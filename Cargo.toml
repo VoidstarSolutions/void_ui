@@ -5,3 +5,6 @@ edition = "2024"
 
 [dependencies]
 void-chart = { path = "../void_chart" }
+masonry = { workspace = true }
+xilem = { workspace = true }
+xilem_masonry = { workspace = true }
