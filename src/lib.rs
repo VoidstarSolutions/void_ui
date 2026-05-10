@@ -62,10 +62,13 @@ where
         _state: &mut State,
     ) {
         if self.data.snapshot != prev.data.snapshot {
-            // Snapshot replacement: re-baseline the widget from scratch.
-            if let Some(snapshot) = self.data.snapshot.clone() {
-                ChartWidget::apply_snapshot(&mut element, snapshot, self.data.deltas.clone());
-            }
+            // Snapshot replacement (including transitions to/from None):
+            // re-baseline the widget from scratch.
+            ChartWidget::apply_state(
+                &mut element,
+                self.data.snapshot.clone(),
+                self.data.deltas.clone(),
+            );
         } else if self.data.deltas.len() > prev.data.deltas.len()
             && self.data.deltas[..prev.data.deltas.len()] == prev.data.deltas[..]
         {
@@ -74,10 +77,12 @@ where
                 ChartWidget::push_delta(&mut element, delta.clone());
             }
         } else if self.data.deltas != prev.data.deltas {
-            // History diverged in some other way — re-apply from current snapshot.
-            if let Some(snapshot) = self.data.snapshot.clone() {
-                ChartWidget::apply_snapshot(&mut element, snapshot, self.data.deltas.clone());
-            }
+            // History diverged in some other way — re-apply current state.
+            ChartWidget::apply_state(
+                &mut element,
+                self.data.snapshot.clone(),
+                self.data.deltas.clone(),
+            );
         }
     }
 
