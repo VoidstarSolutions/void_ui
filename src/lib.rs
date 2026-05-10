@@ -9,18 +9,31 @@
 
 use std::marker::PhantomData;
 
+use citadel_core::pf::{ChartSnapshot, ColumnDelta};
 use void_chart::ChartWidget;
 use xilem_masonry::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem_masonry::{Pod, ViewCtx};
 
-pub fn chart<State: 'static>() -> Chart<State> {
+/// Snapshot of the chart's input state. Cloned into the [`Chart`] view on
+/// every `app_logic` rebuild; cheap for the verification-vector sizes we
+/// run today (single-digit deltas), worth revisiting if very long histories
+/// flow through.
+#[derive(Default, Clone, Debug)]
+pub struct ChartData {
+    pub snapshot: Option<ChartSnapshot>,
+    pub deltas: Vec<ColumnDelta>,
+}
+
+pub fn chart<State: 'static>(data: ChartData) -> Chart<State> {
     Chart {
+        data,
         phantom: PhantomData,
     }
 }
 
 #[must_use = "View values do nothing unless provided to Xilem."]
 pub struct Chart<State> {
+    data: ChartData,
     phantom: PhantomData<fn() -> State>,
 }
 
@@ -35,18 +48,37 @@ where
     type ViewState = ();
 
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
-        let element = ctx.with_action_widget(|ctx| ctx.create_pod(ChartWidget::new()));
+        let widget = ChartWidget::with_state(self.data.snapshot.clone(), self.data.deltas.clone());
+        let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, ())
     }
 
     fn rebuild(
         &self,
-        _prev: &Self,
+        prev: &Self,
         (): &mut Self::ViewState,
         _ctx: &mut ViewCtx,
-        _element: Mut<'_, Self::Element>,
+        mut element: Mut<'_, Self::Element>,
         _state: &mut State,
     ) {
+        if self.data.snapshot != prev.data.snapshot {
+            // Snapshot replacement: re-baseline the widget from scratch.
+            if let Some(snapshot) = self.data.snapshot.clone() {
+                ChartWidget::apply_snapshot(&mut element, snapshot, self.data.deltas.clone());
+            }
+        } else if self.data.deltas.len() > prev.data.deltas.len()
+            && self.data.deltas[..prev.data.deltas.len()] == prev.data.deltas[..]
+        {
+            // Append-only growth: push only the new tail.
+            for delta in &self.data.deltas[prev.data.deltas.len()..] {
+                ChartWidget::push_delta(&mut element, delta.clone());
+            }
+        } else if self.data.deltas != prev.data.deltas {
+            // History diverged in some other way — re-apply from current snapshot.
+            if let Some(snapshot) = self.data.snapshot.clone() {
+                ChartWidget::apply_snapshot(&mut element, snapshot, self.data.deltas.clone());
+            }
+        }
     }
 
     fn teardown(

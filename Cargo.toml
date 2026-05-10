@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+citadel-core = { path = "../core" }
 void-chart = { path = "../void_chart" }
 masonry = { workspace = true }
 xilem = { workspace = true }
