@@ -1,7 +1,7 @@
 //! Void UI components.
 //!
-//! Xilem-flavored widget library wrapping [`void_chart`] and the rest of the
-//! domain widget surface (scanner grid, watch list, instrument context,
+//! Xilem-flavored widget library wrapping [`citadel_chart`] and the rest of
+//! the domain widget surface (scanner grid, watch list, instrument context,
 //! settings forms). This crate absorbs Xilem view-layer churn so application
 //! code stays insulated from upstream renames.
 
@@ -9,8 +9,8 @@
 
 use std::marker::PhantomData;
 
+use citadel_chart::ChartWidget;
 use citadel_core::pf::{ChartSnapshot, ColumnDelta};
-use void_chart::ChartWidget;
 use xilem_masonry::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem_masonry::{Pod, ViewCtx};
 

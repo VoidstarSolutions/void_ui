@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+citadel-chart = { path = "../chart" }
 citadel-core = { path = "../core" }
-void-chart = { path = "../void_chart" }
 masonry = { workspace = true }
 xilem = { workspace = true }
 xilem_masonry = { workspace = true }
