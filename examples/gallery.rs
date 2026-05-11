@@ -43,8 +43,8 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
 
     let workspace = workspace_row(focused, theme_panel_open, &theme);
 
-    let outer = flex_col((topbar(theme_panel_open, &theme), workspace))
-        .cross_axis_alignment(CrossAxisAlignment::Start)
+    let outer = flex_col((topbar(theme_panel_open, &theme), workspace.flex(1.0)))
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .main_axis_alignment(MainAxisAlignment::Start);
 
     sized_box(outer).background_color(theme.palette.bg_deep)
@@ -72,12 +72,12 @@ fn workspace_row(
         .border(theme.palette.border, 1.0);
         Box::new(
             flex_row((sidebar_view, main.flex(1.0), panel))
-                .cross_axis_alignment(CrossAxisAlignment::Start),
+                .cross_axis_alignment(CrossAxisAlignment::Stretch),
         )
     } else {
         Box::new(
             flex_row((sidebar_view, main.flex(1.0)))
-                .cross_axis_alignment(CrossAxisAlignment::Start),
+                .cross_axis_alignment(CrossAxisAlignment::Stretch),
         )
     }
 }
@@ -223,11 +223,16 @@ fn accents_block(theme: &Theme) -> impl WidgetView<State> + use<> {
     let row_a = flex_row((
         swatch_tile("teal", p.teal, theme),
         swatch_tile("coral", p.coral, theme),
+    ))
+    .gap(Length::px(6.0));
+    let row_b = flex_row((
         swatch_tile("amber", p.amber, theme),
         swatch_tile("violet", p.violet, theme),
     ))
     .gap(Length::px(6.0));
-    flex_col((row_a,)).cross_axis_alignment(CrossAxisAlignment::Start)
+    flex_col((row_a, row_b))
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .gap(Length::px(6.0))
 }
 
 fn domain_block(theme: &Theme) -> impl WidgetView<State> + use<> {
