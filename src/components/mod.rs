@@ -13,8 +13,10 @@
 //! the host, not a tree walk.
 
 pub mod button;
+pub mod data_grid;
 
 pub use button::{Button, ButtonView, button};
+pub use data_grid::{CellAlign, ColumnDef, SelectionState, optional_text_column, text_column};
 
 /// One entry per component the gallery exposes.
 ///

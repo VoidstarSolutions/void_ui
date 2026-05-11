@@ -20,6 +20,9 @@ pub mod pointer_inert;
 pub mod theme;
 
 pub use chart::{Chart, ChartAction, ChartData, chart};
-pub use components::{Button, ButtonView, button};
+pub use components::{
+    Button, ButtonView, CellAlign, ColumnDef, SelectionState, button, optional_text_column,
+    text_column,
+};
 pub use pointer_inert::{PointerInert, PointerInertView, pointer_inert};
 pub use theme::{Density, FontStack, Palette, Radii, Theme, ThemeVariant, Typography};
