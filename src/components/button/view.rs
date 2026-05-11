@@ -14,6 +14,7 @@
 use std::marker::PhantomData;
 
 use masonry::core::{ArcStr, StyleProperty, Widget as _};
+use masonry::properties::ContentColor;
 use masonry::widgets::{ButtonPress, Label};
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx};
@@ -93,9 +94,14 @@ where
     type ViewState = ();
 
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
-        let label = Label::new(self.label.clone())
+        let mut label = Label::new(self.label.clone())
             .with_style(StyleProperty::FontSize(self.theme.density.ui_font_size))
             .prepare();
+        // Without this, the Label inherits masonry's stock dark-theme
+        // text color and turns invisible against the light palette.
+        label
+            .properties
+            .insert(ContentColor::new(self.theme.palette.text));
         let widget = ThemedButton::new(label, &self.theme).with_active(self.active);
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, ())
@@ -111,6 +117,8 @@ where
     ) {
         if self.theme != prev.theme {
             ThemedButton::set_theme(&mut element, &self.theme);
+            let mut child = ThemedButton::child_mut(&mut element);
+            child.insert_prop(ContentColor::new(self.theme.palette.text));
         }
         if self.active != prev.active {
             ThemedButton::set_active(&mut element, self.active);
