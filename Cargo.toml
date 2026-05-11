@@ -12,5 +12,12 @@ masonry = { workspace = true }
 xilem = { workspace = true }
 xilem_masonry = { workspace = true }
 
+[dev-dependencies]
+xilem = { workspace = true }
+
+[[example]]
+name = "gallery"
+path = "examples/gallery.rs"
+
 [lints]
 workspace = true
