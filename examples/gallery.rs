@@ -17,6 +17,7 @@ use xilem::view::{
 use xilem::winit::error::EventLoopError;
 use xilem::{EventLoop, WidgetView, WindowOptions, Xilem};
 
+use void_ui::components::{ButtonState, button};
 use void_ui::theme::{Density, Theme};
 
 struct State {
@@ -35,6 +36,7 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
     let theme = state.theme;
     let body = flex_col((
         topbar(&theme),
+        section_buttons(&theme),
         section_surfaces(&theme),
         section_text(&theme),
         section_accents(&theme),
@@ -90,6 +92,35 @@ fn topbar(theme: &Theme) -> impl WidgetView<State> + use<> {
     flex_row((header, FlexSpacer::Flex(1.0), theme_toggle, density_toggle))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(12.0))
+}
+
+fn section_buttons(theme: &Theme) -> impl WidgetView<State> + use<> {
+    let labeled = |state_name: &'static str, btn| {
+        flex_col((
+            btn,
+            label(state_name)
+                .text_size(theme.typography.size_caption)
+                .color(theme.palette.text_faint),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .gap(Length::px(4.0))
+    };
+    let row = flex_row((
+        labeled("default", button("Reset view").render(theme)),
+        labeled(
+            "hover",
+            button("Reset view").state(ButtonState::Hover).render(theme),
+        ),
+        labeled(
+            "active",
+            button("Reset view")
+                .state(ButtonState::Active)
+                .render(theme),
+        ),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Start)
+    .gap(Length::px(16.0));
+    section("Buttons · default · hover · active", theme, row)
 }
 
 fn section_surfaces(theme: &Theme) -> impl WidgetView<State> + use<> {
