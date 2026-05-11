@@ -5,15 +5,20 @@
 //! collection of widgets (chips, tags, swatches, buttons) without the
 //! call site having to know how many will fit per row.
 //!
-//! ## Step 1 limitation
+//! ## Algorithm
 //!
-//! The current implementation lays children out in a single row (no
-//! wrap). The struct fields and the public API are already shaped to
-//! accept gap and alignment configuration; the actual row-partitioning
-//! algorithm and alignment math land in the follow-up commit. Callers
-//! with children that all fit on one row see correct behavior now;
-//! callers whose children overflow see the children spill off the right
-//! edge until step 2 lands.
+//! `measure` and `layout` share a row-partitioning pass: children are
+//! visited in order, their natural widths summed (with `col_gap`
+//! between siblings), and a new row is started whenever adding the next
+//! child would exceed the available width. Each row's height is the
+//! height of its tallest child; total height is the sum of row heights
+//! plus `row_gap` between adjacent rows.
+//!
+//! Within each row, [`MainAxisAlignment`] decides how the slack between
+//! the row's natural width and the available width is distributed.
+//! [`CrossAxisAlignment`] decides how each child sits inside its row's
+//! height — `Stretch` is special-cased to re-resize the child to the
+//! row's height before layout.
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
@@ -22,7 +27,7 @@ use masonry::core::{
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Size};
-use masonry::layout::{LayoutSize, LenReq, SizeDef};
+use masonry::layout::{LayoutSize, LenDef, LenReq, SizeDef};
 use masonry::properties::types::{CrossAxisAlignment, MainAxisAlignment};
 
 /// A wrapping flex container.
@@ -42,6 +47,106 @@ pub struct FlexWrap {
     col_gap: f64,
     main_axis_alignment: MainAxisAlignment,
     cross_axis_alignment: CrossAxisAlignment,
+}
+
+// --- MARK: LAYOUT HELPERS
+
+/// A single row in the wrapped layout — half-open range over the
+/// `children` vector.
+#[derive(Clone, Copy, Debug)]
+struct Row {
+    start: usize,
+    end: usize,
+}
+
+/// Walks `widths` in order and groups them into rows. A new row starts
+/// whenever appending the next width (plus `col_gap`) would exceed
+/// `available`. A single child wider than `available` still becomes its
+/// own row — overflow is preferred to dropping the child.
+fn partition_rows(widths: &[f64], available: f64, col_gap: f64) -> Vec<Row> {
+    let mut rows = Vec::new();
+    if widths.is_empty() {
+        return rows;
+    }
+    let mut start = 0;
+    let mut width_acc = widths[0];
+    for (i, &w) in widths.iter().enumerate().skip(1) {
+        let candidate = width_acc + col_gap + w;
+        if candidate > available && i > start {
+            rows.push(Row { start, end: i });
+            start = i;
+            width_acc = w;
+        } else {
+            width_acc = candidate;
+        }
+    }
+    rows.push(Row {
+        start,
+        end: widths.len(),
+    });
+    rows
+}
+
+/// Returns the x-position of each child within a row given the row's
+/// child widths, the row's available width, the configured `col_gap`,
+/// and the [`MainAxisAlignment`].
+///
+/// For `Space*` alignments, the natural `col_gap` is replaced by an
+/// effective gap distributing whatever slack the row has. For `n == 1`
+/// the `Space*` cases degenerate to centering.
+fn main_axis_positions(
+    widths: &[f64],
+    available: f64,
+    col_gap: f64,
+    alignment: MainAxisAlignment,
+) -> Vec<f64> {
+    let n = widths.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let content_width: f64 = widths.iter().sum();
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "child counts are small (<< 2^53)"
+    )]
+    let n_f = n as f64;
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "child counts are small (<< 2^53)"
+    )]
+    let gap_count = (n.saturating_sub(1)) as f64;
+    let natural_total = content_width + col_gap * gap_count;
+    let slack = (available - natural_total).max(0.0);
+
+    let (mut x, gap) = match alignment {
+        MainAxisAlignment::Start => (0.0, col_gap),
+        MainAxisAlignment::Center => (slack / 2.0, col_gap),
+        MainAxisAlignment::End => (slack, col_gap),
+        MainAxisAlignment::SpaceBetween => {
+            if n == 1 {
+                (0.0, 0.0)
+            } else {
+                (0.0, (available - content_width) / gap_count)
+            }
+        }
+        MainAxisAlignment::SpaceEvenly => {
+            let g = (available - content_width) / (n_f + 1.0);
+            (g, g)
+        }
+        MainAxisAlignment::SpaceAround => {
+            let pad = (available - content_width) / n_f;
+            (pad / 2.0, pad)
+        }
+    };
+
+    let mut positions = Vec::with_capacity(n);
+    for (i, &w) in widths.iter().enumerate() {
+        positions.push(x);
+        if i + 1 < n {
+            x += w + gap;
+        }
+    }
+    positions
 }
 
 // --- MARK: BUILDERS
@@ -256,59 +361,176 @@ impl Widget for FlexWrap {
         if self.children.is_empty() {
             return 0.0;
         }
-        let auto_length = len_req.into();
+        let auto_length: LenDef = len_req.into();
+
+        // Collect each child's natural max-content width — both axes
+        // need this. The width pre-pass is unconditional; masonry caches
+        // measurement queries internally, so downstream `compute_length`
+        // calls for the same child won't re-walk its tree.
+        let widths: Vec<f64> = self
+            .children
+            .iter_mut()
+            .map(|child| {
+                ctx.compute_length(
+                    child,
+                    LenDef::MaxContent,
+                    LayoutSize::default(),
+                    Axis::Horizontal,
+                    None,
+                )
+            })
+            .collect();
+
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "child counts are small (<< 2^53)"
+        )]
+        let gap_count = widths.len().saturating_sub(1) as f64;
+
         match axis {
             Axis::Horizontal => {
-                // Step 1: report the natural single-row width. Step 2
-                // will refine to honor MinContent/MaxContent/FitContent
-                // semantics around wrapping.
-                let mut total: f64 = 0.0;
-                for child in &mut self.children {
-                    let w = ctx.compute_length(
-                        child,
-                        auto_length,
-                        LayoutSize::default(),
-                        Axis::Horizontal,
-                        None,
-                    );
-                    total += w;
+                let natural_total = widths.iter().sum::<f64>() + self.col_gap * gap_count;
+                let min_total = widths.iter().fold(0.0_f64, |a, &b| a.max(b));
+                match len_req {
+                    LenReq::MinContent => min_total,
+                    LenReq::MaxContent => natural_total,
+                    // Prefer the natural single-row width, capped at
+                    // what the parent offered, but never claim less
+                    // than the widest single child (forcing overflow
+                    // beneath that bound gains nothing).
+                    LenReq::FitContent(space) => natural_total.min(space).max(min_total),
                 }
-                #[expect(clippy::cast_precision_loss, reason = "child count is small (<< 2^53)")]
-                let gap_total = self.col_gap * (self.children.len() - 1) as f64;
-                total + gap_total
             }
-            Axis::Vertical => {
-                // Step 1: assume one row; report the tallest child.
-                let mut max_h: f64 = 0.0;
-                let context = LayoutSize::maybe(Axis::Horizontal, cross_length);
-                for child in &mut self.children {
-                    let h = ctx.compute_length(
-                        child,
-                        auto_length,
-                        context,
-                        Axis::Vertical,
-                        cross_length,
-                    );
-                    max_h = max_h.max(h);
+            Axis::Vertical => match cross_length {
+                None => {
+                    // No width constraint — assume one row; report the
+                    // tallest child given its natural width.
+                    self.children
+                        .iter_mut()
+                        .zip(widths.iter())
+                        .fold(0.0_f64, |a, (child, &w)| {
+                            let h = ctx.compute_length(
+                                child,
+                                auto_length,
+                                LayoutSize::maybe(Axis::Horizontal, Some(w)),
+                                Axis::Vertical,
+                                Some(w),
+                            );
+                            a.max(h)
+                        })
                 }
-                max_h
-            }
+                Some(available_width) => {
+                    let rows = partition_rows(&widths, available_width, self.col_gap);
+                    let mut total: f64 = 0.0;
+                    for (row_idx, row) in rows.iter().enumerate() {
+                        let row_children = &mut self.children[row.start..row.end];
+                        let row_widths = &widths[row.start..row.end];
+                        let row_h = row_children.iter_mut().zip(row_widths.iter()).fold(
+                            0.0_f64,
+                            |a, (child, &w)| {
+                                let h = ctx.compute_length(
+                                    child,
+                                    auto_length,
+                                    LayoutSize::maybe(Axis::Horizontal, Some(w)),
+                                    Axis::Vertical,
+                                    Some(w),
+                                );
+                                a.max(h)
+                            },
+                        );
+                        total += row_h;
+                        if row_idx + 1 < rows.len() {
+                            total += self.row_gap;
+                        }
+                    }
+                    total
+                }
+            },
         }
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         if self.children.is_empty() {
+            ctx.clear_baselines();
             return;
         }
-        // Step 1: pack children flat from x=0, all at y=0. Wrap +
-        // alignment math arrive in step 2.
-        let mut x: f64 = 0.0;
+
+        // Pass 1: query each child's natural size given the full
+        // available area. The result is only the child's preference —
+        // `run_layout` below commits the final size (which can differ
+        // for `Stretch` cross-alignment).
         let auto_size = SizeDef::fit(size);
-        for child in &mut self.children {
-            let child_size = ctx.compute_size(child, auto_size, size.into());
-            ctx.run_layout(child, child_size);
-            ctx.place_child(child, Point::new(x, 0.0));
-            x += child_size.width + self.col_gap;
+        let natural: Vec<Size> = self
+            .children
+            .iter_mut()
+            .map(|child| ctx.compute_size(child, auto_size, size.into()))
+            .collect();
+        let widths: Vec<f64> = natural.iter().map(|s| s.width).collect();
+        let rows = partition_rows(&widths, size.width, self.col_gap);
+
+        // Pass 2: place each child. We track `y` (top of current row)
+        // as we walk rows, and within each row use
+        // `main_axis_positions` for the x-offsets plus
+        // `CrossAxisAlignment::offset` for the y-offset within the row.
+        let mut y: f64 = 0.0;
+        for (row_idx, row) in rows.iter().enumerate() {
+            let row_widths = &widths[row.start..row.end];
+            let row_natural = &natural[row.start..row.end];
+            let row_height = row_natural.iter().fold(0.0_f64, |a, s| a.max(s.height));
+            let positions = main_axis_positions(
+                row_widths,
+                size.width,
+                self.col_gap,
+                self.main_axis_alignment,
+            );
+
+            for (slot, child_idx) in (row.start..row.end).enumerate() {
+                let child_natural = natural[child_idx];
+                let x = positions[slot];
+
+                let (final_size, cross_offset) = if self.cross_axis_alignment
+                    == CrossAxisAlignment::Stretch
+                {
+                    // Re-query the child with its height pinned to the
+                    // row's height; the child can refuse and report a
+                    // smaller size, in which case `run_layout` commits
+                    // what it reported (no enforcement here — masonry
+                    // already documents Stretch as a best-effort hint).
+                    let stretch_def = auto_size.with_height(LenDef::Fixed(row_height));
+                    let stretched =
+                        ctx.compute_size(&mut self.children[child_idx], stretch_def, size.into());
+                    (stretched, 0.0)
+                } else {
+                    let slack = row_height - child_natural.height;
+                    (child_natural, self.cross_axis_alignment.offset(slack))
+                };
+
+                let child = &mut self.children[child_idx];
+                ctx.run_layout(child, final_size);
+                ctx.place_child(child, Point::new(x, y + cross_offset));
+            }
+
+            y += row_height;
+            if row_idx + 1 < rows.len() {
+                y += self.row_gap;
+            }
+        }
+
+        // Derive baselines from the first row's first child and the
+        // last row's first child. Matches the multi-cell pattern from
+        // masonry's Grid — close enough for a wrapping container where
+        // every row's leading child is the most likely text anchor.
+        if let (Some(first_row), Some(last_row)) = (rows.first(), rows.last()) {
+            let first_origin = ctx.child_origin(&self.children[first_row.start]);
+            let last_origin = ctx.child_origin(&self.children[last_row.start]);
+            let (first_baseline, _) = ctx.child_aligned_baselines(&self.children[first_row.start]);
+            let (_, last_baseline) = ctx.child_aligned_baselines(&self.children[last_row.start]);
+            ctx.set_baselines(
+                first_origin.y + first_baseline,
+                last_origin.y + last_baseline,
+            );
+        } else {
+            ctx.clear_baselines();
         }
     }
 
