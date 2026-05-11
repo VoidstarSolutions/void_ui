@@ -12,7 +12,7 @@ use xilem::peniko::Color;
 use xilem::style::Style as _;
 use xilem::view::{
     CrossAxisAlignment, FlexExt as _, FlexSpacer, MainAxisAlignment, flex_col, flex_row, label,
-    sized_box,
+    portal, sized_box,
 };
 use xilem::winit::error::EventLoopError;
 use xilem::{AnyWidgetView, EventLoop, WidgetView, WindowOptions, Xilem};
@@ -64,11 +64,12 @@ fn workspace_row(
         .background_color(theme.palette.bg);
 
     if theme_panel_open {
-        let panel = sized_box(theme_panel(theme))
-            .fixed_width(Length::px(360.0))
-            .padding(16.0)
-            .background_color(theme.palette.surface)
-            .border(theme.palette.border, 1.0);
+        let panel = sized_box(
+            portal(sized_box(theme_panel(theme)).padding(16.0)).constrain_horizontal(true),
+        )
+        .fixed_width(Length::px(360.0))
+        .background_color(theme.palette.surface)
+        .border(theme.palette.border, 1.0);
         Box::new(
             flex_row((sidebar_view, main.flex(1.0), panel))
                 .cross_axis_alignment(CrossAxisAlignment::Start),
