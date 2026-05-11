@@ -33,4 +33,4 @@
 
 pub mod flex_wrap;
 
-pub use flex_wrap::FlexWrap;
+pub use flex_wrap::{FlexWrap, flex_wrap};
