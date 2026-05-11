@@ -10,6 +10,7 @@
 use std::marker::PhantomData;
 
 use citadel_chart::ChartWidget;
+use citadel_core::Tick;
 use citadel_core::pf::{ChartSnapshot, ColumnDelta};
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
@@ -28,10 +29,17 @@ pub use citadel_chart::ChartAction;
 /// every `app_logic` rebuild; cheap for the verification-vector sizes we
 /// run today (single-digit deltas), worth revisiting if very long histories
 /// flow through.
+///
+/// `ticks` carries the input price stream alongside the derived
+/// `deltas`. It isn't used for painting; it's there so the chart
+/// widget can copy the raw price history to the system clipboard
+/// (Cmd-C / Ctrl-C) — the seed for new validation vectors carved out
+/// of real data.
 #[derive(Default, Clone, Debug)]
 pub struct ChartData {
     pub snapshot: Option<ChartSnapshot>,
     pub deltas: Vec<ColumnDelta>,
+    pub ticks: Vec<Tick>,
 }
 
 /// Construct a chart view that forwards key-press actions from the chart
@@ -68,7 +76,11 @@ where
     type ViewState = ();
 
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
-        let widget = ChartWidget::with_state(self.data.snapshot.clone(), self.data.deltas.clone());
+        let widget = ChartWidget::with_state(
+            self.data.snapshot.clone(),
+            self.data.deltas.clone(),
+            self.data.ticks.clone(),
+        );
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, ())
     }
@@ -81,27 +93,39 @@ where
         mut element: Mut<'_, Self::Element>,
         _state: &mut State,
     ) {
+        // Re-baseline whenever the snapshot identity changes (load /
+        // reset / no-snapshot transitions). The deltas / ticks
+        // streams reset alongside it.
         if self.data.snapshot != prev.data.snapshot {
-            // Snapshot replacement (including transitions to/from None):
-            // re-baseline the widget from scratch.
             ChartWidget::apply_state(
                 &mut element,
                 self.data.snapshot.clone(),
                 self.data.deltas.clone(),
+                self.data.ticks.clone(),
             );
-        } else if self.data.deltas.len() > prev.data.deltas.len()
-            && self.data.deltas[..prev.data.deltas.len()] == prev.data.deltas[..]
-        {
-            // Append-only growth: push only the new tail.
+            return;
+        }
+
+        let deltas_grew = self.data.deltas.len() > prev.data.deltas.len()
+            && self.data.deltas[..prev.data.deltas.len()] == prev.data.deltas[..];
+        let ticks_grew = self.data.ticks.len() > prev.data.ticks.len()
+            && self.data.ticks[..prev.data.ticks.len()] == prev.data.ticks[..];
+
+        if deltas_grew && ticks_grew {
+            // Append-only growth on both streams — push tails only.
             for delta in &self.data.deltas[prev.data.deltas.len()..] {
                 ChartWidget::push_delta(&mut element, delta.clone());
             }
-        } else if self.data.deltas != prev.data.deltas {
+            for tick in &self.data.ticks[prev.data.ticks.len()..] {
+                ChartWidget::push_tick(&mut element, tick.clone());
+            }
+        } else if self.data.deltas != prev.data.deltas || self.data.ticks != prev.data.ticks {
             // History diverged in some other way — re-apply current state.
             ChartWidget::apply_state(
                 &mut element,
                 self.data.snapshot.clone(),
                 self.data.deltas.clone(),
+                self.data.ticks.clone(),
             );
         }
     }
