@@ -14,6 +14,8 @@ use citadel_core::pf::{ChartSnapshot, ColumnDelta};
 use xilem_masonry::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem_masonry::{Pod, ViewCtx};
 
+pub use citadel_chart::ChartAction;
+
 /// Snapshot of the chart's input state. Cloned into the [`Chart`] view on
 /// every `app_logic` rebuild; cheap for the verification-vector sizes we
 /// run today (single-digit deltas), worth revisiting if very long histories
@@ -24,25 +26,35 @@ pub struct ChartData {
     pub deltas: Vec<ColumnDelta>,
 }
 
-pub fn chart<State: 'static>(data: ChartData) -> Chart<State> {
+/// Construct a chart view that forwards key-press actions from the chart
+/// widget to `on_key`. The callback receives the action emitted by the
+/// underlying [`ChartWidget`] and may mutate `State` and/or return an
+/// `Action` for the parent view.
+pub fn chart<F, State, Action>(data: ChartData, on_key: F) -> Chart<F, State, Action>
+where
+    F: Fn(&mut State, ChartAction) -> Action + 'static,
+{
     Chart {
         data,
+        on_key,
         phantom: PhantomData,
     }
 }
 
 #[must_use = "View values do nothing unless provided to Xilem."]
-pub struct Chart<State> {
+pub struct Chart<F, State, Action> {
     data: ChartData,
-    phantom: PhantomData<fn() -> State>,
+    on_key: F,
+    phantom: PhantomData<fn(State) -> Action>,
 }
 
-impl<State> ViewMarker for Chart<State> {}
+impl<F, State, Action> ViewMarker for Chart<F, State, Action> {}
 
-impl<State, Action> View<State, Action, ViewCtx> for Chart<State>
+impl<F, State, Action> View<State, Action, ViewCtx> for Chart<F, State, Action>
 where
     State: 'static,
     Action: 'static,
+    F: Fn(&mut State, ChartAction) -> Action + 'static,
 {
     type Element = Pod<ChartWidget>;
     type ViewState = ();
@@ -89,18 +101,22 @@ where
     fn teardown(
         &self,
         (): &mut Self::ViewState,
-        _ctx: &mut ViewCtx,
-        _element: Mut<'_, Self::Element>,
+        ctx: &mut ViewCtx,
+        element: Mut<'_, Self::Element>,
     ) {
+        ctx.teardown_action_source(element);
     }
 
     fn message(
         &self,
         (): &mut Self::ViewState,
-        _message: &mut MessageCtx,
+        message: &mut MessageCtx,
         _element: Mut<'_, Self::Element>,
-        _app_state: &mut State,
+        app_state: &mut State,
     ) -> MessageResult<Action> {
-        MessageResult::Stale
+        match message.take_message::<ChartAction>() {
+            Some(action) => MessageResult::Action((self.on_key)(app_state, *action)),
+            None => MessageResult::Stale,
+        }
     }
 }
