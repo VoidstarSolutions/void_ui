@@ -44,9 +44,24 @@ impl Default for Radii {
     }
 }
 
+/// Which palette variant a [`Theme`] is built from.
+///
+/// Stored as a discriminator so callers can ask "are we currently dark?"
+/// without comparing palette structs. The variant carries no behavior of
+/// its own — the palette field is the source of truth for colors.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ThemeVariant {
+    /// Tessera's `data-theme="dark"`.
+    #[default]
+    Dark,
+    /// Tessera's `data-theme="light"`.
+    Light,
+}
+
 /// All tokens for one theme variant.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Theme {
+    pub variant: ThemeVariant,
     pub palette: Palette,
     pub density: Density,
     pub typography: Typography,
@@ -58,6 +73,7 @@ impl Theme {
     #[must_use]
     pub fn dark() -> Self {
         Self {
+            variant: ThemeVariant::Dark,
             palette: Palette::dark(),
             density: Density::balanced(),
             typography: Typography::default_stack(),
@@ -69,6 +85,7 @@ impl Theme {
     #[must_use]
     pub fn light() -> Self {
         Self {
+            variant: ThemeVariant::Light,
             palette: Palette::light(),
             density: Density::balanced(),
             typography: Typography::default_stack(),
@@ -81,6 +98,18 @@ impl Theme {
     pub fn with_density(mut self, density: Density) -> Self {
         self.density = density;
         self
+    }
+
+    /// True when this theme is the dark variant.
+    #[must_use]
+    pub const fn is_dark(&self) -> bool {
+        matches!(self.variant, ThemeVariant::Dark)
+    }
+
+    /// True when this theme is the light variant.
+    #[must_use]
+    pub const fn is_light(&self) -> bool {
+        matches!(self.variant, ThemeVariant::Light)
     }
 }
 
