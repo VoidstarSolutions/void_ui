@@ -1,6 +1,6 @@
 //! Tessera `.tb-btn` button — interactive, theme-driven.
 //!
-//! Wraps [`crate::widgets::ThemedButton`] in a xilem [`View`]. Pointer
+//! Wraps [`super::widget::ThemedButton`] in a xilem [`View`]. Pointer
 //! state (hover, press) is tracked by the masonry widget; the `active`
 //! flag is the host-controlled selected-toggle state.
 //!
@@ -18,8 +18,8 @@ use masonry::widgets::{ButtonPress, Label};
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx};
 
+use super::widget::ThemedButton;
 use crate::Theme;
-use crate::widgets::ThemedButton;
 
 /// Builder for an interactive themed button.
 ///

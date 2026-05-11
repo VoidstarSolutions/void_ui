@@ -17,7 +17,6 @@ pub mod chart;
 pub mod components;
 pub mod pointer_inert;
 pub mod theme;
-pub mod widgets;
 
 pub use chart::{Chart, ChartAction, ChartData, chart};
 pub use components::{Button, ButtonView, button};
