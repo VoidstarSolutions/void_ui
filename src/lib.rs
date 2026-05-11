@@ -21,7 +21,9 @@ pub mod layout;
 pub mod pointer_inert;
 pub mod theme;
 
-pub use chart::{Chart, ChartAction, ChartData, HoverArea, HoverElement, HoverState, chart};
+pub use chart::{
+    Chart, ChartAction, ChartData, ChartLayout, HoverArea, HoverElement, HoverState, chart,
+};
 pub use components::{
     Button, ButtonVariant, ButtonView, CellAlign, ColumnDef, SelectionState, SidebarItem,
     SidebarItemView, Tooltip, TooltipView, button, data_grid, optional_text_column, sidebar_item,
