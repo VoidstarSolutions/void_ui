@@ -14,9 +14,11 @@
 #![forbid(unsafe_code)]
 
 pub mod chart;
+pub mod components;
 pub mod pointer_inert;
 pub mod theme;
 
 pub use chart::{Chart, ChartAction, ChartData, chart};
+pub use components::{Button, ButtonState, button};
 pub use pointer_inert::{PointerInert, PointerInertView, pointer_inert};
 pub use theme::{Density, FontStack, Palette, Radii, Theme, Typography};
