@@ -15,6 +15,7 @@
 
 pub mod chart;
 pub mod components;
+pub mod layout;
 pub mod pointer_inert;
 pub mod theme;
 
