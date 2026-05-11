@@ -12,12 +12,11 @@ use xilem::peniko::Color;
 use xilem::style::Style as _;
 use xilem::view::{
     CrossAxisAlignment, FlexSpacer, MainAxisAlignment, flex_col, flex_row, label, sized_box,
-    text_button,
 };
 use xilem::winit::error::EventLoopError;
 use xilem::{EventLoop, WidgetView, WindowOptions, Xilem};
 
-use void_ui::components::{ButtonState, button};
+use void_ui::components::button;
 use void_ui::theme::{Density, Theme};
 
 struct State {
@@ -36,7 +35,6 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
     let theme = state.theme;
     let body = flex_col((
         topbar(&theme),
-        section_buttons(&theme),
         section_surfaces(&theme),
         section_text(&theme),
         section_accents(&theme),
@@ -57,7 +55,7 @@ fn topbar(theme: &Theme) -> impl WidgetView<State> + use<> {
     let title = label("void-ui · Tessera tokens")
         .text_size(16.0)
         .color(theme.palette.text);
-    let subtitle = label("dark / light · compact / balanced / airy")
+    let subtitle = label("hover · press · click — interactive buttons")
         .text_size(theme.typography.size_caption)
         .color(theme.palette.text_faint);
     let header = flex_col((title, subtitle))
@@ -65,62 +63,45 @@ fn topbar(theme: &Theme) -> impl WidgetView<State> + use<> {
         .gap(Length::px(2.0));
 
     let theme_toggle = flex_row((
-        text_button("Dark", |s: &mut State| {
+        button("Dark", |s: &mut State| {
             let d = s.theme.density;
             s.theme = Theme::dark().with_density(d);
-        }),
-        text_button("Light", |s: &mut State| {
+        })
+        .active(theme.is_dark())
+        .render(theme),
+        button("Light", |s: &mut State| {
             let d = s.theme.density;
             s.theme = Theme::light().with_density(d);
-        }),
+        })
+        .active(theme.is_light())
+        .render(theme),
     ))
+    .cross_axis_alignment(CrossAxisAlignment::Center)
     .gap(Length::px(6.0));
 
     let density_toggle = flex_row((
-        text_button("Compact", |s: &mut State| {
+        button("Compact", |s: &mut State| {
             s.theme = s.theme.with_density(Density::compact());
-        }),
-        text_button("Balanced", |s: &mut State| {
+        })
+        .active(theme.density == Density::compact())
+        .render(theme),
+        button("Balanced", |s: &mut State| {
             s.theme = s.theme.with_density(Density::balanced());
-        }),
-        text_button("Airy", |s: &mut State| {
+        })
+        .active(theme.density == Density::balanced())
+        .render(theme),
+        button("Airy", |s: &mut State| {
             s.theme = s.theme.with_density(Density::airy());
-        }),
+        })
+        .active(theme.density == Density::airy())
+        .render(theme),
     ))
+    .cross_axis_alignment(CrossAxisAlignment::Center)
     .gap(Length::px(6.0));
 
     flex_row((header, FlexSpacer::Flex(1.0), theme_toggle, density_toggle))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(12.0))
-}
-
-fn section_buttons(theme: &Theme) -> impl WidgetView<State> + use<> {
-    let labeled = |state_name: &'static str, btn| {
-        flex_col((
-            btn,
-            label(state_name)
-                .text_size(theme.typography.size_caption)
-                .color(theme.palette.text_faint),
-        ))
-        .cross_axis_alignment(CrossAxisAlignment::Start)
-        .gap(Length::px(4.0))
-    };
-    let row = flex_row((
-        labeled("default", button("Reset view").render(theme)),
-        labeled(
-            "hover",
-            button("Reset view").state(ButtonState::Hover).render(theme),
-        ),
-        labeled(
-            "active",
-            button("Reset view")
-                .state(ButtonState::Active)
-                .render(theme),
-        ),
-    ))
-    .cross_axis_alignment(CrossAxisAlignment::Start)
-    .gap(Length::px(16.0));
-    section("Buttons · default · hover · active", theme, row)
 }
 
 fn section_surfaces(theme: &Theme) -> impl WidgetView<State> + use<> {

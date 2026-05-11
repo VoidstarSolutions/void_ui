@@ -1,93 +1,147 @@
-//! Tessera `.tb-btn` button — text label, optional `active` flag.
+//! Tessera `.tb-btn` button — interactive, theme-driven.
 //!
-//! Visual-only first cut: no hover, press, or click handling. The active
-//! state is a flag the caller toggles (e.g. "Inspector" is active when the
-//! inspector panel is open). When hover/press states land, they'll attach
-//! to the same widget without changing the public API.
+//! Wraps [`crate::widgets::ThemedButton`] in a xilem [`View`]. Pointer
+//! state (hover, press) is tracked by the masonry widget; the `active`
+//! flag is the host-controlled selected-toggle state.
+//!
+//! ```ignore
+//! use void_ui::components::button;
+//! button("Reset view", |s: &mut State| s.reset())
+//!     .active(false)
+//!     .render(&theme)
+//! ```
 
-use masonry::core::ArcStr;
-use masonry::properties::Padding;
-use xilem::WidgetView;
-use xilem::peniko::Color;
-use xilem::style::Style as _;
-use xilem::view::{label, sized_box};
+use std::marker::PhantomData;
+
+use masonry::core::{ArcStr, StyleProperty, Widget as _};
+use masonry::widgets::{ButtonPress, Label};
+use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
+use xilem::{Pod, ViewCtx};
 
 use crate::Theme;
+use crate::widgets::ThemedButton;
 
-/// Static visual state of a [`Button`].
+/// Builder for an interactive themed button.
 ///
-/// In real usage the harness drives this — `Default` while resting,
-/// `Hover` while the pointer is over the widget, `Active` while pressed
-/// or when the host has marked the button as the currently-selected
-/// toggle. While interactivity is not wired yet, callers can set the
-/// state explicitly to render any of the three.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ButtonState {
-    /// Resting state — muted text on transparent chrome.
-    #[default]
-    Default,
-    /// Pointer-hovered — full text, filled surface, no border.
-    Hover,
-    /// Selected / pressed — full text, filled surface, visible border.
-    Active,
-}
-
-/// Builder for a Tessera-styled button.
-///
-/// Build with [`button`], chain modifiers, then call [`Button::render`] to
-/// produce a xilem `WidgetView`.
-#[derive(Clone, Debug)]
+/// Created with [`button`]. Returns a xilem `WidgetView` via [`Self::render`].
 #[must_use = "Button does nothing until rendered with .render(&theme)"]
-pub struct Button {
+pub struct Button<F> {
     label: ArcStr,
-    state: ButtonState,
+    active: bool,
+    callback: F,
 }
 
-/// Start a new button with the given label.
-pub fn button(label: impl Into<ArcStr>) -> Button {
+/// Create a new button with the given label and click callback.
+///
+/// The callback is invoked on primary-pointer release inside the widget
+/// and on Space / Enter while the widget is focused.
+pub fn button<F>(label: impl Into<ArcStr>, callback: F) -> Button<F> {
     Button {
         label: label.into(),
-        state: ButtonState::Default,
+        active: false,
+        callback,
     }
 }
 
-impl Button {
-    /// Mark this button as currently selected. Convenience for
-    /// [`Self::state`] — `true` → `Active`, `false` → `Default`. Use
-    /// [`Self::state`] directly if you need `Hover`.
+impl<F> Button<F> {
+    /// Mark this button as the currently-selected toggle. Tessera's
+    /// `.tb-btn.active` — filled background, visible border.
     pub fn active(mut self, on: bool) -> Self {
-        self.state = if on {
-            ButtonState::Active
-        } else {
-            ButtonState::Default
-        };
+        self.active = on;
         self
     }
 
-    /// Set the visual state explicitly.
-    pub fn state(mut self, state: ButtonState) -> Self {
-        self.state = state;
-        self
+    /// Materialize the xilem view at the supplied theme.
+    pub fn render<State, Action>(self, theme: &Theme) -> ButtonView<F, State, Action>
+    where
+        State: 'static,
+        Action: 'static,
+        F: Fn(&mut State) -> Action + Send + Sync + 'static,
+    {
+        ButtonView {
+            label: self.label,
+            active: self.active,
+            theme: *theme,
+            callback: self.callback,
+            phantom: PhantomData,
+        }
+    }
+}
+
+/// The materialized [`View`] backing a [`Button`].
+///
+/// Built only through [`Button::render`]; not constructed directly by
+/// callers.
+#[must_use = "View values do nothing unless provided to Xilem."]
+pub struct ButtonView<F, State, Action> {
+    label: ArcStr,
+    active: bool,
+    theme: Theme,
+    callback: F,
+    phantom: PhantomData<fn(State) -> Action>,
+}
+
+impl<F, State, Action> ViewMarker for ButtonView<F, State, Action> {}
+
+impl<F, State, Action> View<State, Action, ViewCtx> for ButtonView<F, State, Action>
+where
+    State: 'static,
+    Action: 'static,
+    F: Fn(&mut State) -> Action + Send + Sync + 'static,
+{
+    type Element = Pod<ThemedButton>;
+    type ViewState = ();
+
+    fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
+        let label = Label::new(self.label.clone())
+            .with_style(StyleProperty::FontSize(self.theme.density.ui_font_size))
+            .prepare();
+        let widget = ThemedButton::new(label, &self.theme).with_active(self.active);
+        let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
+        (element, ())
     }
 
-    /// Build the xilem view at the supplied theme.
-    #[must_use]
-    pub fn render<S: 'static>(&self, theme: &Theme) -> impl WidgetView<S> + use<S> {
-        let p = &theme.palette;
-        let (text_color, bg_color, border_color) = match self.state {
-            ButtonState::Default => (p.text_muted, Color::TRANSPARENT, Color::TRANSPARENT),
-            ButtonState::Hover => (p.text, p.surface_2, Color::TRANSPARENT),
-            ButtonState::Active => (p.text, p.surface_2, p.border),
-        };
+    fn rebuild(
+        &self,
+        prev: &Self,
+        (): &mut Self::ViewState,
+        _ctx: &mut ViewCtx,
+        mut element: Mut<'_, Self::Element>,
+        _app_state: &mut State,
+    ) {
+        if self.theme != prev.theme {
+            ThemedButton::set_theme(&mut element, &self.theme);
+        }
+        if self.active != prev.active {
+            ThemedButton::set_active(&mut element, self.active);
+        }
+        // Label text and font size are not re-applied here; the masonry
+        // Label widget doesn't currently expose post-construction text
+        // mutation in a way that's stable to depend on. If the label
+        // string changes, the parent view should typically replace the
+        // whole button, which xilem will do via teardown+build.
+        let _ = &prev.label;
+    }
 
-        let text = label(self.label.clone())
-            .text_size(theme.density.ui_font_size)
-            .color(text_color);
+    fn teardown(
+        &self,
+        (): &mut Self::ViewState,
+        ctx: &mut ViewCtx,
+        element: Mut<'_, Self::Element>,
+    ) {
+        ctx.teardown_action_source(element);
+    }
 
-        sized_box(text)
-            .padding(Padding::from_vh(5.0, 9.0))
-            .background_color(bg_color)
-            .border(border_color, 1.0)
-            .corner_radius(5.0)
+    fn message(
+        &self,
+        (): &mut Self::ViewState,
+        message: &mut MessageCtx,
+        _element: Mut<'_, Self::Element>,
+        app_state: &mut State,
+    ) -> MessageResult<Action> {
+        match message.take_message::<ButtonPress>() {
+            Some(_press) => MessageResult::Action((self.callback)(app_state)),
+            None => MessageResult::Stale,
+        }
     }
 }

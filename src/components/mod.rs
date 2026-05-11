@@ -14,4 +14,4 @@
 
 pub mod button;
 
-pub use button::{Button, ButtonState, button};
+pub use button::{Button, ButtonView, button};
