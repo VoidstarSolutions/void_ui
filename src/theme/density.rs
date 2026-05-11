@@ -18,6 +18,12 @@ pub struct Density {
     /// Base font size for UI controls (topbar buttons, inspector chips,
     /// segmented controls), in px.
     pub ui_font_size: f32,
+    /// Vertical padding inside a button (label gap above/below), in px.
+    /// Spread is deliberate — Compact 3 / Balanced 5 / Airy 8 — so the
+    /// density swap is visibly meaningful, not just a 1-px font change.
+    pub button_pad_v: f32,
+    /// Horizontal padding inside a button, in px.
+    pub button_pad_h: f32,
 }
 
 impl Density {
@@ -29,6 +35,8 @@ impl Density {
             col: 12.0,
             pad: 10.0,
             ui_font_size: 11.0,
+            button_pad_v: 3.0,
+            button_pad_h: 7.0,
         }
     }
 
@@ -40,6 +48,8 @@ impl Density {
             col: 15.0,
             pad: 12.0,
             ui_font_size: 12.0,
+            button_pad_v: 5.0,
+            button_pad_h: 9.0,
         }
     }
 
@@ -51,6 +61,8 @@ impl Density {
             col: 19.0,
             pad: 16.0,
             ui_font_size: 13.0,
+            button_pad_v: 8.0,
+            button_pad_h: 14.0,
         }
     }
 }

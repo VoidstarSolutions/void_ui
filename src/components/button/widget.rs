@@ -27,9 +27,6 @@ use masonry::widgets::ButtonPress;
 
 use crate::Theme;
 
-/// Tessera `.tb-btn` padding — vertical 5px, horizontal 9px.
-const PAD_V: f64 = 5.0;
-const PAD_H: f64 = 9.0;
 /// Tessera `.tb-btn` corner radius (`border-radius: 5px`).
 const CORNER_RADIUS: f64 = 5.0;
 /// Border thickness when the active selector applies.
@@ -76,10 +73,12 @@ impl ThemedButton {
 
 // --- MARK: WIDGETMUT
 impl ThemedButton {
-    /// Replaces the theme. Requests a repaint if the value changed.
+    /// Replaces the theme. Requests layout + repaint if the value
+    /// changed — density-driven padding shifts the button's size.
     pub fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
         if this.widget.theme != *theme {
             this.widget.theme = *theme;
+            this.ctx.request_layout();
             this.ctx.request_paint_only();
         }
     }
@@ -212,9 +211,11 @@ impl Widget for ThemedButton {
     ) -> f64 {
         // Forward to the child with the cross-axis padding peeled off,
         // then add the main-axis padding back.
+        let pad_v = f64::from(self.theme.density.button_pad_v);
+        let pad_h = f64::from(self.theme.density.button_pad_h);
         let (main_pad, cross_pad) = match axis {
-            Axis::Horizontal => (2.0 * PAD_H, 2.0 * PAD_V),
-            Axis::Vertical => (2.0 * PAD_V, 2.0 * PAD_H),
+            Axis::Horizontal => (2.0 * pad_h, 2.0 * pad_v),
+            Axis::Vertical => (2.0 * pad_v, 2.0 * pad_h),
         };
         let inner_cross = cross_length.map(|c| (c - cross_pad).max(0.0));
         let auto_length = len_req.into();
@@ -230,17 +231,19 @@ impl Widget for ThemedButton {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
+        let pad_v = f64::from(self.theme.density.button_pad_v);
+        let pad_h = f64::from(self.theme.density.button_pad_h);
         let inner = Size::new(
-            (size.width - 2.0 * PAD_H).max(0.0),
-            (size.height - 2.0 * PAD_V).max(0.0),
+            (size.width - 2.0 * pad_h).max(0.0),
+            (size.height - 2.0 * pad_v).max(0.0),
         );
         let child_size = ctx.compute_size(&mut self.child, SizeDef::fit(inner), inner.into());
         ctx.run_layout(&mut self.child, child_size);
 
         // Center child within the padded box.
         let child_origin = Point::new(
-            PAD_H + ((inner.width - child_size.width) * 0.5).max(0.0),
-            PAD_V + ((inner.height - child_size.height) * 0.5).max(0.0),
+            pad_h + ((inner.width - child_size.width) * 0.5).max(0.0),
+            pad_v + ((inner.height - child_size.height) * 0.5).max(0.0),
         );
         ctx.place_child(&mut self.child, child_origin);
         ctx.derive_baselines(&self.child);

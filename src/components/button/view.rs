@@ -119,6 +119,11 @@ where
             ThemedButton::set_theme(&mut element, &self.theme);
             let mut child = ThemedButton::child_mut(&mut element);
             child.insert_prop(ContentColor::new(self.theme.palette.text));
+            let mut label = child.downcast::<Label>();
+            Label::insert_style(
+                &mut label,
+                StyleProperty::FontSize(self.theme.density.ui_font_size),
+            );
         }
         if self.active != prev.active {
             ThemedButton::set_active(&mut element, self.active);
