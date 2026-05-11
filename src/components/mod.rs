@@ -5,7 +5,7 @@
 //!
 //! ```ignore
 //! use void_ui::components::button;
-//! button("Reset view").active(false).render(&theme)
+//! button("Reset view", |_: &mut State| {}).render(&theme)
 //! ```
 //!
 //! Theme is passed at the render boundary rather than stored on each
@@ -15,3 +15,31 @@
 pub mod button;
 
 pub use button::{Button, ButtonView, button};
+
+/// One entry per component the gallery exposes.
+///
+/// The gallery uses this enum for two things:
+/// - to iterate components when rendering its sidebar
+/// - to dispatch to the focused component's `demo::panel` in the main pane
+///
+/// Adding a new component is one variant + one dispatch arm in the gallery.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ComponentKind {
+    Button,
+}
+
+impl ComponentKind {
+    /// Human-readable name for the sidebar.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Button => "Button",
+        }
+    }
+
+    /// Every component in display order.
+    #[must_use]
+    pub const fn all() -> &'static [Self] {
+        &[Self::Button]
+    }
+}

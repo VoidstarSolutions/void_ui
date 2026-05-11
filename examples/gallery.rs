@@ -35,6 +35,7 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
     let theme = state.theme;
     let body = flex_col((
         topbar(&theme),
+        section_button_demo(&theme),
         section_surfaces(&theme),
         section_text(&theme),
         section_accents(&theme),
@@ -49,6 +50,14 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
     sized_box(body)
         .padding(20.0)
         .background_color(theme.palette.bg_deep)
+}
+
+fn section_button_demo(theme: &Theme) -> impl WidgetView<State> + use<> {
+    section(
+        "Button",
+        theme,
+        void_ui::components::button::demo::panel(theme),
+    )
 }
 
 fn topbar(theme: &Theme) -> impl WidgetView<State> + use<> {

@@ -6,6 +6,7 @@
 //! type can name it without leaking a private type through the public
 //! API.
 
+pub mod demo;
 mod view;
 pub mod widget;
 
