@@ -18,6 +18,7 @@ use xilem::winit::error::EventLoopError;
 use xilem::{AnyWidgetView, EventLoop, WidgetView, WindowOptions, Xilem};
 
 use void_ui::components::{ComponentKind, button};
+use void_ui::layout::flex_wrap;
 use void_ui::theme::{Density, Theme};
 
 struct State {
@@ -220,19 +221,13 @@ fn surfaces_block(theme: &Theme) -> impl WidgetView<State> + use<> {
 
 fn accents_block(theme: &Theme) -> impl WidgetView<State> + use<> {
     let p = &theme.palette;
-    let row_a = flex_row((
+    flex_wrap((
         swatch_tile("teal", p.teal, theme),
         swatch_tile("coral", p.coral, theme),
-    ))
-    .gap(Length::px(6.0));
-    let row_b = flex_row((
         swatch_tile("amber", p.amber, theme),
         swatch_tile("violet", p.violet, theme),
     ))
-    .gap(Length::px(6.0));
-    flex_col((row_a, row_b))
-        .cross_axis_alignment(CrossAxisAlignment::Start)
-        .gap(Length::px(6.0))
+    .gap(6.0)
 }
 
 fn domain_block(theme: &Theme) -> impl WidgetView<State> + use<> {
