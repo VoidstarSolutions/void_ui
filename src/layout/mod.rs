@@ -30,3 +30,7 @@
 //! Both kinds can use each other: a `Card` component may compose
 //! `flex_wrap` internally; a `flex_wrap` demo may use `Button` as its
 //! sample children.
+
+pub mod flex_wrap;
+
+pub use flex_wrap::FlexWrap;
