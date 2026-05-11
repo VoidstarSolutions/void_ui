@@ -16,7 +16,9 @@
 //! `data_grid` view itself arrives in a follow-up commit.
 
 pub mod column;
+pub mod copy_shortcut;
 pub mod selection;
 
 pub use column::{CellAlign, ColumnDef, optional_text_column, text_column};
+pub use copy_shortcut::CopyOnShortcut;
 pub use selection::SelectionState;
