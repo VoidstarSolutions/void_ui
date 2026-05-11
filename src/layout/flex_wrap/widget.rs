@@ -455,15 +455,17 @@ impl Widget for FlexWrap {
             return;
         }
 
-        // Pass 1: query each child's natural size given the full
-        // available area. The result is only the child's preference —
-        // `run_layout` below commits the final size (which can differ
-        // for `Stretch` cross-alignment).
-        let auto_size = SizeDef::fit(size);
+        // Pass 1: query each child's natural (max-content) size. We
+        // must *not* pass `SizeDef::fit(size)` here — masonry's `Flex`
+        // treats `FitContent` as "fill the offered space up to your
+        // min-content," which would make every child report the full
+        // available width and collapse the wrap into a single column.
+        // `SizeDef::MAX` (MaxContent on both axes) returns each child's
+        // natural size, which is what the partition pass needs.
         let natural: Vec<Size> = self
             .children
             .iter_mut()
-            .map(|child| ctx.compute_size(child, auto_size, size.into()))
+            .map(|child| ctx.compute_size(child, SizeDef::MAX, size.into()))
             .collect();
         let widths: Vec<f64> = natural.iter().map(|s| s.width).collect();
         let rows = partition_rows(&widths, size.width, self.col_gap);
@@ -496,7 +498,7 @@ impl Widget for FlexWrap {
                     // smaller size, in which case `run_layout` commits
                     // what it reported (no enforcement here — masonry
                     // already documents Stretch as a best-effort hint).
-                    let stretch_def = auto_size.with_height(LenDef::Fixed(row_height));
+                    let stretch_def = SizeDef::MAX.with_height(LenDef::Fixed(row_height));
                     let stretched =
                         ctx.compute_size(&mut self.children[child_idx], stretch_def, size.into());
                     (stretched, 0.0)
