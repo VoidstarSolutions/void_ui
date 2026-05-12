@@ -7,13 +7,17 @@
 //! other in-memory `&[R]` exposed by the host's app state.
 //!
 //! Backed by masonry's [`VirtualScroll`][masonry::widgets::VirtualScroll]
-//! for row virtualization. The view is mostly xilem stock; the only
-//! custom widget is a tiny focusable wrapper used to catch Ctrl/Cmd+C
-//! for clipboard copy (lands in a later commit).
+//! for row virtualization. Mostly composed of xilem stock, with three
+//! small custom masonry wrappers: [`copy_shortcut::CopyOnShortcut`]
+//! (catches Ctrl/Cmd+C and dumps a TSV payload to the clipboard),
+//! [`row_click::RowClickable`] (emits modifier-aware row clicks for
+//! selection), and [`overflow_warn::OverflowWarn`] (one-shot
+//! `tracing::warn!` when the viewport is narrower than the sum of
+//! column widths).
 //!
-//! See [`column::ColumnDef`] for the per-column contract,
-//! [`selection::SelectionState`] for the selection model. The xilem
-//! `data_grid` view itself arrives in a follow-up commit.
+//! Entry points: [`view::data_grid`] for the xilem view,
+//! [`column::ColumnDef`] for the per-column contract,
+//! [`selection::SelectionState`] for the selection model.
 
 pub mod column;
 pub mod copy_shortcut;

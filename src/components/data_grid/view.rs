@@ -2,16 +2,19 @@
 //!
 //! - The body is `flex_col(header, virtual_scroll(body))` — pure xilem
 //!   stock with a row builder closure that materializes one
-//!   `flex_row` of fixed-width cells per loaded index.
-//! - The grid is wrapped in [`CopyOnShortcutView`], a private wrapper
-//!   for the [`CopyOnShortcut`](super::CopyOnShortcut) masonry widget.
-//!   On every rebuild it pushes a fresh TSV projection of the current
-//!   selection; the widget itself catches Ctrl/Cmd+C and dumps that
-//!   payload to the platform clipboard.
+//!   `flex_row` of fixed-width cells per loaded index. Each row is
+//!   wrapped in [`super::row_click::clickable_row`] so primary clicks
+//!   (with optional shift / ctrl-cmd modifiers) update the
+//!   [`SelectionState`].
+//! - The grid is wrapped in [`super::overflow_warn::OverflowWarn`]
+//!   to log a one-shot `tracing::warn!` when the viewport is
+//!   narrower than the sum of column widths, then in
+//!   [`CopyOnShortcutView`], a private wrapper for the
+//!   [`CopyOnShortcut`](super::CopyOnShortcut) masonry widget that
+//!   pushes a fresh TSV projection of the current selection on every
+//!   rebuild and dumps it to the platform clipboard on Ctrl/Cmd+C.
 //! - Selected rows are styled with the theme's `surface_2` panel
-//!   color. v1 has no row-click widget yet; callers populate the
-//!   [`SelectionState`] externally (a follow-up commit adds a
-//!   modifier-aware row-click widget).
+//!   color.
 
 use std::marker::PhantomData;
 use std::sync::Arc;

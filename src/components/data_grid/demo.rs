@@ -61,8 +61,9 @@ impl Demo {
         }
     }
 
-    /// Replaces the current selection with rows `0..n`. Useful for
-    /// exercising the clipboard path before a click widget exists.
+    /// Replaces the current selection with rows `0..n`. Bulk-
+    /// selection helper used by the gallery demo's toolbar as a
+    /// quick alternate to clicking individual rows.
     pub fn select_first(&mut self, n: u64) {
         self.selection.clear();
         if n == 0 {

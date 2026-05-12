@@ -164,9 +164,9 @@ fn main_pane(
 }
 
 /// Gallery panel for the `data_grid` demo: a small toolbar plus the
-/// grid itself. The toolbar exercises selection programmatically (no
-/// modifier-aware row-click widget yet) so the clipboard path can be
-/// validated with Ctrl/Cmd+C.
+/// grid itself. The toolbar's bulk-selection buttons are convenient
+/// alternates to mouse selection — clicking rows (with optional
+/// shift / ctrl-cmd modifiers) updates the same `SelectionState`.
 fn data_grid_panel(
     theme: &Theme,
     row_count: u64,
