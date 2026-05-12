@@ -29,6 +29,7 @@ use xilem::{AnyWidgetView, Pod, ViewCtx};
 
 use super::column::{CellAlign, CellRenderer, ColumnDef, TextProjector};
 use super::copy_shortcut::CopyOnShortcut;
+use super::overflow_warn::overflow_warn;
 use super::row_click::clickable_row;
 use super::selection::SelectionState;
 use crate::Theme;
@@ -185,7 +186,14 @@ where
         })
     });
 
-    let inner = flex_col((header, body)).cross_axis_alignment(CrossAxisAlignment::Start);
+    let stack = flex_col((header, body)).cross_axis_alignment(CrossAxisAlignment::Start);
+
+    // --- Wrap in OverflowWarn so a viewport narrower than the sum of
+    //     column widths emits a one-shot tracing::warn! — backs the
+    //     doc claim on ColumnDef and helps callers notice when their
+    //     column configuration silently clips on the right.
+    let sum_widths: f64 = render_slots.iter().map(|slot| slot.width).sum();
+    let inner = overflow_warn(stack, sum_widths);
 
     // --- Wrap in CopyOnShortcut so Ctrl/Cmd+C dumps the
     //     selection-projected TSV. The wrapper captures the text

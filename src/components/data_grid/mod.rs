@@ -18,12 +18,14 @@
 pub mod column;
 pub mod copy_shortcut;
 pub mod demo;
+pub mod overflow_warn;
 pub mod row_click;
 pub mod selection;
 mod view;
 
 pub use column::{CellAlign, ColumnDef, optional_text_column, text_column};
 pub use copy_shortcut::CopyOnShortcut;
+pub use overflow_warn::OverflowWarn;
 pub use row_click::{RowClickAction, RowClickable};
 pub use selection::SelectionState;
 pub use view::data_grid;
