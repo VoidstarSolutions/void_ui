@@ -14,7 +14,7 @@ use citadel_core::pf::{ChartSnapshot, ColumnDelta};
 use xilem_masonry::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem_masonry::{Pod, ViewCtx};
 
-pub use citadel_chart::scene::ChartLayout;
+pub use citadel_chart::scene::{ChartLayout, Column};
 pub use citadel_chart::{ChartAction, HoverArea, HoverElement, HoverState};
 
 /// Snapshot of the chart's input state. Cloned into the [`Chart`] view on
