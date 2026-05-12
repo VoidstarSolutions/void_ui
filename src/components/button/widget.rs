@@ -16,8 +16,8 @@ use masonry::accesskit::{Node, Role};
 use masonry::core::keyboard::{Key, NamedKey};
 use masonry::core::{
     AccessCtx, AccessEvent, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, PaintCtx,
-    PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update,
-    UpdateCtx, Widget, WidgetMut, WidgetPod,
+    PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx,
+    TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, RoundedRect, Size, Stroke};
@@ -140,15 +140,24 @@ impl Widget for ThemedButton {
         _props: &mut PropertiesMut<'_>,
         event: &PointerEvent,
     ) {
+        // Only react to the primary button — right/middle clicks
+        // should not capture pointer or fire `ButtonPress`, matching
+        // the docstring promise of "primary-pointer release."
         match event {
-            PointerEvent::Down(..) => {
+            PointerEvent::Down(PointerButtonEvent {
+                button: Some(PointerButton::Primary),
+                ..
+            }) => {
                 ctx.request_focus();
                 ctx.capture_pointer();
                 // Pointer capture flips `is_active`; repaint for the
                 // pressed visual.
                 ctx.request_paint_only();
             }
-            PointerEvent::Up(PointerButtonEvent { button, .. }) => {
+            PointerEvent::Up(PointerButtonEvent {
+                button: button @ Some(PointerButton::Primary),
+                ..
+            }) => {
                 // Only fire on release *over* the widget — matches the
                 // standard masonry button.
                 if ctx.is_active() && ctx.is_hovered() {
