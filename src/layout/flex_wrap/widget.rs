@@ -118,6 +118,13 @@ fn main_axis_positions(
     let natural_total = content_width + col_gap * gap_count;
     let slack = (available - natural_total).max(0.0);
 
+    // The `Space*` modes distribute slack between children. When
+    // content overflows the row (`available < content_width`), the
+    // raw slack is negative and naively dividing would shift the
+    // first child to a negative x and overlap the rest. Clamp to
+    // `>= 0.0` so overflow falls back to natural `col_gap` packing
+    // from x=0 — matching the `Start`/`Center`/`End` behavior above.
+    let extra = (available - content_width).max(0.0);
     let (mut x, gap) = match alignment {
         MainAxisAlignment::Start => (0.0, col_gap),
         MainAxisAlignment::Center => (slack / 2.0, col_gap),
@@ -126,15 +133,15 @@ fn main_axis_positions(
             if n == 1 {
                 (0.0, 0.0)
             } else {
-                (0.0, (available - content_width) / gap_count)
+                (0.0, extra / gap_count)
             }
         }
         MainAxisAlignment::SpaceEvenly => {
-            let g = (available - content_width) / (n_f + 1.0);
+            let g = extra / (n_f + 1.0);
             (g, g)
         }
         MainAxisAlignment::SpaceAround => {
-            let pad = (available - content_width) / n_f;
+            let pad = extra / n_f;
             (pad / 2.0, pad)
         }
     };
