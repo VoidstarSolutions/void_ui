@@ -17,7 +17,8 @@ use xilem::view::{
 use xilem::winit::error::EventLoopError;
 use xilem::{AnyWidgetView, EventLoop, WidgetView, WindowOptions, Xilem};
 
-use void_ui::components::{ComponentKind, button};
+use void_ui::components::data_grid::demo::{Demo, tick_columns};
+use void_ui::components::{ComponentKind, button, data_grid};
 use void_ui::layout::flex_wrap;
 use void_ui::theme::{Density, Theme};
 
@@ -25,6 +26,7 @@ struct State {
     theme: Theme,
     focused: ComponentKind,
     theme_panel_open: bool,
+    data_grid: Demo,
 }
 
 impl State {
@@ -33,6 +35,10 @@ impl State {
             theme: Theme::dark(),
             focused: ComponentKind::Button,
             theme_panel_open: false,
+            // Seed with 100k rows so virtualization is exercised on
+            // first open; cheaper than a million but big enough that
+            // scrolling has to be real.
+            data_grid: Demo::with_initial(100_000),
         }
     }
 }
@@ -41,8 +47,24 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
     let theme = state.theme;
     let focused = state.focused;
     let theme_panel_open = state.theme_panel_open;
+    // Snapshot the data-grid demo's row count and base timestamp at
+    // frame time so the panel can be built without further state
+    // access. `data_grid` itself reads state via the lens closures
+    // it captures.
+    let dg_row_count = u64::try_from(state.data_grid.ticks.len()).unwrap_or(u64::MAX);
+    let dg_base_time_ns = state
+        .data_grid
+        .ticks
+        .first()
+        .map_or(0, |t| t.timestamps.event.0);
 
-    let workspace = workspace_row(focused, theme_panel_open, &theme);
+    let workspace = workspace_row(
+        focused,
+        theme_panel_open,
+        &theme,
+        dg_row_count,
+        dg_base_time_ns,
+    );
 
     let outer = flex_col((topbar(theme_panel_open, &theme), workspace.flex(1.0)))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
@@ -55,12 +77,14 @@ fn workspace_row(
     focused: ComponentKind,
     theme_panel_open: bool,
     theme: &Theme,
+    dg_row_count: u64,
+    dg_base_time_ns: i64,
 ) -> Box<AnyWidgetView<State>> {
     let sidebar_view = sized_box(sidebar(focused, theme))
         .fixed_width(Length::px(180.0))
         .padding(12.0)
         .background_color(theme.palette.surface);
-    let main = sized_box(main_pane(focused, theme))
+    let main = sized_box(main_pane(focused, theme, dg_row_count, dg_base_time_ns))
         .padding(20.0)
         .background_color(theme.palette.bg);
 
@@ -111,22 +135,83 @@ fn topbar(theme_panel_open: bool, theme: &Theme) -> impl WidgetView<State> + use
 }
 
 fn sidebar(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State> + use<> {
-    // One entry per ComponentKind. While there's only one variant, this is a
-    // tuple of one. When more components arrive we'll switch to a
-    // Vec<Box<AnyWidgetView<State>>>.
-    flex_col((button("Button", |s: &mut State| {
-        s.focused = ComponentKind::Button;
-    })
-    .active(focused == ComponentKind::Button)
-    .render(theme),))
+    flex_col((
+        button("Button", |s: &mut State| {
+            s.focused = ComponentKind::Button;
+        })
+        .active(focused == ComponentKind::Button)
+        .render(theme),
+        button("Data Grid", |s: &mut State| {
+            s.focused = ComponentKind::DataGrid;
+        })
+        .active(focused == ComponentKind::DataGrid)
+        .render(theme),
+    ))
     .cross_axis_alignment(CrossAxisAlignment::Start)
     .gap(Length::px(4.0))
 }
 
-fn main_pane(focused: ComponentKind, theme: &Theme) -> Box<AnyWidgetView<State>> {
+fn main_pane(
+    focused: ComponentKind,
+    theme: &Theme,
+    dg_row_count: u64,
+    dg_base_time_ns: i64,
+) -> Box<AnyWidgetView<State>> {
     match focused {
         ComponentKind::Button => Box::new(void_ui::components::button::demo::panel(theme)),
+        ComponentKind::DataGrid => Box::new(data_grid_panel(theme, dg_row_count, dg_base_time_ns)),
     }
+}
+
+/// Gallery panel for the `data_grid` demo: a small toolbar plus the
+/// grid itself. The toolbar exercises selection programmatically (no
+/// modifier-aware row-click widget yet) so the clipboard path can be
+/// validated with Ctrl/Cmd+C.
+fn data_grid_panel(
+    theme: &Theme,
+    row_count: u64,
+    base_time_ns: i64,
+) -> impl WidgetView<State> + use<> {
+    let columns = tick_columns::<State>(base_time_ns);
+    let theme_copy = *theme;
+
+    let toolbar = flex_row((
+        button("Add 100 ticks", |s: &mut State| {
+            s.data_grid.append_n(100);
+        })
+        .render(theme),
+        button("Add 10k ticks", |s: &mut State| {
+            s.data_grid.append_n(10_000);
+        })
+        .render(theme),
+        button("Select 0..50", |s: &mut State| {
+            s.data_grid.select_first(50);
+        })
+        .render(theme),
+        button("Clear selection", |s: &mut State| {
+            s.data_grid.clear_selection();
+        })
+        .render(theme),
+        FlexSpacer::Flex(1.0),
+        label(format!("{row_count} ticks"))
+            .text_size(theme.typography.size_caption)
+            .color(theme.palette.text_muted),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Center)
+    .gap(Length::px(8.0));
+
+    let grid = data_grid(
+        columns,
+        row_count,
+        |s: &State| &s.data_grid.ticks[..],
+        |s: &mut State| &mut s.data_grid.selection,
+        &theme_copy,
+        22.0,
+    );
+
+    flex_col((toolbar, sized_box(grid).flex(1.0)))
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .gap(Length::px(12.0))
 }
 
 // === Theme panel ===========================================================

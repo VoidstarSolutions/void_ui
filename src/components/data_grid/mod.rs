@@ -17,6 +17,7 @@
 
 pub mod column;
 pub mod copy_shortcut;
+pub mod demo;
 pub mod selection;
 mod view;
 

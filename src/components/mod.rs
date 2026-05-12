@@ -30,6 +30,7 @@ pub use data_grid::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ComponentKind {
     Button,
+    DataGrid,
 }
 
 impl ComponentKind {
@@ -38,12 +39,13 @@ impl ComponentKind {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Button => "Button",
+            Self::DataGrid => "Data Grid",
         }
     }
 
     /// Every component in display order.
     #[must_use]
     pub const fn all() -> &'static [Self] {
-        &[Self::Button]
+        &[Self::Button, Self::DataGrid]
     }
 }
