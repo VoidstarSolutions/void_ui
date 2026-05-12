@@ -29,6 +29,7 @@ use xilem::{Pod, ViewCtx};
 
 use super::column::{CellRenderer, ColumnDef, TextProjector};
 use super::copy_shortcut::CopyOnShortcut;
+use super::row_click::clickable_row;
 use super::selection::SelectionState;
 use crate::Theme;
 
@@ -120,7 +121,9 @@ where
 
     // --- Body: virtual_scroll. The row builder captures the
     //     rendering slots Arc, the data accessor, and the selection
-    //     lens (for the selection-styling read path).
+    //     lens. The lens is used in two ways: a read pass to decide
+    //     selected-row styling, and a clone moved into each row's
+    //     click handler so pointer-up can mutate the selection.
     let valid_range_end = i64::try_from(row_count).unwrap_or(i64::MAX);
     let render_slots_for_body = Arc::clone(&render_slots);
     let rows_for_body = rows.clone();
@@ -149,9 +152,24 @@ where
         } else {
             Color::TRANSPARENT
         };
-        sized_box(flex_row(cells).cross_axis_alignment(CrossAxisAlignment::Center))
+        let row_view = sized_box(flex_row(cells).cross_axis_alignment(CrossAxisAlignment::Center))
             .fixed_height(Length::px(row_height))
-            .background_color(row_bg)
+            .background_color(row_bg);
+
+        // Each row gets its own click handler closing over the
+        // (cloned) lens + the row's index. Modifiers route to the
+        // matching SelectionState op.
+        let lens_for_click = selection_lens_for_body.clone();
+        clickable_row(row_view, move |state: &mut State, action| {
+            let sel = lens_for_click(state);
+            if action.shift {
+                sel.extend_to(row_idx_u64);
+            } else if action.action_mod {
+                sel.toggle(row_idx_u64);
+            } else {
+                sel.replace_with(row_idx_u64);
+            }
+        })
     });
 
     let inner = flex_col((header, body)).cross_axis_alignment(CrossAxisAlignment::Start);

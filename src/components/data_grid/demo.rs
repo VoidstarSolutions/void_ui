@@ -102,7 +102,7 @@ impl Demo {
                 receive: None,
                 ingest: None,
             },
-            price: Price::from_units(self.last_price_units),
+            price: Price::from_raw(self.last_price_units),
             size: Some(Volume(trade_size)),
             side: Some(aggressor),
         }
