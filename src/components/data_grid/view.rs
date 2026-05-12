@@ -22,12 +22,12 @@ use xilem::masonry::layout::Length;
 use xilem::peniko::Color;
 use xilem::style::Style as _;
 use xilem::view::{
-    AnyFlexChild, CrossAxisAlignment, flex_col, flex_item, flex_row, label, sized_box,
-    virtual_scroll,
+    AnyFlexChild, CrossAxisAlignment, MainAxisAlignment, flex_col, flex_item, flex_row, label,
+    sized_box, virtual_scroll,
 };
-use xilem::{Pod, ViewCtx};
+use xilem::{AnyWidgetView, Pod, ViewCtx};
 
-use super::column::{CellRenderer, ColumnDef, TextProjector};
+use super::column::{CellAlign, CellRenderer, ColumnDef, TextProjector};
 use super::copy_shortcut::CopyOnShortcut;
 use super::row_click::clickable_row;
 use super::selection::SelectionState;
@@ -39,7 +39,19 @@ use crate::Theme;
 struct ColumnRender<R, State> {
     title: String,
     width: f64,
+    align: CellAlign,
     render: CellRenderer<R, State>,
+}
+
+/// Translates [`CellAlign`] into the [`MainAxisAlignment`] used by the
+/// single-child flex wrapper that aligns the cell view inside its
+/// fixed-width slot.
+const fn align_to_main(align: CellAlign) -> MainAxisAlignment {
+    match align {
+        CellAlign::Start => MainAxisAlignment::Start,
+        CellAlign::Center => MainAxisAlignment::Center,
+        CellAlign::End => MainAxisAlignment::End,
+    }
 }
 
 /// Builds a virtualized data grid view.
@@ -96,6 +108,7 @@ where
         render_slots.push(ColumnRender {
             title: col.title,
             width: col.width,
+            align: col.align,
             render: col.render,
         });
     }
@@ -110,7 +123,7 @@ where
                 .text_size(theme.typography.size_caption)
                 .letter_spacing(1.2)
                 .color(theme.palette.text_muted);
-            let cell = sized_box(header_label).fixed_width(Length::px(slot.width));
+            let cell = aligned_cell(Box::new(header_label), slot.width, slot.align);
             flex_item(cell, 0.0).into()
         })
         .collect();
@@ -139,7 +152,7 @@ where
                 .iter()
                 .map(|slot| {
                     let cell_view = (slot.render)(row, &theme);
-                    let cell = sized_box(cell_view).fixed_width(Length::px(slot.width));
+                    let cell = aligned_cell(cell_view, slot.width, slot.align);
                     flex_item(cell, 0.0).into()
                 })
                 .collect()
@@ -310,4 +323,24 @@ where
         let data = (self.rows)(app_state);
         project_tsv(&self.text_projectors, data, &selection_snapshot)
     }
+}
+
+// --- MARK: CELL ALIGNMENT ---------------------------------------------
+
+/// Wraps a cell view in a fixed-width `sized_box` with the cell's
+/// content packed via a single-child `flex_row` whose
+/// `main_axis_alignment` is derived from [`CellAlign`].
+///
+/// Returning a boxed `AnyWidgetView` keeps the concrete type out of
+/// the call sites in the header / body builders (which already
+/// erase further).
+fn aligned_cell<State: 'static>(
+    inner: Box<AnyWidgetView<State>>,
+    width: f64,
+    align: CellAlign,
+) -> Box<AnyWidgetView<State>> {
+    let aligned = flex_row((flex_item(inner, 0.0),))
+        .main_axis_alignment(align_to_main(align))
+        .cross_axis_alignment(CrossAxisAlignment::Center);
+    Box::new(sized_box(aligned).fixed_width(Length::px(width)))
 }
