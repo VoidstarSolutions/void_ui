@@ -43,6 +43,14 @@ impl CopyOnShortcut {
             payload: None,
         }
     }
+
+    /// Builder-style payload setter. Mostly useful at construction
+    /// time; afterward, use the [`set_payload`] `WidgetMut` method.
+    #[must_use]
+    pub fn with_payload(mut self, payload: Option<String>) -> Self {
+        self.payload = payload;
+        self
+    }
 }
 
 // --- MARK: WIDGETMUT

@@ -42,6 +42,17 @@ pub enum CellAlign {
 pub type CellRenderer<R, State> =
     Box<dyn Fn(&R, &Theme) -> Box<AnyWidgetView<State>> + Send + Sync + 'static>;
 
+/// Text-only projector used to materialize a row's cell value for
+/// clipboard copy.
+///
+/// A [`ColumnDef`] may carry one of these alongside its widget-
+/// returning [`render`](ColumnDef::render). When the user copies a
+/// selection, the grid walks the selected rows and joins each
+/// column's text projector output with tabs. Columns without a text
+/// projector emit an empty string (a tab will still appear so the
+/// row's columns line up in the spreadsheet target).
+pub type TextProjector<R> = Box<dyn Fn(&R) -> String + Send + Sync + 'static>;
+
 /// Describes one column in a [`super::data_grid`] view.
 ///
 /// `R` is the row type — every column in a single grid renders from the
@@ -61,6 +72,12 @@ pub struct ColumnDef<R, State> {
     pub align: CellAlign,
     /// Builds a cell view for the supplied row at the supplied theme.
     pub render: CellRenderer<R, State>,
+    /// Optional text-only projector used for clipboard copy. The
+    /// helpers [`text_column`] and [`optional_text_column`] populate
+    /// this automatically; custom callers using [`ColumnDef::new`]
+    /// can attach one via [`ColumnDef::with_text`]. Columns without a
+    /// text projector contribute an empty TSV cell.
+    pub text: Option<TextProjector<R>>,
 }
 
 impl<R, State> ColumnDef<R, State> {
@@ -75,7 +92,20 @@ impl<R, State> ColumnDef<R, State> {
             width,
             align,
             render: Box::new(render),
+            text: None,
         }
+    }
+
+    /// Attaches a text projector for clipboard copy. Builders chain
+    /// `.with_text(...)` after [`ColumnDef::new`] when the column's
+    /// cells aren't built by [`text_column`] / [`optional_text_column`]
+    /// but still need to participate in copy.
+    pub fn with_text<F>(mut self, projector: F) -> Self
+    where
+        F: Fn(&R) -> String + Send + Sync + 'static,
+    {
+        self.text = Some(Box::new(projector));
+        self
     }
 }
 
@@ -83,7 +113,8 @@ impl<R, State> ColumnDef<R, State> {
 ///
 /// `fmt` projects a row into the text shown in that row's cell. The
 /// label inherits the active theme's body font size and primary text
-/// color.
+/// color. The same projector is wired into the column's clipboard
+/// path (see [`ColumnDef::text`]).
 pub fn text_column<R, State, F>(
     title: impl Into<String>,
     width: f64,
@@ -95,13 +126,17 @@ where
     State: 'static,
     F: Fn(&R) -> String + Send + Sync + 'static,
 {
+    let fmt = std::sync::Arc::new(fmt);
+    let fmt_for_render = std::sync::Arc::clone(&fmt);
+    let fmt_for_text = std::sync::Arc::clone(&fmt);
     ColumnDef::new(title, width, align, move |row, theme| {
-        let text = fmt(row);
+        let text = fmt_for_render(row);
         let view = label(text)
             .text_size(theme.typography.size_body)
             .color(theme.palette.text);
         Box::new(view)
     })
+    .with_text(move |row| fmt_for_text(row))
 }
 
 /// A column whose cells are plain text when the projection returns
@@ -121,8 +156,11 @@ where
     State: 'static,
     F: Fn(&R) -> Option<String> + Send + Sync + 'static,
 {
+    let fmt = std::sync::Arc::new(fmt);
+    let fmt_for_render = std::sync::Arc::clone(&fmt);
+    let fmt_for_text = std::sync::Arc::clone(&fmt);
     ColumnDef::new(title, width, align, move |row, theme| {
-        let (text, color) = match fmt(row) {
+        let (text, color) = match fmt_for_render(row) {
             Some(s) => (s, theme.palette.text),
             None => ("—".to_string(), theme.palette.text_faint),
         };
@@ -131,4 +169,8 @@ where
             .color(color);
         Box::new(view)
     })
+    // Clipboard cells get an empty string for None, not "—" — the
+    // em dash is presentation-only; a spreadsheet target wants the
+    // structural absence.
+    .with_text(move |row| fmt_for_text(row).unwrap_or_default())
 }
