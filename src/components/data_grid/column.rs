@@ -32,12 +32,15 @@ pub enum CellAlign {
 
 /// Type-erased cell-builder used by every [`ColumnDef`].
 ///
-/// The closure is `Send + 'static` (but **not** `Sync`) so callers can
-/// capture e.g. an `Rc<…>` or a non-`Sync` formatter without fighting
-/// the type system. xilem only needs single-threaded access during
-/// rebuild.
+/// `Send + Sync` is required because xilem propagates these bounds
+/// through its view tree (the row builder we hand to `virtual_scroll`
+/// must be `Sync`, which forces every captured value — including the
+/// renderer closures — to be `Sync` too). Closures that own their
+/// captures or hold only `Sync` types satisfy this automatically;
+/// reach for `Arc<…>` over `Rc<…>` inside a renderer if you need
+/// shared state.
 pub type CellRenderer<R, State> =
-    Box<dyn Fn(&R, &Theme) -> Box<AnyWidgetView<State>> + Send + 'static>;
+    Box<dyn Fn(&R, &Theme) -> Box<AnyWidgetView<State>> + Send + Sync + 'static>;
 
 /// Describes one column in a [`super::data_grid`] view.
 ///
@@ -65,7 +68,7 @@ impl<R, State> ColumnDef<R, State> {
     /// should prefer [`text_column`] or [`optional_text_column`].
     pub fn new<F>(title: impl Into<String>, width: f64, align: CellAlign, render: F) -> Self
     where
-        F: Fn(&R, &Theme) -> Box<AnyWidgetView<State>> + Send + 'static,
+        F: Fn(&R, &Theme) -> Box<AnyWidgetView<State>> + Send + Sync + 'static,
     {
         Self {
             title: title.into(),
@@ -90,7 +93,7 @@ pub fn text_column<R, State, F>(
 where
     R: 'static,
     State: 'static,
-    F: Fn(&R) -> String + Send + 'static,
+    F: Fn(&R) -> String + Send + Sync + 'static,
 {
     ColumnDef::new(title, width, align, move |row, theme| {
         let text = fmt(row);
@@ -116,7 +119,7 @@ pub fn optional_text_column<R, State, F>(
 where
     R: 'static,
     State: 'static,
-    F: Fn(&R) -> Option<String> + Send + 'static,
+    F: Fn(&R) -> Option<String> + Send + Sync + 'static,
 {
     ColumnDef::new(title, width, align, move |row, theme| {
         let (text, color) = match fmt(row) {

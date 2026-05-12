@@ -18,7 +18,9 @@
 pub mod column;
 pub mod copy_shortcut;
 pub mod selection;
+mod view;
 
 pub use column::{CellAlign, ColumnDef, optional_text_column, text_column};
 pub use copy_shortcut::CopyOnShortcut;
 pub use selection::SelectionState;
+pub use view::data_grid;
