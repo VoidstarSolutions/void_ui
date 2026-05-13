@@ -15,14 +15,16 @@
 
 pub mod chart;
 pub mod components;
+pub mod gallery;
 pub mod layout;
 pub mod pointer_inert;
 pub mod theme;
 
 pub use chart::{Chart, ChartAction, ChartData, chart};
 pub use components::{
-    Button, ButtonView, CellAlign, ColumnDef, SelectionState, button, data_grid,
+    Button, ButtonVariant, ButtonView, CellAlign, ColumnDef, SelectionState, button, data_grid,
     optional_text_column, text_column,
 };
+pub use gallery::code_block;
 pub use pointer_inert::{PointerInert, PointerInertView, pointer_inert};
 pub use theme::{Density, FontStack, Palette, Radii, Theme, ThemeVariant, Typography};
