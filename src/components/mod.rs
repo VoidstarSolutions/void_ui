@@ -15,7 +15,7 @@
 pub mod button;
 pub mod data_grid;
 
-pub use button::{Button, ButtonView, button};
+pub use button::{Button, ButtonVariant, ButtonView, button};
 pub use data_grid::{
     CellAlign, ColumnDef, SelectionState, data_grid, optional_text_column, text_column,
 };
