@@ -22,7 +22,8 @@ pub mod pointer_inert;
 pub mod theme;
 
 pub use chart::{
-    Chart, ChartAction, ChartData, ChartLayout, Column, HoverArea, HoverElement, HoverState, chart,
+    Chart, ChartAction, ChartData, ChartLayout, Column, HoverArea, HoverElement, HoverState,
+    Viewport, chart,
 };
 pub use components::{
     Button, ButtonVariant, ButtonView, CellAlign, ColumnDef, SelectionState, SidebarItem,
