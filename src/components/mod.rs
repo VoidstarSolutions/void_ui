@@ -15,12 +15,14 @@
 pub mod button;
 pub mod data_grid;
 pub mod sidebar;
+pub mod tooltip;
 
 pub use button::{Button, ButtonVariant, ButtonView, button};
 pub use data_grid::{
     CellAlign, ColumnDef, SelectionState, data_grid, optional_text_column, text_column,
 };
 pub use sidebar::{SidebarItem, SidebarItemView, sidebar_item};
+pub use tooltip::{Tooltip, TooltipView, tooltip};
 
 /// One entry per component the gallery exposes.
 ///
@@ -34,6 +36,7 @@ pub enum ComponentKind {
     Button,
     DataGrid,
     Sidebar,
+    Tooltip,
 }
 
 impl ComponentKind {
@@ -44,12 +47,13 @@ impl ComponentKind {
             Self::Button => "Button",
             Self::DataGrid => "Data Grid",
             Self::Sidebar => "Sidebar",
+            Self::Tooltip => "Tooltip",
         }
     }
 
     /// Every component in display order.
     #[must_use]
     pub const fn all() -> &'static [Self] {
-        &[Self::Button, Self::DataGrid, Self::Sidebar]
+        &[Self::Button, Self::DataGrid, Self::Sidebar, Self::Tooltip]
     }
 }

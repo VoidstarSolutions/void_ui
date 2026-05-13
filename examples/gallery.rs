@@ -151,6 +151,11 @@ fn sidebar(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State> + us
         })
         .active(focused == ComponentKind::Sidebar)
         .render(theme),
+        sidebar_item("Tooltip", |s: &mut State| {
+            s.focused = ComponentKind::Tooltip;
+        })
+        .active(focused == ComponentKind::Tooltip)
+        .render(theme),
     ))
     .cross_axis_alignment(CrossAxisAlignment::Stretch)
     .gap(Length::px(2.0))
@@ -166,6 +171,7 @@ fn main_pane(
         ComponentKind::Button => Box::new(void_ui::components::button::demo::panel(theme)),
         ComponentKind::DataGrid => Box::new(data_grid_panel(theme, dg_row_count, dg_base_time_ns)),
         ComponentKind::Sidebar => Box::new(void_ui::components::sidebar::demo::panel(theme)),
+        ComponentKind::Tooltip => Box::new(void_ui::components::tooltip::demo::panel(theme)),
     }
 }
 

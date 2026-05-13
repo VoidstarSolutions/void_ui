@@ -23,7 +23,8 @@ pub mod theme;
 pub use chart::{Chart, ChartAction, ChartData, chart};
 pub use components::{
     Button, ButtonVariant, ButtonView, CellAlign, ColumnDef, SelectionState, SidebarItem,
-    SidebarItemView, button, data_grid, optional_text_column, sidebar_item, text_column,
+    SidebarItemView, Tooltip, TooltipView, button, data_grid, optional_text_column, sidebar_item,
+    text_column, tooltip,
 };
 pub use gallery::code_block;
 pub use pointer_inert::{PointerInert, PointerInertView, pointer_inert};
