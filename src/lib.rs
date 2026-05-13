@@ -1,9 +1,11 @@
 //! Void UI components.
 //!
-//! Xilem-flavored widget library wrapping [`citadel_chart`] and the rest of
-//! the domain widget surface (scanner grid, watch list, instrument context,
-//! settings forms). This crate absorbs Xilem view-layer churn so application
-//! code stays insulated from upstream renames.
+//! Product-agnostic Xilem widget library — scanner grid, watch list,
+//! instrument context, settings forms, and shared primitives. This crate
+//! absorbs Xilem view-layer churn so application code stays insulated
+//! from upstream renames. It deliberately has no dependency on
+//! `citadel-chart` (or any other Citadel-specific crate) so it can be
+//! released independently.
 //!
 //! ## Design tokens
 //!
@@ -13,7 +15,6 @@
 
 #![forbid(unsafe_code)]
 
-pub mod chart;
 pub mod components;
 pub mod floating;
 pub mod gallery;
@@ -21,10 +22,6 @@ pub mod layout;
 pub mod pointer_inert;
 pub mod theme;
 
-pub use chart::{
-    Chart, ChartAction, ChartData, ChartLayout, Column, HoverArea, HoverElement, HoverState,
-    Viewport, chart,
-};
 pub use components::{
     Button, ButtonVariant, ButtonView, CellAlign, ColumnDef, SelectionState, SidebarItem,
     SidebarItemView, Tooltip, TooltipView, button, data_grid, optional_text_column, sidebar_item,
