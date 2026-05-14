@@ -291,6 +291,14 @@ impl Widget for ThemedButton {
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
+            // Propagate the host-supplied initial `disabled` to masonry on
+            // widget add. `with_disabled` only sets the widget-internal field;
+            // without this, the first build leaves masonry's `is_disabled()`
+            // out of sync with paint state, breaking event routing and the
+            // accessibility pass that drives `node.set_disabled()`.
+            Update::WidgetAdded => {
+                ctx.set_disabled(self.disabled);
+            }
             Update::HoveredChanged(_) | Update::DisabledChanged(_) | Update::FocusChanged(_) => {
                 ctx.request_paint_only();
             }
@@ -417,7 +425,13 @@ impl Widget for ThemedButton {
         _props: &PropertiesRef<'_>,
         node: &mut Node,
     ) {
-        node.add_action(accesskit::Action::Click);
+        // Masonry's accessibility pass calls `node.set_disabled()` whenever
+        // `ctx.is_disabled()` is true (see masonry passes/accessibility.rs).
+        // We additionally suppress the Click action so AT clients don't see
+        // a disabled button as an actionable target.
+        if !self.disabled {
+            node.add_action(accesskit::Action::Click);
+        }
     }
 
     fn children_ids(&self) -> ChildrenIds {
