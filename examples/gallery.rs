@@ -18,7 +18,7 @@ use xilem::winit::error::EventLoopError;
 use xilem::{AnyWidgetView, EventLoop, WidgetView, WindowOptions, Xilem};
 
 use void_ui::components::data_grid::demo::{Demo, tick_columns};
-use void_ui::components::{ComponentKind, button, data_grid};
+use void_ui::components::{ComponentKind, button, data_grid, sidebar_item};
 use void_ui::layout::flex_wrap;
 use void_ui::theme::{Density, Theme};
 
@@ -136,19 +136,29 @@ fn topbar(theme_panel_open: bool, theme: &Theme) -> impl WidgetView<State> + use
 
 fn sidebar(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State> + use<> {
     flex_col((
-        button("Button", |s: &mut State| {
+        sidebar_item("Button", |s: &mut State| {
             s.focused = ComponentKind::Button;
         })
         .active(focused == ComponentKind::Button)
         .render(theme),
-        button("Data Grid", |s: &mut State| {
+        sidebar_item("Data Grid", |s: &mut State| {
             s.focused = ComponentKind::DataGrid;
         })
         .active(focused == ComponentKind::DataGrid)
         .render(theme),
+        sidebar_item("Sidebar", |s: &mut State| {
+            s.focused = ComponentKind::Sidebar;
+        })
+        .active(focused == ComponentKind::Sidebar)
+        .render(theme),
+        sidebar_item("Tooltip", |s: &mut State| {
+            s.focused = ComponentKind::Tooltip;
+        })
+        .active(focused == ComponentKind::Tooltip)
+        .render(theme),
     ))
-    .cross_axis_alignment(CrossAxisAlignment::Start)
-    .gap(Length::px(4.0))
+    .cross_axis_alignment(CrossAxisAlignment::Stretch)
+    .gap(Length::px(2.0))
 }
 
 fn main_pane(
@@ -160,6 +170,8 @@ fn main_pane(
     match focused {
         ComponentKind::Button => Box::new(void_ui::components::button::demo::panel(theme)),
         ComponentKind::DataGrid => Box::new(data_grid_panel(theme, dg_row_count, dg_base_time_ns)),
+        ComponentKind::Sidebar => Box::new(void_ui::components::sidebar::demo::panel(theme)),
+        ComponentKind::Tooltip => Box::new(void_ui::components::tooltip::demo::panel(theme)),
     }
 }
 
