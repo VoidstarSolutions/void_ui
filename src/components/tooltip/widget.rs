@@ -161,9 +161,11 @@ impl Widget for TooltipHost {
                 layer,
                 pos,
             );
-            // The layer is up; do not request another anim frame. The next
-            // `Move` (which masonry's `Tooltip` will use to dismiss itself)
-            // will re-arm the loop via `on_pointer_event`.
+            // Disarm the timer so stray anim frames (e.g., requested by a
+            // sibling widget) don't repeatedly re-create the layer. The
+            // next `PointerEvent::Move` — which masonry's `Tooltip` uses
+            // to dismiss itself — re-arms us via `on_pointer_event`.
+            self.last_pointer_move = None;
         } else {
             ctx.request_anim_frame();
         }
