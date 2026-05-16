@@ -6,7 +6,6 @@ license = "LicenseRef-Proprietary"
 publish = false
 
 [dependencies]
-citadel-chart = { path = "../chart" }
 citadel-core = { path = "../core" }
 masonry = { workspace = true }
 tracing = { workspace = true }
