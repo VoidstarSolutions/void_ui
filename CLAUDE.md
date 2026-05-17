@@ -4,10 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## void_ui (`void-ui`)
 
-Shared xilem/Masonry component library for Voidstar UIs. Theme-driven, product-agnostic, display-only.
+A general-purpose xilem/Masonry component library. Theme-driven, product-agnostic.
 
-- **UI crate — no analysis logic.** UI code may import data types (`Tick`, `ColumnDelta`, `ChartSnapshot`) but never analysis primitives (e.g. `pf::ColumnBuilder`, `Analysis::process`). The IP boundary is enforced at the import level.
-- Keep components reusable and product-agnostic. Citadel-specific composition belongs in the downstream `ui` crate, not here.
+- **Presentation only.** No business/domain logic, no network, no persistence. Components receive state as input and emit events; they do not reach for ambient app state. If a change would couple a component to a specific product's data model, push it back to the consumer.
+- **Reusable and product-agnostic.** If a primitive only makes sense in one downstream app, it belongs in that app, not here.
 
 ## Commands
 

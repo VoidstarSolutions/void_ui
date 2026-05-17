@@ -1,8 +1,8 @@
 # void-ui
 
-Xilem/Masonry component library for Voidstar UIs. Components are theme-driven, product-agnostic, and display-only — analysis logic lives server-side per the workspace IP boundary.
+A general-purpose xilem/Masonry component library. Theme-driven, product-agnostic, focused on a tight catalog of well-built primitives rather than a sprawling kitchen sink.
 
-The visual language is sourced from the Tessera P&F prototype and lives in `theme`. Each component reads its colors, sizes, and type stack from a `Theme` value owned by the host application; swapping themes is a single state change, not a tree walk.
+Every component reads its colors, sizes, and type stack from a `Theme` value owned by the host application; swapping themes is a single state change, not a tree walk.
 
 ## Status
 
@@ -10,10 +10,10 @@ Shipped components:
 
 - **`Button`** — variants (Default/Danger), active toggle, disabled, leading icon, focus ring
 - **`DataGrid`** — virtualized rows, declarative columns, selection model, copy-to-clipboard shortcut, overflow detection
-- **`SidebarItem`** — full-width nav row with teal accent on active
-- **`Chart`** — xilem wrapper around `citadel_chart::ChartWidget`
+- **`SidebarItem`** — full-width nav row with accent on active
+- **`Tooltip`** — anchored, dismiss-aware
 
-Layout primitives: **`FlexWrap`** (left-to-right wrapping row), **`PointerInert`** (event-transparent wrapper).
+Layout primitives: **`FlexWrap`** (left-to-right wrapping row), **`PointerInert`** (event-transparent wrapper), **`FloatingOverlay`** (the shared overlay primitive — see below).
 
 A live gallery exercises every component end-to-end with source snippets via the `with_source!` macro:
 
@@ -35,7 +35,6 @@ The cross-cutting work that unblocks the rest of the roadmap.
 | ---------------- | ---- | ------------------------------------------------------------ |
 | `Separator`      | S    | Horizontal/vertical divider, optional label.                 |
 | `Overlay`/Portal | L    | Anchored positioning, dismiss-on-outside, keyboard trap.     |
-| `Tooltip`        | M    | First overlay consumer; validates the design.                |
 | `Icon` registry  | M    | Named-icon system generalizing the ad-hoc `BezPath` in Button. |
 
 Implementation order:
@@ -88,7 +87,7 @@ Depends on the overlay primitive.
 | Component                | Size | Notes                                              |
 | ------------------------ | ---- | -------------------------------------------------- |
 | `Dialog` / `AlertDialog` | M    | Header/body/footer on the overlay primitive.       |
-| `Resizable`              | L    | Split-panel drag handles for the chart workspace.  |
+| `Resizable`              | L    | Split-panel drag handles.                          |
 | `GroupBox` / `Card`      | S    |                                                    |
 
 ### Phase 5 — Data display
@@ -98,7 +97,7 @@ Depends on the overlay primitive.
 | `List`            | M    | Extract DataGrid's virtualization for a flat list. |
 | `Tree`            | L    | Hierarchical with expand/collapse.               |
 | `Pagination`      | S    |                                                  |
-| `DescriptionList` | S    | Label/value pairs — useful for instrument context. |
+| `DescriptionList` | S    | Label/value pairs.                               |
 | `HoverCard`       | M    | Tooltip with richer content.                     |
 
 ### Phase 6 — Specialized
@@ -114,19 +113,19 @@ Depends on the overlay primitive.
 
 Explicitly out of scope, even if they appear in inspiration libraries:
 
-- **IDE-style dockable panels.** A `Resizable` split is enough for the chart workspace; full dock + drag/drop + persisted layouts is a project, not a component.
+- **IDE-style dockable panels.** A `Resizable` split covers the realistic cases; full dock + drag/drop + persisted layouts is a project, not a component.
 - **Built-in inspector / debug overlay.** Internal tooling, not a consumer component.
 - **Code editor / syntax highlighter.** Tree-sitter + LSP is a separate product surface.
 - **Rich-text / Markdown / HTML rendering.** Build narrow text helpers as specific surfaces need them.
-- **Generic chart suite (Area/Line/Bar/Candlestick/Pie).** `citadel_chart` is the product chart; void_ui does not ship a competing plotting library.
-- **Exotic input variants (OTP, code-cell inputs).** Not citadel use cases.
-- **Avatar / Rating / similar consumer-app patterns.** Not citadel use cases.
+- **Charts and plotting.** Charting is its own design space; consumers can compose a chart widget as a peer crate.
+- **Exotic input variants (OTP, code-cell inputs).**
+- **Avatar / Rating / similar consumer-app patterns.**
 
 ## Architecture notes
 
 - **Two layers.** Xilem `View`s coordinate state and rebuild logic; masonry `Widget`s own paint, layout, and event handling. Each component ships both: a builder + `View` in `view.rs`, a widget in `widget.rs`, a gallery panel in `demo.rs`.
 - **Theme at the render boundary.** `Theme` is passed when materializing a view (`.render(&theme)`), copied into the widget, and re-applied on rebuild when the value differs. No global theme state.
-- **No analysis imports.** UI crates may import data types (`Tick`, `ColumnDelta`, `ChartSnapshot`) but never analysis primitives (`pf::ColumnBuilder`, `Analysis::process`). The architecture's IP boundary is enforced at the import level.
+- **Presentation only.** Components do not own business logic, network, or persistence. State is passed in; events flow out.
 
 ## Acknowledgments
 

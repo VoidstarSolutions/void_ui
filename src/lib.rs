@@ -1,17 +1,15 @@
 //! Void UI components.
 //!
-//! Product-agnostic Xilem widget library — scanner grid, watch list,
-//! instrument context, settings forms, and shared primitives. This crate
-//! absorbs Xilem view-layer churn so application code stays insulated
-//! from upstream renames. It deliberately has no dependency on
-//! `citadel-chart` (or any other Citadel-specific crate) so it can be
-//! released independently.
+//! A general-purpose Xilem/Masonry component library: buttons, data grids,
+//! sidebars, overlays, and shared layout primitives. The crate absorbs Xilem
+//! view-layer churn so application code stays insulated from upstream
+//! renames, and stays product-agnostic so it can be reused across
+//! independent UIs.
 //!
 //! ## Design tokens
 //!
-//! The visual language is sourced from the Tessera P&F prototype and lives
-//! in [`theme`]. Components read their colors, sizes, and type stack from a
-//! [`Theme`] value owned by the host application.
+//! Components read their colors, sizes, and type stack from a [`Theme`]
+//! value owned by the host application; see [`theme`] for the primitives.
 
 #![forbid(unsafe_code)]
 
