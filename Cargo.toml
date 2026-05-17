@@ -1,3 +1,29 @@
+[workspace]
+members = ["."]
+resolver = "3"
+
+[workspace.dependencies]
+tracing = "0.1"
+
+# Linebender UI stack — track `main`. Co-versioned across the xilem repo.
+# Do not depend on peniko/kurbo/parley/vello/imaging directly: masonry and
+# xilem re-export them, and pulling them in standalone causes diamond-dep
+# version skew against xilem's pinned forest-rs/imaging rev.
+#
+# Defaults must stay on: masonry's default-feature chain (`masonry/default →
+# masonry_winit/imaging_vello → masonry_imaging/imaging_vello`) is what
+# selects the Vello classic renderer backend at compile time. With
+# `default-features = false` and no explicit re-enable, masonry_winit panics
+# at startup with `backend=""`.
+masonry = { git = "https://github.com/linebender/xilem.git", rev = "1e131feededf0a94f5c01da711e7592a02e371d7" }
+xilem = { git = "https://github.com/linebender/xilem.git", rev = "1e131feededf0a94f5c01da711e7592a02e371d7" }
+xilem_masonry = { git = "https://github.com/linebender/xilem.git", rev = "1e131feededf0a94f5c01da711e7592a02e371d7" }
+
+# Workspace-wide lints. Member crates opt in via `[lints] workspace = true`.
+# `priority = -1` lets individual lints override the group level when needed.
+[workspace.lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+
 [package]
 name = "void-ui"
 version = "0.1.0"
@@ -6,7 +32,6 @@ license = "LicenseRef-Proprietary"
 publish = false
 
 [dependencies]
-citadel-core = { path = "../core" }
 masonry = { workspace = true }
 tracing = { workspace = true }
 xilem = { workspace = true }
