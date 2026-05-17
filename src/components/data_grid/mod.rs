@@ -3,8 +3,8 @@
 //!
 //! v1 is read-only with row-only selection and TSV clipboard copy. The
 //! widget is generic over the row type so the same grid can browse
-//! [`citadel_core::Tick`] streams, `ColumnDelta` event logs, or any
-//! other in-memory `&[R]` exposed by the host's app state.
+//! synthetic tick streams (see [`demo::DemoTick`]), event logs, or
+//! any other in-memory `&[R]` exposed by the host's app state.
 //!
 //! Backed by masonry's [`VirtualScroll`][masonry::widgets::VirtualScroll]
 //! for row virtualization. Mostly composed of xilem stock, with three

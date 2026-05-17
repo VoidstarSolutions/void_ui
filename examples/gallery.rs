@@ -11,14 +11,14 @@ use xilem::masonry::layout::Length;
 use xilem::peniko::Color;
 use xilem::style::Style as _;
 use xilem::view::{
-    CrossAxisAlignment, FlexExt as _, FlexSpacer, MainAxisAlignment, flex_col, flex_row, label,
-    portal, sized_box,
+    flex_col, flex_row, label, portal, sized_box, CrossAxisAlignment, FlexExt as _, FlexSpacer,
+    MainAxisAlignment,
 };
 use xilem::winit::error::EventLoopError;
 use xilem::{AnyWidgetView, EventLoop, WidgetView, WindowOptions, Xilem};
 
-use void_ui::components::data_grid::demo::{Demo, tick_columns};
-use void_ui::components::{ComponentKind, button, data_grid, sidebar_item};
+use void_ui::components::data_grid::demo::{tick_columns, Demo};
+use void_ui::components::{button, data_grid, sidebar_item, ComponentKind};
 use void_ui::layout::flex_wrap;
 use void_ui::theme::{Density, Theme};
 
@@ -52,11 +52,7 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
     // access. `data_grid` itself reads state via the lens closures
     // it captures.
     let dg_row_count = u64::try_from(state.data_grid.ticks.len()).unwrap_or(u64::MAX);
-    let dg_base_time_ns = state
-        .data_grid
-        .ticks
-        .first()
-        .map_or(0, |t| t.timestamps.event.0);
+    let dg_base_time_ns = state.data_grid.ticks.first().map_or(0, |t| t.event_ns);
 
     let workspace = workspace_row(
         focused,

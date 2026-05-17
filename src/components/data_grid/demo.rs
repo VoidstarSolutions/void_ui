@@ -9,25 +9,50 @@
 //! Public surface:
 //!
 //! - [`Demo`] — state struct (ticks + selection + RNG state).
-//! - [`tick_columns`] — column descriptors for browsing `Tick`s.
+//! - [`tick_columns`] — column descriptors for browsing [`DemoTick`]s.
 //!
 //! The gallery wires these into its app state and dispatches to a
 //! locally-defined panel function (see `examples/gallery.rs`).
+//!
+//! Types here are intentionally self-contained — `void_ui` ships as a
+//! generic component library and must not depend on any
+//! market-data crate.
 
-use citadel_core::{Price, Side, Tick, Timestamp, Timestamps, Volume};
-
-use super::column::{CellAlign, ColumnDef, optional_text_column, text_column};
+use super::column::{optional_text_column, text_column, CellAlign, ColumnDef};
 use super::selection::SelectionState;
 
 const START_PRICE_UNITS: i64 = 100_000_000_000; // $100.00 in 1e-9 units.
 const TICK_INTERVAL_NS: i64 = 100_000_000; // 100 ms between synthetic trades.
 const PRICE_STEP_UNITS: i64 = 50_000_000; // ±$0.05 per tick.
+const PRICE_UNITS_PER_DOLLAR: f64 = 1_000_000_000.0;
+
+/// Aggressor side of a synthetic trade.
+#[derive(Debug, Clone, Copy)]
+pub enum DemoSide {
+    Buy,
+    Sell,
+}
+
+/// A synthetic trade tick used purely by the gallery demo. Flat
+/// fields keep this self-contained — see the module-level doc on why
+/// `void_ui` doesn't depend on a market-data crate.
+#[derive(Debug, Clone, Copy)]
+pub struct DemoTick {
+    /// Event time in nanoseconds since an arbitrary epoch.
+    pub event_ns: i64,
+    /// Price in 1e-9 units of the quoted currency.
+    pub price_units: i64,
+    /// Trade size (None means unknown).
+    pub size: Option<u64>,
+    /// Aggressor side (None means unknown).
+    pub side: Option<DemoSide>,
+}
 
 /// Demo state. Lives as a field on the gallery's app state.
 #[derive(Debug, Clone)]
 pub struct Demo {
     /// The synthetic tick history.
-    pub ticks: Vec<Tick>,
+    pub ticks: Vec<DemoTick>,
     /// Currently-selected row indices.
     pub selection: SelectionState,
     rng_state: u64,
@@ -80,7 +105,7 @@ impl Demo {
         self.selection.clear();
     }
 
-    fn next_tick(&mut self) -> Tick {
+    fn next_tick(&mut self) -> DemoTick {
         self.last_time_ns += TICK_INTERVAL_NS;
         let raw = xorshift64(&mut self.rng_state);
         // Map raw bits into `±PRICE_STEP_UNITS`.
@@ -93,18 +118,14 @@ impl Demo {
         self.last_price_units = self.last_price_units.saturating_add(price_delta);
         let trade_size = (xorshift64(&mut self.rng_state) % 900) + 100;
         let aggressor = if xorshift64(&mut self.rng_state) & 1 == 0 {
-            Side::Buy
+            DemoSide::Buy
         } else {
-            Side::Sell
+            DemoSide::Sell
         };
-        Tick {
-            timestamps: Timestamps {
-                event: Timestamp(self.last_time_ns),
-                receive: None,
-                ingest: None,
-            },
-            price: Price::from_raw(self.last_price_units),
-            size: Some(Volume(trade_size)),
+        DemoTick {
+            event_ns: self.last_time_ns,
+            price_units: self.last_price_units,
+            size: Some(trade_size),
             side: Some(aggressor),
         }
     }
@@ -120,34 +141,36 @@ fn xorshift64(state: &mut u64) -> u64 {
     x
 }
 
-/// Builds the four column descriptors for browsing a `Tick` stream:
-/// `Time` (relative ms from `base_time_ns`), `Price` (`$X.XX`),
-/// `Size`, and `Side` (`B`/`S`/`—`).
+/// Builds the four column descriptors for browsing a [`DemoTick`]
+/// stream: `Time` (relative ms from `base_time_ns`), `Price`
+/// (`$X.XX`), `Size`, and `Side` (`B`/`S`/`—`).
 ///
 /// `base_time_ns` is captured by the time column's projector so the
 /// displayed values are relative — much easier to read than raw
-/// nanosecond timestamps. Pass `ticks.first().map(|t| t.timestamps.event.0)
+/// nanosecond timestamps. Pass `ticks.first().map(|t| t.event_ns)
 /// .unwrap_or(0)` from the caller.
 #[must_use]
-pub fn tick_columns<State: 'static>(base_time_ns: i64) -> Vec<ColumnDef<Tick, State>> {
+pub fn tick_columns<State: 'static>(base_time_ns: i64) -> Vec<ColumnDef<DemoTick, State>> {
     vec![
-        text_column("Time (ms)", 100.0, CellAlign::End, move |t: &Tick| {
-            let delta_ns = t.timestamps.event.0.saturating_sub(base_time_ns);
+        text_column("Time (ms)", 100.0, CellAlign::End, move |t: &DemoTick| {
+            let delta_ns = t.event_ns.saturating_sub(base_time_ns);
             // ns → ms with one decimal.
             #[expect(clippy::cast_precision_loss, reason = "Display only")]
             let ms = delta_ns as f64 / 1_000_000.0;
             format!("{ms:.1}")
         }),
-        text_column("Price", 90.0, CellAlign::End, |t: &Tick| {
-            format!("${:.2}", t.price.to_f64())
+        text_column("Price", 90.0, CellAlign::End, |t: &DemoTick| {
+            #[expect(clippy::cast_precision_loss, reason = "Display only")]
+            let dollars = t.price_units as f64 / PRICE_UNITS_PER_DOLLAR;
+            format!("${dollars:.2}")
         }),
-        optional_text_column("Size", 80.0, CellAlign::End, |t: &Tick| {
-            t.size.map(|v| v.0.to_string())
+        optional_text_column("Size", 80.0, CellAlign::End, |t: &DemoTick| {
+            t.size.map(|v| v.to_string())
         }),
-        optional_text_column("Side", 60.0, CellAlign::Center, |t: &Tick| {
+        optional_text_column("Side", 60.0, CellAlign::Center, |t: &DemoTick| {
             t.side.map(|s| match s {
-                Side::Buy => "B".to_string(),
-                Side::Sell => "S".to_string(),
+                DemoSide::Buy => "B".to_string(),
+                DemoSide::Sell => "S".to_string(),
             })
         }),
     ]
