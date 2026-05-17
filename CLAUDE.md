@@ -1,6 +1,60 @@
-# void_ui (`void-ui`)
+# CLAUDE.md
 
-Shared xilem/Masonry components for Voidstar UIs.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-- **UI crate — no analysis logic.** See root `CLAUDE.md` for the IP boundary rule.
-- Keep components reusable and product-agnostic. Citadel-specific composition belongs in `ui`, not here.
+## void_ui (`void-ui`)
+
+Shared xilem/Masonry component library for Voidstar UIs. Theme-driven, product-agnostic, display-only.
+
+- **UI crate — no analysis logic.** UI code may import data types (`Tick`, `ColumnDelta`, `ChartSnapshot`) but never analysis primitives (e.g. `pf::ColumnBuilder`, `Analysis::process`). The IP boundary is enforced at the import level.
+- Keep components reusable and product-agnostic. Citadel-specific composition belongs in the downstream `ui` crate, not here.
+
+## Commands
+
+```sh
+# Build the library
+cargo build
+
+# Run the live component gallery (exercises every shipped component end-to-end)
+cargo run -p void-ui --example gallery
+
+# Lints (workspace denies clippy::pedantic — fix don't allow)
+cargo clippy --all-targets
+
+# Tests
+cargo test                                  # all
+cargo test --lib <name>                     # a single test by substring
+```
+
+## Architecture
+
+### Two-layer component pattern
+
+Each component ships **both** a xilem View and a masonry Widget. The convention is one folder per component under `src/components/<name>/` containing:
+
+- `view.rs` — builder + xilem `View` impl. Coordinates state and rebuild logic.
+- `widget.rs` — masonry `Widget` impl. Owns paint, layout, event handling.
+- `demo.rs` — gallery panel exercising the component.
+- `mod.rs` — re-exports.
+
+When adding a component, follow this split. Don't merge view + widget into a single file.
+
+### Theme propagation
+
+`Theme` is **not** global state. It is passed in when materializing a view via `.render(&theme)`, copied into the widget at build time, and re-applied on rebuild only when the value differs. Theme swapping is a single state change at the host application root, not a tree walk. Components read colors/sizes/type from the `Theme` they were rendered with — never reach for ambient state.
+
+Theme primitives live in `src/theme/`: `Palette` (colors), `Typography` (font stack), `Density` (sizes/spacing), `Radii`, and `ThemeVariant`.
+
+### Overlay primitive
+
+Anything overlay-shaped (popover, dropdown, menu, tooltip, dialog, toast) is meant to share a single primitive — currently `floating::FloatingOverlay` (`src/floating.rs`) with `floating()` and `interactive_floating()` builders. Build new overlay-flavored components on top of this rather than reimplementing positioning/dismissal.
+
+### Linebender dep pinning
+
+`masonry`, `xilem`, and `xilem_masonry` are git-pinned to the same rev in the workspace `Cargo.toml`. Per the comment there: **do not depend on `peniko`/`kurbo`/`parley`/`vello`/`imaging` directly** — masonry and xilem re-export them, and pulling them in standalone causes diamond-dep version skew. Also do not disable masonry's default features without a deliberate re-enable: the default-feature chain (`masonry/default → masonry_winit/imaging_vello → masonry_imaging/imaging_vello`) is what selects the Vello backend at compile time, and disabling it panics at startup with `backend=""`.
+
+When bumping the Linebender stack, bump all three crates to the same rev in a single commit.
+
+### Gallery and `with_source!`
+
+The `gallery` example is the canonical visual test surface. Component demos use the `with_source!` macro (see `src/gallery.rs` / `src/components/*/demo.rs`) to display rendered output alongside its source. New components should ship a demo panel before the API is considered final.

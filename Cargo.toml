@@ -15,9 +15,9 @@ tracing = "0.1"
 # selects the Vello classic renderer backend at compile time. With
 # `default-features = false` and no explicit re-enable, masonry_winit panics
 # at startup with `backend=""`.
-masonry = { git = "https://github.com/linebender/xilem.git", rev = "1e131feededf0a94f5c01da711e7592a02e371d7" }
-xilem = { git = "https://github.com/linebender/xilem.git", rev = "1e131feededf0a94f5c01da711e7592a02e371d7" }
-xilem_masonry = { git = "https://github.com/linebender/xilem.git", rev = "1e131feededf0a94f5c01da711e7592a02e371d7" }
+masonry = { git = "https://github.com/linebender/xilem.git", branch = "main" }
+xilem = { git = "https://github.com/linebender/xilem.git", branch = "main" }
+xilem_masonry = { git = "https://github.com/linebender/xilem.git", branch = "main" }
 
 # Workspace-wide lints. Member crates opt in via `[lints] workspace = true`.
 # `priority = -1` lets individual lints override the group level when needed.
