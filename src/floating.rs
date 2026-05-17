@@ -38,16 +38,41 @@ pub struct FloatingOverlay {
     /// Anchor point in this overlay's local coordinates. `None` hides
     /// the child by stashing it.
     position: Option<Point>,
+    /// When `true`, the overlay propagates pointer events into the
+    /// child so wrapped buttons / inputs receive clicks; the overlay
+    /// itself still doesn't accept hits, so the area *outside* the
+    /// positioned child stays transparent to underlying siblings.
+    /// Default `false` — purely-visual decorations (e.g. inspector
+    /// pills) opt out so they never intercept anything.
+    interactive: bool,
 }
 
 impl FloatingOverlay {
     /// Create a `FloatingOverlay` wrapping `child` at the given `position`
-    /// (or hidden when `position` is `None`).
+    /// (or hidden when `position` is `None`). Pointer-transparent by
+    /// default; flip [`Self::set_interactive`] / pass `interactive: true`
+    /// through the view constructor when wrapping an interactive child.
     #[must_use]
     pub fn new(child: NewWidget<impl Widget + ?Sized>, position: Option<Point>) -> Self {
         Self {
             inner: child.erased().to_pod(),
             position,
+            interactive: false,
+        }
+    }
+
+    /// Construct an interactive floating overlay — pointer events that
+    /// land on the child propagate through, while the rest of the
+    /// overlay's bounds stay transparent.
+    #[must_use]
+    pub fn new_interactive(
+        child: NewWidget<impl Widget + ?Sized>,
+        position: Option<Point>,
+    ) -> Self {
+        Self {
+            inner: child.erased().to_pod(),
+            position,
+            interactive: true,
         }
     }
 
@@ -77,11 +102,18 @@ impl Widget for FloatingOverlay {
     type Action = NoAction;
 
     fn accepts_pointer_interaction(&self) -> bool {
+        // The overlay itself never absorbs hits — the positioned child
+        // does (when in interactive mode). Hits outside the child's
+        // bounds fall through to siblings below in the ZStack.
         false
     }
 
     fn propagates_pointer_interaction(&self) -> bool {
-        false
+        // Interactive overlays forward pointer events to their child
+        // so wrapped buttons / inputs receive clicks. Decorative
+        // overlays (e.g. inspector pills) skip propagation so the
+        // child can't intercept hits aimed at siblings below.
+        self.interactive
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
@@ -182,6 +214,28 @@ where
     FloatingOverlayView {
         content,
         position,
+        interactive: false,
+        phantom: PhantomData,
+    }
+}
+
+/// Same as [`floating`] but the overlay forwards pointer events to
+/// the wrapped child so interactive widgets (buttons, text inputs)
+/// inside the overlay receive clicks. Area outside the child's hit
+/// box still falls through to siblings below in the `ZStack`.
+pub fn interactive_floating<State, Action, V>(
+    content: V,
+    position: Option<Point>,
+) -> FloatingOverlayView<V, State, Action>
+where
+    State: 'static,
+    Action: 'static,
+    V: WidgetView<State, Action>,
+{
+    FloatingOverlayView {
+        content,
+        position,
+        interactive: true,
         phantom: PhantomData,
     }
 }
@@ -190,6 +244,7 @@ where
 pub struct FloatingOverlayView<V, State, Action> {
     content: V,
     position: Option<Point>,
+    interactive: bool,
     phantom: PhantomData<fn(State) -> Action>,
 }
 
@@ -206,7 +261,11 @@ where
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let (child, child_state) = self.content.build(ctx, app_state);
-        let widget = FloatingOverlay::new(child.new_widget.erased(), self.position);
+        let widget = if self.interactive {
+            FloatingOverlay::new_interactive(child.new_widget.erased(), self.position)
+        } else {
+            FloatingOverlay::new(child.new_widget.erased(), self.position)
+        };
         (ctx.create_pod(widget), child_state)
     }
 

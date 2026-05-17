@@ -27,7 +27,7 @@ pub use components::{
     SidebarItemView, Tooltip, TooltipView, button, data_grid, optional_text_column, sidebar_item,
     text_column, tooltip,
 };
-pub use floating::{FloatingOverlay, FloatingOverlayView, floating};
+pub use floating::{FloatingOverlay, FloatingOverlayView, floating, interactive_floating};
 pub use gallery::code_block;
 pub use pointer_inert::{PointerInert, PointerInertView, pointer_inert};
 pub use theme::{Density, FontStack, Palette, Radii, Theme, ThemeVariant, Typography};
