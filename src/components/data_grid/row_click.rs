@@ -20,7 +20,7 @@ use masonry::core::{
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Size};
-use masonry::layout::{LayoutSize, LenReq, SizeDef};
+use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 
 /// Action emitted by [`RowClickable`] on primary-button release. The
 /// receiver inspects the modifiers to decide whether this is a plain
@@ -131,8 +131,8 @@ impl Widget for RowClickable {
         _props: &PropertiesRef<'_>,
         axis: Axis,
         len_req: LenReq,
-        cross_length: Option<f64>,
-    ) -> f64 {
+        cross_length: Option<Length>,
+    ) -> Length {
         let auto_length = len_req.into();
         ctx.compute_length(
             &mut self.child,

@@ -18,7 +18,7 @@ use masonry::core::{
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Size};
-use masonry::layout::{LayoutSize, LenReq, SizeDef};
+use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use xilem_masonry::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem_masonry::{Pod, ViewCtx, WidgetView};
 
@@ -126,8 +126,8 @@ impl Widget for FloatingOverlay {
         _props: &PropertiesRef<'_>,
         _axis: Axis,
         len_req: LenReq,
-        _cross_length: Option<f64>,
-    ) -> f64 {
+        _cross_length: Option<Length>,
+    ) -> Length {
         // The overlay's footprint is dictated by its parent (typically
         // `Dimensions::STRETCH` inside a ZStack), not its child — we
         // want to fill the chart so any anchor point inside the chart
@@ -135,8 +135,12 @@ impl Widget for FloatingOverlay {
         // axis without consulting the child.
         match len_req {
             LenReq::FitContent(space) => space,
-            LenReq::MinContent => 0.0,
-            LenReq::MaxContent => f64::INFINITY,
+            LenReq::MinContent => Length::ZERO,
+            // `Length` can no longer represent infinity (always finite,
+            // per masonry's invariant); pick the largest finite value
+            // to preserve the old "take whatever the parent gives me"
+            // semantics.
+            LenReq::MaxContent => Length::px(f64::MAX),
         }
     }
 

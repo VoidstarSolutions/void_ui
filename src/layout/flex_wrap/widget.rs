@@ -27,7 +27,7 @@ use masonry::core::{
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Size};
-use masonry::layout::{LayoutSize, LenDef, LenReq, SizeDef};
+use masonry::layout::{LayoutSize, LenDef, LenReq, Length, SizeDef};
 use masonry::properties::types::{CrossAxisAlignment, MainAxisAlignment};
 
 /// A wrapping flex container.
@@ -363,17 +363,19 @@ impl Widget for FlexWrap {
         _props: &PropertiesRef<'_>,
         axis: Axis,
         len_req: LenReq,
-        cross_length: Option<f64>,
-    ) -> f64 {
+        cross_length: Option<Length>,
+    ) -> Length {
         if self.children.is_empty() {
-            return 0.0;
+            return Length::ZERO;
         }
         let auto_length: LenDef = len_req.into();
 
         // Collect each child's natural max-content width — both axes
         // need this. The width pre-pass is unconditional; masonry caches
         // measurement queries internally, so downstream `compute_length`
-        // calls for the same child won't re-walk its tree.
+        // calls for the same child won't re-walk its tree. We unwrap
+        // each `Length` to `f64` here so the partition / alignment
+        // helpers (which interop with kurbo's `Size`) stay in f64.
         let widths: Vec<f64> = self
             .children
             .iter_mut()
@@ -385,6 +387,7 @@ impl Widget for FlexWrap {
                     Axis::Horizontal,
                     None,
                 )
+                .get()
             })
             .collect();
 
@@ -394,7 +397,7 @@ impl Widget for FlexWrap {
         )]
         let gap_count = widths.len().saturating_sub(1) as f64;
 
-        match axis {
+        let result = match axis {
             Axis::Horizontal => {
                 let natural_total = widths.iter().sum::<f64>() + self.col_gap * gap_count;
                 let min_total = widths.iter().fold(0.0_f64, |a, &b| a.max(b));
@@ -405,7 +408,7 @@ impl Widget for FlexWrap {
                     // what the parent offered, but never claim less
                     // than the widest single child (forcing overflow
                     // beneath that bound gains nothing).
-                    LenReq::FitContent(space) => natural_total.min(space).max(min_total),
+                    LenReq::FitContent(space) => natural_total.min(space.get()).max(min_total),
                 }
             }
             Axis::Vertical => match cross_length {
@@ -416,18 +419,19 @@ impl Widget for FlexWrap {
                         .iter_mut()
                         .zip(widths.iter())
                         .fold(0.0_f64, |a, (child, &w)| {
+                            let w_len = Length::px(w);
                             let h = ctx.compute_length(
                                 child,
                                 auto_length,
-                                LayoutSize::maybe(Axis::Horizontal, Some(w)),
+                                LayoutSize::maybe(Axis::Horizontal, Some(w_len)),
                                 Axis::Vertical,
-                                Some(w),
+                                Some(w_len),
                             );
-                            a.max(h)
+                            a.max(h.get())
                         })
                 }
                 Some(available_width) => {
-                    let rows = partition_rows(&widths, available_width, self.col_gap);
+                    let rows = partition_rows(&widths, available_width.get(), self.col_gap);
                     let mut total: f64 = 0.0;
                     for (row_idx, row) in rows.iter().enumerate() {
                         let row_children = &mut self.children[row.start..row.end];
@@ -435,14 +439,15 @@ impl Widget for FlexWrap {
                         let row_h = row_children.iter_mut().zip(row_widths.iter()).fold(
                             0.0_f64,
                             |a, (child, &w)| {
+                                let w_len = Length::px(w);
                                 let h = ctx.compute_length(
                                     child,
                                     auto_length,
-                                    LayoutSize::maybe(Axis::Horizontal, Some(w)),
+                                    LayoutSize::maybe(Axis::Horizontal, Some(w_len)),
                                     Axis::Vertical,
-                                    Some(w),
+                                    Some(w_len),
                                 );
-                                a.max(h)
+                                a.max(h.get())
                             },
                         );
                         total += row_h;
@@ -453,7 +458,8 @@ impl Widget for FlexWrap {
                     total
                 }
             },
-        }
+        };
+        Length::px(result)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
@@ -505,7 +511,8 @@ impl Widget for FlexWrap {
                     // smaller size, in which case `run_layout` commits
                     // what it reported (no enforcement here — masonry
                     // already documents Stretch as a best-effort hint).
-                    let stretch_def = SizeDef::MAX.with_height(LenDef::Fixed(row_height));
+                    let stretch_def =
+                        SizeDef::MAX.with_height(LenDef::Fixed(Length::px(row_height)));
                     let stretched =
                         ctx.compute_size(&mut self.children[child_idx], stretch_def, size.into());
                     (stretched, 0.0)

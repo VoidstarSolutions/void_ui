@@ -49,11 +49,11 @@ Theme primitives live in `src/theme/`: `Palette` (colors), `Typography` (font st
 
 Anything overlay-shaped (popover, dropdown, menu, tooltip, dialog, toast) is meant to share a single primitive — currently `floating::FloatingOverlay` (`src/floating.rs`) with `floating()` and `interactive_floating()` builders. Build new overlay-flavored components on top of this rather than reimplementing positioning/dismissal.
 
-### Linebender dep pinning
+### Linebender dep tracking
 
-`masonry`, `xilem`, and `xilem_masonry` are git-pinned to the same rev in the workspace `Cargo.toml`. Per the comment there: **do not depend on `peniko`/`kurbo`/`parley`/`vello`/`imaging` directly** — masonry and xilem re-export them, and pulling them in standalone causes diamond-dep version skew. Also do not disable masonry's default features without a deliberate re-enable: the default-feature chain (`masonry/default → masonry_winit/imaging_vello → masonry_imaging/imaging_vello`) is what selects the Vello backend at compile time, and disabling it panics at startup with `backend=""`.
+`masonry`, `xilem`, and `xilem_masonry` track the `main` branch of <https://github.com/linebender/xilem> in the workspace `Cargo.toml` — we intentionally follow upstream rather than pin a rev, and the lockfile is the only thing holding the resolved revision steady between builds. Per the comment in `Cargo.toml`: **do not depend on `peniko`/`kurbo`/`parley`/`vello`/`imaging` directly** — masonry and xilem re-export them, and pulling them in standalone causes diamond-dep version skew. Also do not disable masonry's default features without a deliberate re-enable: the default-feature chain (`masonry/default → masonry_winit/imaging_vello → masonry_imaging/imaging_vello`) is what selects the Vello backend at compile time, and disabling it panics at startup with `backend=""`.
 
-When bumping the Linebender stack, bump all three crates to the same rev in a single commit.
+Because we follow `main`, an upstream API change can break our build the next time `cargo update` runs. When that happens, migrate the consumer code rather than pinning to an older rev — the goal is to stay current. Always bump all three crates together (`cargo update -p masonry -p xilem -p xilem_masonry`) so they stay on a single upstream commit.
 
 ### Gallery and `with_source!`
 

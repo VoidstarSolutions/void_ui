@@ -20,7 +20,7 @@ use masonry::core::{
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Size};
-use masonry::layout::{LayoutSize, LenReq, SizeDef};
+use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 
 /// Wraps a child and warns once if the laid-out width is less than
 /// the column-sum width supplied at construction.
@@ -106,8 +106,8 @@ impl Widget for OverflowWarn {
         _props: &PropertiesRef<'_>,
         axis: Axis,
         len_req: LenReq,
-        cross_length: Option<f64>,
-    ) -> f64 {
+        cross_length: Option<Length>,
+    ) -> Length {
         let auto_length = len_req.into();
         ctx.compute_length(
             &mut self.child,

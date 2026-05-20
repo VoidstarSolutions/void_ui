@@ -134,7 +134,7 @@ where
     let header = sized_box(flex_row(header_cells).cross_axis_alignment(CrossAxisAlignment::Center))
         .fixed_height(Length::px(row_height))
         .background_color(theme.palette.surface_2)
-        .border(theme.palette.border, 1.0);
+        .border(theme.palette.border, Length::px(1.0));
 
     // --- Body: virtual_scroll. The row builder captures the
     //     rendering slots Arc, the data accessor, and the selection

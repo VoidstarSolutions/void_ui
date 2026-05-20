@@ -18,7 +18,7 @@ use masonry::core::{
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Size};
-use masonry::layout::LenReq;
+use masonry::layout::{LenReq, Length};
 use xilem_masonry::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem_masonry::{Pod, ViewCtx, WidgetView};
 
@@ -82,8 +82,8 @@ impl Widget for PointerInert {
         _props: &PropertiesRef<'_>,
         axis: Axis,
         _len_req: LenReq,
-        cross_length: Option<f64>,
-    ) -> f64 {
+        cross_length: Option<Length>,
+    ) -> Length {
         ctx.redirect_measurement(&mut self.inner, axis, cross_length)
     }
 

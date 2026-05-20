@@ -23,7 +23,7 @@ use masonry::core::{
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Affine, Axis, BezPath, Point, RoundedRect, Size, Stroke};
-use masonry::layout::{LayoutSize, LenReq, SizeDef};
+use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use masonry::peniko::Color;
 use masonry::widgets::ButtonPress;
 
@@ -318,8 +318,8 @@ impl Widget for ThemedButton {
         _props: &PropertiesRef<'_>,
         axis: Axis,
         len_req: LenReq,
-        cross_length: Option<f64>,
-    ) -> f64 {
+        cross_length: Option<Length>,
+    ) -> Length {
         let pad_v = f64::from(self.theme.density.button_pad_v);
         let pad_h = f64::from(self.theme.density.button_pad_h);
         let (main_pad, cross_pad) = match axis {
@@ -331,7 +331,7 @@ impl Widget for ThemedButton {
         } else {
             0.0
         };
-        let inner_cross = cross_length.map(|c| (c - cross_pad).max(0.0));
+        let inner_cross = cross_length.map(|c| Length::px((c.get() - cross_pad).max(0.0)));
         let auto_length = len_req.into();
         let context_size = LayoutSize::maybe(axis.cross(), inner_cross);
         let child_length = ctx.compute_length(
@@ -341,7 +341,7 @@ impl Widget for ThemedButton {
             axis,
             inner_cross,
         );
-        child_length + main_pad + icon_extra
+        Length::px(child_length.get() + main_pad + icon_extra)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {

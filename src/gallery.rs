@@ -3,6 +3,7 @@
 //! Demo panels in each component's `demo.rs` use these to display the source
 //! snippet that produced a live example directly below it.
 
+use masonry::layout::Length;
 use masonry::parley::{FontFamily, FontFamilyName, GenericFamily};
 use xilem::WidgetView;
 use xilem::style::Style as _;
@@ -25,10 +26,10 @@ pub fn code_block<S: 'static>(source: &str, theme: &Theme) -> impl WidgetView<S>
         .color(theme.palette.text_muted);
 
     sized_box(text)
-        .padding(12.0)
+        .padding(Length::px(12.0))
         .background_color(theme.palette.bg_deep)
-        .border(theme.palette.border, 1.0)
-        .corner_radius(f64::from(theme.radius.small))
+        .border(theme.palette.border, Length::px(1.0))
+        .corner_radius(Length::px(f64::from(theme.radius.small)))
 }
 
 /// Wraps a view expression and appends its stringified source below it.

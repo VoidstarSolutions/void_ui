@@ -19,7 +19,7 @@ use masonry::core::{
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Size, Vec2};
 use masonry::layers::Tooltip as TooltipLayer;
-use masonry::layout::LenReq;
+use masonry::layout::{LenReq, Length};
 use masonry::properties::{Background, BorderColor, BorderWidth, ContentColor, Padding};
 use masonry::util::Instant;
 use masonry::widgets::Label;
@@ -30,9 +30,9 @@ use crate::Theme;
 /// the typical button-press hand-shape so the label is readable.
 const CURSOR_OFFSET: Vec2 = Vec2::new(12.0, 20.0);
 /// Border thickness on the tooltip surface.
-const BORDER_WIDTH: f64 = 1.0;
+const BORDER_WIDTH: Length = Length::const_px(1.0);
 /// Padding inside the tooltip surface around the label.
-const PADDING: f64 = 6.0;
+const PADDING: Length = Length::const_px(6.0);
 
 /// Hosts a child widget and creates a tooltip layer on hover-idle.
 ///
@@ -192,8 +192,8 @@ impl Widget for TooltipHost {
         _props: &PropertiesRef<'_>,
         axis: Axis,
         _len_req: LenReq,
-        cross_length: Option<f64>,
-    ) -> f64 {
+        cross_length: Option<Length>,
+    ) -> Length {
         ctx.redirect_measurement(&mut self.child, axis, cross_length)
     }
 

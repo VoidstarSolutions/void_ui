@@ -23,7 +23,7 @@ use masonry::core::{
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Size};
-use masonry::layout::{LayoutSize, LenReq, SizeDef};
+use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 
 /// Wrap an arbitrary child widget; intercept Ctrl/Cmd+C; on press,
 /// write the cached payload to the clipboard.
@@ -153,8 +153,8 @@ impl Widget for CopyOnShortcut {
         _props: &PropertiesRef<'_>,
         axis: Axis,
         len_req: LenReq,
-        cross_length: Option<f64>,
-    ) -> f64 {
+        cross_length: Option<Length>,
+    ) -> Length {
         let auto_length = len_req.into();
         ctx.compute_length(
             &mut self.child,

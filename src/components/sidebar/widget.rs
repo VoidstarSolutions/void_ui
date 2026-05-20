@@ -18,7 +18,7 @@ use masonry::core::{
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, RoundedRect, Size, Stroke};
-use masonry::layout::{LayoutSize, LenReq, SizeDef};
+use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use masonry::peniko::Color;
 use masonry::widgets::ButtonPress;
 
@@ -196,13 +196,13 @@ impl Widget for ThemedSidebarItem {
         _props: &PropertiesRef<'_>,
         axis: Axis,
         len_req: LenReq,
-        cross_length: Option<f64>,
-    ) -> f64 {
+        cross_length: Option<Length>,
+    ) -> Length {
         let (main_pad, cross_pad) = match axis {
             Axis::Horizontal => (ACCENT_WIDTH + 2.0 * PAD_H, 2.0 * PAD_V),
             Axis::Vertical => (2.0 * PAD_V, ACCENT_WIDTH + 2.0 * PAD_H),
         };
-        let inner_cross = cross_length.map(|c| (c - cross_pad).max(0.0));
+        let inner_cross = cross_length.map(|c| Length::px((c.get() - cross_pad).max(0.0)));
         let auto_length = len_req.into();
         let context_size = LayoutSize::maybe(axis.cross(), inner_cross);
         let child_length = ctx.compute_length(
@@ -212,7 +212,7 @@ impl Widget for ThemedSidebarItem {
             axis,
             inner_cross,
         );
-        child_length + main_pad
+        Length::px(child_length.get() + main_pad)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {

@@ -78,19 +78,20 @@ fn workspace_row(
 ) -> Box<AnyWidgetView<State>> {
     let sidebar_view = sized_box(sidebar(focused, theme))
         .fixed_width(Length::px(180.0))
-        .padding(12.0)
+        .padding(Length::px(12.0))
         .background_color(theme.palette.surface);
     let main = sized_box(main_pane(focused, theme, dg_row_count, dg_base_time_ns))
-        .padding(20.0)
+        .padding(Length::px(20.0))
         .background_color(theme.palette.bg);
 
     if theme_panel_open {
         let panel = sized_box(
-            portal(sized_box(theme_panel(theme)).padding(16.0)).constrain_horizontal(true),
+            portal(sized_box(theme_panel(theme)).padding(Length::px(16.0)))
+                .constrain_horizontal(true),
         )
         .fixed_width(Length::px(360.0))
         .background_color(theme.palette.surface)
-        .border(theme.palette.border, 1.0);
+        .border(theme.palette.border, Length::px(1.0));
         Box::new(
             flex_row((sidebar_view, main.flex(1.0), panel))
                 .cross_axis_alignment(CrossAxisAlignment::Stretch),
@@ -125,9 +126,9 @@ fn topbar(theme_panel_open: bool, theme: &Theme) -> impl WidgetView<State> + use
         .gap(Length::px(12.0));
 
     sized_box(chrome)
-        .padding(12.0)
+        .padding(Length::px(12.0))
         .background_color(theme.palette.surface)
-        .border(theme.palette.border, 1.0)
+        .border(theme.palette.border, Length::px(1.0))
 }
 
 fn sidebar(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State> + use<> {
@@ -387,8 +388,8 @@ fn swatch_tile(name: &'static str, color: Color, theme: &Theme) -> impl WidgetVi
         .fixed_width(Length::px(96.0))
         .fixed_height(Length::px(32.0))
         .background_color(color)
-        .border(theme.palette.border, 1.0)
-        .corner_radius(f64::from(theme.radius.small));
+        .border(theme.palette.border, Length::px(1.0))
+        .corner_radius(Length::px(f64::from(theme.radius.small)));
     let caption = label(name)
         .text_size(theme.typography.size_caption)
         .color(theme.palette.text_muted);
