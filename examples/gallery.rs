@@ -245,7 +245,7 @@ fn data_grid_panel(
 
 // === Theme panel ===========================================================
 
-fn theme_panel(theme: &Theme) -> impl WidgetView<State> + use<> {
+fn theme_panel(theme: &Theme) -> impl WidgetView<State> {
     flex_col((
         section_header("Theme", theme),
         theme_variant_row(theme),
