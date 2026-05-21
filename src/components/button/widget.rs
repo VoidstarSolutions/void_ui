@@ -174,14 +174,14 @@ impl ThemedButton {
 
     /// Resolves `(background, border)` colors for the current state.
     ///
-    /// | state              | Default bg   | Danger bg    | border         |
-    /// |--------------------|--------------|--------------|----------------|
-    /// | disabled           | transparent  | transparent  | none           |
-    /// | default            | transparent  | transparent  | none           |
-    /// | hover              | `surface_2`  | `coral_soft` | none           |
-    /// | pressed            | `surface_hi` | `coral`      | none           |
-    /// | active (toggle)    | `surface_2`  | `coral_soft` | border / coral |
-    /// | active + pressed   | `surface_hi` | `coral`      | border / coral |
+    /// | state           | Default      | Danger       | Primary    | Ghost        | Warning      |
+    /// |-----------------|--------------|--------------|------------|--------------|--------------|
+    /// | disabled        | transparent  | transparent  | transparent| transparent  | transparent  |
+    /// | rest            | transparent  | transparent  | teal_soft  | transparent/border| transparent |
+    /// | hover           | `surface_2`  | `coral_soft` | `teal`     | `surface_2`  | `amber_soft` |
+    /// | pressed         | `surface_hi` | `coral`      | `teal`     | `surface_hi` | `amber`      |
+    /// | active (toggle) | `surface_2`  | `coral_soft` | `teal_soft`| transparent  | `amber_soft` |
+    /// | border on active| `border`     | `coral`      | `teal`     | `border`     | `amber`      |
     fn resolve_colors(&self, hovered: bool, pressed: bool) -> (Color, Color) {
         let p = &self.theme.palette;
         if self.disabled {
@@ -213,6 +213,41 @@ impl ThemedButton {
                 };
                 let border = if self.active {
                     p.coral
+                } else {
+                    Color::TRANSPARENT
+                };
+                (bg, border)
+            }
+            ButtonVariant::Primary => {
+                let bg = if pressed || hovered {
+                    p.teal
+                } else {
+                    p.teal_soft
+                };
+                let border = if self.active { p.teal } else { Color::TRANSPARENT };
+                (bg, border)
+            }
+            ButtonVariant::Ghost => {
+                let bg = if pressed {
+                    p.surface_hi
+                } else if hovered {
+                    p.surface_2
+                } else {
+                    Color::TRANSPARENT
+                };
+                let border = if hovered { p.border_strong } else { p.border };
+                (bg, border)
+            }
+            ButtonVariant::Warning => {
+                let bg = if pressed {
+                    p.amber
+                } else if self.active || hovered {
+                    p.amber_soft
+                } else {
+                    Color::TRANSPARENT
+                };
+                let border = if self.active {
+                    p.amber
                 } else {
                     Color::TRANSPARENT
                 };

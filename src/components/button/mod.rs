@@ -20,4 +20,10 @@ pub enum ButtonVariant {
     Default,
     /// Destructive action — coral accent tones on hover and active.
     Danger,
+    /// Primary action — teal fill, always-visible background.
+    Primary,
+    /// Subtle — always-visible border, no fill until hover.
+    Ghost,
+    /// Cautionary action — amber accent tones on hover and active.
+    Warning,
 }
