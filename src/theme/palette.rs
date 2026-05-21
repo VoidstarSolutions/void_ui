@@ -36,6 +36,10 @@ pub struct Palette {
     pub amber_soft: Color,
     pub violet: Color,
     pub violet_soft: Color,
+    pub green: Color,
+    pub green_soft: Color,
+    pub blue: Color,
+    pub blue_soft: Color,
 
     // Domain semantics (mapped to accents in source, kept as fields for
     // future themes that may diverge)
@@ -71,6 +75,10 @@ impl Palette {
             amber_soft: oklcha(0.82, 0.130, 80.0, 0.18),
             violet: oklch(0.72, 0.080, 295.0),
             violet_soft: oklcha(0.72, 0.080, 295.0, 0.18),
+            green: oklch(0.72, 0.130, 145.0),
+            green_soft: oklcha(0.72, 0.130, 145.0, 0.18),
+            blue: oklch(0.68, 0.090, 260.0),
+            blue_soft: oklcha(0.68, 0.090, 260.0, 0.18),
 
             target: oklch(0.70, 0.060, 145.0),
             target_soft: oklcha(0.70, 0.060, 145.0, 0.18),
@@ -104,6 +112,10 @@ impl Palette {
             amber_soft: oklcha(0.62, 0.130, 65.0, 0.14),
             violet: oklch(0.50, 0.085, 295.0),
             violet_soft: oklcha(0.50, 0.085, 295.0, 0.14),
+            green: oklch(0.48, 0.120, 145.0),
+            green_soft: oklcha(0.48, 0.120, 145.0, 0.14),
+            blue: oklch(0.46, 0.090, 260.0),
+            blue_soft: oklcha(0.46, 0.090, 260.0, 0.14),
 
             target: oklch(0.50, 0.075, 145.0),
             target_soft: oklcha(0.50, 0.075, 145.0, 0.14),

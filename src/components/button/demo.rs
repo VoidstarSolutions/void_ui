@@ -5,12 +5,11 @@
 //! a new variant is: add a `header`, add an example block, wrap in
 //! `with_source!`.
 
+use masonry::kurbo::BezPath;
 use xilem::WidgetView;
 use xilem::masonry::layout::Length;
 use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, flex_col, flex_row, label};
-
-use masonry::kurbo::BezPath;
 
 use super::button;
 use crate::Theme;
@@ -19,8 +18,8 @@ use crate::with_source;
 
 /// Renders the Button demo panel.
 ///
-/// Covers the default, danger, disabled, and icon variants. Callbacks are
-/// no-ops — the panel exercises visual states, not application logic.
+/// Covers all 10 named variants, plus active / disabled / loading / trailing-icon
+/// states. Callbacks are no-ops — the panel exercises visual states only.
 #[must_use]
 pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     let header = |text: &'static str| {
@@ -30,39 +29,13 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
             .color(theme.palette.text_faint)
     };
 
+    // --- variants (rest / active / disabled) ---
+
     let default_example = with_source!(theme, {
-        flex_row((button("Reset view", |_: &mut S| {}).render(theme),))
-            .cross_axis_alignment(CrossAxisAlignment::Center)
-            .gap(Length::px(8.0))
-    });
-
-    let active_example = with_source!(theme, {
-        flex_row((button("Reset view", |_: &mut S| {})
-            .active(true)
-            .render(theme),))
-        .cross_axis_alignment(CrossAxisAlignment::Center)
-        .gap(Length::px(8.0))
-    });
-
-    let danger_example = with_source!(theme, {
         flex_row((
-            button("Delete", |_: &mut S| {})
-                .variant(ButtonVariant::Danger)
-                .render(theme),
-            button("Delete", |_: &mut S| {})
-                .variant(ButtonVariant::Danger)
-                .active(true)
-                .render(theme),
-        ))
-    });
-
-    let disabled_example = with_source!(theme, {
-        flex_row((
-            button("Reset", |_: &mut S| {}).disabled(true).render(theme),
-            button("Delete", |_: &mut S| {})
-                .variant(ButtonVariant::Danger)
-                .disabled(true)
-                .render(theme),
+            button("Default", |_: &mut S| {}).render(theme),
+            button("Active", |_: &mut S| {}).active(true).render(theme),
+            button("Disabled", |_: &mut S| {}).disabled(true).render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(8.0))
@@ -70,14 +43,14 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
 
     let primary_example = with_source!(theme, {
         flex_row((
-            button("Confirm", |_: &mut S| {})
+            button("Primary", |_: &mut S| {})
                 .variant(ButtonVariant::Primary)
                 .render(theme),
-            button("Submit", |_: &mut S| {})
+            button("Active", |_: &mut S| {})
                 .variant(ButtonVariant::Primary)
                 .active(true)
                 .render(theme),
-            button("Apply", |_: &mut S| {})
+            button("Disabled", |_: &mut S| {})
                 .variant(ButtonVariant::Primary)
                 .disabled(true)
                 .render(theme),
@@ -86,17 +59,35 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
         .gap(Length::px(8.0))
     });
 
-    let ghost_example = with_source!(theme, {
+    let secondary_example = with_source!(theme, {
         flex_row((
-            button("Settings", |_: &mut S| {})
-                .variant(ButtonVariant::Ghost)
+            button("Secondary", |_: &mut S| {})
+                .variant(ButtonVariant::Secondary)
                 .render(theme),
-            button("Filters", |_: &mut S| {})
-                .variant(ButtonVariant::Ghost)
+            button("Active", |_: &mut S| {})
+                .variant(ButtonVariant::Secondary)
                 .active(true)
                 .render(theme),
-            button("Export", |_: &mut S| {})
-                .variant(ButtonVariant::Ghost)
+            button("Disabled", |_: &mut S| {})
+                .variant(ButtonVariant::Secondary)
+                .disabled(true)
+                .render(theme),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .gap(Length::px(8.0))
+    });
+
+    let danger_example = with_source!(theme, {
+        flex_row((
+            button("Danger", |_: &mut S| {})
+                .variant(ButtonVariant::Danger)
+                .render(theme),
+            button("Active", |_: &mut S| {})
+                .variant(ButtonVariant::Danger)
+                .active(true)
+                .render(theme),
+            button("Disabled", |_: &mut S| {})
+                .variant(ButtonVariant::Danger)
                 .disabled(true)
                 .render(theme),
         ))
@@ -106,14 +97,14 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
 
     let warning_example = with_source!(theme, {
         flex_row((
-            button("Archive", |_: &mut S| {})
+            button("Warning", |_: &mut S| {})
                 .variant(ButtonVariant::Warning)
                 .render(theme),
-            button("Overwrite", |_: &mut S| {})
+            button("Active", |_: &mut S| {})
                 .variant(ButtonVariant::Warning)
                 .active(true)
                 .render(theme),
-            button("Reset", |_: &mut S| {})
+            button("Disabled", |_: &mut S| {})
                 .variant(ButtonVariant::Warning)
                 .disabled(true)
                 .render(theme),
@@ -122,20 +113,93 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
         .gap(Length::px(8.0))
     });
 
-    // Downward-pointing chevron in unit-square space, used as a dropdown caret.
-    let caret = {
-        let mut p = BezPath::new();
-        p.move_to((0.2, 0.35));
-        p.line_to((0.5, 0.65));
-        p.line_to((0.8, 0.35));
-        p
-    };
+    let success_example = with_source!(theme, {
+        flex_row((
+            button("Success", |_: &mut S| {})
+                .variant(ButtonVariant::Success)
+                .render(theme),
+            button("Active", |_: &mut S| {})
+                .variant(ButtonVariant::Success)
+                .active(true)
+                .render(theme),
+            button("Disabled", |_: &mut S| {})
+                .variant(ButtonVariant::Success)
+                .disabled(true)
+                .render(theme),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .gap(Length::px(8.0))
+    });
+
+    let info_example = with_source!(theme, {
+        flex_row((
+            button("Info", |_: &mut S| {})
+                .variant(ButtonVariant::Info)
+                .render(theme),
+            button("Active", |_: &mut S| {})
+                .variant(ButtonVariant::Info)
+                .active(true)
+                .render(theme),
+            button("Disabled", |_: &mut S| {})
+                .variant(ButtonVariant::Info)
+                .disabled(true)
+                .render(theme),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .gap(Length::px(8.0))
+    });
+
+    let ghost_example = with_source!(theme, {
+        flex_row((
+            button("Ghost", |_: &mut S| {})
+                .variant(ButtonVariant::Ghost)
+                .render(theme),
+            button("Active", |_: &mut S| {})
+                .variant(ButtonVariant::Ghost)
+                .active(true)
+                .render(theme),
+            button("Disabled", |_: &mut S| {})
+                .variant(ButtonVariant::Ghost)
+                .disabled(true)
+                .render(theme),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .gap(Length::px(8.0))
+    });
+
+    let link_example = with_source!(theme, {
+        flex_row((
+            button("Link", |_: &mut S| {})
+                .variant(ButtonVariant::Link)
+                .render(theme),
+            button("Disabled", |_: &mut S| {})
+                .variant(ButtonVariant::Link)
+                .disabled(true)
+                .render(theme),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .gap(Length::px(8.0))
+    });
+
+    let text_example = with_source!(theme, {
+        flex_row((
+            button("Text", |_: &mut S| {})
+                .variant(ButtonVariant::Text)
+                .render(theme),
+            button("Disabled", |_: &mut S| {})
+                .variant(ButtonVariant::Text)
+                .disabled(true)
+                .render(theme),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .gap(Length::px(8.0))
+    });
+
+    // --- loading & trailing icon ---
 
     let loading_example = with_source!(theme, {
         flex_row((
-            button("Saving…", |_: &mut S| {})
-                .loading(true)
-                .render(theme),
+            button("Saving…", |_: &mut S| {}).loading(true).render(theme),
             button("Saving…", |_: &mut S| {})
                 .variant(ButtonVariant::Primary)
                 .loading(true)
@@ -144,6 +208,14 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(8.0))
     });
+
+    let caret = {
+        let mut p = BezPath::new();
+        p.move_to((0.2, 0.35));
+        p.line_to((0.5, 0.65));
+        p.line_to((0.8, 0.35));
+        p
+    };
 
     let trailing_icon_example = with_source!(theme, {
         flex_row((
@@ -159,32 +231,42 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
         .gap(Length::px(8.0))
     });
 
-    let variants = flex_col((
-        header("Default — hover for surface fill, press for darker fill"),
+    // Split into two nested flex_cols to stay within xilem's tuple-impl limit.
+    let top = flex_col((
+        header("Default"),
         default_example,
-        header("Active (host-controlled toggle)"),
-        active_example,
-        header("Primary variant — teal fill, always-visible background"),
+        header("Primary — teal fill"),
         primary_example,
-        header("Ghost variant — always-visible border, no fill at rest"),
-        ghost_example,
-        header("Warning variant — amber tones on hover / active"),
-        warning_example,
-        header("Danger variant — coral tones on hover / active"),
+        header("Secondary — violet accent"),
+        secondary_example,
+        header("Danger — coral accent"),
         danger_example,
-        header("Disabled — muted text, no interaction"),
-        disabled_example,
+        header("Warning — amber accent"),
+        warning_example,
+        header("Success — green accent"),
+        success_example,
+        header("Info — blue accent"),
+        info_example,
     ))
     .cross_axis_alignment(CrossAxisAlignment::Start)
     .gap(Length::px(16.0));
 
-    flex_col((
-        variants,
-        header("Loading — spinner in leading slot, interaction blocked"),
+    let bottom = flex_col((
+        header("Ghost — always-visible border"),
+        ghost_example,
+        header("Link — teal text, no frame"),
+        link_example,
+        header("Text — flat, no frame or hover fill"),
+        text_example,
+        header("Loading — spinner, interaction blocked"),
         loading_example,
-        header("Trailing icon — dropdown caret at right edge"),
+        header("Trailing icon"),
         trailing_icon_example,
     ))
     .cross_axis_alignment(CrossAxisAlignment::Start)
-    .gap(Length::px(16.0))
+    .gap(Length::px(16.0));
+
+    flex_col((top, bottom))
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .gap(Length::px(16.0))
 }

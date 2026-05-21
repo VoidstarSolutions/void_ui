@@ -288,6 +288,51 @@ impl ThemedButton {
                 let border = if self.active { p.teal } else { Color::TRANSPARENT };
                 (bg, border)
             }
+            ButtonVariant::Warning => {
+                let bg = if pressed {
+                    p.amber
+                } else if self.active || hovered {
+                    p.amber_soft
+                } else {
+                    Color::TRANSPARENT
+                };
+                let border = if self.active { p.amber } else { Color::TRANSPARENT };
+                (bg, border)
+            }
+            ButtonVariant::Secondary => {
+                let bg = if pressed {
+                    p.violet
+                } else if self.active || hovered {
+                    p.violet_soft
+                } else {
+                    Color::TRANSPARENT
+                };
+                let border = if self.active { p.violet } else { Color::TRANSPARENT };
+                (bg, border)
+            }
+            ButtonVariant::Success => {
+                let bg = if pressed {
+                    p.green
+                } else if self.active || hovered {
+                    p.green_soft
+                } else {
+                    Color::TRANSPARENT
+                };
+                let border = if self.active { p.green } else { Color::TRANSPARENT };
+                (bg, border)
+            }
+            ButtonVariant::Info => {
+                let bg = if pressed {
+                    p.blue
+                } else if self.active || hovered {
+                    p.blue_soft
+                } else {
+                    Color::TRANSPARENT
+                };
+                let border = if self.active { p.blue } else { Color::TRANSPARENT };
+                (bg, border)
+            }
+            // Ghost: always-visible border, fill on hover/press.
             ButtonVariant::Ghost => {
                 let bg = if pressed {
                     p.surface_hi
@@ -299,21 +344,8 @@ impl ThemedButton {
                 let border = if hovered { p.border_strong } else { p.border };
                 (bg, border)
             }
-            ButtonVariant::Warning => {
-                let bg = if pressed {
-                    p.amber
-                } else if self.active || hovered {
-                    p.amber_soft
-                } else {
-                    Color::TRANSPARENT
-                };
-                let border = if self.active {
-                    p.amber
-                } else {
-                    Color::TRANSPARENT
-                };
-                (bg, border)
-            }
+            // Link and Text: no background or border — appearance comes from text color.
+            ButtonVariant::Link | ButtonVariant::Text => (Color::TRANSPARENT, Color::TRANSPARENT),
         }
     }
 }

@@ -22,8 +22,18 @@ pub enum ButtonVariant {
     Danger,
     /// Primary action — teal fill, always-visible background.
     Primary,
+    /// Secondary action — violet accent tones, less prominent than Primary.
+    Secondary,
+    /// Destructive-adjacent caution — amber accent tones.
+    Warning,
+    /// Positive confirmation — green accent tones.
+    Success,
+    /// Neutral information — blue accent tones.
+    Info,
     /// Subtle — always-visible border, no fill until hover.
     Ghost,
-    /// Cautionary action — amber accent tones on hover and active.
-    Warning,
+    /// Hyperlink style — teal text, no background or border.
+    Link,
+    /// Completely flat — no background, no border, no hover fill.
+    Text,
 }

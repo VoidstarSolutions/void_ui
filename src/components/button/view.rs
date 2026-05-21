@@ -152,6 +152,8 @@ where
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
         let text_color = if self.disabled {
             self.theme.palette.text_faint
+        } else if self.variant == ButtonVariant::Link {
+            self.theme.palette.teal
         } else {
             self.theme.palette.text
         };
@@ -188,6 +190,8 @@ where
             ThemedButton::set_theme(&mut element, &self.theme);
             let text_color = if self.disabled {
                 self.theme.palette.text_faint
+            } else if self.variant == ButtonVariant::Link {
+                self.theme.palette.teal
             } else {
                 self.theme.palette.text
             };
@@ -209,6 +213,8 @@ where
             ThemedButton::set_disabled(&mut element, self.disabled);
             let text_color = if self.disabled {
                 self.theme.palette.text_faint
+            } else if self.variant == ButtonVariant::Link {
+                self.theme.palette.teal
             } else {
                 self.theme.palette.text
             };
@@ -217,6 +223,19 @@ where
         }
         if self.variant != prev.variant {
             ThemedButton::set_variant(&mut element, self.variant);
+            // Link gains/loses teal text; Text and others revert to default.
+            if !self.disabled
+                && (self.variant == ButtonVariant::Link
+                    || prev.variant == ButtonVariant::Link)
+            {
+                let text_color = if self.variant == ButtonVariant::Link {
+                    self.theme.palette.teal
+                } else {
+                    self.theme.palette.text
+                };
+                let mut child = ThemedButton::child_mut(&mut element);
+                child.insert_prop(ContentColor::new(text_color));
+            }
         }
         // BezPath has no PartialEq — compare Arc pointers instead.
         let icon_changed = match (&self.icon, &prev.icon) {
