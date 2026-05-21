@@ -35,6 +35,7 @@ pub struct Button<F> {
     disabled: bool,
     variant: ButtonVariant,
     icon: Option<Arc<BezPath>>,
+    trailing_icon: Option<Arc<BezPath>>,
     callback: F,
 }
 
@@ -49,6 +50,7 @@ pub fn button<F>(label: impl Into<ArcStr>, callback: F) -> Button<F> {
         disabled: false,
         variant: ButtonVariant::Default,
         icon: None,
+        trailing_icon: None,
         callback,
     }
 }
@@ -81,6 +83,14 @@ impl<F> Button<F> {
         self
     }
 
+    /// Attach a trailing icon (e.g. a dropdown caret).
+    ///
+    /// Same coordinate space and scaling rules as [`Self::icon`].
+    pub fn trailing_icon(mut self, path: BezPath) -> Self {
+        self.trailing_icon = Some(Arc::new(path));
+        self
+    }
+
     /// Materialize the xilem view at the supplied theme.
     pub fn render<State, Action>(self, theme: &Theme) -> ButtonView<F, State, Action>
     where
@@ -94,6 +104,7 @@ impl<F> Button<F> {
             disabled: self.disabled,
             variant: self.variant,
             icon: self.icon,
+            trailing_icon: self.trailing_icon,
             theme: *theme,
             callback: self.callback,
             phantom: PhantomData,
@@ -111,6 +122,7 @@ pub struct ButtonView<F, State, Action> {
     disabled: bool,
     variant: ButtonVariant,
     icon: Option<Arc<BezPath>>,
+    trailing_icon: Option<Arc<BezPath>>,
     theme: Theme,
     callback: F,
     phantom: PhantomData<fn(State) -> Action>,
@@ -141,7 +153,8 @@ where
             .with_active(self.active)
             .with_disabled(self.disabled)
             .with_variant(self.variant)
-            .with_icon(self.icon.clone());
+            .with_icon(self.icon.clone())
+            .with_trailing_icon(self.trailing_icon.clone());
         // `with_action_widget` registers the widget as an action source so that
         // `ButtonPress` events bubble up to this view's `message` handler rather
         // than being dropped by xilem's dispatch loop.
@@ -199,6 +212,14 @@ where
         };
         if icon_changed {
             ThemedButton::set_icon(&mut element, self.icon.clone());
+        }
+        let trailing_icon_changed = match (&self.trailing_icon, &prev.trailing_icon) {
+            (None, None) => false,
+            (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
+            _ => true,
+        };
+        if trailing_icon_changed {
+            ThemedButton::set_trailing_icon(&mut element, self.trailing_icon.clone());
         }
         // Label text is not re-applied here; masonry's Label doesn't expose
         // stable post-construction text mutation. If the label string changes

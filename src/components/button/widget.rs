@@ -59,6 +59,8 @@ pub struct ThemedButton {
     /// Optional leading icon: a unit-square `BezPath` (0..1 coordinate
     /// space) scaled to the theme's UI font size at paint time.
     icon: Option<Arc<BezPath>>,
+    /// Optional trailing icon (e.g. a dropdown caret), painted at the right edge.
+    trailing_icon: Option<Arc<BezPath>>,
 }
 
 // --- MARK: BUILDERS
@@ -76,6 +78,7 @@ impl ThemedButton {
             disabled: false,
             variant: ButtonVariant::Default,
             icon: None,
+            trailing_icon: None,
         }
     }
 
@@ -104,6 +107,13 @@ impl ThemedButton {
     #[must_use]
     pub fn with_icon(mut self, icon: Option<Arc<BezPath>>) -> Self {
         self.icon = icon;
+        self
+    }
+
+    /// Attaches a trailing icon (e.g. a dropdown caret).
+    #[must_use]
+    pub fn with_trailing_icon(mut self, icon: Option<Arc<BezPath>>) -> Self {
+        self.trailing_icon = icon;
         self
     }
 }
@@ -155,6 +165,21 @@ impl ThemedButton {
         };
         if changed {
             this.widget.icon = icon;
+            this.ctx.request_layout();
+            this.ctx.request_paint_only();
+        }
+    }
+
+    /// Replaces the trailing icon. Compares by `Arc` pointer; requests
+    /// layout + repaint only when the icon actually changes.
+    pub fn set_trailing_icon(this: &mut WidgetMut<'_, Self>, icon: Option<Arc<BezPath>>) {
+        let changed = match (&this.widget.trailing_icon, &icon) {
+            (None, None) => false,
+            (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
+            _ => true,
+        };
+        if changed {
+            this.widget.trailing_icon = icon;
             this.ctx.request_layout();
             this.ctx.request_paint_only();
         }
@@ -369,6 +394,11 @@ impl Widget for ThemedButton {
         } else {
             0.0
         };
+        let trailing_extra = if self.trailing_icon.is_some() && axis == Axis::Horizontal {
+            self.icon_size() + ICON_GAP
+        } else {
+            0.0
+        };
         let inner_cross = cross_length.map(|c| Length::px((c.get() - cross_pad).max(0.0)));
         let auto_length = len_req.into();
         let context_size = LayoutSize::maybe(axis.cross(), inner_cross);
@@ -379,7 +409,7 @@ impl Widget for ThemedButton {
             axis,
             inner_cross,
         );
-        Length::px(child_length.get() + main_pad + icon_extra)
+        Length::px(child_length.get() + main_pad + icon_extra + trailing_extra)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
@@ -390,15 +420,19 @@ impl Widget for ThemedButton {
         } else {
             0.0
         };
+        let trailing_extra = if self.trailing_icon.is_some() {
+            self.icon_size() + ICON_GAP
+        } else {
+            0.0
+        };
         let inner = Size::new(
-            (size.width - 2.0 * pad_h - icon_extra).max(0.0),
+            (size.width - 2.0 * pad_h - icon_extra - trailing_extra).max(0.0),
             (size.height - 2.0 * pad_v).max(0.0),
         );
         let child_size = ctx.compute_size(&mut self.child, SizeDef::fit(inner), inner.into());
         ctx.run_layout(&mut self.child, child_size);
 
-        // Label starts immediately after the icon area; no horizontal
-        // centering within the remaining space keeps icon+text as a visual unit.
+        // Label sits between the leading and trailing icon areas.
         let child_x = pad_h + icon_extra;
         let child_y = pad_v + ((inner.height - child_size.height) * 0.5).max(0.0);
         ctx.place_child(&mut self.child, Point::new(child_x, child_y));
@@ -443,12 +477,20 @@ impl Widget for ThemedButton {
                 .draw();
         }
 
+        let icon_color = if self.disabled { p.text_faint } else { p.text };
+        let icon_size = self.icon_size();
+        let pad_h = f64::from(self.theme.density.button_pad_h);
+
         if let Some(icon) = &self.icon {
-            let icon_size = self.icon_size();
             let icon_y = (size.height - icon_size) * 0.5;
-            let icon_color = if self.disabled { p.text_faint } else { p.text };
-            let pad_h = f64::from(self.theme.density.button_pad_h);
             let transform = Affine::translate((pad_h, icon_y)) * Affine::scale(icon_size);
+            painter.fill(transform * icon.as_ref(), icon_color).draw();
+        }
+
+        if let Some(icon) = &self.trailing_icon {
+            let icon_y = (size.height - icon_size) * 0.5;
+            let icon_x = size.width - pad_h - icon_size;
+            let transform = Affine::translate((icon_x, icon_y)) * Affine::scale(icon_size);
             painter.fill(transform * icon.as_ref(), icon_color).draw();
         }
     }
