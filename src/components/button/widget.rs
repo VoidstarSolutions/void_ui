@@ -22,7 +22,7 @@ use masonry::core::{
     TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Affine, Axis, BezPath, Point, RoundedRect, Size, Stroke};
+use masonry::kurbo::{Affine, Arc as KurboArc, Axis, BezPath, Point, RoundedRect, Shape, Size, Stroke, Vec2};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use masonry::peniko::Color;
 use masonry::widgets::ButtonPress;
@@ -40,6 +40,24 @@ const FOCUS_RING_WIDTH: f64 = 1.5;
 const FOCUS_RING_INSET: f64 = 2.0;
 /// Gap between a leading icon and the label.
 const ICON_GAP: f64 = 5.0;
+/// Sweep angle (radians) of the spinner arc — leaves a ~60° gap to suggest rotation.
+const SPINNER_SWEEP: f64 = std::f64::consts::TAU * (300.0 / 360.0);
+
+/// Returns a partial-circle `BezPath` in unit-square (0..1) space, used as the
+/// loading spinner icon. Scaled to `icon_size` at paint time like any other icon.
+fn spinner_path() -> BezPath {
+    // TODO: animate via request_anim_frame once masonry exposes a stable API.
+    let arc = KurboArc {
+        center: Point::new(0.5, 0.5),
+        radii: Vec2::new(0.45, 0.45),
+        start_angle: 0.0,
+        sweep_angle: SPINNER_SWEEP,
+        x_rotation: 0.0,
+    };
+    let mut path = BezPath::new();
+    arc.into_path(0.01).iter().for_each(|el| path.push(el));
+    path
+}
 
 /// Themed, interactive button widget.
 ///
@@ -61,6 +79,8 @@ pub struct ThemedButton {
     icon: Option<Arc<BezPath>>,
     /// Optional trailing icon (e.g. a dropdown caret), painted at the right edge.
     trailing_icon: Option<Arc<BezPath>>,
+    /// When true, shows a spinner and blocks all interaction.
+    loading: bool,
 }
 
 // --- MARK: BUILDERS
@@ -79,6 +99,7 @@ impl ThemedButton {
             variant: ButtonVariant::Default,
             icon: None,
             trailing_icon: None,
+            loading: false,
         }
     }
 
@@ -114,6 +135,13 @@ impl ThemedButton {
     #[must_use]
     pub fn with_trailing_icon(mut self, icon: Option<Arc<BezPath>>) -> Self {
         self.trailing_icon = icon;
+        self
+    }
+
+    /// Shows a spinner and blocks all interaction.
+    #[must_use]
+    pub fn with_loading(mut self, loading: bool) -> Self {
+        self.loading = loading;
         self
     }
 }
@@ -181,6 +209,14 @@ impl ThemedButton {
         if changed {
             this.widget.trailing_icon = icon;
             this.ctx.request_layout();
+            this.ctx.request_paint_only();
+        }
+    }
+
+    /// Sets the loading state. Requests a repaint on change.
+    pub fn set_loading(this: &mut WidgetMut<'_, Self>, loading: bool) {
+        if this.widget.loading != loading {
+            this.widget.loading = loading;
             this.ctx.request_paint_only();
         }
     }
@@ -292,7 +328,7 @@ impl Widget for ThemedButton {
         _props: &mut PropertiesMut<'_>,
         event: &PointerEvent,
     ) {
-        if self.disabled {
+        if self.disabled || self.loading {
             return;
         }
         match event {
@@ -326,7 +362,7 @@ impl Widget for ThemedButton {
         _props: &mut PropertiesMut<'_>,
         event: &TextEvent,
     ) {
-        if self.disabled {
+        if self.disabled || self.loading {
             return;
         }
         if let TextEvent::Keyboard(event) = event
@@ -344,7 +380,7 @@ impl Widget for ThemedButton {
         _props: &mut PropertiesMut<'_>,
         event: &AccessEvent,
     ) {
-        if self.disabled {
+        if self.disabled || self.loading {
             return;
         }
         if event.action == accesskit::Action::Click {
@@ -481,7 +517,16 @@ impl Widget for ThemedButton {
         let icon_size = self.icon_size();
         let pad_h = f64::from(self.theme.density.button_pad_h);
 
-        if let Some(icon) = &self.icon {
+        // When loading, replace the leading icon slot (or paint spinner at the
+        // leading position when there is no icon) with a partial-circle spinner.
+        if self.loading {
+            let spinner = spinner_path();
+            let icon_y = (size.height - icon_size) * 0.5;
+            let transform = Affine::translate((pad_h, icon_y)) * Affine::scale(icon_size);
+            painter
+                .stroke(transform * &spinner, &Stroke::new(0.1), p.text_muted)
+                .draw();
+        } else if let Some(icon) = &self.icon {
             let icon_y = (size.height - icon_size) * 0.5;
             let transform = Affine::translate((pad_h, icon_y)) * Affine::scale(icon_size);
             painter.fill(transform * icon.as_ref(), icon_color).draw();
@@ -509,7 +554,7 @@ impl Widget for ThemedButton {
         // `ctx.is_disabled()` is true (see masonry passes/accessibility.rs).
         // We additionally suppress the Click action so AT clients don't see
         // a disabled button as an actionable target.
-        if !self.disabled {
+        if !self.disabled && !self.loading {
             node.add_action(accesskit::Action::Click);
         }
     }

@@ -10,6 +10,8 @@ use xilem::masonry::layout::Length;
 use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, flex_col, flex_row, label};
 
+use masonry::kurbo::BezPath;
+
 use super::button;
 use crate::Theme;
 use crate::components::ButtonVariant;
@@ -29,27 +31,15 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     };
 
     let default_example = with_source!(theme, {
-        flex_row((
-            button("Reset view", |_: &mut S| {}).render(theme),
-            button("Annotate", |_: &mut S| {}).render(theme),
-            button("Inspector", |_: &mut S| {}).render(theme),
-        ))
-        .cross_axis_alignment(CrossAxisAlignment::Center)
-        .gap(Length::px(8.0))
+        flex_row((button("Reset view", |_: &mut S| {}).render(theme),))
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .gap(Length::px(8.0))
     });
 
     let active_example = with_source!(theme, {
-        flex_row((
-            button("Reset view", |_: &mut S| {})
-                .active(true)
-                .render(theme),
-            button("Annotate", |_: &mut S| {})
-                .active(true)
-                .render(theme),
-            button("Inspector", |_: &mut S| {})
-                .active(true)
-                .render(theme),
-        ))
+        flex_row((button("Reset view", |_: &mut S| {})
+            .active(true)
+            .render(theme),))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(8.0))
     });
@@ -59,26 +49,16 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
             button("Delete", |_: &mut S| {})
                 .variant(ButtonVariant::Danger)
                 .render(theme),
-            button("Remove all", |_: &mut S| {})
-                .variant(ButtonVariant::Danger)
-                .render(theme),
-            button("Clear history", |_: &mut S| {})
+            button("Delete", |_: &mut S| {})
                 .variant(ButtonVariant::Danger)
                 .active(true)
                 .render(theme),
         ))
-        .cross_axis_alignment(CrossAxisAlignment::Center)
-        .gap(Length::px(8.0))
     });
 
     let disabled_example = with_source!(theme, {
         flex_row((
-            button("Reset view", |_: &mut S| {})
-                .disabled(true)
-                .render(theme),
-            button("Annotate", |_: &mut S| {})
-                .disabled(true)
-                .render(theme),
+            button("Reset", |_: &mut S| {}).disabled(true).render(theme),
             button("Delete", |_: &mut S| {})
                 .variant(ButtonVariant::Danger)
                 .disabled(true)
@@ -142,7 +122,44 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
         .gap(Length::px(8.0))
     });
 
-    flex_col((
+    // Downward-pointing chevron in unit-square space, used as a dropdown caret.
+    let caret = {
+        let mut p = BezPath::new();
+        p.move_to((0.2, 0.35));
+        p.line_to((0.5, 0.65));
+        p.line_to((0.8, 0.35));
+        p
+    };
+
+    let loading_example = with_source!(theme, {
+        flex_row((
+            button("Saving…", |_: &mut S| {})
+                .loading(true)
+                .render(theme),
+            button("Saving…", |_: &mut S| {})
+                .variant(ButtonVariant::Primary)
+                .loading(true)
+                .render(theme),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .gap(Length::px(8.0))
+    });
+
+    let trailing_icon_example = with_source!(theme, {
+        flex_row((
+            button("More options", |_: &mut S| {})
+                .trailing_icon(caret.clone())
+                .render(theme),
+            button("More options", |_: &mut S| {})
+                .variant(ButtonVariant::Ghost)
+                .trailing_icon(caret.clone())
+                .render(theme),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .gap(Length::px(8.0))
+    });
+
+    let variants = flex_col((
         header("Default — hover for surface fill, press for darker fill"),
         default_example,
         header("Active (host-controlled toggle)"),
@@ -157,6 +174,16 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
         danger_example,
         header("Disabled — muted text, no interaction"),
         disabled_example,
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Start)
+    .gap(Length::px(16.0));
+
+    flex_col((
+        variants,
+        header("Loading — spinner in leading slot, interaction blocked"),
+        loading_example,
+        header("Trailing icon — dropdown caret at right edge"),
+        trailing_icon_example,
     ))
     .cross_axis_alignment(CrossAxisAlignment::Start)
     .gap(Length::px(16.0))

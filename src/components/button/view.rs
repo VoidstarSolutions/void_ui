@@ -33,6 +33,7 @@ pub struct Button<F> {
     label: ArcStr,
     active: bool,
     disabled: bool,
+    loading: bool,
     variant: ButtonVariant,
     icon: Option<Arc<BezPath>>,
     trailing_icon: Option<Arc<BezPath>>,
@@ -48,6 +49,7 @@ pub fn button<F>(label: impl Into<ArcStr>, callback: F) -> Button<F> {
         label: label.into(),
         active: false,
         disabled: false,
+        loading: false,
         variant: ButtonVariant::Default,
         icon: None,
         trailing_icon: None,
@@ -65,6 +67,12 @@ impl<F> Button<F> {
     /// Suppress all interaction and mute the visual appearance.
     pub fn disabled(mut self, on: bool) -> Self {
         self.disabled = on;
+        self
+    }
+
+    /// Show a spinner and block all interaction until the operation completes.
+    pub fn loading(mut self, on: bool) -> Self {
+        self.loading = on;
         self
     }
 
@@ -102,6 +110,7 @@ impl<F> Button<F> {
             label: self.label,
             active: self.active,
             disabled: self.disabled,
+            loading: self.loading,
             variant: self.variant,
             icon: self.icon,
             trailing_icon: self.trailing_icon,
@@ -120,6 +129,7 @@ pub struct ButtonView<F, State, Action> {
     label: ArcStr,
     active: bool,
     disabled: bool,
+    loading: bool,
     variant: ButtonVariant,
     icon: Option<Arc<BezPath>>,
     trailing_icon: Option<Arc<BezPath>>,
@@ -152,6 +162,7 @@ where
         let widget = ThemedButton::new(label, &self.theme)
             .with_active(self.active)
             .with_disabled(self.disabled)
+            .with_loading(self.loading)
             .with_variant(self.variant)
             .with_icon(self.icon.clone())
             .with_trailing_icon(self.trailing_icon.clone());
@@ -190,6 +201,9 @@ where
         }
         if self.active != prev.active {
             ThemedButton::set_active(&mut element, self.active);
+        }
+        if self.loading != prev.loading {
+            ThemedButton::set_loading(&mut element, self.loading);
         }
         if self.disabled != prev.disabled {
             ThemedButton::set_disabled(&mut element, self.disabled);
