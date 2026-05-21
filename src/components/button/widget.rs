@@ -248,6 +248,9 @@ impl Widget for ThemedButton {
                 button: button @ Some(PointerButton::Primary),
                 ..
             }) => {
+                // Require both active (pointer was captured on Down) and hovered
+                // (pointer is still inside the button) before firing. This lets
+                // the user drag out of the button to cancel the press.
                 if ctx.is_active() && ctx.is_hovered() {
                     ctx.submit_action::<Self::Action>(ButtonPress { button: *button });
                 }

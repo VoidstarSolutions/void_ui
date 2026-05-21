@@ -142,6 +142,9 @@ where
             .with_disabled(self.disabled)
             .with_variant(self.variant)
             .with_icon(self.icon.clone());
+        // `with_action_widget` registers the widget as an action source so that
+        // `ButtonPress` events bubble up to this view's `message` handler rather
+        // than being dropped by xilem's dispatch loop.
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, ())
     }
@@ -154,6 +157,9 @@ where
         mut element: Mut<'_, Self::Element>,
         _app_state: &mut State,
     ) {
+        // Only push properties that actually changed; each setter on ThemedButton
+        // guards behind a `!=` check and calls `request_layout` / `request_paint_only`
+        // only when needed, so diffing here avoids spurious repaints.
         if self.theme != prev.theme {
             ThemedButton::set_theme(&mut element, &self.theme);
             let text_color = if self.disabled {
@@ -217,6 +223,9 @@ where
         _element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
+        // `take_message` consumes the `ButtonPress` posted by the widget; returning
+        // `Stale` for any other message type tells xilem to skip this view in its
+        // dispatch walk (the message was meant for a different handler).
         match message.take_message::<ButtonPress>() {
             Some(_press) => MessageResult::Action((self.callback)(app_state)),
             None => MessageResult::Stale,
