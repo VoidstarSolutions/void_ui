@@ -6,22 +6,49 @@
 //! `with_source!`.
 
 use masonry::kurbo::BezPath;
-use xilem::WidgetView;
 use xilem::masonry::layout::Length;
+use xilem::masonry::widgets::Passthrough;
 use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, flex_col, flex_row, label};
+use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
+use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 
 use super::button;
 use crate::Theme;
 use crate::components::ButtonVariant;
+use crate::components::checkbox::checkbox;
 use crate::with_source;
+
+struct ButtonDemoState {
+    disabled: bool,
+}
+
+type InnerView = Box<AnyWidgetView<ButtonDemoState>>;
+type InnerViewState = <InnerView as View<ButtonDemoState, (), ViewCtx>>::ViewState;
+
+/// Opaque state owned by the button demo panel.
+pub struct ButtonDemoPanel {
+    theme: Theme,
+}
+
+#[doc(hidden)]
+pub struct ButtonDemoPanelState {
+    state: ButtonDemoState,
+    inner_view: InnerView,
+    inner_state: InnerViewState,
+}
 
 /// Renders the Button demo panel.
 ///
-/// Covers all 10 named variants, plus active / disabled / loading / trailing-icon
-/// states. Callbacks are no-ops — the panel exercises visual states only.
+/// Includes a "Disabled" checkbox that toggles all button variants between
+/// enabled and disabled. Covers all 10 named variants plus loading and
+/// trailing-icon states.
 #[must_use]
-pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
+pub fn panel(theme: &Theme) -> ButtonDemoPanel {
+    ButtonDemoPanel { theme: *theme }
+}
+
+fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<ButtonDemoState> + use<> {
     let header = |text: &'static str| {
         label(text)
             .text_size(theme.typography.size_caption)
@@ -29,37 +56,57 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
             .color(theme.palette.text_faint)
     };
 
-    // --- variants (rest / active / disabled) ---
+    let disabled = state.disabled;
+
+    let disabled_toggle = checkbox(
+        disabled,
+        |s: &mut ButtonDemoState| s.disabled = !s.disabled,
+    )
+    .label("Disabled")
+    .render(theme);
+
+    // --- variants ---
 
     let default_example = with_source!(theme, {
         flex_row((
-            button("Default", |_: &mut S| {}).render(theme),
-            button("Primary", |_: &mut S| {})
+            button("Default", |_: &mut ButtonDemoState| {})
+                .disabled(disabled)
+                .render(theme),
+            button("Primary", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Primary)
+                .disabled(disabled)
                 .render(theme),
-            button("Secondary", |_: &mut S| {})
+            button("Secondary", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Secondary)
+                .disabled(disabled)
                 .render(theme),
-            button("Danger", |_: &mut S| {})
+            button("Danger", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Danger)
+                .disabled(disabled)
                 .render(theme),
-            button("Warning", |_: &mut S| {})
+            button("Warning", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Warning)
+                .disabled(disabled)
                 .render(theme),
-            button("Success", |_: &mut S| {})
+            button("Success", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Success)
+                .disabled(disabled)
                 .render(theme),
-            button("Info", |_: &mut S| {})
+            button("Info", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Info)
+                .disabled(disabled)
                 .render(theme),
-            button("Ghost", |_: &mut S| {})
+            button("Ghost", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Ghost)
+                .disabled(disabled)
                 .render(theme),
-            button("Link", |_: &mut S| {})
+            button("Link", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Link)
+                .disabled(disabled)
                 .render(theme),
-            button("Text", |_: &mut S| {})
+            button("Text", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Text)
+                .disabled(disabled)
                 .render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Center)
@@ -70,12 +117,14 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
 
     let loading_example = with_source!(theme, {
         flex_row((
-            button("Saving…", |_: &mut S| {})
+            button("Saving…", |_: &mut ButtonDemoState| {})
                 .loading(true)
+                .disabled(disabled)
                 .render(theme),
-            button("Saving…", |_: &mut S| {})
+            button("Saving…", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Primary)
                 .loading(true)
+                .disabled(disabled)
                 .render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Center)
@@ -92,20 +141,21 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
 
     let trailing_icon_example = with_source!(theme, {
         flex_row((
-            button("More options", |_: &mut S| {})
+            button("More options", |_: &mut ButtonDemoState| {})
                 .trailing_icon(caret.clone())
+                .disabled(disabled)
                 .render(theme),
-            button("More options", |_: &mut S| {})
+            button("More options", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Ghost)
                 .trailing_icon(caret.clone())
+                .disabled(disabled)
                 .render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(8.0))
     });
 
-    // Split into two nested flex_cols to stay within xilem's tuple-impl limit.
-    let top = flex_col((header("Default"), default_example))
+    let top = flex_col((header("Variants"), default_example))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(16.0));
 
@@ -118,7 +168,54 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     .cross_axis_alignment(CrossAxisAlignment::Start)
     .gap(Length::px(16.0));
 
-    flex_col((top, bottom))
+    flex_col((disabled_toggle, top, bottom))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(16.0))
+}
+
+impl ViewMarker for ButtonDemoPanel {}
+
+impl<S: 'static> View<S, (), ViewCtx> for ButtonDemoPanel {
+    type ViewState = ButtonDemoPanelState;
+    type Element = Pod<Passthrough>;
+
+    fn build(&self, ctx: &mut ViewCtx, _: &mut S) -> (Self::Element, Self::ViewState) {
+        let mut state = ButtonDemoState { disabled: false };
+        let inner_view: InnerView = Box::new(build_inner(&self.theme, &state));
+        let (element, inner_state) = inner_view.build(ctx, &mut state);
+        (element, ButtonDemoPanelState { state, inner_view, inner_state })
+    }
+
+    fn rebuild(
+        &self,
+        _prev: &Self,
+        vs: &mut ButtonDemoPanelState,
+        ctx: &mut ViewCtx,
+        element: Mut<'_, Pod<Passthrough>>,
+        _: &mut S,
+    ) {
+        let new_inner: InnerView = Box::new(build_inner(&self.theme, &vs.state));
+        new_inner.rebuild(&vs.inner_view, &mut vs.inner_state, ctx, element, &mut vs.state);
+        vs.inner_view = new_inner;
+    }
+
+    fn teardown(
+        &self,
+        vs: &mut ButtonDemoPanelState,
+        ctx: &mut ViewCtx,
+        element: Mut<'_, Pod<Passthrough>>,
+    ) {
+        vs.inner_view.teardown(&mut vs.inner_state, ctx, element);
+    }
+
+    fn message(
+        &self,
+        vs: &mut ButtonDemoPanelState,
+        message: &mut MessageCtx,
+        element: Mut<'_, Pod<Passthrough>>,
+        _: &mut S,
+    ) -> MessageResult<()> {
+        vs.inner_view
+            .message(&mut vs.inner_state, message, element, &mut vs.state)
+    }
 }
