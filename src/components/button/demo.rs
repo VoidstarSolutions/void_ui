@@ -6,12 +6,12 @@
 //! `with_source!`.
 
 use masonry::kurbo::BezPath;
+use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::layout::Length;
 use xilem::masonry::widgets::Passthrough;
 use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, flex_col, flex_row, label};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
-use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 
 use super::button;
 use crate::Theme;
@@ -56,57 +56,58 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
             .color(theme.palette.text_faint)
     };
 
-    let disabled = state.disabled;
+    let disabled_bool = state.disabled;
 
-    let disabled_toggle = checkbox(
-        disabled,
-        |s: &mut ButtonDemoState| s.disabled = !s.disabled,
-    )
-    .label("Disabled")
-    .render(theme);
+    let disabled_toggle = flex_row(
+        checkbox(disabled_bool, |s: &mut ButtonDemoState| {
+            s.disabled = !s.disabled
+        })
+        .label("disabled_bool")
+        .render(theme),
+    );
 
     // --- variants ---
 
     let default_example = with_source!(theme, {
         flex_row((
             button("Default", |_: &mut ButtonDemoState| {})
-                .disabled(disabled)
+                .disabled(disabled_bool)
                 .render(theme),
             button("Primary", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Primary)
-                .disabled(disabled)
+                .disabled(disabled_bool)
                 .render(theme),
             button("Secondary", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Secondary)
-                .disabled(disabled)
+                .disabled(disabled_bool)
                 .render(theme),
             button("Danger", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Danger)
-                .disabled(disabled)
+                .disabled(disabled_bool)
                 .render(theme),
             button("Warning", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Warning)
-                .disabled(disabled)
+                .disabled(disabled_bool)
                 .render(theme),
             button("Success", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Success)
-                .disabled(disabled)
+                .disabled(disabled_bool)
                 .render(theme),
             button("Info", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Info)
-                .disabled(disabled)
+                .disabled(disabled_bool)
                 .render(theme),
             button("Ghost", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Ghost)
-                .disabled(disabled)
+                .disabled(disabled_bool)
                 .render(theme),
             button("Link", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Link)
-                .disabled(disabled)
+                .disabled(disabled_bool)
                 .render(theme),
             button("Text", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Text)
-                .disabled(disabled)
+                .disabled(disabled_bool)
                 .render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Center)
@@ -119,12 +120,12 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
         flex_row((
             button("Saving…", |_: &mut ButtonDemoState| {})
                 .loading(true)
-                .disabled(disabled)
+                .disabled(disabled_bool)
                 .render(theme),
             button("Saving…", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Primary)
                 .loading(true)
-                .disabled(disabled)
+                .disabled(disabled_bool)
                 .render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Center)
@@ -143,12 +144,12 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
         flex_row((
             button("More options", |_: &mut ButtonDemoState| {})
                 .trailing_icon(caret.clone())
-                .disabled(disabled)
+                .disabled(disabled_bool)
                 .render(theme),
             button("More options", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Ghost)
                 .trailing_icon(caret.clone())
-                .disabled(disabled)
+                .disabled(disabled_bool)
                 .render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Center)
@@ -183,7 +184,14 @@ impl<S: 'static> View<S, (), ViewCtx> for ButtonDemoPanel {
         let mut state = ButtonDemoState { disabled: false };
         let inner_view: InnerView = Box::new(build_inner(&self.theme, &state));
         let (element, inner_state) = inner_view.build(ctx, &mut state);
-        (element, ButtonDemoPanelState { state, inner_view, inner_state })
+        (
+            element,
+            ButtonDemoPanelState {
+                state,
+                inner_view,
+                inner_state,
+            },
+        )
     }
 
     fn rebuild(
@@ -195,7 +203,13 @@ impl<S: 'static> View<S, (), ViewCtx> for ButtonDemoPanel {
         _: &mut S,
     ) {
         let new_inner: InnerView = Box::new(build_inner(&self.theme, &vs.state));
-        new_inner.rebuild(&vs.inner_view, &mut vs.inner_state, ctx, element, &mut vs.state);
+        new_inner.rebuild(
+            &vs.inner_view,
+            &mut vs.inner_state,
+            ctx,
+            element,
+            &mut vs.state,
+        );
         vs.inner_view = new_inner;
     }
 
