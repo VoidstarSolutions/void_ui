@@ -17,7 +17,6 @@ use xilem::view::{
 use xilem::winit::error::EventLoopError;
 use xilem::{AnyWidgetView, EventLoop, WidgetView, WindowOptions, Xilem};
 
-use void_ui::components::checkbox::demo::CheckboxDemo;
 use void_ui::components::data_grid::demo::{Demo, tick_columns};
 use void_ui::components::{ComponentKind, button, data_grid, sidebar_item};
 use void_ui::layout::flex_wrap;
@@ -28,7 +27,6 @@ struct State {
     focused: ComponentKind,
     theme_panel_open: bool,
     data_grid: Demo,
-    checkbox: CheckboxDemo,
 }
 
 impl State {
@@ -41,11 +39,6 @@ impl State {
             // first open; cheaper than a million but big enough that
             // scrolling has to be real.
             data_grid: Demo::with_initial(100_000),
-            checkbox: CheckboxDemo {
-                bare_b: true,
-                labeled_b: true,
-                ..CheckboxDemo::default()
-            },
         }
     }
 }
@@ -60,7 +53,6 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
     // it captures.
     let dg_row_count = u64::try_from(state.data_grid.ticks.len()).unwrap_or(u64::MAX);
     let dg_base_time_ns = state.data_grid.ticks.first().map_or(0, |t| t.event_ns);
-    let checkbox = state.checkbox.clone();
 
     let workspace = workspace_row(
         focused,
@@ -68,7 +60,6 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
         &theme,
         dg_row_count,
         dg_base_time_ns,
-        &checkbox,
     );
 
     let outer = flex_col((topbar(theme_panel_open, &theme), workspace.flex(1.0)))
@@ -84,13 +75,12 @@ fn workspace_row(
     theme: &Theme,
     dg_row_count: u64,
     dg_base_time_ns: i64,
-    checkbox: &CheckboxDemo,
 ) -> Box<AnyWidgetView<State>> {
     let sidebar_view = sized_box(sidebar(focused, theme))
         .fixed_width(Length::px(180.0))
         .padding(Length::px(12.0))
         .background_color(theme.palette.surface);
-    let main = sized_box(main_pane(focused, theme, dg_row_count, dg_base_time_ns, checkbox))
+    let main = sized_box(main_pane(focused, theme, dg_row_count, dg_base_time_ns))
         .padding(Length::px(20.0))
         .background_color(theme.palette.bg);
 
@@ -178,27 +168,16 @@ fn main_pane(
     theme: &Theme,
     dg_row_count: u64,
     dg_base_time_ns: i64,
-    checkbox: &CheckboxDemo,
 ) -> Box<AnyWidgetView<State>> {
     match focused {
         ComponentKind::Button => Box::new(void_ui::components::button::demo::panel(theme)),
-        ComponentKind::Checkbox => Box::new(checkbox_panel(theme, checkbox)),
+        ComponentKind::Checkbox => Box::new(void_ui::components::checkbox::demo::panel(theme)),
         ComponentKind::DataGrid => Box::new(data_grid_panel(theme, dg_row_count, dg_base_time_ns)),
         ComponentKind::Sidebar => Box::new(void_ui::components::sidebar::demo::panel(theme)),
         ComponentKind::Tooltip => Box::new(void_ui::components::tooltip::demo::panel(theme)),
     }
 }
 
-fn checkbox_panel(theme: &Theme, state: &CheckboxDemo) -> impl WidgetView<State> + use<> {
-    void_ui::components::checkbox::demo::panel(
-        theme,
-        state,
-        |s: &mut State| s.checkbox.bare_a = !s.checkbox.bare_a,
-        |s: &mut State| s.checkbox.bare_b = !s.checkbox.bare_b,
-        |s: &mut State| s.checkbox.labeled_a = !s.checkbox.labeled_a,
-        |s: &mut State| s.checkbox.labeled_b = !s.checkbox.labeled_b,
-    )
-}
 /// Gallery panel for the `data_grid` demo: a small toolbar plus the
 /// grid itself. The toolbar's bulk-selection buttons are convenient
 /// alternates to mouse selection — clicking rows (with optional
