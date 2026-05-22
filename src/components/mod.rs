@@ -13,11 +13,13 @@
 //! the host, not a tree walk.
 
 pub mod button;
+pub mod checkbox;
 pub mod data_grid;
 pub mod sidebar;
 pub mod tooltip;
 
 pub use button::{Button, ButtonVariant, ButtonView, button};
+pub use checkbox::{Checkbox, CheckboxView, checkbox};
 pub use data_grid::{
     CellAlign, ColumnDef, SelectionState, data_grid, optional_text_column, text_column,
 };
@@ -34,6 +36,7 @@ pub use tooltip::{Tooltip, TooltipView, tooltip};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ComponentKind {
     Button,
+    Checkbox,
     DataGrid,
     Sidebar,
     Tooltip,
@@ -45,6 +48,7 @@ impl ComponentKind {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Button => "Button",
+            Self::Checkbox => "Checkbox",
             Self::DataGrid => "Data Grid",
             Self::Sidebar => "Sidebar",
             Self::Tooltip => "Tooltip",
@@ -54,6 +58,12 @@ impl ComponentKind {
     /// Every component in display order.
     #[must_use]
     pub const fn all() -> &'static [Self] {
-        &[Self::Button, Self::DataGrid, Self::Sidebar, Self::Tooltip]
+        &[
+            Self::Button,
+            Self::Checkbox,
+            Self::DataGrid,
+            Self::Sidebar,
+            Self::Tooltip,
+        ]
     }
 }
