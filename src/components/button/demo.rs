@@ -21,6 +21,7 @@ use crate::with_source;
 
 struct ButtonDemoState {
     disabled: bool,
+    active: bool,
 }
 
 type InnerView = Box<AnyWidgetView<ButtonDemoState>>;
@@ -58,6 +59,8 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
 
     let disabled_bool = state.disabled;
 
+    let active_bool = state.active;
+
     let disabled_toggle = flex_row(
         checkbox(disabled_bool, |s: &mut ButtonDemoState| {
             s.disabled = !s.disabled
@@ -66,48 +69,64 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
         .render(theme),
     );
 
+    let active_toggle = flex_row(
+        checkbox(active_bool, |s: &mut ButtonDemoState| s.active = !s.active)
+            .label("active_bool")
+            .render(theme),
+    );
+
     // --- variants ---
 
     let default_example = with_source!(theme, {
         flex_row((
             button("Default", |_: &mut ButtonDemoState| {})
                 .disabled(disabled_bool)
+                .active(active_bool)
                 .render(theme),
             button("Primary", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Primary)
                 .disabled(disabled_bool)
+                .active(active_bool)
                 .render(theme),
             button("Secondary", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Secondary)
                 .disabled(disabled_bool)
+                .active(active_bool)
                 .render(theme),
             button("Danger", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Danger)
                 .disabled(disabled_bool)
+                .active(active_bool)
                 .render(theme),
             button("Warning", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Warning)
                 .disabled(disabled_bool)
+                .active(active_bool)
                 .render(theme),
             button("Success", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Success)
                 .disabled(disabled_bool)
+                .active(active_bool)
                 .render(theme),
             button("Info", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Info)
                 .disabled(disabled_bool)
+                .active(active_bool)
                 .render(theme),
             button("Ghost", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Ghost)
                 .disabled(disabled_bool)
+                .active(active_bool)
                 .render(theme),
             button("Link", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Link)
                 .disabled(disabled_bool)
+                .active(active_bool)
                 .render(theme),
             button("Text", |_: &mut ButtonDemoState| {})
                 .variant(ButtonVariant::Text)
                 .disabled(disabled_bool)
+                .active(active_bool)
                 .render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Center)
@@ -169,7 +188,7 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
     .cross_axis_alignment(CrossAxisAlignment::Start)
     .gap(Length::px(16.0));
 
-    flex_col((disabled_toggle, top, bottom))
+    flex_col((flex_row((disabled_toggle, active_toggle)), top, bottom))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(16.0))
 }
@@ -181,7 +200,10 @@ impl<S: 'static> View<S, (), ViewCtx> for ButtonDemoPanel {
     type Element = Pod<Passthrough>;
 
     fn build(&self, ctx: &mut ViewCtx, _: &mut S) -> (Self::Element, Self::ViewState) {
-        let mut state = ButtonDemoState { disabled: false };
+        let mut state = ButtonDemoState {
+            disabled: false,
+            active: false,
+        };
         let inner_view: InnerView = Box::new(build_inner(&self.theme, &state));
         let (element, inner_state) = inner_view.build(ctx, &mut state);
         (
