@@ -7,7 +7,7 @@
 //! Emits [`CheckboxPress`] on primary-pointer release inside the widget and
 //! on Space/Enter while focused.
 
-use masonry::accesskit::{self, Node, Role};
+use masonry::accesskit::{self, Node, Role, Toggled};
 use masonry::core::keyboard::{Key, NamedKey};
 use masonry::core::{
     AccessCtx, AccessEvent, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, PaintCtx,
@@ -70,11 +70,12 @@ impl CheckboxWidget {
 
 // --- MARK: WIDGETMUT
 impl CheckboxWidget {
-    /// Sets the checked state. Requests a repaint on change.
+    /// Sets the checked state. Requests a repaint and accessibility update on change.
     pub fn set_checked(this: &mut WidgetMut<'_, Self>, checked: bool) {
         if this.widget.checked != checked {
             this.widget.checked = checked;
             this.ctx.request_paint_only();
+            this.ctx.request_accessibility_update();
         }
     }
 
@@ -99,6 +100,23 @@ impl CheckboxWidget {
     /// Returns a mutable reference to the label child, if one exists.
     pub fn label_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, dyn Widget>> {
         this.widget.label.as_mut().map(|l| this.ctx.get_mut(l))
+    }
+
+    /// Attaches a new label child, replacing any existing one.
+    pub fn attach_label(this: &mut WidgetMut<'_, Self>, label: NewWidget<impl Widget + ?Sized>) {
+        if let Some(old) = this.widget.label.take() {
+            this.ctx.remove_child(old);
+        }
+        this.widget.label = Some(label.erased().to_pod());
+        this.ctx.children_changed();
+    }
+
+    /// Detaches and removes the label child.
+    pub fn detach_label(this: &mut WidgetMut<'_, Self>) {
+        if let Some(old) = this.widget.label.take() {
+            this.ctx.remove_child(old);
+            this.ctx.children_changed();
+        }
     }
 }
 
@@ -348,6 +366,11 @@ impl Widget for CheckboxWidget {
         if !self.disabled {
             node.add_action(accesskit::Action::Click);
         }
+        node.set_toggled(if self.checked {
+            Toggled::True
+        } else {
+            Toggled::False
+        });
     }
 
     fn children_ids(&self) -> ChildrenIds {

@@ -157,8 +157,37 @@ where
                 lbl.insert_prop(ContentColor::new(text_color));
             }
         }
-        // Label text is not re-applied post-construction — xilem rebuilds the
-        // whole widget when identity changes (same constraint as button labels).
+        if self.label != prev.label {
+            let text_color = if self.disabled {
+                self.theme.palette.text_faint
+            } else {
+                self.theme.palette.text
+            };
+            match (&self.label, &prev.label) {
+                (Some(text), Some(_)) => {
+                    if let Some(mut lbl) = CheckboxWidget::label_mut(&mut element) {
+                        lbl.insert_prop(ContentColor::new(text_color));
+                        let mut typed = lbl.downcast::<Label>();
+                        Label::insert_style(
+                            &mut typed,
+                            StyleProperty::FontSize(self.theme.density.ui_font_size),
+                        );
+                        Label::set_text(&mut typed, text.clone());
+                    }
+                }
+                (Some(text), None) => {
+                    let mut lbl = Label::new(text.clone())
+                        .with_style(StyleProperty::FontSize(self.theme.density.ui_font_size))
+                        .prepare();
+                    lbl.properties.insert(ContentColor::new(text_color));
+                    CheckboxWidget::attach_label(&mut element, lbl);
+                }
+                (None, Some(_)) => {
+                    CheckboxWidget::detach_label(&mut element);
+                }
+                (None, None) => {}
+            }
+        }
     }
 
     fn teardown(

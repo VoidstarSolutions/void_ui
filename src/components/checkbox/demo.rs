@@ -84,12 +84,7 @@ where
         .gap(Length::px(8.0))
     });
 
-    flex_col((
-        header("Box only — unchecked / checked / disabled off / disabled on"),
-        bare,
-        header("With label"),
-        labeled,
-    ))
-    .cross_axis_alignment(CrossAxisAlignment::Start)
-    .gap(Length::px(16.0))
+    flex_col((header("Box only"), bare, header("With label"), labeled))
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .gap(Length::px(16.0))
 }
