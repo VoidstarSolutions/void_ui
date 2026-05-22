@@ -46,7 +46,6 @@ const SPINNER_SWEEP: f64 = std::f64::consts::TAU * (300.0 / 360.0);
 /// Returns a partial-circle `BezPath` in unit-square (0..1) space, used as the
 /// loading spinner icon. Scaled to `icon_size` at paint time like any other icon.
 fn spinner_path() -> BezPath {
-    // TODO: animate via request_anim_frame once masonry exposes a stable API.
     let arc = KurboArc {
         center: Point::new(0.5, 0.5),
         radii: Vec2::new(0.45, 0.45),
@@ -81,6 +80,8 @@ pub struct ThemedButton {
     trailing_icon: Option<Arc<BezPath>>,
     /// When true, shows a spinner and blocks all interaction.
     loading: bool,
+    /// Animation time in seconds [0, 1), advanced each anim frame while loading.
+    spinner_t: f64,
 }
 
 // --- MARK: BUILDERS
@@ -100,6 +101,7 @@ impl ThemedButton {
             icon: None,
             trailing_icon: None,
             loading: false,
+            spinner_t: 0.0,
         }
     }
 
@@ -213,10 +215,14 @@ impl ThemedButton {
         }
     }
 
-    /// Sets the loading state. Requests a repaint on change.
+    /// Sets the loading state. Requests a repaint on change; kicks off the
+    /// animation loop when transitioning into loading.
     pub fn set_loading(this: &mut WidgetMut<'_, Self>, loading: bool) {
         if this.widget.loading != loading {
             this.widget.loading = loading;
+            if loading {
+                this.ctx.request_anim_frame();
+            }
             this.ctx.request_paint_only();
         }
     }
@@ -420,6 +426,19 @@ impl Widget for ThemedButton {
         }
     }
 
+    fn on_anim_frame(
+        &mut self,
+        ctx: &mut UpdateCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        interval: u64,
+    ) {
+        if self.loading {
+            self.spinner_t = (self.spinner_t + interval as f64 * 1e-9).rem_euclid(1.0);
+            ctx.request_anim_frame();
+            ctx.request_paint_only();
+        }
+    }
+
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
             // Propagate the host-supplied initial `disabled` to masonry on
@@ -429,6 +448,9 @@ impl Widget for ThemedButton {
             // accessibility pass that drives `node.set_disabled()`.
             Update::WidgetAdded => {
                 ctx.set_disabled(self.disabled);
+                if self.loading {
+                    ctx.request_anim_frame();
+                }
             }
             Update::HoveredChanged(_) | Update::DisabledChanged(_) | Update::FocusChanged(_) => {
                 ctx.request_paint_only();
@@ -457,7 +479,7 @@ impl Widget for ThemedButton {
             Axis::Horizontal => (2.0 * pad_h, 2.0 * pad_v),
             Axis::Vertical => (2.0 * pad_v, 2.0 * pad_h),
         };
-        let icon_extra = if self.icon.is_some() && axis == Axis::Horizontal {
+        let icon_extra = if (self.icon.is_some() || self.loading) && axis == Axis::Horizontal {
             self.icon_size() + ICON_GAP
         } else {
             0.0
@@ -483,7 +505,7 @@ impl Widget for ThemedButton {
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         let pad_v = f64::from(self.theme.density.button_pad_v);
         let pad_h = f64::from(self.theme.density.button_pad_h);
-        let icon_extra = if self.icon.is_some() {
+        let icon_extra = if self.icon.is_some() || self.loading {
             self.icon_size() + ICON_GAP
         } else {
             0.0
@@ -554,9 +576,15 @@ impl Widget for ThemedButton {
         if self.loading {
             let spinner = spinner_path();
             let icon_y = (size.height - icon_size) * 0.5;
-            let transform = Affine::translate((pad_h, icon_y)) * Affine::scale(icon_size);
+            // Rotate around the center of the unit square (0.5, 0.5), then
+            // scale to icon_size and position at the leading icon slot.
+            let angle = self.spinner_t * std::f64::consts::TAU;
+            let spin = Affine::translate((0.5, 0.5))
+                * Affine::rotate(angle)
+                * Affine::translate((-0.5, -0.5));
+            let transform = Affine::translate((pad_h, icon_y)) * Affine::scale(icon_size) * spin;
             painter
-                .stroke(transform * &spinner, &Stroke::new(0.1), p.text_muted)
+                .stroke(transform * &spinner, &Stroke::new(1.5), p.text_muted)
                 .draw();
         } else if let Some(icon) = &self.icon {
             let icon_y = (size.height - icon_size) * 0.5;
