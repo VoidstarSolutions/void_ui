@@ -63,7 +63,7 @@ where
         .gap(Length::px(12.0))
     });
     // Rows with labels
-    let labeled = flex_col((
+    let labeled = with_source!(theme, {
         flex_row((
             checkbox(labeled_a, on_labeled_a)
                 .label("Unchecked")
@@ -71,10 +71,6 @@ where
             checkbox(labeled_b, on_labeled_b)
                 .label("Checked")
                 .render(theme),
-        ))
-        .cross_axis_alignment(CrossAxisAlignment::Center)
-        .gap(Length::px(16.0)),
-        flex_row((
             checkbox(false, |_: &mut S| {})
                 .label("Disabled off")
                 .disabled(true)
@@ -84,11 +80,9 @@ where
                 .disabled(true)
                 .render(theme),
         ))
-        .cross_axis_alignment(CrossAxisAlignment::Center)
-        .gap(Length::px(16.0)),
-    ))
-    .cross_axis_alignment(CrossAxisAlignment::Start)
-    .gap(Length::px(8.0));
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .gap(Length::px(8.0))
+    });
 
     flex_col((
         header("Box only — unchecked / checked / disabled off / disabled on"),
