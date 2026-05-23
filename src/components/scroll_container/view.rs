@@ -13,7 +13,7 @@
 
 use std::marker::PhantomData;
 
-use masonry::properties::AutoHideScrollBar;
+use masonry::properties::{AutoHideScrollBar, Collapsible};
 use masonry::widgets;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
@@ -142,8 +142,20 @@ where
         if self.fill != prev.fill {
             widgets::Portal::set_content_must_fill(&mut element, self.fill);
         }
-        if self.auto_hide != prev.auto_hide {
-            element.insert_prop(AutoHideScrollBar(self.auto_hide));
+        // Always re-insert both properties on rebuild so that:
+        // - AutoHideScrollBar triggers property_changed on Portal, which calls
+        //   request_anim_frame and starts the opacity animation.
+        // - Collapsible on each ScrollBar child gates whether the bar can actually
+        //   become transparent (ScrollBar resets opacity to 1 in its own anim frame
+        //   whenever Collapsible is false, overriding whatever Portal set).
+        element.insert_prop(AutoHideScrollBar(self.auto_hide));
+        {
+            let mut h = widgets::Portal::horizontal_scrollbar_mut(&mut element);
+            h.insert_prop(Collapsible(self.auto_hide));
+        }
+        {
+            let mut v = widgets::Portal::vertical_scrollbar_mut(&mut element);
+            v.insert_prop(Collapsible(self.auto_hide));
         }
         let child_element = widgets::Portal::child_mut(&mut element);
         self.child
