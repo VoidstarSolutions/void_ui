@@ -5,7 +5,9 @@ use xilem::AnyWidgetView;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::layout::Length;
 use xilem::style::Style as _;
-use xilem::view::{AnyFlexChild, CrossAxisAlignment, FlexExt as _, flex_col, flex_row, label, sized_box};
+use xilem::view::{
+    AnyFlexChild, CrossAxisAlignment, FlexExt as _, flex_col, flex_row, label, sized_box,
+};
 use xilem::{Pod, ViewCtx, WidgetView};
 
 use super::{ScrollBarVisibility, scroll_container};
@@ -30,11 +32,9 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     };
 
     let both_axes = with_source!(theme, {
-        sized_box(
-            scroll_container(content_grid::<S>(theme, 12, 8)).render(theme),
-        )
-        .fixed_width(Length::px(320.0))
-        .fixed_height(Length::px(200.0))
+        sized_box(scroll_container(content_grid::<S>(theme, 12, 8)).render(theme))
+            .fixed_width(Length::px(320.0))
+            .fixed_height(Length::px(200.0))
     });
 
     let vertical_only = with_source!(theme, {
@@ -47,16 +47,18 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
         .fixed_height(Length::px(160.0))
     });
 
-    flex_col((
-        header("Both axes — 12 × 8 grid in a 320 × 200 viewport"),
-        both_axes,
-        header("Vertical only — constrain_horizontal(true)"),
-        vertical_only,
-        header("Scrollbar visibility — switch to try each mode"),
-        ScrollContainerDemoPanel { theme: *theme },
-    ))
-    .cross_axis_alignment(CrossAxisAlignment::Start)
-    .gap(Length::px(16.0))
+    sized_box(
+        flex_col((
+            header("Both axes — 12 × 8 grid in a 320 × 200 viewport"),
+            both_axes,
+            header("Vertical only — constrain_horizontal(true)"),
+            vertical_only,
+            header("Scrollbar visibility — switch to try each mode"),
+            ScrollContainerDemoPanel { theme: *theme },
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .gap(Length::px(16.0)),
+    )
 }
 
 fn content_grid<S: 'static>(theme: &Theme, cols: u32, rows: u32) -> impl WidgetView<S> + use<S> {
@@ -72,11 +74,15 @@ fn content_grid<S: 'static>(theme: &Theme, cols: u32, rows: u32) -> impl WidgetV
             let cells: Vec<AnyFlexChild<S, ()>> = (0..cols)
                 .map(|c| {
                     let bg = if (r + c) % 2 == 0 { bg_a } else { bg_b };
-                    sized_box(label(format!("{r},{c}")).text_size(caption).color(text_muted))
-                        .fixed_width(Length::px(cell_w))
-                        .fixed_height(Length::px(cell_h))
-                        .background_color(bg)
-                        .into_any_flex()
+                    sized_box(
+                        label(format!("{r},{c}"))
+                            .text_size(caption)
+                            .color(text_muted),
+                    )
+                    .fixed_width(Length::px(cell_w))
+                    .fixed_height(Length::px(cell_h))
+                    .background_color(bg)
+                    .into_any_flex()
                 })
                 .collect();
             flex_row(cells)
@@ -118,7 +124,14 @@ impl<S: 'static> View<S, (), ViewCtx> for ScrollContainerDemoPanel {
         let mut local: DemoState = DemoState::default();
         let view: InnerView = make_inner_view(self.theme, local).boxed();
         let (element, view_state) = view.build(ctx, &mut local);
-        (element, ScrollContainerDemoPanelState { local, view, view_state })
+        (
+            element,
+            ScrollContainerDemoPanelState {
+                local,
+                view,
+                view_state,
+            },
+        )
     }
 
     fn rebuild(
@@ -150,7 +163,8 @@ impl<S: 'static> View<S, (), ViewCtx> for ScrollContainerDemoPanel {
         element: Mut<'_, Self::Element>,
         _: &mut S,
     ) -> MessageResult<()> {
-        vs.view.message(&mut vs.view_state, message, element, &mut vs.local)
+        vs.view
+            .message(&mut vs.view_state, message, element, &mut vs.local)
     }
 }
 
@@ -166,7 +180,7 @@ fn make_inner_view(theme: Theme, vis: DemoState) -> impl WidgetView<DemoState> +
     let controls = flex_row((
         btn("Always visible", ScrollBarVisibility::AlwaysVisible),
         btn("On activity", ScrollBarVisibility::OnActivity),
-        btn("Always hidden", ScrollBarVisibility::AlwaysHidden),
+        // btn("Always hidden (FIX ME)", ScrollBarVisibility::AlwaysHidden),
     ))
     .cross_axis_alignment(CrossAxisAlignment::Center)
     .gap(Length::px(8.0));
