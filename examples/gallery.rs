@@ -184,7 +184,7 @@ fn main_pane(
         ComponentKind::DataGrid => Box::new(data_grid_panel(theme, dg_row_count, dg_base_time_ns)),
         ComponentKind::Radio => Box::new(void_ui::components::radio::demo::panel(theme)),
         ComponentKind::ScrollContainer => {
-            Box::new(void_ui::components::scrollbar::demo::panel(theme))
+            Box::new(void_ui::components::scroll_container::demo::panel(theme))
         }
         ComponentKind::Sidebar => Box::new(void_ui::components::sidebar::demo::panel(theme)),
         ComponentKind::Tooltip => Box::new(void_ui::components::tooltip::demo::panel(theme)),
