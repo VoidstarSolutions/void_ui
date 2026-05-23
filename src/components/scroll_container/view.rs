@@ -20,6 +20,35 @@ use xilem::{Pod, ViewCtx, WidgetView};
 
 use crate::Theme;
 
+/// Controls when scrollbars are shown in a [`ScrollContainer`].
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollBarVisibility {
+    /// Scrollbars are always visible at full opacity.
+    #[default]
+    AlwaysVisible,
+    /// Scrollbars appear on pointer activity and fade out after a short delay.
+    ///
+    /// The first hide cycle requires at least one app-state change (rebuild) to
+    /// have occurred after the container was built, so that `Collapsible` is
+    /// propagated to the scrollbar children. Any interactive widget in the same
+    /// view tree satisfies this; the demo switcher does so automatically.
+    OnActivity,
+    /// Scrollbars are hidden at rest. Portal will briefly show them (~400 ms)
+    /// when the pointer moves over the container — a known masonry limitation
+    /// that cannot be suppressed from this layer without an upstream API change.
+    AlwaysHidden,
+}
+
+impl ScrollBarVisibility {
+    fn auto_hide(self) -> bool {
+        matches!(self, Self::OnActivity | Self::AlwaysHidden)
+    }
+
+    fn collapsible(self) -> bool {
+        matches!(self, Self::OnActivity | Self::AlwaysHidden)
+    }
+}
+
 /// Builder for a scroll container.
 ///
 /// Created with [`scroll_container`]. Returns a xilem `WidgetView` via
@@ -30,7 +59,7 @@ pub struct ScrollContainer<V> {
     constrain_horizontal: bool,
     constrain_vertical: bool,
     fill: bool,
-    auto_hide: bool,
+    scroll_bar_visibility: ScrollBarVisibility,
 }
 
 /// Wrap `child` in a scroll container with scrollbars on both axes.
@@ -40,7 +69,7 @@ pub fn scroll_container<V>(child: V) -> ScrollContainer<V> {
         constrain_horizontal: false,
         constrain_vertical: false,
         fill: false,
-        auto_hide: false,
+        scroll_bar_visibility: ScrollBarVisibility::default(),
     }
 }
 
@@ -66,10 +95,9 @@ impl<V> ScrollContainer<V> {
         self
     }
 
-    /// When `true`, scrollbars fade out when the pointer is not moving over
-    /// the container and reappear on pointer activity or scroll wheel use.
-    pub fn auto_hide(mut self, v: bool) -> Self {
-        self.auto_hide = v;
+    /// Controls when scrollbars are shown. Defaults to [`ScrollBarVisibility::AlwaysVisible`].
+    pub fn scroll_bar_visibility(mut self, v: ScrollBarVisibility) -> Self {
+        self.scroll_bar_visibility = v;
         self
     }
 
@@ -85,7 +113,7 @@ impl<V> ScrollContainer<V> {
             constrain_horizontal: self.constrain_horizontal,
             constrain_vertical: self.constrain_vertical,
             fill: self.fill,
-            auto_hide: self.auto_hide,
+            scroll_bar_visibility: self.scroll_bar_visibility,
             phantom: PhantomData,
         }
     }
@@ -100,7 +128,7 @@ pub struct ScrollContainerView<V, State, Action> {
     constrain_horizontal: bool,
     constrain_vertical: bool,
     fill: bool,
-    auto_hide: bool,
+    scroll_bar_visibility: ScrollBarVisibility,
     phantom: PhantomData<fn(State) -> Action>,
 }
 
@@ -121,7 +149,7 @@ where
             .constrain_horizontal(self.constrain_horizontal)
             .constrain_vertical(self.constrain_vertical)
             .content_must_fill(self.fill);
-        let pod = Pod::new_with_props(widget, AutoHideScrollBar(self.auto_hide));
+        let pod = Pod::new_with_props(widget, AutoHideScrollBar(self.scroll_bar_visibility.auto_hide()));
         (pod, child_state)
     }
 
@@ -142,20 +170,16 @@ where
         if self.fill != prev.fill {
             widgets::Portal::set_content_must_fill(&mut element, self.fill);
         }
-        // Always re-insert both properties on rebuild so that:
-        // - AutoHideScrollBar triggers property_changed on Portal, which calls
-        //   request_anim_frame and starts the opacity animation.
-        // - Collapsible on each ScrollBar child gates whether the bar can actually
-        //   become transparent (ScrollBar resets opacity to 1 in its own anim frame
-        //   whenever Collapsible is false, overriding whatever Portal set).
-        element.insert_prop(AutoHideScrollBar(self.auto_hide));
-        {
-            let mut h = widgets::Portal::horizontal_scrollbar_mut(&mut element);
-            h.insert_prop(Collapsible(self.auto_hide));
-        }
-        {
-            let mut v = widgets::Portal::vertical_scrollbar_mut(&mut element);
-            v.insert_prop(Collapsible(self.auto_hide));
+        if self.scroll_bar_visibility != prev.scroll_bar_visibility {
+            element.insert_prop(AutoHideScrollBar(self.scroll_bar_visibility.auto_hide()));
+            {
+                let mut h = widgets::Portal::horizontal_scrollbar_mut(&mut element);
+                h.insert_prop(Collapsible(self.scroll_bar_visibility.collapsible()));
+            }
+            {
+                let mut v = widgets::Portal::vertical_scrollbar_mut(&mut element);
+                v.insert_prop(Collapsible(self.scroll_bar_visibility.collapsible()));
+            }
         }
         let child_element = widgets::Portal::child_mut(&mut element);
         self.child

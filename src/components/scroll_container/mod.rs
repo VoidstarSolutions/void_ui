@@ -3,4 +3,4 @@
 pub mod demo;
 mod view;
 
-pub use view::{ScrollContainer, ScrollContainerView, scroll_container};
+pub use view::{ScrollBarVisibility, ScrollContainer, ScrollContainerView, scroll_container};

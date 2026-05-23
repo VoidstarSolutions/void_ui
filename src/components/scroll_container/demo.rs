@@ -1,18 +1,25 @@
 //! Scroll container demo panel used by the void-ui gallery.
 
-use xilem::WidgetView;
+use masonry::widgets::Passthrough;
+use xilem::AnyWidgetView;
+use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::layout::Length;
 use xilem::style::Style as _;
 use xilem::view::{AnyFlexChild, CrossAxisAlignment, FlexExt as _, flex_col, flex_row, label, sized_box};
+use xilem::{Pod, ViewCtx, WidgetView};
 
-use super::scroll_container;
+use super::{ScrollBarVisibility, scroll_container};
 use crate::Theme;
+use crate::components::button;
 use crate::with_source;
+
+// --- Static scroll demos ------------------------------------------------
 
 /// Renders the Scroll Container demo panel.
 ///
-/// Displays a fixed-size viewport containing content that overflows on both
-/// axes. Drag the scrollbars or use the scroll wheel to navigate.
+/// Displays fixed-size viewports with overflow content and a live visibility
+/// switcher that exercises [`ScrollBarVisibility::AlwaysVisible`],
+/// [`ScrollBarVisibility::OnActivity`], and [`ScrollBarVisibility::AlwaysHidden`].
 #[must_use]
 pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     let header = |text: &'static str| {
@@ -45,6 +52,8 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
         both_axes,
         header("Vertical only — constrain_horizontal(true)"),
         vertical_only,
+        header("Scrollbar visibility — switch to try each mode"),
+        ScrollContainerDemoPanel { theme: *theme },
     ))
     .cross_axis_alignment(CrossAxisAlignment::Start)
     .gap(Length::px(16.0))
@@ -77,4 +86,101 @@ fn content_grid<S: 'static>(theme: &Theme, cols: u32, rows: u32) -> impl WidgetV
         .collect();
 
     flex_col(row_views).cross_axis_alignment(CrossAxisAlignment::Start)
+}
+
+// --- Interactive visibility switcher ------------------------------------
+
+type DemoState = ScrollBarVisibility;
+type InnerView = Box<AnyWidgetView<DemoState>>;
+type InnerViewState = <InnerView as View<DemoState, (), ViewCtx>>::ViewState;
+
+/// Interactive demo panel that owns its scrollbar-visibility selection state.
+pub struct ScrollContainerDemoPanel {
+    theme: Theme,
+}
+
+/// View state for [`ScrollContainerDemoPanel`]. Public due to trait visibility;
+/// treat as an implementation detail.
+#[doc(hidden)]
+pub struct ScrollContainerDemoPanelState {
+    local: DemoState,
+    view: InnerView,
+    view_state: InnerViewState,
+}
+
+impl ViewMarker for ScrollContainerDemoPanel {}
+
+impl<S: 'static> View<S, (), ViewCtx> for ScrollContainerDemoPanel {
+    type Element = Pod<Passthrough>;
+    type ViewState = ScrollContainerDemoPanelState;
+
+    fn build(&self, ctx: &mut ViewCtx, _: &mut S) -> (Self::Element, Self::ViewState) {
+        let mut local: DemoState = DemoState::default();
+        let view: InnerView = make_inner_view(self.theme, local).boxed();
+        let (element, view_state) = view.build(ctx, &mut local);
+        (element, ScrollContainerDemoPanelState { local, view, view_state })
+    }
+
+    fn rebuild(
+        &self,
+        _prev: &Self,
+        vs: &mut Self::ViewState,
+        ctx: &mut ViewCtx,
+        element: Mut<'_, Self::Element>,
+        _: &mut S,
+    ) {
+        let new_view: InnerView = make_inner_view(self.theme, vs.local).boxed();
+        new_view.rebuild(&vs.view, &mut vs.view_state, ctx, element, &mut vs.local);
+        vs.view = new_view;
+    }
+
+    fn teardown(
+        &self,
+        vs: &mut Self::ViewState,
+        ctx: &mut ViewCtx,
+        element: Mut<'_, Self::Element>,
+    ) {
+        vs.view.teardown(&mut vs.view_state, ctx, element);
+    }
+
+    fn message(
+        &self,
+        vs: &mut Self::ViewState,
+        message: &mut MessageCtx,
+        element: Mut<'_, Self::Element>,
+        _: &mut S,
+    ) -> MessageResult<()> {
+        vs.view.message(&mut vs.view_state, message, element, &mut vs.local)
+    }
+}
+
+fn make_inner_view(theme: Theme, vis: DemoState) -> impl WidgetView<DemoState> + use<> {
+    let btn = move |lbl: &'static str, target: DemoState| {
+        button(lbl, move |s: &mut DemoState| {
+            *s = target;
+        })
+        .active(vis == target)
+        .render(&theme)
+    };
+
+    let controls = flex_row((
+        btn("Always visible", ScrollBarVisibility::AlwaysVisible),
+        btn("On activity", ScrollBarVisibility::OnActivity),
+        btn("Always hidden", ScrollBarVisibility::AlwaysHidden),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Center)
+    .gap(Length::px(8.0));
+
+    let scroll = sized_box(
+        scroll_container(content_grid::<DemoState>(&theme, 4, 20))
+            .constrain_horizontal(true)
+            .scroll_bar_visibility(vis)
+            .render(&theme),
+    )
+    .fixed_width(Length::px(320.0))
+    .fixed_height(Length::px(200.0));
+
+    flex_col((controls, scroll))
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .gap(Length::px(12.0))
 }

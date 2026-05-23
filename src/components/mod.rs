@@ -25,7 +25,7 @@ pub use checkbox::{Checkbox, CheckboxView, checkbox};
 pub use data_grid::{
     CellAlign, ColumnDef, SelectionState, data_grid, optional_text_column, text_column,
 };
-pub use scroll_container::{ScrollContainer, ScrollContainerView, scroll_container};
+pub use scroll_container::{ScrollBarVisibility, ScrollContainer, ScrollContainerView, scroll_container};
 pub use sidebar::{SidebarItem, SidebarItemView, sidebar_item};
 pub use tooltip::{Tooltip, TooltipView, tooltip};
 
