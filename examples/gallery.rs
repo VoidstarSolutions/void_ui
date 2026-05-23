@@ -11,14 +11,14 @@ use xilem::masonry::layout::Length;
 use xilem::peniko::Color;
 use xilem::style::Style as _;
 use xilem::view::{
-    flex_col, flex_row, label, portal, sized_box, CrossAxisAlignment, FlexExt as _, FlexSpacer,
-    MainAxisAlignment,
+    CrossAxisAlignment, FlexExt as _, FlexSpacer, MainAxisAlignment, flex_col, flex_row, label,
+    portal, sized_box,
 };
 use xilem::winit::error::EventLoopError;
 use xilem::{AnyWidgetView, EventLoop, WidgetView, WindowOptions, Xilem};
 
-use void_ui::components::data_grid::demo::{tick_columns, Demo};
-use void_ui::components::{button, data_grid, sidebar_item, ComponentKind};
+use void_ui::components::data_grid::demo::{Demo, tick_columns};
+use void_ui::components::{ComponentKind, button, data_grid, sidebar_item};
 use void_ui::layout::flex_wrap;
 use void_ui::theme::{Density, Theme};
 
@@ -138,6 +138,11 @@ fn sidebar(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State> + us
         })
         .active(focused == ComponentKind::Button)
         .render(theme),
+        sidebar_item("Checkbox", |s: &mut State| {
+            s.focused = ComponentKind::Checkbox;
+        })
+        .active(focused == ComponentKind::Checkbox)
+        .render(theme),
         sidebar_item("Data Grid", |s: &mut State| {
             s.focused = ComponentKind::DataGrid;
         })
@@ -166,6 +171,7 @@ fn main_pane(
 ) -> Box<AnyWidgetView<State>> {
     match focused {
         ComponentKind::Button => Box::new(void_ui::components::button::demo::panel(theme)),
+        ComponentKind::Checkbox => Box::new(void_ui::components::checkbox::demo::panel(theme)),
         ComponentKind::DataGrid => Box::new(data_grid_panel(theme, dg_row_count, dg_base_time_ns)),
         ComponentKind::Sidebar => Box::new(void_ui::components::sidebar::demo::panel(theme)),
         ComponentKind::Tooltip => Box::new(void_ui::components::tooltip::demo::panel(theme)),
