@@ -13,6 +13,7 @@
 
 use std::marker::PhantomData;
 
+use masonry::properties::AutoHideScrollBar;
 use masonry::widgets;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
@@ -29,6 +30,7 @@ pub struct ScrollContainer<V> {
     constrain_horizontal: bool,
     constrain_vertical: bool,
     fill: bool,
+    auto_hide: bool,
 }
 
 /// Wrap `child` in a scroll container with scrollbars on both axes.
@@ -38,6 +40,7 @@ pub fn scroll_container<V>(child: V) -> ScrollContainer<V> {
         constrain_horizontal: false,
         constrain_vertical: false,
         fill: false,
+        auto_hide: false,
     }
 }
 
@@ -63,6 +66,13 @@ impl<V> ScrollContainer<V> {
         self
     }
 
+    /// When `true`, scrollbars fade out when the pointer is not moving over
+    /// the container and reappear on pointer activity or scroll wheel use.
+    pub fn auto_hide(mut self, v: bool) -> Self {
+        self.auto_hide = v;
+        self
+    }
+
     /// Materialize the xilem view at the supplied theme.
     pub fn render<State, Action>(self, _theme: &Theme) -> ScrollContainerView<V, State, Action>
     where
@@ -75,6 +85,7 @@ impl<V> ScrollContainer<V> {
             constrain_horizontal: self.constrain_horizontal,
             constrain_vertical: self.constrain_vertical,
             fill: self.fill,
+            auto_hide: self.auto_hide,
             phantom: PhantomData,
         }
     }
@@ -89,6 +100,7 @@ pub struct ScrollContainerView<V, State, Action> {
     constrain_horizontal: bool,
     constrain_vertical: bool,
     fill: bool,
+    auto_hide: bool,
     phantom: PhantomData<fn(State) -> Action>,
 }
 
@@ -109,7 +121,8 @@ where
             .constrain_horizontal(self.constrain_horizontal)
             .constrain_vertical(self.constrain_vertical)
             .content_must_fill(self.fill);
-        (ctx.create_pod(widget), child_state)
+        let pod = Pod::new_with_props(widget, AutoHideScrollBar(self.auto_hide));
+        (pod, child_state)
     }
 
     fn rebuild(
@@ -128,6 +141,9 @@ where
         }
         if self.fill != prev.fill {
             widgets::Portal::set_content_must_fill(&mut element, self.fill);
+        }
+        if self.auto_hide != prev.auto_hide {
+            element.insert_prop(AutoHideScrollBar(self.auto_hide));
         }
         let child_element = widgets::Portal::child_mut(&mut element);
         self.child
