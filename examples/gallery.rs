@@ -340,6 +340,8 @@ fn accents_block(theme: &Theme) -> impl WidgetView<State> + use<> {
         swatch_tile("coral", p.coral, theme),
         swatch_tile("amber", p.amber, theme),
         swatch_tile("violet", p.violet, theme),
+        swatch_tile("green", p.green, theme),
+        swatch_tile("blue", p.blue, theme),
     ))
     .gap(6.0)
 }

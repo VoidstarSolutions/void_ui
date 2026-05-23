@@ -136,20 +136,32 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
     // --- loading & trailing icon ---
 
     let loading_example = with_source!(theme, {
-        flex_row((
-            button("Saving…", |_: &mut ButtonDemoState| {})
-                .loading(true)
-                .disabled(disabled_bool)
-                .render(theme),
-            button("Saving…", |_: &mut ButtonDemoState| {})
-                .variant(ButtonVariant::Primary)
-                .loading(true)
-                .disabled(disabled_bool)
-                .render(theme),
-        ))
+        flex_row((button("Saving…", |_: &mut ButtonDemoState| {})
+            .variant(ButtonVariant::Primary)
+            .loading(true)
+            .disabled(disabled_bool)
+            .render(theme),))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(8.0))
     });
+
+    let plus = {
+        let mut p = BezPath::new();
+        p.move_to((0.1, 0.4));
+        p.line_to((0.4, 0.4));
+        p.line_to((0.4, 0.1));
+        p.line_to((0.6, 0.1));
+        p.line_to((0.6, 0.4));
+        p.line_to((0.9, 0.4));
+        p.line_to((0.9, 0.6));
+        p.line_to((0.6, 0.6));
+        p.line_to((0.6, 0.9));
+        p.line_to((0.4, 0.9));
+        p.line_to((0.4, 0.6));
+        p.line_to((0.1, 0.6));
+        p.close_path();
+        p
+    };
 
     let caret = {
         let mut p = BezPath::new();
@@ -159,18 +171,20 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
         p
     };
 
+    let leading_icon_example = with_source!(theme, {
+        flex_row((button("Add item", |_: &mut ButtonDemoState| {})
+            .icon(plus.clone())
+            .disabled(disabled_bool)
+            .render(theme),))
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .gap(Length::px(8.0))
+    });
+
     let trailing_icon_example = with_source!(theme, {
-        flex_row((
-            button("More options", |_: &mut ButtonDemoState| {})
-                .trailing_icon(caret.clone())
-                .disabled(disabled_bool)
-                .render(theme),
-            button("More options", |_: &mut ButtonDemoState| {})
-                .variant(ButtonVariant::Ghost)
-                .trailing_icon(caret.clone())
-                .disabled(disabled_bool)
-                .render(theme),
-        ))
+        flex_row((button("More options", |_: &mut ButtonDemoState| {})
+            .trailing_icon(caret.clone())
+            .disabled(disabled_bool)
+            .render(theme),))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(8.0))
     });
@@ -182,6 +196,8 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
     let bottom = flex_col((
         header("Loading — spinner, interaction blocked"),
         loading_example,
+        header("Leading icon"),
+        leading_icon_example,
         header("Trailing icon"),
         trailing_icon_example,
     ))
