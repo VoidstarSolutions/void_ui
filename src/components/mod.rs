@@ -15,6 +15,7 @@
 pub mod button;
 pub mod checkbox;
 pub mod data_grid;
+pub mod radio;
 pub mod sidebar;
 pub mod tooltip;
 
@@ -23,6 +24,7 @@ pub use checkbox::{Checkbox, CheckboxView, checkbox};
 pub use data_grid::{
     CellAlign, ColumnDef, SelectionState, data_grid, optional_text_column, text_column,
 };
+
 pub use sidebar::{SidebarItem, SidebarItemView, sidebar_item};
 pub use tooltip::{Tooltip, TooltipView, tooltip};
 
@@ -38,6 +40,7 @@ pub enum ComponentKind {
     Button,
     Checkbox,
     DataGrid,
+    Radio,
     Sidebar,
     Tooltip,
 }
@@ -50,6 +53,7 @@ impl ComponentKind {
             Self::Button => "Button",
             Self::Checkbox => "Checkbox",
             Self::DataGrid => "Data Grid",
+            Self::Radio => "Radio",
             Self::Sidebar => "Sidebar",
             Self::Tooltip => "Tooltip",
         }
@@ -60,8 +64,9 @@ impl ComponentKind {
     pub const fn all() -> &'static [Self] {
         &[
             Self::Button,
-            Self::Checkbox,
+            Self::Radio,
             Self::DataGrid,
+            Self::Checkbox,
             Self::Sidebar,
             Self::Tooltip,
         ]
