@@ -152,6 +152,7 @@ fn sidebar(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State> + us
             s.focused = ComponentKind::Radio;
         })
         .active(focused == ComponentKind::Radio)
+        .render(theme),
         sidebar_item("Scroll Container", |s: &mut State| {
             s.focused = ComponentKind::ScrollContainer;
         })
