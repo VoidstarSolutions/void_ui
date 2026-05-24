@@ -39,25 +39,29 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
 
     let vertical_only = with_source!(theme, {
         sized_box(
-            scroll_container(content_grid::<S>(theme, 4, 20))
+            scroll_container(content_grid::<S>(theme, 12, 8))
                 .constrain_horizontal(true)
                 .render(theme),
         )
         .fixed_width(Length::px(320.0))
-        .fixed_height(Length::px(160.0))
+        .fixed_height(Length::px(200.0))
     });
 
     sized_box(
-        flex_col((
-            header("Both axes — 12 × 8 grid in a 320 × 200 viewport"),
-            both_axes,
-            header("Vertical only — constrain_horizontal(true)"),
-            vertical_only,
-            header("Scrollbar visibility — switch to try each mode"),
-            ScrollContainerDemoPanel { theme: *theme },
-        ))
-        .cross_axis_alignment(CrossAxisAlignment::Start)
-        .gap(Length::px(16.0)),
+        scroll_container(
+            flex_col((
+                header("Both axes — 12 × 8 grid in a 320 × 200 viewport"),
+                both_axes,
+                header("Vertical only — constrain_horizontal(true)"),
+                vertical_only,
+                header("Scrollbar visibility — switch to try each mode"),
+                ScrollContainerDemoPanel { theme: *theme },
+            ))
+            .cross_axis_alignment(CrossAxisAlignment::Start)
+            .gap(Length::px(16.0)),
+        )
+        .scroll_bar_visibility(ScrollBarVisibility::OnActivity)
+        .render(theme),
     )
 }
 
@@ -186,7 +190,7 @@ fn make_inner_view(theme: Theme, vis: DemoState) -> impl WidgetView<DemoState> +
     .gap(Length::px(8.0));
 
     let scroll = sized_box(
-        scroll_container(content_grid::<DemoState>(&theme, 4, 20))
+        scroll_container(content_grid::<DemoState>(&theme, 12, 8))
             .constrain_horizontal(true)
             .scroll_bar_visibility(vis)
             .render(&theme),
