@@ -434,16 +434,6 @@ impl Widget for ThemedButton {
             Axis::Horizontal => (2.0 * pad_h, 2.0 * pad_v),
             Axis::Vertical => (2.0 * pad_v, 2.0 * pad_h),
         };
-        let icon_extra = if (self.icon.is_some() || self.loading) && axis == Axis::Horizontal {
-            self.icon_size() + ICON_GAP
-        } else {
-            0.0
-        };
-        let trailing_extra = if self.trailing_icon.is_some() && axis == Axis::Horizontal {
-            self.icon_size() + ICON_GAP
-        } else {
-            0.0
-        };
         let inner_cross = cross_length.map(|c| Length::px((c.get() - cross_pad).max(0.0)));
         let auto_length = len_req.into();
         let context_size = LayoutSize::maybe(axis.cross(), inner_cross);
@@ -454,29 +444,34 @@ impl Widget for ThemedButton {
             axis,
             inner_cross,
         );
+        let has_label = child_length.get() > 0.0;
+        let icon_extra = if (self.icon.is_some() || self.loading) && axis == Axis::Horizontal {
+            self.icon_size() + if has_label { ICON_GAP } else { 0.0 }
+        } else {
+            0.0
+        };
+        let trailing_extra = if self.trailing_icon.is_some() && axis == Axis::Horizontal {
+            self.icon_size() + if has_label { ICON_GAP } else { 0.0 }
+        } else {
+            0.0
+        };
         Length::px(child_length.get() + main_pad + icon_extra + trailing_extra)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         let pad_v = f64::from(self.theme.density.button_pad_v);
         let pad_h = f64::from(self.theme.density.button_pad_h);
-        let icon_extra = if self.icon.is_some() || self.loading {
-            self.icon_size() + ICON_GAP
-        } else {
-            0.0
-        };
-        let trailing_extra = if self.trailing_icon.is_some() {
-            self.icon_size() + ICON_GAP
-        } else {
-            0.0
-        };
+        let icon_base = if self.icon.is_some() || self.loading { self.icon_size() } else { 0.0 };
+        let trailing_base = if self.trailing_icon.is_some() { self.icon_size() } else { 0.0 };
         let inner = Size::new(
-            (size.width - 2.0 * pad_h - icon_extra - trailing_extra).max(0.0),
+            (size.width - 2.0 * pad_h - icon_base - trailing_base).max(0.0),
             (size.height - 2.0 * pad_v).max(0.0),
         );
         let child_size = ctx.compute_size(&mut self.child, SizeDef::fit(inner), inner.into());
         ctx.run_layout(&mut self.child, child_size);
 
+        let gap = if child_size.width > 0.0 { ICON_GAP } else { 0.0 };
+        let icon_extra = if icon_base > 0.0 { icon_base + gap } else { 0.0 };
         // Label sits between the leading and trailing icon areas.
         let child_x = pad_h + icon_extra;
         let child_y = pad_v + ((inner.height - child_size.height) * 0.5).max(0.0);

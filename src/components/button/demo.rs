@@ -14,10 +14,10 @@ use xilem::view::{CrossAxisAlignment, flex_col, flex_row, label};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::button;
-use crate::Theme;
-use crate::components::ButtonVariant;
 use crate::components::checkbox::checkbox;
+use crate::components::{ButtonVariant, ScrollBarVisibility};
 use crate::with_source;
+use crate::{Theme, scroll_container};
 
 struct ButtonDemoState {
     disabled: bool,
@@ -79,51 +79,61 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
 
     let default_example = with_source!(theme, {
         flex_row((
-            button("Default", |_: &mut ButtonDemoState| {})
+            button(|_: &mut ButtonDemoState| {})
+                .label("Default")
                 .disabled(disabled_bool)
                 .active(active_bool)
                 .render(theme),
-            button("Primary", |_: &mut ButtonDemoState| {})
+            button(|_: &mut ButtonDemoState| {})
+                .label("Primary")
                 .variant(ButtonVariant::Primary)
                 .disabled(disabled_bool)
                 .active(active_bool)
                 .render(theme),
-            button("Secondary", |_: &mut ButtonDemoState| {})
+            button(|_: &mut ButtonDemoState| {})
+                .label("Secondary")
                 .variant(ButtonVariant::Secondary)
                 .disabled(disabled_bool)
                 .active(active_bool)
                 .render(theme),
-            button("Danger", |_: &mut ButtonDemoState| {})
+            button(|_: &mut ButtonDemoState| {})
+                .label("Danger")
                 .variant(ButtonVariant::Danger)
                 .disabled(disabled_bool)
                 .active(active_bool)
                 .render(theme),
-            button("Warning", |_: &mut ButtonDemoState| {})
+            button(|_: &mut ButtonDemoState| {})
+                .label("Warning")
                 .variant(ButtonVariant::Warning)
                 .disabled(disabled_bool)
                 .active(active_bool)
                 .render(theme),
-            button("Success", |_: &mut ButtonDemoState| {})
+            button(|_: &mut ButtonDemoState| {})
+                .label("Success")
                 .variant(ButtonVariant::Success)
                 .disabled(disabled_bool)
                 .active(active_bool)
                 .render(theme),
-            button("Info", |_: &mut ButtonDemoState| {})
+            button(|_: &mut ButtonDemoState| {})
+                .label("Info")
                 .variant(ButtonVariant::Info)
                 .disabled(disabled_bool)
                 .active(active_bool)
                 .render(theme),
-            button("Ghost", |_: &mut ButtonDemoState| {})
+            button(|_: &mut ButtonDemoState| {})
+                .label("Ghost")
                 .variant(ButtonVariant::Ghost)
                 .disabled(disabled_bool)
                 .active(active_bool)
                 .render(theme),
-            button("Link", |_: &mut ButtonDemoState| {})
+            button(|_: &mut ButtonDemoState| {})
+                .label("Link")
                 .variant(ButtonVariant::Link)
                 .disabled(disabled_bool)
                 .active(active_bool)
                 .render(theme),
-            button("Text", |_: &mut ButtonDemoState| {})
+            button(|_: &mut ButtonDemoState| {})
+                .label("Text")
                 .variant(ButtonVariant::Text)
                 .disabled(disabled_bool)
                 .active(active_bool)
@@ -136,7 +146,8 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
     // --- loading & trailing icon ---
 
     let loading_example = with_source!(theme, {
-        flex_row((button("Saving…", |_: &mut ButtonDemoState| {})
+        flex_row((button(|_: &mut ButtonDemoState| {})
+            .label("Saving…")
             .variant(ButtonVariant::Primary)
             .loading(true)
             .disabled(disabled_bool)
@@ -172,7 +183,8 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
     };
 
     let leading_icon_example = with_source!(theme, {
-        flex_row((button("Add item", |_: &mut ButtonDemoState| {})
+        flex_row((button(|_: &mut ButtonDemoState| {})
+            .label("Create")
             .icon(plus.clone())
             .disabled(disabled_bool)
             .render(theme),))
@@ -181,10 +193,26 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
     });
 
     let trailing_icon_example = with_source!(theme, {
-        flex_row((button("More options", |_: &mut ButtonDemoState| {})
+        flex_row((button(|_: &mut ButtonDemoState| {})
+            .label("More options")
             .trailing_icon(caret.clone())
             .disabled(disabled_bool)
             .render(theme),))
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .gap(Length::px(8.0))
+    });
+
+    let icon_only_example = with_source!(theme, {
+        flex_row((
+            button(|_: &mut ButtonDemoState| {})
+                .icon(plus.clone())
+                .disabled(disabled_bool)
+                .render(theme),
+            button(|_: &mut ButtonDemoState| {})
+                .trailing_icon(caret.clone())
+                .disabled(disabled_bool)
+                .render(theme),
+        ))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(8.0))
     });
@@ -200,13 +228,19 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
         leading_icon_example,
         header("Trailing icon"),
         trailing_icon_example,
+        header("Icon only"),
+        icon_only_example,
     ))
     .cross_axis_alignment(CrossAxisAlignment::Start)
     .gap(Length::px(16.0));
 
-    flex_col((flex_row((disabled_toggle, active_toggle)), top, bottom))
-        .cross_axis_alignment(CrossAxisAlignment::Start)
-        .gap(Length::px(16.0))
+    scroll_container(
+        flex_col((flex_row((disabled_toggle, active_toggle)), top, bottom))
+            .cross_axis_alignment(CrossAxisAlignment::Start)
+            .gap(Length::px(16.0)),
+    )
+    .scroll_bar_visibility(ScrollBarVisibility::OnActivity)
+    .render(theme)
 }
 
 impl ViewMarker for ButtonDemoPanel {}

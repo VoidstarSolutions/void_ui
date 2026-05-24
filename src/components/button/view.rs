@@ -27,10 +27,11 @@ use crate::Theme;
 
 /// Builder for an interactive themed button.
 ///
-/// Created with [`button`]. Returns a xilem `WidgetView` via [`Self::render`].
+/// Created with [`button`] (label required) or [`icon_button`] (icon required).
+/// Returns a xilem `WidgetView` via [`Self::render`].
 #[must_use = "Button does nothing until rendered with .render(&theme)"]
 pub struct Button<F> {
-    label: ArcStr,
+    label: Option<ArcStr>,
     active: bool,
     disabled: bool,
     loading: bool,
@@ -44,9 +45,9 @@ pub struct Button<F> {
 ///
 /// The callback is invoked on primary-pointer release inside the widget and on
 /// Space / Enter while the widget is focused.
-pub fn button<F>(label: impl Into<ArcStr>, callback: F) -> Button<F> {
+pub fn button<F>(callback: F) -> Button<F> {
     Button {
-        label: label.into(),
+        label: None,
         active: false,
         disabled: false,
         loading: false,
@@ -79,6 +80,14 @@ impl<F> Button<F> {
     /// Set the visual style variant.
     pub fn variant(mut self, v: ButtonVariant) -> Self {
         self.variant = v;
+        self
+    }
+
+    /// Set or replace the text label.
+    ///
+    /// Useful when constructing via [`icon_button`] and a label is also desired.
+    pub fn label(mut self, text: impl Into<ArcStr>) -> Self {
+        self.label = Some(text.into());
         self
     }
 
@@ -126,7 +135,7 @@ impl<F> Button<F> {
 /// Built only through [`Button::render`]; not constructed directly by callers.
 #[must_use = "View values do nothing unless provided to Xilem."]
 pub struct ButtonView<F, State, Action> {
-    label: ArcStr,
+    label: Option<ArcStr>,
     active: bool,
     disabled: bool,
     loading: bool,
@@ -157,7 +166,7 @@ where
         } else {
             self.theme.palette.text
         };
-        let mut label = Label::new(self.label.clone())
+        let mut label = Label::new(self.label.clone().unwrap_or_default())
             .with_style(StyleProperty::FontSize(self.theme.density.ui_font_size))
             .prepare();
         label.properties.insert(ContentColor::new(text_color));
@@ -225,8 +234,7 @@ where
             ThemedButton::set_variant(&mut element, self.variant);
             // Link gains/loses teal text; Text and others revert to default.
             if !self.disabled
-                && (self.variant == ButtonVariant::Link
-                    || prev.variant == ButtonVariant::Link)
+                && (self.variant == ButtonVariant::Link || prev.variant == ButtonVariant::Link)
             {
                 let text_color = if self.variant == ButtonVariant::Link {
                     self.theme.palette.teal
