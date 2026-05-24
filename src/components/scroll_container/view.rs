@@ -27,25 +27,16 @@ pub enum ScrollBarVisibility {
     #[default]
     AlwaysVisible,
     /// Scrollbars appear on pointer activity and fade out after a short delay.
-    ///
-    /// The first hide cycle requires at least one app-state change (rebuild) to
-    /// have occurred after the container was built, so that `Collapsible` is
-    /// propagated to the scrollbar children. Any interactive widget in the same
-    /// view tree satisfies this; the demo switcher does so automatically.
     OnActivity,
-    /// Scrollbars are hidden at rest. Portal will briefly show them (~400 ms)
-    /// when the pointer moves over the container — a known masonry limitation
-    /// that cannot be suppressed from this layer without an upstream API change.
-    AlwaysHidden,
 }
 
 impl ScrollBarVisibility {
     fn auto_hide(self) -> bool {
-        matches!(self, Self::OnActivity | Self::AlwaysHidden)
+        matches!(self, Self::OnActivity)
     }
 
     fn collapsible(self) -> bool {
-        matches!(self, Self::OnActivity | Self::AlwaysHidden)
+        matches!(self, Self::OnActivity)
     }
 }
 
@@ -172,14 +163,14 @@ where
         }
         if self.scroll_bar_visibility != prev.scroll_bar_visibility {
             element.insert_prop(AutoHideScrollBar(self.scroll_bar_visibility.auto_hide()));
-            {
-                let mut h = widgets::Portal::horizontal_scrollbar_mut(&mut element);
-                h.insert_prop(Collapsible(self.scroll_bar_visibility.collapsible()));
-            }
-            {
-                let mut v = widgets::Portal::vertical_scrollbar_mut(&mut element);
-                v.insert_prop(Collapsible(self.scroll_bar_visibility.collapsible()));
-            }
+        }
+        {
+            let mut h = widgets::Portal::horizontal_scrollbar_mut(&mut element);
+            h.insert_prop(Collapsible(self.scroll_bar_visibility.collapsible()));
+        }
+        {
+            let mut v = widgets::Portal::vertical_scrollbar_mut(&mut element);
+            v.insert_prop(Collapsible(self.scroll_bar_visibility.collapsible()));
         }
         let child_element = widgets::Portal::child_mut(&mut element);
         self.child

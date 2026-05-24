@@ -12,7 +12,7 @@ use xilem::{Pod, ViewCtx, WidgetView};
 
 use super::{ScrollBarVisibility, scroll_container};
 use crate::Theme;
-use crate::components::button;
+use crate::components::radio::radio;
 use crate::with_source;
 
 // --- Static scroll demos ------------------------------------------------
@@ -173,21 +173,20 @@ impl<S: 'static> View<S, (), ViewCtx> for ScrollContainerDemoPanel {
 }
 
 fn make_inner_view(theme: Theme, vis: DemoState) -> impl WidgetView<DemoState> + use<> {
-    let btn = move |lbl: &'static str, target: DemoState| {
-        button(lbl, move |s: &mut DemoState| {
-            *s = target;
-        })
-        .active(vis == target)
-        .render(&theme)
-    };
-
     let controls = flex_row((
-        btn("Always visible", ScrollBarVisibility::AlwaysVisible),
-        btn("On activity", ScrollBarVisibility::OnActivity),
-        // btn("Always hidden (FIX ME)", ScrollBarVisibility::AlwaysHidden),
+        radio("Always visible", move |s: &mut DemoState| {
+            *s = ScrollBarVisibility::AlwaysVisible;
+        })
+        .active(vis == ScrollBarVisibility::AlwaysVisible)
+        .render(&theme),
+        radio("On activity", move |s: &mut DemoState| {
+            *s = ScrollBarVisibility::OnActivity;
+        })
+        .active(vis == ScrollBarVisibility::OnActivity)
+        .render(&theme),
     ))
     .cross_axis_alignment(CrossAxisAlignment::Center)
-    .gap(Length::px(8.0));
+    .gap(Length::px(16.0));
 
     let scroll = sized_box(
         scroll_container(content_grid::<DemoState>(&theme, 12, 8))
