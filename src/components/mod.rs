@@ -16,6 +16,7 @@ pub mod button;
 pub mod checkbox;
 pub mod data_grid;
 pub mod radio;
+pub mod scroll_container;
 pub mod sidebar;
 pub mod tooltip;
 
@@ -24,7 +25,7 @@ pub use checkbox::{Checkbox, CheckboxView, checkbox};
 pub use data_grid::{
     CellAlign, ColumnDef, SelectionState, data_grid, optional_text_column, text_column,
 };
-
+pub use scroll_container::{ScrollBarVisibility, ScrollContainer, ScrollContainerView, scroll_container};
 pub use sidebar::{SidebarItem, SidebarItemView, sidebar_item};
 pub use tooltip::{Tooltip, TooltipView, tooltip};
 
@@ -41,6 +42,7 @@ pub enum ComponentKind {
     Checkbox,
     DataGrid,
     Radio,
+    ScrollContainer,
     Sidebar,
     Tooltip,
 }
@@ -54,6 +56,7 @@ impl ComponentKind {
             Self::Checkbox => "Checkbox",
             Self::DataGrid => "Data Grid",
             Self::Radio => "Radio",
+            Self::ScrollContainer => "Scroll Container",
             Self::Sidebar => "Sidebar",
             Self::Tooltip => "Tooltip",
         }
@@ -66,7 +69,7 @@ impl ComponentKind {
             Self::Button,
             Self::Radio,
             Self::DataGrid,
-            Self::Checkbox,
+            Self::ScrollContainer,
             Self::Sidebar,
             Self::Tooltip,
         ]

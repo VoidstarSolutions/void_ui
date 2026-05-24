@@ -153,6 +153,11 @@ fn sidebar(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State> + us
         })
         .active(focused == ComponentKind::Radio)
         .render(theme),
+        sidebar_item("Scroll Container", |s: &mut State| {
+            s.focused = ComponentKind::ScrollContainer;
+        })
+        .active(focused == ComponentKind::ScrollContainer)
+        .render(theme),
         sidebar_item("Sidebar", |s: &mut State| {
             s.focused = ComponentKind::Sidebar;
         })
@@ -179,6 +184,9 @@ fn main_pane(
         ComponentKind::Checkbox => Box::new(void_ui::components::checkbox::demo::panel(theme)),
         ComponentKind::DataGrid => Box::new(data_grid_panel(theme, dg_row_count, dg_base_time_ns)),
         ComponentKind::Radio => Box::new(void_ui::components::radio::demo::panel(theme)),
+        ComponentKind::ScrollContainer => {
+            Box::new(void_ui::components::scroll_container::demo::panel(theme))
+        }
         ComponentKind::Sidebar => Box::new(void_ui::components::sidebar::demo::panel(theme)),
         ComponentKind::Tooltip => Box::new(void_ui::components::tooltip::demo::panel(theme)),
     }
