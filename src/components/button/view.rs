@@ -15,7 +15,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use masonry::core::{ArcStr, StyleProperty, Widget as _};
-use masonry::kurbo::BezPath;
+use masonry::kurbo::{BezPath, RoundedRectRadii};
 use masonry::properties::ContentColor;
 use masonry::widgets::{ButtonPress, Label};
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
@@ -41,6 +41,7 @@ pub struct Button<F> {
     variant: ButtonVariant,
     icon: Option<Arc<BezPath>>,
     trailing_icon: Option<Arc<BezPath>>,
+    corners: Option<RoundedRectRadii>,
     callback: F,
 }
 
@@ -59,6 +60,7 @@ pub fn button<F>(callback: F) -> Button<F> {
         variant: ButtonVariant::Default,
         icon: None,
         trailing_icon: None,
+        corners: None,
         callback,
     }
 }
@@ -122,6 +124,15 @@ impl<F> Button<F> {
         self
     }
 
+    /// Override the corner radii for the button background and focus ring.
+    ///
+    /// Used by button groups to round only the outer edges of the group.
+    /// Standalone buttons do not need this — the default `5px` radius is used.
+    pub fn corners(mut self, radii: RoundedRectRadii) -> Self {
+        self.corners = Some(radii);
+        self
+    }
+
     /// Materialize the xilem view at the supplied theme.
     pub fn render<State, Action>(self, theme: &Theme) -> ButtonView<F, State, Action>
     where
@@ -138,6 +149,7 @@ impl<F> Button<F> {
             variant: self.variant,
             icon: self.icon,
             trailing_icon: self.trailing_icon,
+            corners: self.corners,
             theme: *theme,
             callback: self.callback,
             phantom: PhantomData,
@@ -158,6 +170,7 @@ pub struct ButtonView<F, State, Action> {
     variant: ButtonVariant,
     icon: Option<Arc<BezPath>>,
     trailing_icon: Option<Arc<BezPath>>,
+    corners: Option<RoundedRectRadii>,
     theme: Theme,
     callback: F,
     phantom: PhantomData<fn(State) -> Action>,
@@ -186,7 +199,7 @@ where
             .with_style(StyleProperty::FontSize(self.theme.density.ui_font_size))
             .prepare();
         label.properties.insert(ContentColor::new(text_color));
-        let widget = ThemedButton::new(label, &self.theme)
+        let mut widget = ThemedButton::new(label, &self.theme)
             .with_active(self.active)
             .with_disabled(self.disabled)
             .with_loading(self.loading)
@@ -194,6 +207,9 @@ where
             .with_icon(self.icon.clone())
             .with_trailing_icon(self.trailing_icon.clone())
             .with_accessibility_label(self.accessible_name.clone());
+        if let Some(corners) = self.corners {
+            widget = widget.with_corners(corners);
+        }
         // `with_action_widget` registers the widget as an action source so that
         // `ButtonPress` events bubble up to this view's `message` handler rather
         // than being dropped by xilem's dispatch loop.
@@ -281,6 +297,13 @@ where
         }
         if self.accessible_name != prev.accessible_name {
             ThemedButton::set_accessibility_label(&mut element, self.accessible_name.clone());
+        }
+        if self.corners != prev.corners {
+            use masonry::kurbo::RoundedRectRadii as R;
+            let radii = self
+                .corners
+                .unwrap_or_else(|| R::from_single_radius(5.0));
+            ThemedButton::set_corners(&mut element, radii);
         }
         // Label text is not re-applied here; masonry's Label doesn't expose
         // stable post-construction text mutation. If the label string changes

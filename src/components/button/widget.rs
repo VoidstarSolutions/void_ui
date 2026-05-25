@@ -23,7 +23,8 @@ use masonry::core::{
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{
-    Affine, Arc as KurboArc, Axis, BezPath, Point, RoundedRect, Shape, Size, Stroke, Vec2,
+    Affine, Arc as KurboArc, Axis, BezPath, Point, RoundedRect, RoundedRectRadii, Shape, Size,
+    Stroke, Vec2,
 };
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use masonry::peniko::Color;
@@ -88,6 +89,10 @@ pub struct ThemedButton {
     accessibility_label: Option<ArcStr>,
     /// When set, written to the system clipboard whenever the button fires.
     clipboard_payload: Option<ArcStr>,
+    /// Per-corner radii for the background and focus-ring shapes.
+    /// Defaults to a uniform `CORNER_RADIUS`; button groups override this to
+    /// round only the outer edges of the group.
+    corners: RoundedRectRadii,
 }
 
 // --- MARK: BUILDERS
@@ -110,6 +115,7 @@ impl ThemedButton {
             spinner_t: 0.0,
             accessibility_label: None,
             clipboard_payload: None,
+            corners: RoundedRectRadii::from_single_radius(CORNER_RADIUS),
         }
     }
 
@@ -166,6 +172,15 @@ impl ThemedButton {
     #[must_use]
     pub fn with_clipboard_payload(mut self, payload: Option<ArcStr>) -> Self {
         self.clipboard_payload = payload;
+        self
+    }
+
+    /// Overrides the corner radii for the button background and focus ring.
+    ///
+    /// Used by button groups to round only the outer edges of the group.
+    #[must_use]
+    pub fn with_corners(mut self, corners: RoundedRectRadii) -> Self {
+        self.corners = corners;
         self
     }
 }
@@ -261,6 +276,14 @@ impl ThemedButton {
     /// Updates the clipboard payload. No visual side effects — only matters at event time.
     pub fn set_clipboard_payload(this: &mut WidgetMut<'_, Self>, payload: Option<ArcStr>) {
         this.widget.clipboard_payload = payload;
+    }
+
+    /// Replaces the corner radii. Requests a repaint on change.
+    pub fn set_corners(this: &mut WidgetMut<'_, Self>, corners: RoundedRectRadii) {
+        if this.widget.corners != corners {
+            this.widget.corners = corners;
+            this.ctx.request_paint_only();
+        }
     }
 
     /// Returns a mutable reference to the child widget.
@@ -574,8 +597,10 @@ impl Widget for ThemedButton {
         } else {
             0.0
         };
-        // Label sits between the leading and trailing icon areas.
-        let child_x = pad_h + icon_extra;
+        // Center the label within the space left after padding and icon slots.
+        let child_x = pad_h
+            + icon_extra
+            + ((inner.width - child_size.width) * 0.5).max(0.0);
         let child_y = pad_v + ((inner.height - child_size.height) * 0.5).max(0.0);
         ctx.place_child(&mut self.child, Point::new(child_x, child_y));
         ctx.derive_baselines(&self.child);
@@ -594,7 +619,7 @@ impl Widget for ThemedButton {
         let p = &self.theme.palette;
         let (bg, border) = self.resolve_colors(hovered, pressed);
 
-        let rect = RoundedRect::from_origin_size(Point::ORIGIN, size, CORNER_RADIUS);
+        let rect = RoundedRect::from_origin_size(Point::ORIGIN, size, self.corners);
         if bg.components[3] > 0.0 {
             painter.fill(rect, bg).draw();
         }
@@ -612,7 +637,12 @@ impl Widget for ThemedButton {
                     (size.width - 2.0 * inset).max(0.0),
                     (size.height - 2.0 * inset).max(0.0),
                 ),
-                (CORNER_RADIUS - inset).max(0.0),
+                RoundedRectRadii::new(
+                    (self.corners.top_left - inset).max(0.0),
+                    (self.corners.top_right - inset).max(0.0),
+                    (self.corners.bottom_right - inset).max(0.0),
+                    (self.corners.bottom_left - inset).max(0.0),
+                ),
             );
             painter
                 .stroke(focus_rect, &Stroke::new(FOCUS_RING_WIDTH), p.teal)

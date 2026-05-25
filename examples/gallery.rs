@@ -142,6 +142,11 @@ fn sidebar(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State> + us
         })
         .active(focused == ComponentKind::Button)
         .render(theme),
+        sidebar_item("Button Group", |s: &mut State| {
+            s.focused = ComponentKind::ButtonGroup;
+        })
+        .active(focused == ComponentKind::ButtonGroup)
+        .render(theme),
         sidebar_item("Checkbox", |s: &mut State| {
             s.focused = ComponentKind::Checkbox;
         })
@@ -195,6 +200,9 @@ fn main_pane(
 ) -> Box<AnyWidgetView<State>> {
     match focused {
         ComponentKind::Button => Box::new(void_ui::components::button::demo::panel(theme)),
+        ComponentKind::ButtonGroup => {
+            Box::new(void_ui::components::button_group::demo::panel(theme))
+        }
         ComponentKind::Checkbox => Box::new(void_ui::components::checkbox::demo::panel(theme)),
         ComponentKind::Clipboard => Box::new(void_ui::components::clipboard::demo::panel(theme)),
         ComponentKind::DataGrid => Box::new(data_grid_panel(theme, dg_row_count, dg_base_time_ns)),
