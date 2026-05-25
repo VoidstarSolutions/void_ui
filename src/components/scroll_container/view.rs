@@ -13,8 +13,14 @@
 
 use std::marker::PhantomData;
 
+use masonry::core::NewWidget;
+use masonry::layout::Length;
 use masonry::properties::{AutoHideScrollBar, Collapsible, Padding};
 use masonry::widgets;
+
+const SCROLLBAR_TRACK: Length =
+    Length::const_px(masonry::theme::SCROLLBAR_WIDTH + masonry::theme::SCROLLBAR_PAD * 2.0);
+
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
@@ -51,8 +57,14 @@ pub struct ScrollContainer<V> {
     constrain_vertical: bool,
     fill: bool,
     scroll_bar_visibility: ScrollBarVisibility,
-    child_padding: Option<Padding>,
+    child_padding: Padding,
 }
+
+const DEFAULT_CHILD_PADDING: Padding = Padding {
+    right: SCROLLBAR_TRACK,
+    bottom: SCROLLBAR_TRACK,
+    ..Padding::ZERO
+};
 
 /// Wrap `child` in a scroll container with scrollbars on both axes.
 pub fn scroll_container<V>(child: V) -> ScrollContainer<V> {
@@ -62,7 +74,7 @@ pub fn scroll_container<V>(child: V) -> ScrollContainer<V> {
         constrain_vertical: false,
         fill: false,
         scroll_bar_visibility: ScrollBarVisibility::default(),
-        child_padding: None,
+        child_padding: DEFAULT_CHILD_PADDING,
     }
 }
 
@@ -99,7 +111,7 @@ impl<V> ScrollContainer<V> {
     /// Use this to reserve space so scrollbars don't overlap content —
     /// e.g. `Padding::right(12.px())` when a vertical scrollbar is expected.
     pub fn child_padding(mut self, padding: impl Into<Padding>) -> Self {
-        self.child_padding = Some(padding.into());
+        self.child_padding = padding.into();
         self
     }
 
@@ -132,7 +144,7 @@ pub struct ScrollContainerView<V, State, Action> {
     constrain_vertical: bool,
     fill: bool,
     scroll_bar_visibility: ScrollBarVisibility,
-    child_padding: Option<Padding>,
+    child_padding: Padding,
     phantom: PhantomData<fn(State) -> Action>,
 }
 
@@ -144,19 +156,21 @@ where
     State: 'static,
     Action: 'static,
 {
-    type Element = Pod<widgets::Portal<V::Widget>>;
+    type Element = Pod<widgets::Portal<widgets::SizedBox>>;
     type ViewState = V::ViewState;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        let (mut child_pod, child_state) = self.child.build(ctx, app_state);
-        if let Some(padding) = self.child_padding {
-            child_pod.new_widget.properties.insert(padding);
-        }
-        let widget = widgets::Portal::new(child_pod.new_widget)
+        let (child_pod, child_state) = self.child.build(ctx, app_state);
+        let sized_box = NewWidget::new(widgets::SizedBox::new(child_pod.new_widget))
+            .with_props(self.child_padding);
+        let portal = widgets::Portal::new(sized_box)
             .constrain_horizontal(self.constrain_horizontal)
             .constrain_vertical(self.constrain_vertical)
             .content_must_fill(self.fill);
-        let pod = Pod::new_with_props(widget, AutoHideScrollBar(self.scroll_bar_visibility.auto_hide()));
+        let pod = Pod::new_with_props(
+            portal,
+            AutoHideScrollBar(self.scroll_bar_visibility.auto_hide()),
+        );
         (pod, child_state)
     }
 
@@ -180,10 +194,6 @@ where
         if self.scroll_bar_visibility != prev.scroll_bar_visibility {
             element.insert_prop(AutoHideScrollBar(self.scroll_bar_visibility.auto_hide()));
         }
-        if self.child_padding != prev.child_padding {
-            let mut child_element = widgets::Portal::child_mut(&mut element);
-            child_element.insert_prop(self.child_padding.unwrap_or(Padding::ZERO));
-        }
         {
             let mut h = widgets::Portal::horizontal_scrollbar_mut(&mut element);
             h.insert_prop(Collapsible(self.scroll_bar_visibility.collapsible()));
@@ -192,9 +202,16 @@ where
             let mut v = widgets::Portal::vertical_scrollbar_mut(&mut element);
             v.insert_prop(Collapsible(self.scroll_bar_visibility.collapsible()));
         }
-        let child_element = widgets::Portal::child_mut(&mut element);
-        self.child
-            .rebuild(&prev.child, view_state, ctx, child_element, app_state);
+        {
+            let mut sized_box = widgets::Portal::child_mut(&mut element);
+            if self.child_padding != prev.child_padding {
+                sized_box.insert_prop(self.child_padding);
+            }
+            let mut inner = widgets::SizedBox::child_mut(&mut sized_box)
+                .expect("scroll_container SizedBox always has a child");
+            self.child
+                .rebuild(&prev.child, view_state, ctx, inner.downcast(), app_state);
+        }
     }
 
     fn teardown(
@@ -203,8 +220,10 @@ where
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
     ) {
-        let child_element = widgets::Portal::child_mut(&mut element);
-        self.child.teardown(view_state, ctx, child_element);
+        let mut sized_box = widgets::Portal::child_mut(&mut element);
+        let mut inner = widgets::SizedBox::child_mut(&mut sized_box)
+            .expect("scroll_container SizedBox always has a child");
+        self.child.teardown(view_state, ctx, inner.downcast());
     }
 
     fn message(
@@ -214,8 +233,10 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        let child_element = widgets::Portal::child_mut(&mut element);
+        let mut sized_box = widgets::Portal::child_mut(&mut element);
+        let mut inner = widgets::SizedBox::child_mut(&mut sized_box)
+            .expect("scroll_container SizedBox always has a child");
         self.child
-            .message(view_state, message, child_element, app_state)
+            .message(view_state, message, inner.downcast(), app_state)
     }
 }
