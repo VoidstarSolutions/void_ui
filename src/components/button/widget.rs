@@ -357,7 +357,6 @@ impl ThemedButton {
                 let border = if hovered { p.border_strong } else { p.border };
                 (bg, border)
             }
-            }
             // Link: no background or border.
             ButtonVariant::Link => (Color::TRANSPARENT, Color::TRANSPARENT),
             // Text: subtle press feedback only — no hover fill, no border.
