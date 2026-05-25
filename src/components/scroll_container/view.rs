@@ -13,7 +13,7 @@
 
 use std::marker::PhantomData;
 
-use masonry::properties::{AutoHideScrollBar, Collapsible};
+use masonry::properties::{AutoHideScrollBar, Collapsible, Padding};
 use masonry::widgets;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
@@ -51,6 +51,7 @@ pub struct ScrollContainer<V> {
     constrain_vertical: bool,
     fill: bool,
     scroll_bar_visibility: ScrollBarVisibility,
+    child_padding: Option<Padding>,
 }
 
 /// Wrap `child` in a scroll container with scrollbars on both axes.
@@ -61,6 +62,7 @@ pub fn scroll_container<V>(child: V) -> ScrollContainer<V> {
         constrain_vertical: false,
         fill: false,
         scroll_bar_visibility: ScrollBarVisibility::default(),
+        child_padding: None,
     }
 }
 
@@ -92,6 +94,15 @@ impl<V> ScrollContainer<V> {
         self
     }
 
+    /// Applies padding to the child, inset from the scroll viewport.
+    ///
+    /// Use this to reserve space so scrollbars don't overlap content —
+    /// e.g. `Padding::right(12.px())` when a vertical scrollbar is expected.
+    pub fn child_padding(mut self, padding: impl Into<Padding>) -> Self {
+        self.child_padding = Some(padding.into());
+        self
+    }
+
     /// Materialize the xilem view at the supplied theme.
     pub fn render<State, Action>(self, _theme: &Theme) -> ScrollContainerView<V, State, Action>
     where
@@ -105,6 +116,7 @@ impl<V> ScrollContainer<V> {
             constrain_vertical: self.constrain_vertical,
             fill: self.fill,
             scroll_bar_visibility: self.scroll_bar_visibility,
+            child_padding: self.child_padding,
             phantom: PhantomData,
         }
     }
@@ -120,6 +132,7 @@ pub struct ScrollContainerView<V, State, Action> {
     constrain_vertical: bool,
     fill: bool,
     scroll_bar_visibility: ScrollBarVisibility,
+    child_padding: Option<Padding>,
     phantom: PhantomData<fn(State) -> Action>,
 }
 
@@ -135,7 +148,10 @@ where
     type ViewState = V::ViewState;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        let (child_pod, child_state) = self.child.build(ctx, app_state);
+        let (mut child_pod, child_state) = self.child.build(ctx, app_state);
+        if let Some(padding) = self.child_padding {
+            child_pod.new_widget.properties.insert(padding);
+        }
         let widget = widgets::Portal::new(child_pod.new_widget)
             .constrain_horizontal(self.constrain_horizontal)
             .constrain_vertical(self.constrain_vertical)
@@ -163,6 +179,10 @@ where
         }
         if self.scroll_bar_visibility != prev.scroll_bar_visibility {
             element.insert_prop(AutoHideScrollBar(self.scroll_bar_visibility.auto_hide()));
+        }
+        if self.child_padding != prev.child_padding {
+            let mut child_element = widgets::Portal::child_mut(&mut element);
+            child_element.insert_prop(self.child_padding.unwrap_or(Padding::ZERO));
         }
         {
             let mut h = widgets::Portal::horizontal_scrollbar_mut(&mut element);
