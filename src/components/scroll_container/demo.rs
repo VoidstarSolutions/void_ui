@@ -32,14 +32,14 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     };
 
     let both_axes = with_source!(theme, {
-        sized_box(scroll_container(content_grid::<S>(theme, 12, 8)).render(theme))
+        sized_box(scroll_container(content_grid::<S>(theme, 12, 8).boxed()).render(theme))
             .fixed_width(Length::px(320.0))
             .fixed_height(Length::px(200.0))
     });
 
     let vertical_only = with_source!(theme, {
         sized_box(
-            scroll_container(content_grid::<S>(theme, 12, 8))
+            scroll_container(content_grid::<S>(theme, 12, 8).boxed())
                 .constrain_horizontal(true)
                 .render(theme),
         )

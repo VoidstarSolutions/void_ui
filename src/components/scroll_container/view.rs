@@ -18,7 +18,7 @@ use masonry::properties::AutoHideScrollBar;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
-use super::widget::ScrollView;
+use super::widget::{ContentClip, ScrollView};
 use crate::Theme;
 
 /// Controls when scrollbars are shown in a [`ScrollContainer`].
@@ -131,7 +131,7 @@ impl<V, State, Action> ViewMarker for ScrollContainerView<V, State, Action> {}
 impl<V, State, Action> View<State, Action, ViewCtx> for ScrollContainerView<V, State, Action>
 where
     V: WidgetView<State, Action>,
-    V::Widget: FromDynWidget,
+    V::Widget: FromDynWidget + Sized,
     State: 'static,
     Action: 'static,
 {
@@ -177,7 +177,8 @@ where
             );
         }
         {
-            let mut child = ScrollView::child_mut(&mut element);
+            let mut clip = ScrollView::child_mut(&mut element);
+            let mut child = ContentClip::child_mut(&mut clip);
             self.child
                 .rebuild(&prev.child, view_state, ctx, child.downcast(), app_state);
         }
@@ -189,7 +190,8 @@ where
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
     ) {
-        let mut child = ScrollView::child_mut(&mut element);
+        let mut clip = ScrollView::child_mut(&mut element);
+        let mut child = ContentClip::child_mut(&mut clip);
         self.child.teardown(view_state, ctx, child.downcast());
     }
 
@@ -200,7 +202,8 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        let mut child = ScrollView::child_mut(&mut element);
+        let mut clip = ScrollView::child_mut(&mut element);
+        let mut child = ContentClip::child_mut(&mut clip);
         self.child
             .message(view_state, message, child.downcast(), app_state)
     }

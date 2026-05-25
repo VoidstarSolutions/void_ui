@@ -327,12 +327,149 @@ impl Widget for VoidScrollBar {
     }
 }
 
+// --- MARK: ContentClip
+
+/// Wraps user content, clips to the effective viewport (excluding scrollbar
+/// tracks), and applies the scroll translation. Kept separate from
+/// [`ScrollView`] so the scrollbars can be siblings rather than children of
+/// the clip — masonry's `set_clip_path` applies to the whole subtree.
+pub(crate) struct ContentClip<W: Widget + ?Sized> {
+    child: WidgetPod<W>,
+    /// Content size set by [`ScrollView`] before each `run_layout` call.
+    pub(crate) child_size: Size,
+    /// Scroll position set by [`ScrollView`] during compose.
+    pub(crate) viewport_pos: Point,
+}
+
+impl<W: Widget + ?Sized> AllowRawMut for ContentClip<W> {}
+
+impl<W: Widget + ?Sized> ContentClip<W> {
+    fn new(child: NewWidget<W>) -> Self {
+        Self {
+            child: child.to_pod(),
+            child_size: Size::ZERO,
+            viewport_pos: Point::ORIGIN,
+        }
+    }
+}
+
+impl<W: Widget + FromDynWidget> ContentClip<W> {
+    pub(crate) fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, W> {
+        this.ctx.get_mut(&mut this.widget.child)
+    }
+}
+
+impl<W: Widget + ?Sized> Widget for ContentClip<W> {
+    type Action = NoAction;
+
+    fn on_pointer_event(
+        &mut self,
+        _ctx: &mut EventCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _event: &PointerEvent,
+    ) {
+    }
+
+    fn on_text_event(
+        &mut self,
+        _ctx: &mut EventCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _event: &TextEvent,
+    ) {
+    }
+
+    fn on_access_event(
+        &mut self,
+        _ctx: &mut EventCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _event: &AccessEvent,
+    ) {
+    }
+
+    fn on_anim_frame(
+        &mut self,
+        _ctx: &mut UpdateCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _interval: u64,
+    ) {
+    }
+
+    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
+        ctx.register_child(&mut self.child);
+    }
+
+    fn update(
+        &mut self,
+        _ctx: &mut UpdateCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _event: &Update,
+    ) {
+    }
+
+    fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: TypeId) {}
+
+    fn measure(
+        &mut self,
+        ctx: &mut MeasureCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        axis: Axis,
+        len_req: LenReq,
+        cross_length: Option<Length>,
+    ) -> Length {
+        let context_size = LayoutSize::maybe(axis.cross(), cross_length);
+        ctx.compute_length(&mut self.child, len_req.into(), context_size, axis, None)
+    }
+
+    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
+        // size = eff_size (the viewport area excluding scrollbar tracks).
+        // child_size = content_size (may be larger than size).
+        ctx.run_layout(&mut self.child, self.child_size);
+        ctx.set_clip_path(size.to_rect());
+        ctx.place_child(&mut self.child, Point::ZERO);
+    }
+
+    fn compose(&mut self, ctx: &mut ComposeCtx<'_>) {
+        ctx.set_child_scroll_translation(
+            &mut self.child,
+            Vec2::new(-self.viewport_pos.x, -self.viewport_pos.y),
+        );
+    }
+
+    fn paint(
+        &mut self,
+        _ctx: &mut PaintCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        _painter: &mut Painter<'_>,
+    ) {
+    }
+
+    fn accessibility_role(&self) -> Role {
+        Role::GenericContainer
+    }
+
+    fn accessibility(
+        &mut self,
+        _ctx: &mut AccessCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        _node: &mut Node,
+    ) {
+    }
+
+    fn children_ids(&self) -> ChildrenIds {
+        ChildrenIds::from_slice(&[self.child.id()])
+    }
+
+    fn make_trace_span(&self, id: WidgetId) -> Span {
+        trace_span!("ContentClip", id = id.trace())
+    }
+}
+
 // --- MARK: ScrollView
 
 /// A scrolling viewport with clipping that excludes the scrollbar tracks,
 /// so scrollbars are always adjacent to content rather than overlapping it.
 pub struct ScrollView<W: Widget + ?Sized> {
-    child: WidgetPod<W>,
+    child: WidgetPod<ContentClip<W>>,
     content_size: Size,
     viewport_pos: Point,
     constrain_horizontal: bool,
@@ -353,7 +490,7 @@ pub struct ScrollView<W: Widget + ?Sized> {
 impl<W: Widget + ?Sized> ScrollView<W> {
     pub fn new(child: NewWidget<W>) -> Self {
         Self {
-            child: child.to_pod(),
+            child: WidgetPod::new(ContentClip::new(child)),
             content_size: Size::ZERO,
             viewport_pos: Point::ORIGIN,
             constrain_horizontal: false,
@@ -391,8 +528,10 @@ impl<W: Widget + ?Sized> ScrollView<W> {
     }
 }
 
-impl<W: Widget + FromDynWidget + ?Sized> ScrollView<W> {
-    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, W> {
+impl<W: Widget + ?Sized> ScrollView<W> {
+    /// Returns a `WidgetMut` for the [`ContentClip`] wrapper.
+    /// Call [`ContentClip::child_mut`] on the result to reach the user content.
+    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, ContentClip<W>> {
         this.ctx.get_mut(&mut this.widget.child)
     }
 
@@ -534,7 +673,7 @@ impl<W: Widget> UsesProperty<AutoHideScrollBar> for ScrollView<W> {}
 const VISIBILITY_TIMEOUT_NANOS: u64 = 400_000_000;
 
 // --- MARK: IMPL WIDGET
-impl<W: Widget + FromDynWidget + ?Sized> Widget for ScrollView<W> {
+impl<W: Widget + ?Sized> Widget for ScrollView<W> {
     type Action = NoAction;
 
     fn on_pointer_event(
@@ -814,6 +953,29 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for ScrollView<W> {
                 false => LenDef::MaxContent,
             },
         );
+        if self.always_hide_scrollbars {
+            let content_size = {
+                let cs = ctx.compute_size(&mut self.child, auto_size, size.into());
+                if self.must_fill { cs.max(size) } else { cs }
+            };
+            {
+                let (clip, _) = ctx.get_raw_mut(&mut self.child);
+                clip.child_size = content_size;
+            }
+            ctx.run_layout(&mut self.child, size);
+            self.content_size = content_size;
+            self.vbar_width = 0.0;
+            self.hbar_height = 0.0;
+            self.scrollbar_v_visible = false;
+            self.scrollbar_h_visible = false;
+            self.set_viewport_pos_raw(size, content_size, self.viewport_pos);
+            ctx.set_clip_path(size.to_rect());
+            ctx.place_child(&mut self.child, Point::ZERO);
+            ctx.set_stashed(&mut self.scrollbar_v, true);
+            ctx.set_stashed(&mut self.scrollbar_h, true);
+            return;
+        }
+
         let content_size = {
             let cs = ctx.compute_size(&mut self.child, auto_size, size.into());
             if self.must_fill { cs.max(size) } else { cs }
@@ -856,7 +1018,15 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for ScrollView<W> {
                 content_size
             };
 
-        ctx.run_layout(&mut self.child, content_size);
+        // Give ContentClip the content size, then lay it out to eff_size.
+        // ContentClip.layout clips itself to eff_size.to_rect() and lays out
+        // the user content to child_size — so content is clipped at the
+        // scrollbar boundary while the scrollbars (siblings) remain unclipped.
+        {
+            let (clip, _) = ctx.get_raw_mut(&mut self.child);
+            clip.child_size = content_size;
+        }
+        ctx.run_layout(&mut self.child, eff_size);
         self.content_size = content_size;
         self.set_viewport_pos_raw(eff_size, content_size, self.viewport_pos);
 
@@ -916,10 +1086,12 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for ScrollView<W> {
     }
 
     fn compose(&mut self, ctx: &mut ComposeCtx<'_>) {
-        ctx.set_child_scroll_translation(
-            &mut self.child,
-            Vec2::new(-self.viewport_pos.x, -self.viewport_pos.y),
-        );
+        // ContentClip.compose applies the scroll translation to the user content.
+        // Update its viewport_pos and mark it for compose so its own compose
+        // method runs in the same pass and calls set_child_scroll_translation.
+        let (clip, mut clip_ctx) = ctx.get_raw_mut(&mut self.child);
+        clip.viewport_pos = self.viewport_pos;
+        clip_ctx.request_compose();
     }
 
     fn paint(
