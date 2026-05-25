@@ -346,12 +346,28 @@ fn surfaces_block(theme: &Theme) -> impl WidgetView<State> + use<> {
 fn accents_block(theme: &Theme) -> impl WidgetView<State> + use<> {
     let p = &theme.palette;
     flex_wrap((
-        swatch_tile("teal", p.teal, theme),
-        swatch_tile("coral", p.coral, theme),
-        swatch_tile("amber", p.amber, theme),
-        swatch_tile("violet", p.violet, theme),
-        swatch_tile("green", p.green, theme),
-        swatch_tile("blue", p.blue, theme),
+        (
+            swatch_tile("teal", p.teal, theme),
+            swatch_tile("teal_deep", p.teal_deep, theme),
+            swatch_tile("teal_soft", p.teal_soft, theme),
+            swatch_tile("coral", p.coral, theme),
+            swatch_tile("coral_deep", p.coral_deep, theme),
+            swatch_tile("coral_soft", p.coral_soft, theme),
+            swatch_tile("amber", p.amber, theme),
+            swatch_tile("amber_deep", p.amber_deep, theme),
+            swatch_tile("amber_soft", p.amber_soft, theme),
+        ),
+        (
+            swatch_tile("violet", p.violet, theme),
+            swatch_tile("violet_deep", p.violet_deep, theme),
+            swatch_tile("violet_soft", p.violet_soft, theme),
+            swatch_tile("green", p.green, theme),
+            swatch_tile("green_deep", p.green_deep, theme),
+            swatch_tile("green_soft", p.green_soft, theme),
+            swatch_tile("blue", p.blue, theme),
+            swatch_tile("blue_deep", p.blue_deep, theme),
+            swatch_tile("blue_soft", p.blue_soft, theme),
+        ),
     ))
     .gap(6.0)
 }
