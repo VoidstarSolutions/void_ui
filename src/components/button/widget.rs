@@ -22,7 +22,9 @@ use masonry::core::{
     TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Affine, Arc as KurboArc, Axis, BezPath, Point, RoundedRect, Shape, Size, Stroke, Vec2};
+use masonry::kurbo::{
+    Affine, Arc as KurboArc, Axis, BezPath, Point, RoundedRect, Shape, Size, Stroke, Vec2,
+};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use masonry::peniko::Color;
 use masonry::widgets::ButtonPress;
@@ -223,6 +225,7 @@ impl ThemedButton {
             if loading {
                 this.ctx.request_anim_frame();
             }
+            this.ctx.request_layout();
             this.ctx.request_paint_only();
         }
     }
@@ -265,38 +268,68 @@ impl ThemedButton {
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Danger => {
-                let bg = if pressed { p.coral_deep } else if hovered { p.coral } else { p.coral_soft };
+                let bg = if pressed {
+                    p.coral_deep
+                } else if hovered {
+                    p.coral
+                } else {
+                    p.coral_soft
+                };
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Primary => {
-                let bg = if pressed { p.teal_deep } else if hovered { p.teal } else { p.teal_soft };
+                let bg = if pressed {
+                    p.teal_deep
+                } else if hovered {
+                    p.teal
+                } else {
+                    p.teal_soft
+                };
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Warning => {
-                let bg = if pressed { p.amber_deep } else if hovered { p.amber } else { p.amber_soft };
+                let bg = if pressed {
+                    p.amber_deep
+                } else if hovered {
+                    p.amber
+                } else {
+                    p.amber_soft
+                };
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Secondary => {
-                let bg = if pressed { p.violet_deep } else if hovered { p.violet } else { p.violet_soft };
+                let bg = if pressed {
+                    p.violet_deep
+                } else if hovered {
+                    p.violet
+                } else {
+                    p.violet_soft
+                };
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Success => {
-                let bg = if pressed { p.green_deep } else if hovered { p.green } else { p.green_soft };
+                let bg = if pressed {
+                    p.green_deep
+                } else if hovered {
+                    p.green
+                } else {
+                    p.green_soft
+                };
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Info => {
-                let bg = if pressed { p.blue_deep } else if hovered { p.blue } else { p.blue_soft };
+                let bg = if pressed {
+                    p.blue_deep
+                } else if hovered {
+                    p.blue
+                } else {
+                    p.blue_soft
+                };
                 (bg, Color::TRANSPARENT)
             }
             // Ghost: always-visible border, fill on hover/press.
             ButtonVariant::Ghost => {
-                let bg = if pressed {
-                    p.surface_hi
-                } else if hovered {
-                    p.surface_2
-                } else {
-                    p.surface
-                };
+                let bg = Color::TRANSPARENT;
                 let border = if hovered { p.border_strong } else { p.border };
                 (bg, border)
             }
@@ -304,7 +337,11 @@ impl ThemedButton {
             ButtonVariant::Link => (Color::TRANSPARENT, Color::TRANSPARENT),
             // Text: subtle press feedback only — no hover fill, no border.
             ButtonVariant::Text => {
-                let bg = if pressed { p.surface_hi } else { Color::TRANSPARENT };
+                let bg = if pressed {
+                    p.surface_hi
+                } else {
+                    Color::TRANSPARENT
+                };
                 (bg, Color::TRANSPARENT)
             }
         }
@@ -461,8 +498,16 @@ impl Widget for ThemedButton {
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         let pad_v = f64::from(self.theme.density.button_pad_v);
         let pad_h = f64::from(self.theme.density.button_pad_h);
-        let icon_base = if self.icon.is_some() || self.loading { self.icon_size() } else { 0.0 };
-        let trailing_base = if self.trailing_icon.is_some() { self.icon_size() } else { 0.0 };
+        let icon_base = if self.icon.is_some() || self.loading {
+            self.icon_size()
+        } else {
+            0.0
+        };
+        let trailing_base = if self.trailing_icon.is_some() {
+            self.icon_size()
+        } else {
+            0.0
+        };
         let inner = Size::new(
             (size.width - 2.0 * pad_h - icon_base - trailing_base).max(0.0),
             (size.height - 2.0 * pad_v).max(0.0),
@@ -470,8 +515,16 @@ impl Widget for ThemedButton {
         let child_size = ctx.compute_size(&mut self.child, SizeDef::fit(inner), inner.into());
         ctx.run_layout(&mut self.child, child_size);
 
-        let gap = if child_size.width > 0.0 { ICON_GAP } else { 0.0 };
-        let icon_extra = if icon_base > 0.0 { icon_base + gap } else { 0.0 };
+        let gap = if child_size.width > 0.0 {
+            ICON_GAP
+        } else {
+            0.0
+        };
+        let icon_extra = if icon_base > 0.0 {
+            icon_base + gap
+        } else {
+            0.0
+        };
         // Label sits between the leading and trailing icon areas.
         let child_x = pad_h + icon_extra;
         let child_y = pad_v + ((inner.height - child_size.height) * 0.5).max(0.0);
