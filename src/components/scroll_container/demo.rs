@@ -184,6 +184,11 @@ fn make_inner_view(theme: &Theme, vis: DemoState) -> impl WidgetView<DemoState> 
         })
         .active(vis == ScrollBarVisibility::OnActivity)
         .render(theme),
+        radio("Always hidden", move |s: &mut DemoState| {
+            *s = ScrollBarVisibility::AlwaysHidden;
+        })
+        .active(vis == ScrollBarVisibility::AlwaysHidden)
+        .render(theme),
     ))
     .cross_axis_alignment(CrossAxisAlignment::Center)
     .gap(Length::px(16.0));
