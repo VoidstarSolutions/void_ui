@@ -115,9 +115,10 @@ fn topbar(theme_panel_open: bool, theme: &Theme) -> impl WidgetView<State> + use
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(2.0));
 
-    let gear = button("\u{2699} Theme", |s: &mut State| {
+    let gear = button(|s: &mut State| {
         s.theme_panel_open = !s.theme_panel_open;
     })
+    .label("\u{2699} Theme")
     .active(theme_panel_open)
     .render(theme);
 
@@ -205,21 +206,25 @@ fn data_grid_panel(
     let theme_copy = *theme;
 
     let toolbar = flex_row((
-        button("Add 100 ticks", |s: &mut State| {
+        button(|s: &mut State| {
             s.data_grid.append_n(100);
         })
+        .label("Add 100 ticks")
         .render(theme),
-        button("Add 10k ticks", |s: &mut State| {
+        button(|s: &mut State| {
             s.data_grid.append_n(10_000);
         })
+        .label("Add 10k ticks")
         .render(theme),
-        button("Select 0..50", |s: &mut State| {
+        button(|s: &mut State| {
             s.data_grid.select_first(50);
         })
+        .label("Select 0..50")
         .render(theme),
-        button("Clear selection", |s: &mut State| {
+        button(|s: &mut State| {
             s.data_grid.clear_selection();
         })
+        .label("Clear selection")
         .render(theme),
         FlexSpacer::Flex(1.0),
         label(format!("{row_count} ticks"))
@@ -245,7 +250,7 @@ fn data_grid_panel(
 
 // === Theme panel ===========================================================
 
-fn theme_panel(theme: &Theme) -> impl WidgetView<State> + use<> {
+fn theme_panel(theme: &Theme) -> impl WidgetView<State> {
     flex_col((
         section_header("Theme", theme),
         theme_variant_row(theme),
@@ -275,16 +280,18 @@ fn section_header(title: &'static str, theme: &Theme) -> impl WidgetView<State> 
 
 fn theme_variant_row(theme: &Theme) -> impl WidgetView<State> + use<> {
     flex_row((
-        button("Dark", |s: &mut State| {
+        button(|s: &mut State| {
             let d = s.theme.density;
             s.theme = Theme::dark().with_density(d);
         })
+        .label("Dark")
         .active(theme.is_dark())
         .render(theme),
-        button("Light", |s: &mut State| {
+        button(|s: &mut State| {
             let d = s.theme.density;
             s.theme = Theme::light().with_density(d);
         })
+        .label("Light")
         .active(theme.is_light())
         .render(theme),
     ))
@@ -294,19 +301,22 @@ fn theme_variant_row(theme: &Theme) -> impl WidgetView<State> + use<> {
 
 fn density_row(theme: &Theme) -> impl WidgetView<State> + use<> {
     flex_row((
-        button("Compact", |s: &mut State| {
+        button(|s: &mut State| {
             s.theme = s.theme.with_density(Density::compact());
         })
+        .label("Compact")
         .active(theme.density == Density::compact())
         .render(theme),
-        button("Balanced", |s: &mut State| {
+        button(|s: &mut State| {
             s.theme = s.theme.with_density(Density::balanced());
         })
+        .label("Balanced")
         .active(theme.density == Density::balanced())
         .render(theme),
-        button("Airy", |s: &mut State| {
+        button(|s: &mut State| {
             s.theme = s.theme.with_density(Density::airy());
         })
+        .label("Airy")
         .active(theme.density == Density::airy())
         .render(theme),
     ))
@@ -336,10 +346,28 @@ fn surfaces_block(theme: &Theme) -> impl WidgetView<State> + use<> {
 fn accents_block(theme: &Theme) -> impl WidgetView<State> + use<> {
     let p = &theme.palette;
     flex_wrap((
-        swatch_tile("teal", p.teal, theme),
-        swatch_tile("coral", p.coral, theme),
-        swatch_tile("amber", p.amber, theme),
-        swatch_tile("violet", p.violet, theme),
+        (
+            swatch_tile("teal", p.teal, theme),
+            swatch_tile("teal_deep", p.teal_deep, theme),
+            swatch_tile("teal_soft", p.teal_soft, theme),
+            swatch_tile("coral", p.coral, theme),
+            swatch_tile("coral_deep", p.coral_deep, theme),
+            swatch_tile("coral_soft", p.coral_soft, theme),
+            swatch_tile("amber", p.amber, theme),
+            swatch_tile("amber_deep", p.amber_deep, theme),
+            swatch_tile("amber_soft", p.amber_soft, theme),
+        ),
+        (
+            swatch_tile("violet", p.violet, theme),
+            swatch_tile("violet_deep", p.violet_deep, theme),
+            swatch_tile("violet_soft", p.violet_soft, theme),
+            swatch_tile("green", p.green, theme),
+            swatch_tile("green_deep", p.green_deep, theme),
+            swatch_tile("green_soft", p.green_soft, theme),
+            swatch_tile("blue", p.blue, theme),
+            swatch_tile("blue_deep", p.blue_deep, theme),
+            swatch_tile("blue_soft", p.blue_soft, theme),
+        ),
     ))
     .gap(6.0)
 }

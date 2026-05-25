@@ -11,18 +11,20 @@
 //! on primary-pointer release inside the widget and on Space/Enter while
 //! focused.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use masonry::accesskit;
 use masonry::accesskit::{Node, Role};
 use masonry::core::keyboard::{Key, NamedKey};
 use masonry::core::{
-    AccessCtx, AccessEvent, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, PaintCtx,
-    PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx,
-    TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
+    AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
+    PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef,
+    RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Affine, Axis, BezPath, Point, RoundedRect, Size, Stroke};
+use masonry::kurbo::{
+    Affine, Arc as KurboArc, Axis, BezPath, Point, RoundedRect, Shape, Size, Stroke, Vec2,
+};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use masonry::peniko::Color;
 use masonry::widgets::ButtonPress;
@@ -40,6 +42,23 @@ const FOCUS_RING_WIDTH: f64 = 1.5;
 const FOCUS_RING_INSET: f64 = 2.0;
 /// Gap between a leading icon and the label.
 const ICON_GAP: f64 = 5.0;
+/// Sweep angle (radians) of the spinner arc — leaves a ~60° gap to suggest rotation.
+const SPINNER_SWEEP: f64 = std::f64::consts::TAU * (300.0 / 360.0);
+
+/// Partial-circle `BezPath` in unit-square (0..1) space used as the loading
+/// spinner icon. Computed once and cached; callers borrow the static value.
+static SPINNER_PATH: LazyLock<BezPath> = LazyLock::new(|| {
+    let arc = KurboArc {
+        center: Point::new(0.5, 0.5),
+        radii: Vec2::new(0.45, 0.45),
+        start_angle: 0.0,
+        sweep_angle: SPINNER_SWEEP,
+        x_rotation: 0.0,
+    };
+    let mut path = BezPath::new();
+    arc.into_path(0.01).iter().for_each(|el| path.push(el));
+    path
+});
 
 /// Themed, interactive button widget.
 ///
@@ -59,6 +78,14 @@ pub struct ThemedButton {
     /// Optional leading icon: a unit-square `BezPath` (0..1 coordinate
     /// space) scaled to the theme's UI font size at paint time.
     icon: Option<Arc<BezPath>>,
+    /// Optional trailing icon (e.g. a dropdown caret), painted at the right edge.
+    trailing_icon: Option<Arc<BezPath>>,
+    /// When true, shows a spinner and blocks all interaction.
+    loading: bool,
+    /// Animation time in seconds [0, 1), advanced each anim frame while loading.
+    spinner_t: f64,
+    /// Explicit accessibility label for icon-only buttons.
+    accessibility_label: Option<ArcStr>,
 }
 
 // --- MARK: BUILDERS
@@ -76,6 +103,10 @@ impl ThemedButton {
             disabled: false,
             variant: ButtonVariant::Default,
             icon: None,
+            trailing_icon: None,
+            loading: false,
+            spinner_t: 0.0,
+            accessibility_label: None,
         }
     }
 
@@ -104,6 +135,27 @@ impl ThemedButton {
     #[must_use]
     pub fn with_icon(mut self, icon: Option<Arc<BezPath>>) -> Self {
         self.icon = icon;
+        self
+    }
+
+    /// Attaches a trailing icon (e.g. a dropdown caret).
+    #[must_use]
+    pub fn with_trailing_icon(mut self, icon: Option<Arc<BezPath>>) -> Self {
+        self.trailing_icon = icon;
+        self
+    }
+
+    /// Shows a spinner and blocks all interaction.
+    #[must_use]
+    pub fn with_loading(mut self, loading: bool) -> Self {
+        self.loading = loading;
+        self
+    }
+
+    /// Sets an explicit accessibility label (required for icon-only buttons).
+    #[must_use]
+    pub fn with_accessibility_label(mut self, name: Option<ArcStr>) -> Self {
+        self.accessibility_label = name;
         self
     }
 }
@@ -160,6 +212,42 @@ impl ThemedButton {
         }
     }
 
+    /// Replaces the trailing icon. Compares by `Arc` pointer; requests
+    /// layout + repaint only when the icon actually changes.
+    pub fn set_trailing_icon(this: &mut WidgetMut<'_, Self>, icon: Option<Arc<BezPath>>) {
+        let changed = match (&this.widget.trailing_icon, &icon) {
+            (None, None) => false,
+            (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
+            _ => true,
+        };
+        if changed {
+            this.widget.trailing_icon = icon;
+            this.ctx.request_layout();
+            this.ctx.request_paint_only();
+        }
+    }
+
+    /// Sets the loading state. Requests a repaint on change; kicks off the
+    /// animation loop when transitioning into loading.
+    pub fn set_loading(this: &mut WidgetMut<'_, Self>, loading: bool) {
+        if this.widget.loading != loading {
+            this.widget.loading = loading;
+            if loading {
+                this.ctx.request_anim_frame();
+            }
+            this.ctx.request_layout();
+            this.ctx.request_paint_only();
+        }
+    }
+
+    /// Updates the accessibility label. Requests an accessibility update on change.
+    pub fn set_accessibility_label(this: &mut WidgetMut<'_, Self>, name: Option<ArcStr>) {
+        if this.widget.accessibility_label != name {
+            this.widget.accessibility_label = name;
+            this.ctx.request_accessibility_update();
+        }
+    }
+
     /// Returns a mutable reference to the child widget.
     pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
         this.ctx.get_mut(&mut this.widget.child)
@@ -174,14 +262,13 @@ impl ThemedButton {
 
     /// Resolves `(background, border)` colors for the current state.
     ///
-    /// | state              | Default bg   | Danger bg    | border         |
-    /// |--------------------|--------------|--------------|----------------|
-    /// | disabled           | transparent  | transparent  | none           |
-    /// | default            | transparent  | transparent  | none           |
-    /// | hover              | `surface_2`  | `coral_soft` | none           |
-    /// | pressed            | `surface_hi` | `coral`      | none           |
-    /// | active (toggle)    | `surface_2`  | `coral_soft` | border / coral |
-    /// | active + pressed   | `surface_hi` | `coral`      | border / coral |
+    /// | state           | Default      | Danger       | Primary    | Ghost        | Warning      |
+    /// |-----------------|--------------|--------------|------------|--------------|--------------|
+    /// | disabled        | transparent  | transparent  | transparent| transparent  | transparent  |
+    /// | rest            | transparent  | transparent  | teal_soft  | transparent/border| transparent |
+    /// | hover           | `surface_2`  | `coral_soft` | `teal`     | `surface_2`  | `amber_soft` |
+    /// | pressed         | `surface_hi` | `coral`      | `teal`     | `surface_hi` | `amber`      |
+    /// | active (toggle) | `surface_2`  | `coral_soft` | `teal_soft`| transparent  | `amber_soft` |
     fn resolve_colors(&self, hovered: bool, pressed: bool) -> (Color, Color) {
         let p = &self.theme.palette;
         if self.disabled {
@@ -194,29 +281,92 @@ impl ThemedButton {
                 } else if self.active || hovered {
                     p.surface_2
                 } else {
-                    Color::TRANSPARENT
+                    p.surface
                 };
-                let border = if self.active {
-                    p.border
-                } else {
-                    Color::TRANSPARENT
-                };
-                (bg, border)
+                (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Danger => {
                 let bg = if pressed {
+                    p.coral_deep
+                } else if hovered {
                     p.coral
-                } else if self.active || hovered {
+                } else {
                     p.coral_soft
+                };
+                (bg, Color::TRANSPARENT)
+            }
+            ButtonVariant::Primary => {
+                let bg = if pressed {
+                    p.teal_deep
+                } else if hovered {
+                    p.teal
+                } else {
+                    p.teal_soft
+                };
+                (bg, Color::TRANSPARENT)
+            }
+            ButtonVariant::Warning => {
+                let bg = if pressed {
+                    p.amber_deep
+                } else if hovered {
+                    p.amber
+                } else {
+                    p.amber_soft
+                };
+                (bg, Color::TRANSPARENT)
+            }
+            ButtonVariant::Secondary => {
+                let bg = if pressed {
+                    p.violet_deep
+                } else if hovered {
+                    p.violet
+                } else {
+                    p.violet_soft
+                };
+                (bg, Color::TRANSPARENT)
+            }
+            ButtonVariant::Success => {
+                let bg = if pressed {
+                    p.green_deep
+                } else if hovered {
+                    p.green
+                } else {
+                    p.green_soft
+                };
+                (bg, Color::TRANSPARENT)
+            }
+            ButtonVariant::Info => {
+                let bg = if pressed {
+                    p.blue_deep
+                } else if hovered {
+                    p.blue
+                } else {
+                    p.blue_soft
+                };
+                (bg, Color::TRANSPARENT)
+            }
+            // Ghost: always-visible border, fill on hover/press.
+            ButtonVariant::Ghost => {
+                let bg = if pressed {
+                    p.surface_hi
+                } else if hovered {
+                    p.surface_2
                 } else {
                     Color::TRANSPARENT
                 };
-                let border = if self.active {
-                    p.coral
-                } else {
-                    Color::TRANSPARENT
-                };
+                let border = if hovered { p.border_strong } else { p.border };
                 (bg, border)
+            }
+            // Link: no background or border.
+            ButtonVariant::Link => (Color::TRANSPARENT, Color::TRANSPARENT),
+            // Text: subtle press feedback only — no hover fill, no border.
+            ButtonVariant::Text => {
+                let bg = if pressed {
+                    p.surface_hi
+                } else {
+                    Color::TRANSPARENT
+                };
+                (bg, Color::TRANSPARENT)
             }
         }
     }
@@ -232,7 +382,7 @@ impl Widget for ThemedButton {
         _props: &mut PropertiesMut<'_>,
         event: &PointerEvent,
     ) {
-        if self.disabled {
+        if self.disabled || self.loading {
             return;
         }
         match event {
@@ -248,6 +398,9 @@ impl Widget for ThemedButton {
                 button: button @ Some(PointerButton::Primary),
                 ..
             }) => {
+                // Require both active (pointer was captured on Down) and hovered
+                // (pointer is still inside the button) before firing. This lets
+                // the user drag out of the button to cancel the press.
                 if ctx.is_active() && ctx.is_hovered() {
                     ctx.submit_action::<Self::Action>(ButtonPress { button: *button });
                 }
@@ -263,7 +416,7 @@ impl Widget for ThemedButton {
         _props: &mut PropertiesMut<'_>,
         event: &TextEvent,
     ) {
-        if self.disabled {
+        if self.disabled || self.loading {
             return;
         }
         if let TextEvent::Keyboard(event) = event
@@ -281,11 +434,24 @@ impl Widget for ThemedButton {
         _props: &mut PropertiesMut<'_>,
         event: &AccessEvent,
     ) {
-        if self.disabled {
+        if self.disabled || self.loading {
             return;
         }
         if event.action == accesskit::Action::Click {
             ctx.submit_action::<Self::Action>(ButtonPress { button: None });
+        }
+    }
+
+    fn on_anim_frame(
+        &mut self,
+        ctx: &mut UpdateCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        interval: u64,
+    ) {
+        if self.loading {
+            self.spinner_t = (self.spinner_t + interval as f64 * 1e-9).rem_euclid(1.0);
+            ctx.request_anim_frame();
+            ctx.request_paint_only();
         }
     }
 
@@ -298,6 +464,9 @@ impl Widget for ThemedButton {
             // accessibility pass that drives `node.set_disabled()`.
             Update::WidgetAdded => {
                 ctx.set_disabled(self.disabled);
+                if self.loading {
+                    ctx.request_anim_frame();
+                }
             }
             Update::HoveredChanged(_) | Update::DisabledChanged(_) | Update::FocusChanged(_) => {
                 ctx.request_paint_only();
@@ -326,11 +495,6 @@ impl Widget for ThemedButton {
             Axis::Horizontal => (2.0 * pad_h, 2.0 * pad_v),
             Axis::Vertical => (2.0 * pad_v, 2.0 * pad_h),
         };
-        let icon_extra = if self.icon.is_some() && axis == Axis::Horizontal {
-            self.icon_size() + ICON_GAP
-        } else {
-            0.0
-        };
         let inner_cross = cross_length.map(|c| Length::px((c.get() - cross_pad).max(0.0)));
         let auto_length = len_req.into();
         let context_size = LayoutSize::maybe(axis.cross(), inner_cross);
@@ -341,26 +505,51 @@ impl Widget for ThemedButton {
             axis,
             inner_cross,
         );
-        Length::px(child_length.get() + main_pad + icon_extra)
+        let has_label = child_length.get() > 0.0;
+        let icon_extra = if (self.icon.is_some() || self.loading) && axis == Axis::Horizontal {
+            self.icon_size() + if has_label { ICON_GAP } else { 0.0 }
+        } else {
+            0.0
+        };
+        let trailing_extra = if self.trailing_icon.is_some() && axis == Axis::Horizontal {
+            self.icon_size() + if has_label { ICON_GAP } else { 0.0 }
+        } else {
+            0.0
+        };
+        Length::px(child_length.get() + main_pad + icon_extra + trailing_extra)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         let pad_v = f64::from(self.theme.density.button_pad_v);
         let pad_h = f64::from(self.theme.density.button_pad_h);
-        let icon_extra = if self.icon.is_some() {
-            self.icon_size() + ICON_GAP
+        let icon_base = if self.icon.is_some() || self.loading {
+            self.icon_size()
+        } else {
+            0.0
+        };
+        let trailing_base = if self.trailing_icon.is_some() {
+            self.icon_size()
         } else {
             0.0
         };
         let inner = Size::new(
-            (size.width - 2.0 * pad_h - icon_extra).max(0.0),
+            (size.width - 2.0 * pad_h - icon_base - trailing_base).max(0.0),
             (size.height - 2.0 * pad_v).max(0.0),
         );
         let child_size = ctx.compute_size(&mut self.child, SizeDef::fit(inner), inner.into());
         ctx.run_layout(&mut self.child, child_size);
 
-        // Label starts immediately after the icon area; no horizontal
-        // centering within the remaining space keeps icon+text as a visual unit.
+        let gap = if child_size.width > 0.0 {
+            ICON_GAP
+        } else {
+            0.0
+        };
+        let icon_extra = if icon_base > 0.0 {
+            icon_base + gap
+        } else {
+            0.0
+        };
+        // Label sits between the leading and trailing icon areas.
         let child_x = pad_h + icon_extra;
         let child_y = pad_v + ((inner.height - child_size.height) * 0.5).max(0.0);
         ctx.place_child(&mut self.child, Point::new(child_x, child_y));
@@ -405,12 +594,35 @@ impl Widget for ThemedButton {
                 .draw();
         }
 
-        if let Some(icon) = &self.icon {
-            let icon_size = self.icon_size();
+        let icon_color = if self.disabled { p.text_faint } else { p.text };
+        let icon_size = self.icon_size();
+        let pad_h = f64::from(self.theme.density.button_pad_h);
+
+        // When loading, replace the leading icon slot (or paint spinner at the
+        // leading position when there is no icon) with a partial-circle spinner.
+        if self.loading {
+            let spinner = &*SPINNER_PATH;
             let icon_y = (size.height - icon_size) * 0.5;
-            let icon_color = if self.disabled { p.text_faint } else { p.text };
-            let pad_h = f64::from(self.theme.density.button_pad_h);
+            // Rotate around the center of the unit square (0.5, 0.5), then
+            // scale to icon_size and position at the leading icon slot.
+            let angle = self.spinner_t * std::f64::consts::TAU;
+            let spin = Affine::translate((0.5, 0.5))
+                * Affine::rotate(angle)
+                * Affine::translate((-0.5, -0.5));
+            let transform = Affine::translate((pad_h, icon_y)) * Affine::scale(icon_size) * spin;
+            painter
+                .stroke(transform * spinner, &Stroke::new(1.5), p.text_muted)
+                .draw();
+        } else if let Some(icon) = &self.icon {
+            let icon_y = (size.height - icon_size) * 0.5;
             let transform = Affine::translate((pad_h, icon_y)) * Affine::scale(icon_size);
+            painter.fill(transform * icon.as_ref(), icon_color).draw();
+        }
+
+        if let Some(icon) = &self.trailing_icon {
+            let icon_y = (size.height - icon_size) * 0.5;
+            let icon_x = size.width - pad_h - icon_size;
+            let transform = Affine::translate((icon_x, icon_y)) * Affine::scale(icon_size);
             painter.fill(transform * icon.as_ref(), icon_color).draw();
         }
     }
@@ -429,8 +641,11 @@ impl Widget for ThemedButton {
         // `ctx.is_disabled()` is true (see masonry passes/accessibility.rs).
         // We additionally suppress the Click action so AT clients don't see
         // a disabled button as an actionable target.
-        if !self.disabled {
+        if !self.disabled && !self.loading {
             node.add_action(accesskit::Action::Click);
+        }
+        if let Some(name) = &self.accessibility_label {
+            node.set_label(name.as_ref());
         }
     }
 
