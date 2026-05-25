@@ -162,14 +162,6 @@ impl Widget for VoidScrollBar {
         }
     }
 
-    fn on_text_event(
-        &mut self,
-        _ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &TextEvent,
-    ) {
-    }
-
     fn on_access_event(
         &mut self,
         _ctx: &mut EventCtx<'_>,
@@ -361,38 +353,6 @@ impl<W: Widget + FromDynWidget> ContentClip<W> {
 
 impl<W: Widget + ?Sized> Widget for ContentClip<W> {
     type Action = NoAction;
-
-    fn on_pointer_event(
-        &mut self,
-        _ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &PointerEvent,
-    ) {
-    }
-
-    fn on_text_event(
-        &mut self,
-        _ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &TextEvent,
-    ) {
-    }
-
-    fn on_access_event(
-        &mut self,
-        _ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &AccessEvent,
-    ) {
-    }
-
-    fn on_anim_frame(
-        &mut self,
-        _ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _interval: u64,
-    ) {
-    }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
         ctx.register_child(&mut self.child);
@@ -891,12 +851,16 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
             let eff_size = self.effective_size(size);
             let viewport = kurbo::Rect::from_origin_size(self.viewport_pos, eff_size);
 
-            let new_x =
-                compute_pan_range(viewport.min_x()..viewport.max_x(), target.min_x()..target.max_x())
-                    .start;
-            let new_y =
-                compute_pan_range(viewport.min_y()..viewport.max_y(), target.min_y()..target.max_y())
-                    .start;
+            let new_x = compute_pan_range(
+                viewport.min_x()..viewport.max_x(),
+                target.min_x()..target.max_x(),
+            )
+            .start;
+            let new_y = compute_pan_range(
+                viewport.min_y()..viewport.max_y(),
+                target.min_y()..target.max_y(),
+            )
+            .start;
 
             self.set_viewport_pos_raw(eff_size, self.content_size, Point::new(new_x, new_y));
             ctx.request_compose();
