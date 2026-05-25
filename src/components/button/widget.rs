@@ -17,9 +17,9 @@ use masonry::accesskit;
 use masonry::accesskit::{Node, Role};
 use masonry::core::keyboard::{Key, NamedKey};
 use masonry::core::{
-    AccessCtx, AccessEvent, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, PaintCtx,
-    PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx,
-    TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
+    AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
+    PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef,
+    RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{
@@ -84,6 +84,8 @@ pub struct ThemedButton {
     loading: bool,
     /// Animation time in seconds [0, 1), advanced each anim frame while loading.
     spinner_t: f64,
+    /// Explicit accessibility label for icon-only buttons.
+    accessibility_label: Option<ArcStr>,
 }
 
 // --- MARK: BUILDERS
@@ -104,6 +106,7 @@ impl ThemedButton {
             trailing_icon: None,
             loading: false,
             spinner_t: 0.0,
+            accessibility_label: None,
         }
     }
 
@@ -146,6 +149,13 @@ impl ThemedButton {
     #[must_use]
     pub fn with_loading(mut self, loading: bool) -> Self {
         self.loading = loading;
+        self
+    }
+
+    /// Sets an explicit accessibility label (required for icon-only buttons).
+    #[must_use]
+    pub fn with_accessibility_label(mut self, name: Option<ArcStr>) -> Self {
+        self.accessibility_label = name;
         self
     }
 }
@@ -227,6 +237,14 @@ impl ThemedButton {
             }
             this.ctx.request_layout();
             this.ctx.request_paint_only();
+        }
+    }
+
+    /// Updates the accessibility label. Requests an accessibility update on change.
+    pub fn set_accessibility_label(this: &mut WidgetMut<'_, Self>, name: Option<ArcStr>) {
+        if this.widget.accessibility_label != name {
+            this.widget.accessibility_label = name;
+            this.ctx.request_accessibility_update();
         }
     }
 
@@ -619,6 +637,9 @@ impl Widget for ThemedButton {
         // a disabled button as an actionable target.
         if !self.disabled && !self.loading {
             node.add_action(accesskit::Action::Click);
+        }
+        if let Some(name) = &self.accessibility_label {
+            node.set_label(name.as_ref());
         }
     }
 

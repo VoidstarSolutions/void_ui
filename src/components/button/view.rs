@@ -32,6 +32,7 @@ use crate::Theme;
 #[must_use = "Button does nothing until rendered with .render(&theme)"]
 pub struct Button<F> {
     label: Option<ArcStr>,
+    accessible_name: Option<ArcStr>,
     active: bool,
     disabled: bool,
     loading: bool,
@@ -48,6 +49,7 @@ pub struct Button<F> {
 pub fn button<F>(callback: F) -> Button<F> {
     Button {
         label: None,
+        accessible_name: None,
         active: false,
         disabled: false,
         loading: false,
@@ -108,6 +110,15 @@ impl<F> Button<F> {
         self
     }
 
+    /// Set an explicit accessible name for this button.
+    ///
+    /// Required for icon-only buttons so screen readers can describe the action.
+    /// When a visible label is present this is redundant but harmless.
+    pub fn accessible_name(mut self, name: impl Into<ArcStr>) -> Self {
+        self.accessible_name = Some(name.into());
+        self
+    }
+
     /// Materialize the xilem view at the supplied theme.
     pub fn render<State, Action>(self, theme: &Theme) -> ButtonView<F, State, Action>
     where
@@ -117,6 +128,7 @@ impl<F> Button<F> {
     {
         ButtonView {
             label: self.label,
+            accessible_name: self.accessible_name,
             active: self.active,
             disabled: self.disabled,
             loading: self.loading,
@@ -136,6 +148,7 @@ impl<F> Button<F> {
 #[must_use = "View values do nothing unless provided to Xilem."]
 pub struct ButtonView<F, State, Action> {
     label: Option<ArcStr>,
+    accessible_name: Option<ArcStr>,
     active: bool,
     disabled: bool,
     loading: bool,
@@ -176,7 +189,8 @@ where
             .with_loading(self.loading)
             .with_variant(self.variant)
             .with_icon(self.icon.clone())
-            .with_trailing_icon(self.trailing_icon.clone());
+            .with_trailing_icon(self.trailing_icon.clone())
+            .with_accessibility_label(self.accessible_name.clone());
         // `with_action_widget` registers the widget as an action source so that
         // `ButtonPress` events bubble up to this view's `message` handler rather
         // than being dropped by xilem's dispatch loop.
@@ -261,6 +275,9 @@ where
         };
         if trailing_icon_changed {
             ThemedButton::set_trailing_icon(&mut element, self.trailing_icon.clone());
+        }
+        if self.accessible_name != prev.accessible_name {
+            ThemedButton::set_accessibility_label(&mut element, self.accessible_name.clone());
         }
         // Label text is not re-applied here; masonry's Label doesn't expose
         // stable post-construction text mutation. If the label string changes
