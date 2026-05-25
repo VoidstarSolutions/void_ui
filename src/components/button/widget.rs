@@ -11,7 +11,7 @@
 //! on primary-pointer release inside the widget and on Space/Enter while
 //! focused.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use masonry::accesskit;
 use masonry::accesskit::{Node, Role};
@@ -45,9 +45,9 @@ const ICON_GAP: f64 = 5.0;
 /// Sweep angle (radians) of the spinner arc — leaves a ~60° gap to suggest rotation.
 const SPINNER_SWEEP: f64 = std::f64::consts::TAU * (300.0 / 360.0);
 
-/// Returns a partial-circle `BezPath` in unit-square (0..1) space, used as the
-/// loading spinner icon. Scaled to `icon_size` at paint time like any other icon.
-fn spinner_path() -> BezPath {
+/// Partial-circle `BezPath` in unit-square (0..1) space used as the loading
+/// spinner icon. Computed once and cached; callers borrow the static value.
+static SPINNER_PATH: LazyLock<BezPath> = LazyLock::new(|| {
     let arc = KurboArc {
         center: Point::new(0.5, 0.5),
         radii: Vec2::new(0.45, 0.45),
@@ -58,7 +58,7 @@ fn spinner_path() -> BezPath {
     let mut path = BezPath::new();
     arc.into_path(0.01).iter().for_each(|el| path.push(el));
     path
-}
+});
 
 /// Themed, interactive button widget.
 ///
@@ -601,7 +601,7 @@ impl Widget for ThemedButton {
         // When loading, replace the leading icon slot (or paint spinner at the
         // leading position when there is no icon) with a partial-circle spinner.
         if self.loading {
-            let spinner = spinner_path();
+            let spinner = &*SPINNER_PATH;
             let icon_y = (size.height - icon_size) * 0.5;
             // Rotate around the center of the unit square (0.5, 0.5), then
             // scale to icon_size and position at the leading icon slot.
@@ -611,7 +611,7 @@ impl Widget for ThemedButton {
                 * Affine::translate((-0.5, -0.5));
             let transform = Affine::translate((pad_h, icon_y)) * Affine::scale(icon_size) * spin;
             painter
-                .stroke(transform * &spinner, &Stroke::new(1.5), p.text_muted)
+                .stroke(transform * spinner, &Stroke::new(1.5), p.text_muted)
                 .draw();
         } else if let Some(icon) = &self.icon {
             let icon_y = (size.height - icon_size) * 0.5;
