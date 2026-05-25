@@ -27,8 +27,10 @@ use crate::Theme;
 
 /// Builder for an interactive themed button.
 ///
-/// Created with [`button`] (label required) or [`icon_button`] (icon required).
-/// Returns a xilem `WidgetView` via [`Self::render`].
+/// Created with [`button`]; label and icon are optional and set via builder
+/// methods. Returns a xilem [`View`] via [`Self::render`].
+///
+/// [`View`]: xilem::core::View
 #[must_use = "Button does nothing until rendered with .render(&theme)"]
 pub struct Button<F> {
     label: Option<ArcStr>,
@@ -42,8 +44,9 @@ pub struct Button<F> {
     callback: F,
 }
 
-/// Create a new button with the given label and click callback.
+/// Create a new button with the given click callback.
 ///
+/// Label and icon start as `None`; set them via `.label()` and `.icon()`.
 /// The callback is invoked on primary-pointer release inside the widget and on
 /// Space / Enter while the widget is focused.
 pub fn button<F>(callback: F) -> Button<F> {
