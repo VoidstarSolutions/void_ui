@@ -14,6 +14,7 @@
 
 pub mod button;
 pub mod checkbox;
+pub mod clipboard;
 pub mod data_grid;
 pub mod radio;
 pub mod scroll_container;
@@ -22,6 +23,7 @@ pub mod tooltip;
 
 pub use button::{Button, ButtonVariant, ButtonView, button};
 pub use checkbox::{Checkbox, CheckboxView, checkbox};
+pub use clipboard::{Clipboard, ClipboardView, clipboard};
 pub use data_grid::{
     CellAlign, ColumnDef, SelectionState, data_grid, optional_text_column, text_column,
 };
@@ -40,6 +42,7 @@ pub use tooltip::{Tooltip, TooltipView, tooltip};
 pub enum ComponentKind {
     Button,
     Checkbox,
+    Clipboard,
     DataGrid,
     Radio,
     ScrollContainer,
@@ -54,6 +57,7 @@ impl ComponentKind {
         match self {
             Self::Button => "Button",
             Self::Checkbox => "Checkbox",
+            Self::Clipboard => "Clipboard",
             Self::DataGrid => "Data Grid",
             Self::Radio => "Radio",
             Self::ScrollContainer => "Scroll Container",
@@ -67,6 +71,8 @@ impl ComponentKind {
     pub const fn all() -> &'static [Self] {
         &[
             Self::Button,
+            Self::Checkbox,
+            Self::Clipboard,
             Self::Radio,
             Self::DataGrid,
             Self::ScrollContainer,
