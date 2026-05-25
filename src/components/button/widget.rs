@@ -347,9 +347,16 @@ impl ThemedButton {
             }
             // Ghost: always-visible border, fill on hover/press.
             ButtonVariant::Ghost => {
-                let bg = Color::TRANSPARENT;
+                let bg = if pressed {
+                    p.surface_hi
+                } else if hovered {
+                    p.surface_2
+                } else {
+                    Color::TRANSPARENT
+                };
                 let border = if hovered { p.border_strong } else { p.border };
                 (bg, border)
+            }
             }
             // Link: no background or border.
             ButtonVariant::Link => (Color::TRANSPARENT, Color::TRANSPARENT),
