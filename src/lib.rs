@@ -30,4 +30,4 @@ pub use components::{
 pub use floating::{FloatingOverlay, FloatingOverlayView, floating, interactive_floating};
 pub use gallery::code_block;
 pub use pointer_inert::{PointerInert, PointerInertView, pointer_inert};
-pub use theme::{Density, FontStack, Palette, Radii, Theme, ThemeVariant, Typography};
+pub use theme::{CodePalette, Density, FontStack, Palette, Radii, Theme, ThemeVariant, Typography};
