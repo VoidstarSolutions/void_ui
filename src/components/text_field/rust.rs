@@ -189,10 +189,13 @@ fn scan_string(bytes: &[u8], start: usize) -> usize {
 }
 
 fn scan_char_or_lifetime(bytes: &[u8], start: usize) -> (usize, TokenKind) {
+    // '\u{XXXXXX}' is the longest valid char escape: tick + backslash + u + { + 6 hex + } + tick = 11 bytes.
+    // Use a small margin to keep the probe loop bounded.
+    const MAX_CHAR_LITERAL_LEN: usize = 12;
     let is_char_lit = if bytes.get(start + 1) == Some(&b'\\') {
         // '\n' '\\' '\'' '\t' '\0' '\xNN' '\u{...}'
         let mut probe = start + 2;
-        while probe < bytes.len() && bytes[probe] != b'\'' && probe - start < 12 {
+        while probe < bytes.len() && bytes[probe] != b'\'' && probe - start < MAX_CHAR_LITERAL_LEN {
             probe += 1;
         }
         bytes.get(probe) == Some(&b'\'')
@@ -224,6 +227,7 @@ fn scan_char_or_lifetime(bytes: &[u8], start: usize) -> (usize, TokenKind) {
 
 fn scan_number(bytes: &[u8], start: usize) -> usize {
     let mut end = start;
+    // hex/oct/bin prefix
     if bytes[start] == b'0'
         && matches!(
             bytes.get(start + 1),
@@ -238,12 +242,14 @@ fn scan_number(bytes: &[u8], start: usize) -> usize {
         while end < bytes.len() && (bytes[end].is_ascii_digit() || bytes[end] == b'_') {
             end += 1;
         }
+        // fractional part
         if bytes.get(end) == Some(&b'.') && bytes.get(end + 1).is_some_and(u8::is_ascii_digit) {
             end += 1;
             while end < bytes.len() && (bytes[end].is_ascii_digit() || bytes[end] == b'_') {
                 end += 1;
             }
         }
+        // exponent
         if matches!(bytes.get(end), Some(&(b'e' | b'E'))) {
             end += 1;
             if matches!(bytes.get(end), Some(&(b'+' | b'-'))) {
@@ -408,18 +414,14 @@ mod tests {
 
     #[test]
     fn lifetime_is_identifier_not_string() {
-        // 'a (no closing quote) is a lifetime, not a char literal
         let s = "&'a T";
-        let got = spans(s);
-        assert!(
-            got.iter().any(|(_, k)| *k == TokenKind::Identifier),
-            "lifetime should classify as identifier, got {got:?}"
-        );
-        // The tick at index 1 should NOT be inside a String span.
-        assert!(
-            !got.iter()
-                .any(|(r, k)| *k == TokenKind::String && r.contains(&1)),
-            "lifetime tick should not start a string, got {got:?}"
+        assert_eq!(
+            spans(s),
+            vec![
+                (0..1, TokenKind::Operator),
+                (1..3, TokenKind::Identifier),
+                (4..5, TokenKind::Type),
+            ]
         );
     }
 
@@ -455,6 +457,25 @@ mod tests {
                 "{kw} should be Keyword or Type (for `Self`), got {kind:?}"
             );
         }
+    }
+
+    #[test]
+    fn empty_input_emits_no_spans() {
+        assert_eq!(spans(""), vec![]);
+    }
+
+    #[test]
+    fn float_exponent_literal() {
+        assert_eq!(spans("1.5e10"), vec![(0..6, TokenKind::Number)]);
+        assert_eq!(spans("2e-3"), vec![(0..4, TokenKind::Number)]);
+    }
+
+    #[test]
+    fn raw_string_with_mismatched_inner_hashes() {
+        // r##"foo"#bar"## — the inner `"#` is one hash short of the `##` opener,
+        // so it must NOT terminate the string. Termination requires `"##`.
+        let s = "r##\"foo\"#bar\"##";
+        assert_eq!(spans(s), vec![(0..15, TokenKind::String)]);
     }
 
     #[test]
