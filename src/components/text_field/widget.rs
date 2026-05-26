@@ -1,0 +1,401 @@
+//! Masonry widget for the read-only highlighted text field.
+//!
+//! Owns a `String` and a parley [`Layout<BrushIndex>`]. Paints text using a
+//! brush palette indexed by `BrushIndex(n)` — index 0 is the fallback
+//! (`CodePalette::plain`), indices 1.. are the per-token-kind colors.
+//!
+//! Selection and event handling are added in Tasks 7–8.
+
+use masonry::accesskit::{Node, Role};
+use masonry::core::{
+    AccessCtx, AccessEvent, BrushIndex, ChildrenIds, CursorIcon, EventCtx, LayoutCtx, MeasureCtx,
+    PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, QueryCtx, RegisterCtx, StyleProperty,
+    TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut, render_text,
+};
+use masonry::imaging::Painter;
+use masonry::kurbo::{Affine, Axis, Point, RoundedRect, Size, Stroke};
+use masonry::layout::{AsUnit, LenReq, Length};
+use masonry::parley::style::GenericFamily;
+use masonry::parley::{Alignment, AlignmentOptions, FontFamily, FontFamilyName, Layout};
+use masonry::peniko::{Brush, Color};
+use tracing::{Span, trace_span};
+
+use super::highlighter::{TokenKind, TokenSpan};
+
+/// Number of brushes in the palette passed to `render_text`. Index 0 is the
+/// fallback (`CodePalette::plain`); indices 1..=9 are the per-token-kind colors
+/// produced by [`brush_index_for_kind`].
+pub(crate) const BRUSH_PALETTE_LEN: usize = 10;
+
+/// Returns the brush palette index for a given [`TokenKind`].
+///
+/// Index 0 is reserved for the fallback color and is never returned here.
+/// This mapping is the contract between [`CodeViewWidget`] and the view that
+/// builds its brush palette; keep them in sync.
+fn brush_index_for_kind(kind: TokenKind) -> u32 {
+    match kind {
+        TokenKind::Keyword => 1,
+        TokenKind::Type => 2,
+        TokenKind::Function => 3,
+        TokenKind::Identifier => 4,
+        TokenKind::String => 5,
+        TokenKind::Number => 6,
+        TokenKind::Comment => 7,
+        TokenKind::Punctuation => 8,
+        TokenKind::Operator => 9,
+    }
+}
+
+/// Render-only highlighted code view.
+///
+/// Drives parley's [`Layout<BrushIndex>`] directly so it can apply per-range
+/// brush colors. Selection, focus, keyboard handling, and IME are
+/// intentionally omitted at this stage — they are added in later tasks.
+pub struct CodeViewWidget {
+    text: String,
+    spans: Vec<TokenSpan>,
+    /// Exactly [`BRUSH_PALETTE_LEN`] brushes. `brushes[0]` is the
+    /// plain/fallback color; `brushes[1..]` follow [`brush_index_for_kind`].
+    brushes: Vec<Brush>,
+    background: Color,
+    border_color: Color,
+    border_width: f32,
+    corner_radius: f32,
+    padding: f32,
+    font_size: f32,
+    layout: Layout<BrushIndex>,
+    /// `Some(w)` means the cached layout was broken with max-advance `w`;
+    /// `None` means it was unbroken or has never been built.
+    last_max_advance: Option<f32>,
+    /// Set on construction and whenever inputs that affect glyph
+    /// composition change; cleared the next time we run `rebuild_layout`.
+    layout_dirty: bool,
+}
+
+impl CodeViewWidget {
+    /// Builds a new widget. `brushes` must have exactly [`BRUSH_PALETTE_LEN`]
+    /// entries — see [`brush_index_for_kind`] for the index assignment.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "render-only widget needs all chrome + text inputs up front; \
+                  splitting would just push the noise to the call site"
+    )]
+    #[must_use]
+    pub fn new(
+        text: String,
+        spans: Vec<TokenSpan>,
+        brushes: Vec<Brush>,
+        background: Color,
+        border_color: Color,
+        border_width: f32,
+        corner_radius: f32,
+        padding: f32,
+        font_size: f32,
+    ) -> Self {
+        debug_assert_eq!(
+            brushes.len(),
+            BRUSH_PALETTE_LEN,
+            "brush palette must have exactly {BRUSH_PALETTE_LEN} entries"
+        );
+        Self {
+            text,
+            spans,
+            brushes,
+            background,
+            border_color,
+            border_width,
+            corner_radius,
+            padding,
+            font_size,
+            layout: Layout::default(),
+            last_max_advance: None,
+            layout_dirty: true,
+        }
+    }
+}
+
+// --- MARK: WIDGETMUT
+impl CodeViewWidget {
+    /// Replaces the source text. Marks the layout dirty and requests layout if
+    /// the value changed.
+    pub fn set_text(this: &mut WidgetMut<'_, Self>, text: String) {
+        if this.widget.text != text {
+            this.widget.text = text;
+            this.widget.layout_dirty = true;
+            this.ctx.request_layout();
+        }
+    }
+
+    /// Replaces the highlighted spans. Marks the layout dirty and requests
+    /// layout if the value changed.
+    pub fn set_spans(this: &mut WidgetMut<'_, Self>, spans: Vec<TokenSpan>) {
+        if this.widget.spans != spans {
+            this.widget.spans = spans;
+            this.widget.layout_dirty = true;
+            this.ctx.request_layout();
+        }
+    }
+
+    /// Replaces the brush palette. Indexed by [`brush_index_for_kind`].
+    /// Repaint only — the glyph layout is unchanged.
+    pub fn set_brushes(this: &mut WidgetMut<'_, Self>, brushes: Vec<Brush>) {
+        debug_assert_eq!(
+            brushes.len(),
+            BRUSH_PALETTE_LEN,
+            "brush palette must have exactly {BRUSH_PALETTE_LEN} entries"
+        );
+        this.widget.brushes = brushes;
+        this.ctx.request_paint_only();
+    }
+
+    /// Replaces the chrome (background, border, corner, padding). Changes to
+    /// `padding` or `border_width` request a relayout; everything else is a
+    /// repaint.
+    pub fn set_chrome(
+        this: &mut WidgetMut<'_, Self>,
+        background: Color,
+        border_color: Color,
+        border_width: f32,
+        corner_radius: f32,
+        padding: f32,
+    ) {
+        let w = &mut *this.widget;
+        let layout_changed = (w.padding - padding).abs() > f32::EPSILON
+            || (w.border_width - border_width).abs() > f32::EPSILON;
+        w.background = background;
+        w.border_color = border_color;
+        w.border_width = border_width;
+        w.corner_radius = corner_radius;
+        w.padding = padding;
+        if layout_changed {
+            this.ctx.request_layout();
+        } else {
+            this.ctx.request_paint_only();
+        }
+    }
+
+    /// Replaces the font size. Marks the layout dirty and requests layout if
+    /// the value changed.
+    pub fn set_font_size(this: &mut WidgetMut<'_, Self>, font_size: f32) {
+        if (this.widget.font_size - font_size).abs() > f32::EPSILON {
+            this.widget.font_size = font_size;
+            this.widget.layout_dirty = true;
+            this.ctx.request_layout();
+        }
+    }
+}
+
+// --- MARK: LAYOUT BUILDING
+impl CodeViewWidget {
+    /// Rebuilds the parley `Layout` from the current text + spans + font size
+    /// using the supplied parley contexts. Always re-runs `break_all_lines`
+    /// and `align` for the requested `max_advance`.
+    fn rebuild_layout(
+        &mut self,
+        font_ctx: &mut masonry::parley::FontContext,
+        layout_ctx: &mut masonry::parley::LayoutContext<BrushIndex>,
+        max_advance: Option<f32>,
+    ) {
+        let mut builder = layout_ctx.ranged_builder(font_ctx, &self.text, 1.0, true);
+        builder.push_default(StyleProperty::FontSize(self.font_size));
+        builder.push_default(StyleProperty::FontFamily(FontFamily::Single(
+            FontFamilyName::Generic(GenericFamily::Monospace),
+        )));
+        builder.push_default(StyleProperty::Brush(BrushIndex(0)));
+        for span in &self.spans {
+            builder.push(
+                StyleProperty::Brush(BrushIndex(brush_index_for_kind(span.kind) as usize)),
+                span.range.clone(),
+            );
+        }
+        builder.build_into(&mut self.layout, &self.text);
+        self.layout.break_all_lines(max_advance);
+        self.layout
+            .align(max_advance, Alignment::Start, AlignmentOptions::default());
+        self.last_max_advance = max_advance;
+        self.layout_dirty = false;
+    }
+
+    /// Refreshes the layout for the given `max_advance`, reusing the cached
+    /// layout whenever inputs are unchanged.
+    fn ensure_layout(
+        &mut self,
+        font_ctx: &mut masonry::parley::FontContext,
+        layout_ctx: &mut masonry::parley::LayoutContext<BrushIndex>,
+        max_advance: Option<f32>,
+    ) {
+        if self.layout_dirty {
+            self.rebuild_layout(font_ctx, layout_ctx, max_advance);
+            return;
+        }
+        if self.last_max_advance != max_advance {
+            self.layout.break_all_lines(max_advance);
+            self.layout
+                .align(max_advance, Alignment::Start, AlignmentOptions::default());
+            self.last_max_advance = max_advance;
+        }
+    }
+}
+
+// --- MARK: IMPL WIDGET
+impl Widget for CodeViewWidget {
+    type Action = ();
+
+    fn accepts_pointer_interaction(&self) -> bool {
+        // Selection lands in Task 7; until then the widget is purely visual.
+        false
+    }
+
+    fn register_children(&mut self, _ctx: &mut RegisterCtx<'_>) {}
+
+    fn children_ids(&self) -> ChildrenIds {
+        ChildrenIds::new()
+    }
+
+    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        if matches!(event, Update::FontsChanged) {
+            self.layout_dirty = true;
+            ctx.request_layout();
+        }
+    }
+
+    fn measure(
+        &mut self,
+        ctx: &mut MeasureCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        axis: Axis,
+        len_req: LenReq,
+        cross_length: Option<Length>,
+    ) -> Length {
+        let inline = Axis::Horizontal;
+        let pad_each = f64::from(self.padding);
+        let pad_main = 2.0 * pad_each;
+
+        // Determine the max-advance for the text layout, mirroring the
+        // word-wrap-style branching in masonry's `Label::measure`.
+        let max_advance = if axis == inline {
+            match len_req {
+                LenReq::MinContent => Some(Length::ZERO),
+                LenReq::MaxContent => None,
+                LenReq::FitContent(space) => {
+                    Some(Length::px((space.get() - pad_main).max(0.0)))
+                }
+            }
+        } else {
+            // Block axis depends on the cross (inline) length.
+            cross_length.map(|c| Length::px((c.get() - pad_main).max(0.0)))
+        }
+        .map(|v| {
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "parley layout width is f32; truncation of a UI-scale length is acceptable"
+            )]
+            let px = v.get() as f32;
+            px
+        });
+
+        let (font_ctx, layout_ctx) = ctx.text_contexts();
+        self.ensure_layout(font_ctx, layout_ctx, max_advance);
+
+        let raw = if axis == inline {
+            f64::from(self.layout.width())
+        } else {
+            f64::from(self.layout.height())
+        };
+        (raw + pad_main).px()
+    }
+
+    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
+        let pad_each = f64::from(self.padding);
+        let inner_max_w = {
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "parley layout width is f32; truncation of a UI-scale length is acceptable"
+            )]
+            let w = (size.width - 2.0 * pad_each).max(0.0) as f32;
+            w
+        };
+
+        let (font_ctx, layout_ctx) = ctx.text_contexts();
+        self.ensure_layout(font_ctx, layout_ctx, Some(inner_max_w));
+
+        let line_count = self.layout.len();
+        if line_count > 0 {
+            let first = self.layout.get(0).unwrap();
+            let last = self.layout.get(line_count - 1).unwrap();
+            let first_baseline = pad_each + f64::from(first.metrics().baseline);
+            let last_baseline = pad_each + f64::from(last.metrics().baseline);
+            ctx.set_baselines(first_baseline, last_baseline);
+        } else {
+            ctx.clear_baselines();
+        }
+    }
+
+    fn paint(&mut self, ctx: &mut PaintCtx<'_>, _props: &PropertiesRef<'_>, painter: &mut Painter<'_>) {
+        let size = ctx.border_box_size();
+        let rect = RoundedRect::from_origin_size(Point::ORIGIN, size, f64::from(self.corner_radius));
+
+        if self.background.components[3] > 0.0 {
+            painter.fill(rect, self.background).draw();
+        }
+        if self.border_width > 0.0 && self.border_color.components[3] > 0.0 {
+            painter
+                .stroke(rect, &Stroke::new(f64::from(self.border_width)), self.border_color)
+                .draw();
+        }
+
+        render_text(
+            painter,
+            Affine::translate((f64::from(self.padding), f64::from(self.padding))),
+            &self.layout,
+            &self.brushes,
+            true,
+        );
+    }
+
+    fn accessibility_role(&self) -> Role {
+        Role::Document
+    }
+
+    fn accessibility(
+        &mut self,
+        _ctx: &mut AccessCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        node: &mut Node,
+    ) {
+        node.set_read_only();
+        node.set_value(self.text.clone());
+    }
+
+    fn on_pointer_event(
+        &mut self,
+        _ctx: &mut EventCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _event: &PointerEvent,
+    ) {
+    }
+
+    fn on_text_event(
+        &mut self,
+        _ctx: &mut EventCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _event: &TextEvent,
+    ) {
+    }
+
+    fn on_access_event(
+        &mut self,
+        _ctx: &mut EventCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _event: &AccessEvent,
+    ) {
+    }
+
+    fn get_cursor(&self, _ctx: &QueryCtx<'_>, _pos: Point) -> CursorIcon {
+        CursorIcon::Text
+    }
+
+    fn make_trace_span(&self, id: WidgetId) -> Span {
+        trace_span!("CodeViewWidget", id = id.trace())
+    }
+}

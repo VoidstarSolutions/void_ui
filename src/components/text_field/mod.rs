@@ -7,6 +7,7 @@
 
 pub mod highlighter;
 mod rust;
+pub mod widget;
 
 pub use highlighter::{Highlighter, TokenKind, TokenSpan};
 pub use rust::RustHighlighter;
