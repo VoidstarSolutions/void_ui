@@ -3657,9 +3657,14 @@ version = "0.1.0"
 dependencies = [
  "masonry",
  "tracing",
+ "void-ui-macros",
  "xilem",
  "xilem_masonry",
 ]
+
+[[package]]
+name = "void-ui-macros"
+version = "0.1.0"
 
 [[package]]
 name = "walkdir"
