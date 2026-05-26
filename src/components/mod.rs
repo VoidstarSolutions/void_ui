@@ -21,6 +21,7 @@ pub mod label;
 pub mod radio;
 pub mod scroll_container;
 pub mod sidebar;
+pub mod text_field;
 pub mod tooltip;
 
 pub use button::{Button, ButtonVariant, ButtonView, button};
