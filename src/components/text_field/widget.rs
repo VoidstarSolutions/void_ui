@@ -4,9 +4,12 @@
 //! brush palette indexed by `BrushIndex(n)` — index 0 is the fallback
 //! (`CodePalette::plain`), indices 1.. are the per-token-kind colors.
 //!
-//! Keyboard, focus, and IME deferred to Task 8.
+//! IME is deferred to a later task; this widget supports focus-on-click,
+//! click/drag selection (single/double/triple + shift-extend), and
+//! Ctrl/Cmd+C copy.
 
 use masonry::accesskit::{Node, Role};
+use masonry::core::keyboard::{Key, KeyState};
 use masonry::core::{
     AccessCtx, AccessEvent, BrushIndex, ChildrenIds, CursorIcon, EventCtx, LayoutCtx, MeasureCtx,
     PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PointerUpdate, PropertiesMut,
@@ -420,10 +423,26 @@ impl Widget for CodeViewWidget {
                 ..
             }) => {
                 let (x, y) = self.layout_local(ctx.local_position(state.position));
-                let cursor = Cursor::from_point(&self.layout, x, y);
-                // Two-step (Cursor::from_point + Selection::from) instead of
-                // Selection::from_point so cursor affinity stays explicit.
-                self.selection = Selection::from(cursor);
+                match state.count {
+                    2 => {
+                        self.selection = Selection::word_from_point(&self.layout, x, y);
+                    }
+                    3 => {
+                        self.selection = Selection::hard_line_from_point(&self.layout, x, y);
+                    }
+                    _ => {
+                        if state.modifiers.shift() {
+                            self.selection =
+                                self.selection.shift_click_extension(&self.layout, x, y);
+                        } else {
+                            // Two-step (Cursor::from_point + Selection::from) instead of
+                            // Selection::from_point so cursor affinity stays explicit.
+                            let cursor = Cursor::from_point(&self.layout, x, y);
+                            self.selection = Selection::from(cursor);
+                        }
+                    }
+                }
+                ctx.request_focus();
                 ctx.capture_pointer();
                 ctx.request_paint_only();
             }
@@ -436,16 +455,35 @@ impl Widget for CodeViewWidget {
         }
     }
 
-    // Selection + event handling lands in Task 7; these are intentional no-ops for now.
     fn on_text_event(
         &mut self,
-        _ctx: &mut EventCtx<'_>,
+        ctx: &mut EventCtx<'_>,
         _props: &mut PropertiesMut<'_>,
-        _event: &TextEvent,
+        event: &TextEvent,
     ) {
+        let TextEvent::Keyboard(key_event) = event else {
+            return;
+        };
+        if key_event.state != KeyState::Down {
+            return;
+        }
+        let action_mod = if cfg!(target_os = "macos") {
+            key_event.modifiers.meta()
+        } else {
+            key_event.modifiers.ctrl()
+        };
+        if action_mod
+            && matches!(&key_event.key, Key::Character(c) if c.as_str().eq_ignore_ascii_case("c"))
+        {
+            let range = self.selection.text_range();
+            if !range.is_empty() {
+                let text = self.text[range].to_string();
+                ctx.set_clipboard(text);
+            }
+            ctx.set_handled();
+        }
     }
 
-    // Selection + event handling lands in Task 7; these are intentional no-ops for now.
     fn on_access_event(
         &mut self,
         _ctx: &mut EventCtx<'_>,
