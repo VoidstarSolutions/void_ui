@@ -15,7 +15,7 @@
 //! [`ReadOnlyText::no_highlighter`] to render plain (single-color) text.
 
 use std::marker::PhantomData;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use masonry::peniko::Brush;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
@@ -25,6 +25,12 @@ use super::highlighter::{Highlighter, TokenSpan};
 use super::rust::RustHighlighter;
 use super::widget::{BRUSH_PALETTE_LEN, CodeViewWidget};
 use crate::Theme;
+
+const BORDER_WIDTH: f32 = 1.0;
+const PADDING: f32 = 12.0;
+
+static DEFAULT_RUST_HIGHLIGHTER: LazyLock<Arc<dyn Highlighter>> =
+    LazyLock::new(|| Arc::new(RustHighlighter));
 
 /// Builder for a read-only highlighted text view.
 ///
@@ -42,7 +48,7 @@ pub struct ReadOnlyText {
 pub fn read_only_text(text: impl Into<String>) -> ReadOnlyText {
     ReadOnlyText {
         text: text.into(),
-        highlighter: Some(Arc::new(RustHighlighter)),
+        highlighter: Some(DEFAULT_RUST_HIGHLIGHTER.clone()),
     }
 }
 
@@ -104,9 +110,9 @@ where
             brushes,
             self.theme.palette.bg_deep,
             self.theme.palette.border,
-            1.0,
+            BORDER_WIDTH,
             self.theme.radius.small,
-            12.0,
+            PADDING,
             self.theme.typography.size_caption,
         );
         (ctx.create_pod(widget), ())
@@ -142,9 +148,9 @@ where
                 &mut element,
                 self.theme.palette.bg_deep,
                 self.theme.palette.border,
-                1.0,
+                BORDER_WIDTH,
                 self.theme.radius.small,
-                12.0,
+                PADDING,
             );
         }
         if (self.theme.typography.size_caption - prev.theme.typography.size_caption).abs()
@@ -169,7 +175,8 @@ where
         _element: Mut<'_, Self::Element>,
         _app_state: &mut State,
     ) -> MessageResult<()> {
-        MessageResult::Stale
+        // Read-only widget emits no actions; any message routed here is a no-op.
+        MessageResult::Nop
     }
 }
 
