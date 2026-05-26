@@ -9,14 +9,17 @@
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
     AccessCtx, AccessEvent, BrushIndex, ChildrenIds, CursorIcon, EventCtx, LayoutCtx, MeasureCtx,
-    PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, QueryCtx, RegisterCtx, StyleProperty,
-    TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut, render_text,
+    PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PointerUpdate, PropertiesMut,
+    PropertiesRef, QueryCtx, RegisterCtx, StyleProperty, TextEvent, Update, UpdateCtx, Widget,
+    WidgetId, WidgetMut, render_text,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Affine, Axis, Point, RoundedRect, Size, Stroke};
+use masonry::kurbo::{Affine, Axis, Point, Rect, RoundedRect, Size, Stroke};
 use masonry::layout::{AsUnit, LenReq, Length};
 use masonry::parley::style::GenericFamily;
-use masonry::parley::{Alignment, AlignmentOptions, FontFamily, FontFamilyName, Layout};
+use masonry::parley::{
+    Alignment, AlignmentOptions, Cursor, FontFamily, FontFamilyName, Layout, Selection,
+};
 use masonry::peniko::{Brush, Color};
 use tracing::{Span, trace_span};
 
@@ -63,7 +66,15 @@ pub struct CodeViewWidget {
     corner_radius: f32,
     padding: f32,
     font_size: f32,
+    /// Fill color for selection rectangles painted under the text.
+    selection_color: Color,
     layout: Layout<BrushIndex>,
+    /// Current selection. Collapsed (`is_collapsed()`) by default; updated by
+    /// pointer events.
+    selection: Selection,
+    /// `true` while the primary mouse button is held after a press inside the
+    /// widget; drives drag-to-extend in `on_pointer_event`.
+    mouse_down: bool,
     /// `Some(w)` means the cached layout was broken with max-advance `w`;
     /// `None` means it was unbroken or has never been built.
     last_max_advance: Option<f32>,
@@ -91,6 +102,7 @@ impl CodeViewWidget {
         corner_radius: f32,
         padding: f32,
         font_size: f32,
+        selection_color: Color,
     ) -> Self {
         debug_assert_eq!(
             brushes.len(),
@@ -107,7 +119,10 @@ impl CodeViewWidget {
             corner_radius,
             padding,
             font_size,
+            selection_color,
             layout: Layout::default(),
+            selection: Selection::default(),
+            mouse_down: false,
             last_max_advance: None,
             layout_dirty: true,
         }
@@ -159,6 +174,7 @@ impl CodeViewWidget {
         border_width: f32,
         corner_radius: f32,
         padding: f32,
+        selection_color: Color,
     ) {
         let w = &mut *this.widget;
         let layout_changed = (w.padding - padding).abs() > f32::EPSILON;
@@ -167,6 +183,7 @@ impl CodeViewWidget {
         w.border_width = border_width;
         w.corner_radius = corner_radius;
         w.padding = padding;
+        w.selection_color = selection_color;
         if layout_changed {
             this.ctx.request_layout();
         } else {
@@ -242,8 +259,7 @@ impl Widget for CodeViewWidget {
     type Action = ();
 
     fn accepts_pointer_interaction(&self) -> bool {
-        // Selection + event handling lands in Task 7; these are intentional no-ops for now.
-        false
+        true
     }
 
     fn register_children(&mut self, _ctx: &mut RegisterCtx<'_>) {}
@@ -344,6 +360,20 @@ impl Widget for CodeViewWidget {
                 .draw();
         }
 
+        // Paint selection rectangles under the text (no-op when collapsed).
+        if self.selection_color.components[3] > 0.0 {
+            let pad = f64::from(self.padding);
+            for (bbox, _line_index) in self.selection.geometry(&self.layout) {
+                let sel_rect = Rect::new(
+                    bbox.x0 + pad,
+                    bbox.y0 + pad,
+                    bbox.x1 + pad,
+                    bbox.y1 + pad,
+                );
+                painter.fill(sel_rect, self.selection_color).draw();
+            }
+        }
+
         render_text(
             painter,
             Affine::translate((f64::from(self.padding), f64::from(self.padding))),
@@ -367,13 +397,50 @@ impl Widget for CodeViewWidget {
         node.set_value(self.text.clone());
     }
 
-    // Selection + event handling lands in Task 7; these are intentional no-ops for now.
     fn on_pointer_event(
         &mut self,
-        _ctx: &mut EventCtx<'_>,
+        ctx: &mut EventCtx<'_>,
         _props: &mut PropertiesMut<'_>,
-        _event: &PointerEvent,
+        event: &PointerEvent,
     ) {
+        let pad = f64::from(self.padding);
+        match event {
+            PointerEvent::Down(PointerButtonEvent {
+                button: None | Some(PointerButton::Primary),
+                state,
+                ..
+            }) => {
+                let pos = ctx.local_position(state.position);
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "parley cursor APIs take f32 in layout-local coordinates"
+                )]
+                let (x, y) = ((pos.x - pad) as f32, (pos.y - pad) as f32);
+                let cursor = Cursor::from_point(&self.layout, x, y);
+                self.selection = Selection::from(cursor);
+                self.mouse_down = true;
+                ctx.capture_pointer();
+                ctx.request_paint_only();
+            }
+            PointerEvent::Move(PointerUpdate { current, .. }) if self.mouse_down => {
+                let pos = ctx.local_position(current.position);
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "parley cursor APIs take f32 in layout-local coordinates"
+                )]
+                let (x, y) = ((pos.x - pad) as f32, (pos.y - pad) as f32);
+                self.selection = self.selection.extend_to_point(&self.layout, x, y);
+                ctx.request_paint_only();
+            }
+            PointerEvent::Up(PointerButtonEvent {
+                button: None | Some(PointerButton::Primary),
+                ..
+            }) if self.mouse_down => {
+                self.mouse_down = false;
+                ctx.release_pointer();
+            }
+            _ => {}
+        }
     }
 
     // Selection + event handling lands in Task 7; these are intentional no-ops for now.

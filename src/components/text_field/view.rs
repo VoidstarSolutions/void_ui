@@ -114,6 +114,7 @@ where
             self.theme.radius.small,
             PADDING,
             self.theme.typography.size_caption,
+            self.theme.palette.teal_soft,
         );
         (ctx.create_pod(widget), ())
     }
@@ -151,6 +152,7 @@ where
                 BORDER_WIDTH,
                 self.theme.radius.small,
                 PADDING,
+                self.theme.palette.teal_soft,
             );
         }
         if (self.theme.typography.size_caption - prev.theme.typography.size_caption).abs()
