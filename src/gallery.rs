@@ -3,35 +3,22 @@
 //! Demo panels in each component's `demo.rs` use these to display the source
 //! snippet that produced a live example directly below it.
 
-use masonry::layout::Length;
-use masonry::parley::{FontFamily, FontFamilyName, GenericFamily};
 use xilem::WidgetView;
-use xilem::style::Style as _;
-use xilem::view::sized_box;
 
 use crate::Theme;
-use crate::label;
+use crate::components::text_field::read_only_text;
 
-/// Renders `source` in a styled monospace code panel.
+/// Renders `source` in a styled monospace code panel with Rust syntax
+/// highlighting and mouse selection support (selection lands in Task 7).
 ///
-/// The font resolves through the theme's mono stack (`Geist Mono` →
-/// `ui-monospace` → …). Typically called via the [`with_source`] macro
-/// rather than directly.
+/// Typically called via the [`with_source`](crate::with_source) macro rather
+/// than directly.
 #[must_use]
 pub fn code_block<S: 'static>(source: &str, theme: &Theme) -> impl WidgetView<S> + use<S> {
-    let text = label(source)
-        .text_size(theme.typography.size_caption)
-        .font(FontFamily::Single(FontFamilyName::Generic(
-            GenericFamily::Monospace,
-        )))
-        .color(theme.palette.text_muted)
-        .render(theme);
-
-    sized_box(text)
-        .padding(Length::px(12.0))
-        .background_color(theme.palette.bg_deep)
-        .border(theme.palette.border, Length::px(1.0))
-        .corner_radius(Length::px(f64::from(theme.radius.small)))
+    // `read_only_text` defaults to RustHighlighter; chrome (bg, border,
+    // padding, corner) is owned by CodeViewWidget so we don't wrap in a
+    // sized_box here anymore.
+    read_only_text(source).render(theme)
 }
 
 /// Wraps a view expression and appends its stringified source below it.
