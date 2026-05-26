@@ -191,6 +191,11 @@ fn sidebar_items(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State
         })
         .active(focused == ComponentKind::Sidebar)
         .render(theme),
+        sidebar_item("Text Field", |s: &mut State| {
+            s.focused = ComponentKind::TextField;
+        })
+        .active(focused == ComponentKind::TextField)
+        .render(theme),
         sidebar_item("Tooltip", |s: &mut State| {
             s.focused = ComponentKind::Tooltip;
         })
@@ -221,6 +226,7 @@ fn main_pane(
             Box::new(void_ui::components::scroll_container::demo::panel(theme))
         }
         ComponentKind::Sidebar => Box::new(void_ui::components::sidebar::demo::panel(theme)),
+        ComponentKind::TextField => Box::new(void_ui::components::text_field::demo::panel(theme)),
         ComponentKind::Tooltip => Box::new(void_ui::components::tooltip::demo::panel(theme)),
     }
 }

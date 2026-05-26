@@ -5,6 +5,7 @@
 //! handling. This task only stubs in the [`Highlighter`] trait; the rest of
 //! the module is built up in later tasks.
 
+pub mod demo;
 pub mod highlighter;
 mod rust;
 mod view;

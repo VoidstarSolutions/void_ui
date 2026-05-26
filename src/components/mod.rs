@@ -59,6 +59,7 @@ pub enum ComponentKind {
     Radio,
     ScrollContainer,
     Sidebar,
+    TextField,
     Tooltip,
 }
 
@@ -76,6 +77,7 @@ impl ComponentKind {
             Self::Radio => "Radio",
             Self::ScrollContainer => "Scroll Container",
             Self::Sidebar => "Sidebar",
+            Self::TextField => "Text Field",
             Self::Tooltip => "Tooltip",
         }
     }
@@ -93,6 +95,7 @@ impl ComponentKind {
             Self::DataGrid,
             Self::ScrollContainer,
             Self::Sidebar,
+            Self::TextField,
             Self::Tooltip,
         ]
     }
