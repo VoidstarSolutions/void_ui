@@ -6,5 +6,7 @@
 //! the module is built up in later tasks.
 
 pub mod highlighter;
+mod rust;
 
 pub use highlighter::{Highlighter, TokenKind, TokenSpan};
+pub use rust::RustHighlighter;
