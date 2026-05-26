@@ -4,7 +4,7 @@
 //! brush palette indexed by `BrushIndex(n)` — index 0 is the fallback
 //! (`CodePalette::plain`), indices 1.. are the per-token-kind colors.
 //!
-//! Selection and event handling are added in Tasks 7–8.
+//! Keyboard, focus, and IME deferred to Task 8.
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
@@ -72,9 +72,6 @@ pub struct CodeViewWidget {
     /// Current selection. Collapsed (`is_collapsed()`) by default; updated by
     /// pointer events.
     selection: Selection,
-    /// `true` while the primary mouse button is held after a press inside the
-    /// widget; drives drag-to-extend in `on_pointer_event`.
-    mouse_down: bool,
     /// `Some(w)` means the cached layout was broken with max-advance `w`;
     /// `None` means it was unbroken or has never been built.
     last_max_advance: Option<f32>,
@@ -122,7 +119,6 @@ impl CodeViewWidget {
             selection_color,
             layout: Layout::default(),
             selection: Selection::default(),
-            mouse_down: false,
             last_max_advance: None,
             layout_dirty: true,
         }
@@ -251,6 +247,20 @@ impl CodeViewWidget {
                 .align(max_advance, Alignment::Start, AlignmentOptions::default());
             self.last_max_advance = max_advance;
         }
+    }
+}
+
+// --- MARK: POINTER HELPERS
+impl CodeViewWidget {
+    /// Translates a window-local `Point` into layout-local `(x, y)` coordinates
+    /// by subtracting the chrome padding and converting f64 → f32.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "kurbo Point is f64; parley layout is f32 (UI scale, precision is fine)."
+    )]
+    fn layout_local(&self, pos: Point) -> (f32, f32) {
+        let pad = f64::from(self.padding);
+        ((pos.x - pad) as f32, (pos.y - pad) as f32)
     }
 }
 
@@ -403,41 +413,24 @@ impl Widget for CodeViewWidget {
         _props: &mut PropertiesMut<'_>,
         event: &PointerEvent,
     ) {
-        let pad = f64::from(self.padding);
         match event {
             PointerEvent::Down(PointerButtonEvent {
                 button: None | Some(PointerButton::Primary),
                 state,
                 ..
             }) => {
-                let pos = ctx.local_position(state.position);
-                #[expect(
-                    clippy::cast_possible_truncation,
-                    reason = "parley cursor APIs take f32 in layout-local coordinates"
-                )]
-                let (x, y) = ((pos.x - pad) as f32, (pos.y - pad) as f32);
+                let (x, y) = self.layout_local(ctx.local_position(state.position));
                 let cursor = Cursor::from_point(&self.layout, x, y);
+                // Two-step (Cursor::from_point + Selection::from) instead of
+                // Selection::from_point so cursor affinity stays explicit.
                 self.selection = Selection::from(cursor);
-                self.mouse_down = true;
                 ctx.capture_pointer();
                 ctx.request_paint_only();
             }
-            PointerEvent::Move(PointerUpdate { current, .. }) if self.mouse_down => {
-                let pos = ctx.local_position(current.position);
-                #[expect(
-                    clippy::cast_possible_truncation,
-                    reason = "parley cursor APIs take f32 in layout-local coordinates"
-                )]
-                let (x, y) = ((pos.x - pad) as f32, (pos.y - pad) as f32);
+            PointerEvent::Move(PointerUpdate { current, .. }) if ctx.is_active() => {
+                let (x, y) = self.layout_local(ctx.local_position(current.position));
                 self.selection = self.selection.extend_to_point(&self.layout, x, y);
                 ctx.request_paint_only();
-            }
-            PointerEvent::Up(PointerButtonEvent {
-                button: None | Some(PointerButton::Primary),
-                ..
-            }) if self.mouse_down => {
-                self.mouse_down = false;
-                ctx.release_pointer();
             }
             _ => {}
         }
