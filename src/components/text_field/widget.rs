@@ -145,12 +145,13 @@ impl CodeViewWidget {
             "brush palette must have exactly {BRUSH_PALETTE_LEN} entries"
         );
         this.widget.brushes = brushes;
+        // Paint-only; skip deep-eq on Vec<Brush> since the view controls churn.
         this.ctx.request_paint_only();
     }
 
-    /// Replaces the chrome (background, border, corner, padding). Changes to
-    /// `padding` or `border_width` request a relayout; everything else is a
-    /// repaint.
+    /// Replaces the chrome (background, border, corner, padding). Only
+    /// `padding` requests a relayout (since `measure`/`layout` consume it);
+    /// `border_width` is paint-only along with the other chrome inputs.
     pub fn set_chrome(
         this: &mut WidgetMut<'_, Self>,
         background: Color,
@@ -160,8 +161,7 @@ impl CodeViewWidget {
         padding: f32,
     ) {
         let w = &mut *this.widget;
-        let layout_changed = (w.padding - padding).abs() > f32::EPSILON
-            || (w.border_width - border_width).abs() > f32::EPSILON;
+        let layout_changed = (w.padding - padding).abs() > f32::EPSILON;
         w.background = background;
         w.border_color = border_color;
         w.border_width = border_width;
@@ -242,7 +242,7 @@ impl Widget for CodeViewWidget {
     type Action = ();
 
     fn accepts_pointer_interaction(&self) -> bool {
-        // Selection lands in Task 7; until then the widget is purely visual.
+        // Selection + event handling lands in Task 7; these are intentional no-ops for now.
         false
     }
 
@@ -367,6 +367,7 @@ impl Widget for CodeViewWidget {
         node.set_value(self.text.clone());
     }
 
+    // Selection + event handling lands in Task 7; these are intentional no-ops for now.
     fn on_pointer_event(
         &mut self,
         _ctx: &mut EventCtx<'_>,
@@ -375,6 +376,7 @@ impl Widget for CodeViewWidget {
     ) {
     }
 
+    // Selection + event handling lands in Task 7; these are intentional no-ops for now.
     fn on_text_event(
         &mut self,
         _ctx: &mut EventCtx<'_>,
@@ -383,6 +385,7 @@ impl Widget for CodeViewWidget {
     ) {
     }
 
+    // Selection + event handling lands in Task 7; these are intentional no-ops for now.
     fn on_access_event(
         &mut self,
         _ctx: &mut EventCtx<'_>,
