@@ -38,6 +38,7 @@ pub use scroll_container::{
 pub use sidebar::{
     SidebarItem, SidebarItemView, SidebarPanel, SidebarPanelView, sidebar_item, sidebar_panel,
 };
+pub use text_field::{ReadOnlyText, ReadOnlyTextView, RustHighlighter, read_only_text};
 pub use tooltip::{Tooltip, TooltipView, tooltip};
 
 /// One entry per component the gallery exposes.

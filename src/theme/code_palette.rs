@@ -63,4 +63,11 @@ impl CodePalette {
             operator:   oklch(0.45, 0.008, 240.0),
         }
     }
+
+    /// Color used for `TokenKind::Punctuation`. Currently aliased to `plain`;
+    /// kept as a method so we can split it out later without churning callers.
+    #[must_use]
+    pub fn punctuation_or_plain(&self) -> Color {
+        self.plain
+    }
 }

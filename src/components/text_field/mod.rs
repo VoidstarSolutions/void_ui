@@ -7,7 +7,9 @@
 
 pub mod highlighter;
 mod rust;
+mod view;
 pub mod widget;
 
 pub use highlighter::{Highlighter, TokenKind, TokenSpan};
 pub use rust::RustHighlighter;
+pub use view::{ReadOnlyText, ReadOnlyTextView, read_only_text};
