@@ -146,7 +146,7 @@ impl<S: 'static> View<S, (), ViewCtx> for SingleToggleDemo<S> {
         element: Mut<'_, Self::Element>,
         state: &mut S,
     ) -> MessageResult<()> {
-        match message.take_first().map(|id| id.routing_id()) {
+        match message.take_first().map(ViewId::routing_id) {
             Some(0) => {
                 let result = vs
                     .prev_child
@@ -200,6 +200,7 @@ pub struct RadioGroupDemo<S: 'static> {
 }
 
 impl<S: 'static> RadioGroupDemo<S> {
+    #[must_use]
     pub fn new(theme: Theme) -> Self {
         Self {
             theme,
@@ -287,7 +288,7 @@ impl<S: 'static> View<S, (), ViewCtx> for RadioGroupDemo<S> {
         state: &mut S,
     ) -> MessageResult<()> {
         // Route through the id we established in build/rebuild.
-        match message.take_first().map(|id| id.routing_id()) {
+        match message.take_first().map(ViewId::routing_id) {
             Some(0) => {
                 let result = vs
                     .prev_child

@@ -49,6 +49,32 @@ pub fn panel(theme: &Theme) -> ButtonDemoPanel {
     ButtonDemoPanel { theme: *theme }
 }
 
+fn plus_icon() -> BezPath {
+    let mut p = BezPath::new();
+    p.move_to((0.1, 0.4));
+    p.line_to((0.4, 0.4));
+    p.line_to((0.4, 0.1));
+    p.line_to((0.6, 0.1));
+    p.line_to((0.6, 0.4));
+    p.line_to((0.9, 0.4));
+    p.line_to((0.9, 0.6));
+    p.line_to((0.6, 0.6));
+    p.line_to((0.6, 0.9));
+    p.line_to((0.4, 0.9));
+    p.line_to((0.4, 0.6));
+    p.line_to((0.1, 0.6));
+    p.close_path();
+    p
+}
+
+fn caret_icon() -> BezPath {
+    let mut p = BezPath::new();
+    p.move_to((0.2, 0.35));
+    p.line_to((0.5, 0.65));
+    p.line_to((0.8, 0.35));
+    p
+}
+
 fn variants_example(
     theme: &Theme,
     disabled_bool: bool,
@@ -164,31 +190,8 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
         .gap(Length::px(8.0))
     });
 
-    let plus = {
-        let mut p = BezPath::new();
-        p.move_to((0.1, 0.4));
-        p.line_to((0.4, 0.4));
-        p.line_to((0.4, 0.1));
-        p.line_to((0.6, 0.1));
-        p.line_to((0.6, 0.4));
-        p.line_to((0.9, 0.4));
-        p.line_to((0.9, 0.6));
-        p.line_to((0.6, 0.6));
-        p.line_to((0.6, 0.9));
-        p.line_to((0.4, 0.9));
-        p.line_to((0.4, 0.6));
-        p.line_to((0.1, 0.6));
-        p.close_path();
-        p
-    };
-
-    let caret = {
-        let mut p = BezPath::new();
-        p.move_to((0.2, 0.35));
-        p.line_to((0.5, 0.65));
-        p.line_to((0.8, 0.35));
-        p
-    };
+    let plus = plus_icon();
+    let caret = caret_icon();
 
     let leading_icon_example = with_source!(theme, {
         flex_row((button(|_: &mut ButtonDemoState| {})
