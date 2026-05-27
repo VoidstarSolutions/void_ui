@@ -13,18 +13,15 @@ use crate::with_source;
 
 #[derive(Debug, Clone, Default)]
 struct CheckboxDemo {
-    bare_a: bool,
-    bare_b: bool,
-    labeled_a: bool,
-    labeled_b: bool,
+    bare: [bool; 2],
+    labeled: [bool; 2],
 }
 
 impl CheckboxDemo {
     fn new() -> Self {
         Self {
-            bare_b: true,
-            labeled_b: true,
-            ..Self::default()
+            bare: [false, true],
+            labeled: [false, true],
         }
     }
 }
@@ -61,14 +58,14 @@ fn build_inner(theme: &Theme, state: &CheckboxDemo) -> impl WidgetView<CheckboxD
             .color(theme.palette.text_faint)
     };
 
-    let (bare_a, bare_b) = (state.bare_a, state.bare_b);
-    let (labeled_a, labeled_b) = (state.labeled_a, state.labeled_b);
+    let [bare_a, bare_b] = state.bare;
+    let [labeled_a, labeled_b] = state.labeled;
 
     // Box-only rows (no label)
     let bare = with_source!(theme, {
         flex_row((
-            checkbox(bare_a, |s: &mut CheckboxDemo| s.bare_a = !s.bare_a).render(theme),
-            checkbox(bare_b, |s: &mut CheckboxDemo| s.bare_b = !s.bare_b).render(theme),
+            checkbox(bare_a, |s: &mut CheckboxDemo| s.bare[0] = !s.bare[0]).render(theme),
+            checkbox(bare_b, |s: &mut CheckboxDemo| s.bare[1] = !s.bare[1]).render(theme),
             checkbox(false, |_: &mut CheckboxDemo| {})
                 .disabled(true)
                 .render(theme),
@@ -82,10 +79,10 @@ fn build_inner(theme: &Theme, state: &CheckboxDemo) -> impl WidgetView<CheckboxD
     // Rows with labels
     let labeled = with_source!(theme, {
         flex_row((
-            checkbox(labeled_a, |s: &mut CheckboxDemo| s.labeled_a = !s.labeled_a)
+            checkbox(labeled_a, |s: &mut CheckboxDemo| s.labeled[0] = !s.labeled[0])
                 .label("Unchecked")
                 .render(theme),
-            checkbox(labeled_b, |s: &mut CheckboxDemo| s.labeled_b = !s.labeled_b)
+            checkbox(labeled_b, |s: &mut CheckboxDemo| s.labeled[1] = !s.labeled[1])
                 .label("Checked")
                 .render(theme),
             checkbox(false, |_: &mut CheckboxDemo| {})

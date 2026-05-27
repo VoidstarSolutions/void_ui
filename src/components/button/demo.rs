@@ -49,35 +49,12 @@ pub fn panel(theme: &Theme) -> ButtonDemoPanel {
     ButtonDemoPanel { theme: *theme }
 }
 
-fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<ButtonDemoState> + use<> {
-    let header = |text: &'static str| {
-        label(text)
-            .text_size(theme.typography.size_caption)
-            .letter_spacing(1.2)
-            .color(theme.palette.text_faint)
-    };
-
-    let disabled_bool = state.disabled;
-
-    let active_bool = state.active;
-
-    let disabled_toggle = flex_row(
-        checkbox(disabled_bool, |s: &mut ButtonDemoState| {
-            s.disabled = !s.disabled
-        })
-        .label("disabled_bool")
-        .render(theme),
-    );
-
-    let active_toggle = flex_row(
-        checkbox(active_bool, |s: &mut ButtonDemoState| s.active = !s.active)
-            .label("active_bool")
-            .render(theme),
-    );
-
-    // --- variants ---
-
-    let default_example = with_source!(theme, {
+fn variants_example(
+    theme: &Theme,
+    disabled_bool: bool,
+    active_bool: bool,
+) -> impl WidgetView<ButtonDemoState> + use<> {
+    with_source!(theme, {
         flex_row((
             button(|_: &mut ButtonDemoState| {})
                 .label("Default")
@@ -141,7 +118,38 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
         ))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(8.0))
-    });
+    })
+}
+
+fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<ButtonDemoState> + use<> {
+    let header = |text: &'static str| {
+        label(text)
+            .text_size(theme.typography.size_caption)
+            .letter_spacing(1.2)
+            .color(theme.palette.text_faint)
+    };
+
+    let disabled_bool = state.disabled;
+
+    let active_bool = state.active;
+
+    let disabled_toggle = flex_row(
+        checkbox(disabled_bool, |s: &mut ButtonDemoState| {
+            s.disabled = !s.disabled;
+        })
+        .label("disabled_bool")
+        .render(theme),
+    );
+
+    let active_toggle = flex_row(
+        checkbox(active_bool, |s: &mut ButtonDemoState| s.active = !s.active)
+            .label("active_bool")
+            .render(theme),
+    );
+
+    // --- variants ---
+
+    let default_example = variants_example(theme, disabled_bool, active_bool);
 
     // --- loading & trailing icon ---
 

@@ -449,7 +449,8 @@ impl Widget for ThemedButton {
         interval: u64,
     ) {
         if self.loading {
-            self.spinner_t = (self.spinner_t + interval as f64 * 1e-9).rem_euclid(1.0);
+            let interval_ns = u32::try_from(interval).unwrap_or(u32::MAX);
+            self.spinner_t = (self.spinner_t + f64::from(interval_ns) * 1e-9).rem_euclid(1.0);
             ctx.request_anim_frame();
             ctx.request_paint_only();
         }

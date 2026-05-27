@@ -88,6 +88,7 @@ pub struct SingleToggleDemo<S: 'static> {
 }
 
 impl<S: 'static> SingleToggleDemo<S> {
+    #[must_use]
     pub fn new(theme: Theme) -> Self {
         Self { theme, phantom: PhantomData }
     }
