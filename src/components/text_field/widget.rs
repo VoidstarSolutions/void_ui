@@ -71,7 +71,16 @@ pub struct CodeViewWidget {
     font_size: f32,
     /// Fill color for selection rectangles painted under the text.
     selection_color: Color,
+    /// Working layout — mutated freely by `measure()` for whatever query is
+    /// being made. Don't read this in `paint` or pointer code; its
+    /// `break_all_lines` state may not match what's on screen.
     layout: Layout<BrushIndex>,
+    /// Snapshot of `layout` taken at the end of `layout()` — this is the
+    /// state that matches the widget's currently-assigned rect. `paint` and
+    /// pointer/selection code read from this so they aren't affected by
+    /// post-layout measure passes (e.g. a `MinContent` query that re-breaks
+    /// `layout` to one-word-per-line).
+    paint_layout: Layout<BrushIndex>,
     /// Current selection. Collapsed (`is_collapsed()`) by default; updated by
     /// pointer events.
     selection: Selection,
@@ -121,6 +130,7 @@ impl CodeViewWidget {
             font_size,
             selection_color,
             layout: Layout::default(),
+            paint_layout: Layout::default(),
             selection: Selection::default(),
             last_max_advance: None,
             layout_dirty: true,
@@ -345,13 +355,23 @@ impl Widget for CodeViewWidget {
             w
         };
 
+        // Force a fresh rebuild here rather than relying on the cache: prior
+        // measure() passes may have left `self.layout` broken to a different
+        // max_advance, and we need paint() to see the layout in the exact
+        // state that matches the assigned `size`.
         let (font_ctx, layout_ctx) = ctx.text_contexts();
-        self.ensure_layout(font_ctx, layout_ctx, Some(inner_max_w));
+        self.rebuild_layout(font_ctx, layout_ctx, Some(inner_max_w));
 
-        let line_count = self.layout.len();
+        // Snapshot the committed layout for paint() and pointer events to use.
+        // Later measure() passes may re-break `self.layout` (e.g. a MinContent
+        // query with max_advance=0 wraps to many lines), but they must not
+        // affect what gets painted.
+        self.paint_layout = self.layout.clone();
+
+        let line_count = self.paint_layout.len();
         if line_count > 0 {
-            let first = self.layout.get(0).unwrap();
-            let last = self.layout.get(line_count - 1).unwrap();
+            let first = self.paint_layout.get(0).unwrap();
+            let last = self.paint_layout.get(line_count - 1).unwrap();
             let first_baseline = pad_each + f64::from(first.metrics().baseline);
             let last_baseline = pad_each + f64::from(last.metrics().baseline);
             ctx.set_baselines(first_baseline, last_baseline);
@@ -376,7 +396,7 @@ impl Widget for CodeViewWidget {
         // Paint selection rectangles under the text (no-op when collapsed).
         if self.selection_color.components[3] > 0.0 {
             let pad = f64::from(self.padding);
-            for (bbox, _line_index) in self.selection.geometry(&self.layout) {
+            for (bbox, _line_index) in self.selection.geometry(&self.paint_layout) {
                 let sel_rect = Rect::new(
                     bbox.x0 + pad,
                     bbox.y0 + pad,
@@ -390,7 +410,7 @@ impl Widget for CodeViewWidget {
         render_text(
             painter,
             Affine::translate((f64::from(self.padding), f64::from(self.padding))),
-            &self.layout,
+            &self.paint_layout,
             &self.brushes,
             true,
         );
@@ -425,19 +445,19 @@ impl Widget for CodeViewWidget {
                 let (x, y) = self.layout_local(ctx.local_position(state.position));
                 match state.count {
                     2 => {
-                        self.selection = Selection::word_from_point(&self.layout, x, y);
+                        self.selection = Selection::word_from_point(&self.paint_layout, x, y);
                     }
                     3 => {
-                        self.selection = Selection::hard_line_from_point(&self.layout, x, y);
+                        self.selection = Selection::hard_line_from_point(&self.paint_layout, x, y);
                     }
                     _ => {
                         if state.modifiers.shift() {
                             self.selection =
-                                self.selection.shift_click_extension(&self.layout, x, y);
+                                self.selection.shift_click_extension(&self.paint_layout, x, y);
                         } else {
                             // Two-step (Cursor::from_point + Selection::from) instead of
                             // Selection::from_point so cursor affinity stays explicit.
-                            let cursor = Cursor::from_point(&self.layout, x, y);
+                            let cursor = Cursor::from_point(&self.paint_layout, x, y);
                             self.selection = Selection::from(cursor);
                         }
                     }
@@ -448,7 +468,7 @@ impl Widget for CodeViewWidget {
             }
             PointerEvent::Move(PointerUpdate { current, .. }) if ctx.is_active() => {
                 let (x, y) = self.layout_local(ctx.local_position(current.position));
-                self.selection = self.selection.extend_to_point(&self.layout, x, y);
+                self.selection = self.selection.extend_to_point(&self.paint_layout, x, y);
                 ctx.request_paint_only();
             }
             _ => {}
