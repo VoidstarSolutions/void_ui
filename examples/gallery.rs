@@ -18,7 +18,7 @@ use xilem::winit::error::EventLoopError;
 use xilem::{AnyWidgetView, EventLoop, WidgetView, WindowOptions, Xilem};
 
 use void_ui::components::data_grid::demo::{Demo, tick_columns};
-use void_ui::components::{ComponentKind, SortState, button, data_grid, sidebar_item};
+use void_ui::components::{ComponentKind, DataGrid, SortState, button, sidebar_item};
 use void_ui::layout::flex_wrap;
 use void_ui::theme::{Density, Theme};
 
@@ -83,9 +83,15 @@ fn workspace_row(
         .fixed_width(Length::px(180.0))
         .padding(Length::px(12.0))
         .background_color(theme.palette.surface);
-    let main = sized_box(main_pane(focused, theme, dg_row_count, dg_base_time_ns, dg_sort))
-        .padding(Length::px(20.0))
-        .background_color(theme.palette.bg);
+    let main = sized_box(main_pane(
+        focused,
+        theme,
+        dg_row_count,
+        dg_base_time_ns,
+        dg_sort,
+    ))
+    .padding(Length::px(20.0))
+    .background_color(theme.palette.bg);
 
     if theme_panel_open {
         let panel = sized_box(
@@ -187,9 +193,12 @@ fn main_pane(
     match focused {
         ComponentKind::Button => Box::new(void_ui::components::button::demo::panel(theme)),
         ComponentKind::Checkbox => Box::new(void_ui::components::checkbox::demo::panel(theme)),
-        ComponentKind::DataGrid => {
-            Box::new(data_grid_panel(theme, dg_row_count, dg_base_time_ns, dg_sort))
-        }
+        ComponentKind::DataGrid => Box::new(data_grid_panel(
+            theme,
+            dg_row_count,
+            dg_base_time_ns,
+            dg_sort,
+        )),
         ComponentKind::Radio => Box::new(void_ui::components::radio::demo::panel(theme)),
         ComponentKind::ScrollContainer => {
             Box::new(void_ui::components::scroll_container::demo::panel(theme))
@@ -242,16 +251,13 @@ fn data_grid_panel(
     .cross_axis_alignment(CrossAxisAlignment::Center)
     .gap(Length::px(8.0));
 
-    let grid = data_grid(
-        columns,
-        row_count,
-        |s: &State| &s.data_grid.ticks[..],
-        |s: &mut State| &mut s.data_grid.selection,
-        sort,
-        |s: &mut State| &mut s.data_grid.sort,
-        &theme_copy,
-        22.0,
-    );
+    let grid = DataGrid::new(columns)
+        .rows(|s: &State| &s.data_grid.ticks[..])
+        .row_count(row_count)
+        .selection(|s: &mut State| &mut s.data_grid.selection)
+        .sort(sort, |s: &mut State| &mut s.data_grid.sort)
+        .row_height(22.0)
+        .render(&theme_copy);
 
     flex_col((toolbar, sized_box(grid).flex(1.0)))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)

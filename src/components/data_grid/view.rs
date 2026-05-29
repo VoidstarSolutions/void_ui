@@ -39,6 +39,16 @@ use super::selection::SelectionState;
 use super::sort::{SortDirection, SortState, display_order};
 use crate::Theme;
 
+/// Boxed row-data accessor (`Fn(&State) -> &[R]`), shared via `Arc`
+/// across the body and clipboard closures.
+type RowsFn<State, R> = Arc<dyn for<'a> Fn(&'a State) -> &'a [R] + Send + Sync>;
+/// Boxed selection lens (`Fn(&mut State) -> &mut SelectionState`).
+type SelectionLens<State> =
+    Arc<dyn for<'a> Fn(&'a mut State) -> &'a mut SelectionState + Send + Sync>;
+/// Boxed sort lens (`Fn(&mut State) -> &mut SortState`), the write path
+/// for header-click cycling.
+type SortLens<State> = Arc<dyn for<'a> Fn(&'a mut State) -> &'a mut SortState + Send + Sync>;
+
 /// One column's rendering + layout slot — the half of [`ColumnDef`]
 /// that's needed at row-build time. Shared (via `Arc`) between the
 /// header builder and the row builder closures.
@@ -109,81 +119,143 @@ fn resolve_source_idx<R>(
     cache.order.get(virtual_idx).copied()
 }
 
-/// Builds a virtualized data grid view.
+/// Builder for a virtualized, theme-driven data grid view.
 ///
-/// # Parameters
+/// Construct with [`DataGrid::new`], attach data and behavior through
+/// the chained setters, then materialize the xilem view with
+/// [`DataGrid::render`]. Lenses are stored boxed, so each future
+/// feature is a new method rather than another positional parameter.
 ///
-/// - `columns` — column descriptors, consumed; decomposed into
-///   parallel rendering/clipboard slots that the closures share via
-///   `Arc`.
-/// - `row_count` — current row count. The body's virtual scroll uses
-///   `0..row_count` as its valid index range. When live data appends,
-///   the caller passes a larger `row_count` on the next rebuild.
-/// - `rows` — `Fn(&State) -> &[R]` accessor used by both the row
-///   builder (to look up rendered cells) and the TSV builder (to
-///   look up clipboard text).
-/// - `selection_lens` — `Fn(&mut State) -> &mut SelectionState`
-///   accessor. The grid reads it to (a) decide which rows render in
-///   the selected style, and (b) project the TSV payload for
-///   clipboard copy. Selection tracks *source* row indices, so it is
-///   stable across sort changes.
-/// - `sort` — the current [`SortState`] snapshot, read from host state
-///   at frame time. Drives both the header sort arrow and the
-///   virtual→source row mapping. A column is only sorted if its
-///   [`ColumnDef`] carries a comparator (see
-///   [`ColumnDef::sortable_by_key`]); otherwise the state is ignored
-///   and rows display in natural order. Passed by value (rather than
-///   read through `sort_lens`) because the header is built
-///   synchronously, with no `&State` in hand — mirroring how
-///   `row_count` is snapshotted by the caller.
-/// - `sort_lens` — `Fn(&mut State) -> &mut SortState` write path. The
-///   *only* use is mutating the sort when a sortable header is
-///   clicked (cycling that column asc → desc → unsorted). Rendering
-///   uses the `sort` snapshot above, not this lens.
-/// - `theme` — color/typography source. Captured by value (Copy).
-/// - `row_height` — fixed pixel row height.
+/// ```ignore
+/// DataGrid::new(columns)
+///     .rows(|s: &State| &s.ticks[..])
+///     .row_count(n)
+///     .selection(|s| &mut s.selection)
+///     .sort(sort_snapshot, |s| &mut s.sort)
+///     .row_height(22.0)
+///     .render(&theme)
+/// ```
+///
+/// `selection` and `sort` are optional — omit them for a
+/// non-selectable / unsorted grid.
 ///
 /// # Notes
 ///
 /// - If `sum(column.width) > viewport_width`, columns clip off the
-///   right edge. v2 may add horizontal scroll syncing.
-/// - The TSV payload is rebuilt every frame from the current
-///   selection. Columns without a `text` projector contribute empty
-///   cells (so spreadsheet paste keeps the column layout).
-// Each parameter is an independent, cohesive input to a low-level
-// constructor; bundling them into a config/builder is a planned
-// follow-up once the feature set (filtering, resizing, …) settles.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "low-level grid constructor; builder refactor is a tracked follow-up"
-)]
-pub fn data_grid<State, R, FRows, FSel, FSort>(
+///   right edge (a one-shot `tracing::warn!` fires). Horizontal
+///   scroll/resize is a roadmap item.
+/// - The clipboard (TSV) payload is rebuilt every frame from the
+///   current selection; columns without a `text` projector contribute
+///   empty cells so spreadsheet paste keeps the column layout.
+#[must_use = "DataGrid does nothing until rendered with .render(&theme)"]
+pub struct DataGrid<State, R> {
     columns: Vec<ColumnDef<R, State>>,
     row_count: u64,
-    rows: FRows,
-    selection_lens: FSel,
-    sort: SortState,
-    sort_lens: FSort,
-    theme: &Theme,
     row_height: f64,
-) -> impl WidgetView<State, ()> + use<State, R, FRows, FSel, FSort>
+    rows: Option<RowsFn<State, R>>,
+    selection_lens: Option<SelectionLens<State>>,
+    sort: SortState,
+    sort_lens: Option<SortLens<State>>,
+}
+
+/// Default fixed row height when [`DataGrid::row_height`] is unset.
+const DEFAULT_ROW_HEIGHT: f64 = 24.0;
+
+impl<State, R> DataGrid<State, R>
 where
     State: 'static,
     R: 'static,
-    FRows: for<'a> Fn(&'a State) -> &'a [R] + Clone + Send + Sync + 'static,
-    FSel: for<'a> Fn(&'a mut State) -> &'a mut SelectionState + Clone + Send + Sync + 'static,
-    FSort: for<'a> Fn(&'a mut State) -> &'a mut SortState + Clone + Send + Sync + 'static,
 {
-    let theme = *theme;
+    /// Starts a grid from its column descriptors. Attach data with
+    /// [`Self::rows`] + [`Self::row_count`] before rendering.
+    pub fn new(columns: Vec<ColumnDef<R, State>>) -> Self {
+        Self {
+            columns,
+            row_count: 0,
+            row_height: DEFAULT_ROW_HEIGHT,
+            rows: None,
+            selection_lens: None,
+            sort: SortState::new(),
+            sort_lens: None,
+        }
+    }
 
-    // Split each ColumnDef into a rendering slot + a clipboard text
-    // projector. The rendering slots are shared between the header
-    // builder (synchronous, here) and the row builder (captured by
-    // the virtual_scroll closure) via Arc.
+    /// Sets the row-data accessor. Required for the grid to show data;
+    /// without it the body renders empty.
+    pub fn rows<F>(mut self, rows: F) -> Self
+    where
+        F: for<'a> Fn(&'a State) -> &'a [R] + Send + Sync + 'static,
+    {
+        let rows: RowsFn<State, R> = Arc::new(rows);
+        self.rows = Some(rows);
+        self
+    }
+
+    /// Sets the current row count — the body virtualizes over
+    /// `0..row_count`. Snapshot it from host state at frame time.
+    pub fn row_count(mut self, row_count: u64) -> Self {
+        self.row_count = row_count;
+        self
+    }
+
+    /// Fixed pixel row height (defaults to [`DEFAULT_ROW_HEIGHT`]).
+    pub fn row_height(mut self, row_height: f64) -> Self {
+        self.row_height = row_height;
+        self
+    }
+
+    /// Enables row selection via a lens into the host's
+    /// [`SelectionState`]. Selection tracks *source* row indices, so it
+    /// stays attached to the same data rows across sort changes. Omit
+    /// for a non-selectable grid.
+    pub fn selection<F>(mut self, lens: F) -> Self
+    where
+        F: for<'a> Fn(&'a mut State) -> &'a mut SelectionState + Send + Sync + 'static,
+    {
+        let lens: SelectionLens<State> = Arc::new(lens);
+        self.selection_lens = Some(lens);
+        self
+    }
+
+    /// Enables sorting: `state` is the current [`SortState`] snapshot
+    /// (drives the header arrow + the virtual→source row order) and
+    /// `lens` is the write path for header-click cycling. A column is
+    /// only sortable if its [`ColumnDef`] carries a comparator (see
+    /// [`ColumnDef::sortable_by_key`]). Omit for an unsorted grid.
+    pub fn sort<F>(mut self, state: SortState, lens: F) -> Self
+    where
+        F: for<'a> Fn(&'a mut State) -> &'a mut SortState + Send + Sync + 'static,
+    {
+        let lens: SortLens<State> = Arc::new(lens);
+        self.sort = state;
+        self.sort_lens = Some(lens);
+        self
+    }
+
+    /// Materializes the xilem view at the supplied theme.
+    #[must_use]
+    pub fn render(self, theme: &Theme) -> impl WidgetView<State, ()> + use<State, R> {
+        build_grid_view(self, theme)
+    }
+}
+
+/// The parts of a `Vec<ColumnDef>` the view layer needs, decomposed
+/// into parallel, `Arc`-shared vectors: per-column rendering slots,
+/// clipboard text projectors, a `sortable` flag, and comparators.
+type DecomposedColumns<R, State> = (
+    Arc<Vec<ColumnRender<R, State>>>,
+    Arc<Vec<Option<TextProjector<R>>>>,
+    Vec<bool>,
+    Arc<Vec<Option<RowComparator<R>>>>,
+);
+
+/// Splits each [`ColumnDef`] into its rendering slot, clipboard text
+/// projector, and comparator (positionally aligned), plus a `sortable`
+/// flag per column. The `Arc`s are shared between the synchronous
+/// header builder and the `virtual_scroll` row-builder closure.
+fn decompose_columns<R, State>(columns: Vec<ColumnDef<R, State>>) -> DecomposedColumns<R, State> {
     let mut render_slots: Vec<ColumnRender<R, State>> = Vec::with_capacity(columns.len());
     let mut text_projectors: Vec<Option<TextProjector<R>>> = Vec::with_capacity(columns.len());
-    // Per-column comparators (positionally aligned with render_slots).
-    // Shared into the row builder so it can sort by the active column.
     let mut comparators: Vec<Option<RowComparator<R>>> = Vec::with_capacity(columns.len());
     for col in columns {
         text_projectors.push(col.text);
@@ -195,13 +267,43 @@ where
             render: col.render,
         });
     }
-    let render_slots = Arc::new(render_slots);
-    let text_projectors = Arc::new(text_projectors);
-    // Which columns are sortable, captured before `comparators` is
-    // moved into the row builder. A column is sortable iff it carries
-    // a comparator.
     let sortable: Vec<bool> = comparators.iter().map(Option::is_some).collect();
-    let comparators = Arc::new(comparators);
+    (
+        Arc::new(render_slots),
+        Arc::new(text_projectors),
+        sortable,
+        Arc::new(comparators),
+    )
+}
+
+/// Turns a finished [`DataGrid`] builder into the view tree. Kept as a
+/// free function so the body stays flat and `render` is a thin call.
+fn build_grid_view<State, R>(
+    grid: DataGrid<State, R>,
+    theme: &Theme,
+) -> impl WidgetView<State, ()> + use<State, R>
+where
+    State: 'static,
+    R: 'static,
+{
+    let theme = *theme;
+    let DataGrid {
+        columns,
+        row_count,
+        row_height,
+        rows,
+        selection_lens,
+        sort,
+        sort_lens,
+    } = grid;
+
+    // Default the data accessor to an empty slice when unset.
+    let rows: RowsFn<State, R> = rows.unwrap_or_else(|| {
+        let empty: RowsFn<State, R> = Arc::new(|_: &State| -> &[R] { &[] });
+        empty
+    });
+
+    let (render_slots, text_projectors, sortable, comparators) = decompose_columns(columns);
 
     // --- Header row. Sortable columns get a clickable header that
     //     cycles the column's sort, plus an arrow on the active
@@ -209,7 +311,7 @@ where
     let header_cells: Vec<AnyFlexChild<State, ()>> = render_slots
         .iter()
         .enumerate()
-        .map(|(idx, slot)| header_cell(idx, slot, sortable[idx], sort, &sort_lens, &theme))
+        .map(|(idx, slot)| header_cell(idx, slot, sortable[idx], sort, sort_lens.as_ref(), &theme))
         .collect();
     let header = sized_box(flex_row(header_cells).cross_axis_alignment(CrossAxisAlignment::Center))
         .fixed_height(Length::px(row_height))
@@ -238,15 +340,16 @@ where
             sort,
             &comparators,
             &sort_cache,
-            rows_for_body(state),
+            (*rows_for_body)(state),
             virtual_idx,
         );
 
-        let is_selected = source_idx.is_some_and(|s| {
-            selection_lens_for_body(state).contains(u64::try_from(s).unwrap_or(u64::MAX))
-        });
+        let is_selected = match (selection_lens_for_body.as_ref(), source_idx) {
+            (Some(sel), Some(s)) => (**sel)(state).contains(u64::try_from(s).unwrap_or(u64::MAX)),
+            _ => false,
+        };
 
-        let data = rows_for_body(state);
+        let data = (*rows_for_body)(state);
         let cells: Vec<AnyFlexChild<State, ()>> =
             if let Some(row) = source_idx.and_then(|s| data.get(s)) {
                 render_slots_for_body
@@ -282,8 +385,13 @@ where
         let lens_for_click = selection_lens_for_body.clone();
         clickable_row(row_view, move |state: &mut State, action| {
             let Some(source) = source_idx else { return };
-            let Ok(row) = u64::try_from(source) else { return };
-            let sel = lens_for_click(state);
+            let Ok(row) = u64::try_from(source) else {
+                return;
+            };
+            let Some(sel_lens) = lens_for_click.as_ref() else {
+                return;
+            };
+            let sel = (**sel_lens)(state);
             if action.shift {
                 sel.extend_to(row);
             } else if action.action_mod {
@@ -300,8 +408,8 @@ where
     // so callers should place the grid in a bounded-height slot — e.g.
     // `sized_box(grid).flex(1.0)`. In an unbounded-height parent the
     // body falls back to its intrinsic size (a few rows).
-    let stack = flex_col((header, flex_item(body, 1.0)))
-        .cross_axis_alignment(CrossAxisAlignment::Start);
+    let stack =
+        flex_col((header, flex_item(body, 1.0))).cross_axis_alignment(CrossAxisAlignment::Start);
 
     // --- Wrap in OverflowWarn so a viewport narrower than the sum of
     //     column widths emits a one-shot tracing::warn! — backs the
@@ -362,25 +470,24 @@ fn project_tsv<R>(
 // --- MARK: CopyOnShortcutView ------------------------------------------
 
 /// Internal wrapper view that pushes a TSV payload into a
-/// [`CopyOnShortcut`] widget on every rebuild.
-struct CopyOnShortcutView<V, R, State, FRows, FSel> {
+/// [`CopyOnShortcut`] widget on every rebuild. Stores the boxed row
+/// accessor and the optional selection lens so it can recompute the
+/// clipboard payload from the current selection each frame.
+struct CopyOnShortcutView<V, R, State> {
     child: V,
     text_projectors: Arc<Vec<Option<TextProjector<R>>>>,
-    rows: FRows,
-    selection_lens: FSel,
+    rows: RowsFn<State, R>,
+    selection_lens: Option<SelectionLens<State>>,
     phantom: PhantomData<fn() -> State>,
 }
 
-impl<V, R, State, FRows, FSel> ViewMarker for CopyOnShortcutView<V, R, State, FRows, FSel> {}
+impl<V, R, State> ViewMarker for CopyOnShortcutView<V, R, State> {}
 
-impl<V, R, State, FRows, FSel> View<State, (), ViewCtx>
-    for CopyOnShortcutView<V, R, State, FRows, FSel>
+impl<V, R, State> View<State, (), ViewCtx> for CopyOnShortcutView<V, R, State>
 where
     V: WidgetView<State, ()>,
     R: 'static,
     State: 'static,
-    FRows: for<'a> Fn(&'a State) -> &'a [R] + Send + Sync + 'static,
-    FSel: for<'a> Fn(&'a mut State) -> &'a mut SelectionState + Send + Sync + 'static,
 {
     type Element = Pod<CopyOnShortcut>;
     type ViewState = V::ViewState;
@@ -430,20 +537,20 @@ where
     }
 }
 
-impl<V, R, State, FRows, FSel> CopyOnShortcutView<V, R, State, FRows, FSel>
+impl<V, R, State> CopyOnShortcutView<V, R, State>
 where
     R: 'static,
     State: 'static,
-    FRows: for<'a> Fn(&'a State) -> &'a [R],
-    FSel: for<'a> Fn(&'a mut State) -> &'a mut SelectionState,
 {
     fn compute_payload(&self, app_state: &mut State) -> Option<String> {
+        // No selection lens → nothing to copy.
+        let selection_lens = self.selection_lens.as_ref()?;
         // We need both `&[R]` and `&SelectionState` simultaneously,
         // but the lenses return references whose lifetimes overlap
         // app_state. Walk the selection first to copy out the
         // indices, then look up rows.
-        let selection_snapshot = (self.selection_lens)(app_state).clone();
-        let data = (self.rows)(app_state);
+        let selection_snapshot = (**selection_lens)(app_state).clone();
+        let data = (*self.rows)(app_state);
         project_tsv(&self.text_projectors, data, &selection_snapshot)
     }
 }
@@ -476,18 +583,17 @@ fn aligned_cell<State: 'static>(
 /// [`clickable_header`] so a click cycles `sort_lens`'s state for that
 /// column, and the active sort column gains an ascending/descending
 /// arrow. Non-sortable columns render an inert label.
-fn header_cell<State, R, FSort>(
+fn header_cell<State, R>(
     idx: usize,
     slot: &ColumnRender<R, State>,
     sortable: bool,
     sort: SortState,
-    sort_lens: &FSort,
+    sort_lens: Option<&SortLens<State>>,
     theme: &Theme,
 ) -> AnyFlexChild<State, ()>
 where
     State: 'static,
     R: 'static,
-    FSort: for<'a> Fn(&'a mut State) -> &'a mut SortState + Clone + Send + Sync + 'static,
 {
     let title = match sort.direction_for(idx) {
         Some(SortDirection::Ascending) => format!("{}  ▲", slot.title),
@@ -499,14 +605,20 @@ where
         .letter_spacing(1.2)
         .color(theme.palette.text_muted);
     let cell = aligned_cell(Box::new(header_label), slot.width, slot.align);
-    if sortable {
-        let lens = sort_lens.clone();
-        let clickable =
-            clickable_header(cell, theme.palette.border_strong, move |state: &mut State| {
-                lens(state).cycle(idx);
-            });
-        flex_item(clickable, 0.0).into()
-    } else {
-        flex_item(cell, 0.0).into()
+    // Interactive only when the column is sortable *and* a write lens
+    // is available; otherwise an inert label.
+    match (sortable, sort_lens) {
+        (true, Some(lens)) => {
+            let lens = Arc::clone(lens);
+            let clickable = clickable_header(
+                cell,
+                theme.palette.border_strong,
+                move |state: &mut State| {
+                    (*lens)(state).cycle(idx);
+                },
+            );
+            flex_item(clickable, 0.0).into()
+        }
+        _ => flex_item(cell, 0.0).into(),
     }
 }
