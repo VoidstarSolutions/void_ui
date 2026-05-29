@@ -18,7 +18,7 @@ use xilem::winit::error::EventLoopError;
 use xilem::{AnyWidgetView, EventLoop, WidgetView, WindowOptions, Xilem};
 
 use void_ui::components::data_grid::demo::{Demo, tick_columns};
-use void_ui::components::{ComponentKind, DataGrid, SortState, button, sidebar_item};
+use void_ui::components::{ComponentKind, DataGrid, FilterState, SortState, button, sidebar_item};
 use void_ui::layout::flex_wrap;
 use void_ui::theme::{Density, Theme};
 
@@ -60,6 +60,7 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
     let dg_row_count = u64::try_from(dg_visible_len).unwrap_or(u64::MAX);
     let dg_base_time_ns = state.data_grid.ticks.first().map_or(0, |t| t.event_ns);
     let dg_sort = state.data_grid.sort;
+    let dg_filter = state.data_grid.filter.clone();
 
     let workspace = workspace_row(
         focused,
@@ -68,6 +69,7 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
         dg_row_count,
         dg_base_time_ns,
         dg_sort,
+        dg_filter,
     );
 
     let outer = flex_col((topbar(theme_panel_open, &theme), workspace.flex(1.0)))
@@ -84,6 +86,7 @@ fn workspace_row(
     dg_row_count: u64,
     dg_base_time_ns: i64,
     dg_sort: SortState,
+    dg_filter: FilterState,
 ) -> Box<AnyWidgetView<State>> {
     let sidebar_view = sized_box(sidebar(focused, theme))
         .fixed_width(Length::px(180.0))
@@ -95,6 +98,7 @@ fn workspace_row(
         dg_row_count,
         dg_base_time_ns,
         dg_sort,
+        dg_filter,
     ))
     .padding(Length::px(20.0))
     .background_color(theme.palette.bg);
@@ -195,6 +199,7 @@ fn main_pane(
     dg_row_count: u64,
     dg_base_time_ns: i64,
     dg_sort: SortState,
+    dg_filter: FilterState,
 ) -> Box<AnyWidgetView<State>> {
     match focused {
         ComponentKind::Button => Box::new(void_ui::components::button::demo::panel(theme)),
@@ -204,6 +209,7 @@ fn main_pane(
             dg_row_count,
             dg_base_time_ns,
             dg_sort,
+            dg_filter,
         )),
         ComponentKind::Radio => Box::new(void_ui::components::radio::demo::panel(theme)),
         ComponentKind::ScrollContainer => {
@@ -226,6 +232,7 @@ fn data_grid_panel(
     row_count: u64,
     base_time_ns: i64,
     sort: SortState,
+    filter: FilterState,
 ) -> impl WidgetView<State> + use<> {
     let columns = tick_columns::<State>(base_time_ns);
     let theme_copy = *theme;
@@ -290,6 +297,7 @@ fn data_grid_panel(
         .row_count(row_count)
         .selection(|s: &mut State| &mut s.data_grid.selection)
         .sort(sort, |s: &mut State| &mut s.data_grid.sort)
+        .filter(filter)
         .row_height(22.0)
         .render(&theme_copy);
 

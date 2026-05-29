@@ -36,6 +36,7 @@ use super::header_click::clickable_header;
 use super::overflow_warn::overflow_warn;
 use super::row_click::clickable_row;
 use super::selection::SelectionState;
+use super::filter::FilterState;
 use super::sort::{SortDirection, SortState, display_order};
 use crate::Theme;
 
@@ -156,6 +157,7 @@ pub struct DataGrid<State, R> {
     selection_lens: Option<SelectionLens<State>>,
     sort: SortState,
     sort_lens: Option<SortLens<State>>,
+    filter: FilterState,
 }
 
 /// Default fixed row height when [`DataGrid::row_height`] is unset.
@@ -177,6 +179,7 @@ where
             selection_lens: None,
             sort: SortState::new(),
             sort_lens: None,
+            filter: FilterState::new(),
         }
     }
 
@@ -229,6 +232,18 @@ where
         let lens: SortLens<State> = Arc::new(lens);
         self.sort = state;
         self.sort_lens = Some(lens);
+        self
+    }
+
+    /// Supplies the active [`FilterState`] snapshot so the grid can mark
+    /// filtered columns with a persistent indicator. Filtering itself is
+    /// applied host-side (see
+    /// [`filtered_indices`](super::filter::filtered_indices)); this is
+    /// the *display* half — a column with an active query gets an
+    /// always-visible accent + marker so a filtered view is never
+    /// mistaken for the full data set.
+    pub fn filter(mut self, filter: FilterState) -> Self {
+        self.filter = filter;
         self
     }
 
@@ -295,6 +310,7 @@ where
         selection_lens,
         sort,
         sort_lens,
+        filter,
     } = grid;
 
     // Default the data accessor to an empty slice when unset.
@@ -307,11 +323,15 @@ where
 
     // --- Header row. Sortable columns get a clickable header that
     //     cycles the column's sort, plus an arrow on the active
-    //     column. Non-sortable columns render an inert label.
+    //     column; columns with an active filter get a persistent
+    //     accent + marker. Non-sortable columns render an inert label.
     let header_cells: Vec<AnyFlexChild<State, ()>> = render_slots
         .iter()
         .enumerate()
-        .map(|(idx, slot)| header_cell(idx, slot, sortable[idx], sort, sort_lens.as_ref(), &theme))
+        .map(|(idx, slot)| {
+            let filtered = filter.get(idx).is_some();
+            header_cell(idx, slot, sortable[idx], filtered, sort, sort_lens.as_ref(), &theme)
+        })
         .collect();
     let header = sized_box(flex_row(header_cells).cross_axis_alignment(CrossAxisAlignment::Center))
         .fixed_height(Length::px(row_height))
@@ -582,11 +602,14 @@ fn aligned_cell<State: 'static>(
 /// Sortable columns (`sortable == true`) are wrapped in
 /// [`clickable_header`] so a click cycles `sort_lens`'s state for that
 /// column, and the active sort column gains an ascending/descending
-/// arrow. Non-sortable columns render an inert label.
+/// arrow. A column with an active filter (`filtered == true`) is drawn
+/// in the theme accent with a trailing marker, so a filtered view is
+/// always unmistakable. Non-sortable columns render an inert label.
 fn header_cell<State, R>(
     idx: usize,
     slot: &ColumnRender<R, State>,
     sortable: bool,
+    filtered: bool,
     sort: SortState,
     sort_lens: Option<&SortLens<State>>,
     theme: &Theme,
@@ -595,15 +618,26 @@ where
     State: 'static,
     R: 'static,
 {
-    let title = match sort.direction_for(idx) {
+    let mut title = match sort.direction_for(idx) {
         Some(SortDirection::Ascending) => format!("{}  ▲", slot.title),
         Some(SortDirection::Descending) => format!("{}  ▼", slot.title),
         None => slot.title.clone(),
     };
+    // Persistent filter indicator: a filtered column gets a trailing
+    // marker and the theme accent color, so a hidden-data view can't be
+    // mistaken for the full set (even after the trigger loses focus).
+    if filtered {
+        title.push_str("  ●");
+    }
+    let title_color = if filtered {
+        theme.palette.teal
+    } else {
+        theme.palette.text_muted
+    };
     let header_label = label(title)
         .text_size(theme.typography.size_caption)
         .letter_spacing(1.2)
-        .color(theme.palette.text_muted);
+        .color(title_color);
     let cell = aligned_cell(Box::new(header_label), slot.width, slot.align);
     // Interactive only when the column is sortable *and* a write lens
     // is available; otherwise an inert label.
