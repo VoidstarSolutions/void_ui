@@ -501,9 +501,10 @@ where
     let cell = aligned_cell(Box::new(header_label), slot.width, slot.align);
     if sortable {
         let lens = sort_lens.clone();
-        let clickable = clickable_header(cell, move |state: &mut State| {
-            lens(state).cycle(idx);
-        });
+        let clickable =
+            clickable_header(cell, theme.palette.border_strong, move |state: &mut State| {
+                lens(state).cycle(idx);
+            });
         flex_item(clickable, 0.0).into()
     } else {
         flex_item(cell, 0.0).into()

@@ -16,8 +16,9 @@ use masonry::core::{
     TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Point, Size};
+use masonry::kurbo::{Axis, Point, Rect, Size};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
+use masonry::peniko::Color;
 
 /// Action emitted by [`HeaderClickable`] on primary-button release
 /// inside its bounds. Carries no modifiers — a header click means
@@ -26,17 +27,24 @@ use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 pub struct HeaderClicked;
 
 /// Single-child wrapper that emits [`HeaderClicked`] on primary-button
-/// release inside its bounds.
+/// release inside its bounds, and paints a hover-tint background while
+/// the pointer is over it — the affordance that signals "this column
+/// is sortable" (only sortable headers are wrapped in this widget).
 pub struct HeaderClickable {
     child: WidgetPod<dyn Widget>,
+    /// Background painted while hovered. Theme-driven (typically
+    /// `border_strong`, a clear step above the header's `surface_2`
+    /// for an obvious-but-neutral hover cue).
+    hover_bg: Color,
 }
 
 // --- MARK: BUILDERS
 impl HeaderClickable {
     #[must_use]
-    pub fn new(child: NewWidget<impl Widget + ?Sized>) -> Self {
+    pub fn new(child: NewWidget<impl Widget + ?Sized>, hover_bg: Color) -> Self {
         Self {
             child: child.erased().to_pod(),
+            hover_bg,
         }
     }
 }
@@ -46,6 +54,15 @@ impl HeaderClickable {
     /// Returns a mutable reference to the wrapped child.
     pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
         this.ctx.get_mut(&mut this.widget.child)
+    }
+
+    /// Updates the hover-tint color (e.g. on a theme swap). Requests a
+    /// repaint only when the value changes.
+    pub fn set_hover_bg(this: &mut WidgetMut<'_, Self>, hover_bg: Color) {
+        if this.widget.hover_bg != hover_bg {
+            this.widget.hover_bg = hover_bg;
+            this.ctx.request_paint_only();
+        }
     }
 }
 
@@ -95,12 +112,12 @@ impl Widget for HeaderClickable {
     ) {
     }
 
-    fn update(
-        &mut self,
-        _ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &Update,
-    ) {
+    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        // Repaint when the pointer enters/leaves so the hover tint
+        // tracks the cursor — same mechanism the button widget uses.
+        if let Update::HoveredChanged(_) = event {
+            ctx.request_paint_only();
+        }
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
@@ -136,10 +153,17 @@ impl Widget for HeaderClickable {
 
     fn paint(
         &mut self,
-        _ctx: &mut PaintCtx<'_>,
+        ctx: &mut PaintCtx<'_>,
         _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
+        painter: &mut Painter<'_>,
     ) {
+        // Fill the cell with the hover tint while hovered. Painted
+        // before the child label (parent paints first), so the title
+        // and sort arrow render on top.
+        if ctx.is_hovered() && self.hover_bg.components[3] > 0.0 {
+            let rect = Rect::from_origin_size(Point::ORIGIN, ctx.border_box_size());
+            painter.fill(rect, self.hover_bg).draw();
+        }
     }
 
     fn accessibility_role(&self) -> Role {
@@ -186,12 +210,18 @@ use xilem::{Pod, ViewCtx, WidgetView};
 #[must_use = "View values do nothing unless provided to Xilem."]
 pub struct ClickableHeader<V, State, F> {
     child: V,
+    hover_bg: Color,
     on_click: F,
     phantom: PhantomData<fn() -> State>,
 }
 
-/// Constructor for [`ClickableHeader`].
-pub fn clickable_header<V, State, F>(child: V, on_click: F) -> ClickableHeader<V, State, F>
+/// Constructor for [`ClickableHeader`]. `hover_bg` is the tint painted
+/// while the header is hovered (theme-driven).
+pub fn clickable_header<V, State, F>(
+    child: V,
+    hover_bg: Color,
+    on_click: F,
+) -> ClickableHeader<V, State, F>
 where
     V: WidgetView<State, ()>,
     F: Fn(&mut State) + Send + Sync + 'static,
@@ -199,6 +229,7 @@ where
 {
     ClickableHeader {
         child,
+        hover_bg,
         on_click,
         phantom: PhantomData,
     }
@@ -217,7 +248,7 @@ where
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let (child_pod, child_state) = self.child.build(ctx, app_state);
-        let widget = HeaderClickable::new(child_pod.new_widget);
+        let widget = HeaderClickable::new(child_pod.new_widget, self.hover_bg);
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, child_state)
     }
@@ -230,6 +261,9 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) {
+        if self.hover_bg != prev.hover_bg {
+            HeaderClickable::set_hover_bg(&mut element, self.hover_bg);
+        }
         let mut child = HeaderClickable::child_mut(&mut element);
         self.child
             .rebuild(&prev.child, view_state, ctx, child.downcast(), app_state);
