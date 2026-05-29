@@ -280,7 +280,14 @@ where
         })
     });
 
-    let stack = flex_col((header, body)).cross_axis_alignment(CrossAxisAlignment::Start);
+    // The body flexes to fill the height the grid is given; the header
+    // keeps its fixed row height. A virtualized grid must fill a
+    // *bounded* viewport (it can't size itself to the full row count),
+    // so callers should place the grid in a bounded-height slot — e.g.
+    // `sized_box(grid).flex(1.0)`. In an unbounded-height parent the
+    // body falls back to its intrinsic size (a few rows).
+    let stack = flex_col((header, flex_item(body, 1.0)))
+        .cross_axis_alignment(CrossAxisAlignment::Start);
 
     // --- Wrap in OverflowWarn so a viewport narrower than the sum of
     //     column widths emits a one-shot tracing::warn! — backs the
