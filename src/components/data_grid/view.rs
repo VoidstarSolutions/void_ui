@@ -32,6 +32,7 @@ use xilem::{AnyWidgetView, Pod, ViewCtx};
 
 use super::column::{CellAlign, CellRenderer, ColumnDef, RowComparator, TextProjector};
 use super::copy_shortcut::CopyOnShortcut;
+use super::header_click::clickable_header;
 use super::overflow_warn::overflow_warn;
 use super::row_click::clickable_row;
 use super::selection::SelectionState;
@@ -126,12 +127,19 @@ fn resolve_source_idx<R>(
 ///   the selected style, and (b) project the TSV payload for
 ///   clipboard copy. Selection tracks *source* row indices, so it is
 ///   stable across sort changes.
-/// - `sort_lens` — `Fn(&mut State) -> &mut SortState` accessor. The
-///   grid reads the active [`SortState`] to map each visible row to
-///   its source row through the sorted display order. A column is
-///   only sorted if its [`ColumnDef`] carries a comparator
-///   (see [`ColumnDef::sortable_by_key`]); otherwise the state is
-///   ignored and rows display in natural order.
+/// - `sort` — the current [`SortState`] snapshot, read from host state
+///   at frame time. Drives both the header sort arrow and the
+///   virtual→source row mapping. A column is only sorted if its
+///   [`ColumnDef`] carries a comparator (see
+///   [`ColumnDef::sortable_by_key`]); otherwise the state is ignored
+///   and rows display in natural order. Passed by value (rather than
+///   read through `sort_lens`) because the header is built
+///   synchronously, with no `&State` in hand — mirroring how
+///   `row_count` is snapshotted by the caller.
+/// - `sort_lens` — `Fn(&mut State) -> &mut SortState` write path. The
+///   *only* use is mutating the sort when a sortable header is
+///   clicked (cycling that column asc → desc → unsorted). Rendering
+///   uses the `sort` snapshot above, not this lens.
 /// - `theme` — color/typography source. Captured by value (Copy).
 /// - `row_height` — fixed pixel row height.
 ///
@@ -142,11 +150,19 @@ fn resolve_source_idx<R>(
 /// - The TSV payload is rebuilt every frame from the current
 ///   selection. Columns without a `text` projector contribute empty
 ///   cells (so spreadsheet paste keeps the column layout).
+// Each parameter is an independent, cohesive input to a low-level
+// constructor; bundling them into a config/builder is a planned
+// follow-up once the feature set (filtering, resizing, …) settles.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "low-level grid constructor; builder refactor is a tracked follow-up"
+)]
 pub fn data_grid<State, R, FRows, FSel, FSort>(
     columns: Vec<ColumnDef<R, State>>,
     row_count: u64,
     rows: FRows,
     selection_lens: FSel,
+    sort: SortState,
     sort_lens: FSort,
     theme: &Theme,
     row_height: f64,
@@ -181,19 +197,19 @@ where
     }
     let render_slots = Arc::new(render_slots);
     let text_projectors = Arc::new(text_projectors);
+    // Which columns are sortable, captured before `comparators` is
+    // moved into the row builder. A column is sortable iff it carries
+    // a comparator.
+    let sortable: Vec<bool> = comparators.iter().map(Option::is_some).collect();
     let comparators = Arc::new(comparators);
 
-    // --- Header row.
+    // --- Header row. Sortable columns get a clickable header that
+    //     cycles the column's sort, plus an arrow on the active
+    //     column. Non-sortable columns render an inert label.
     let header_cells: Vec<AnyFlexChild<State, ()>> = render_slots
         .iter()
-        .map(|slot| {
-            let header_label = label(slot.title.clone())
-                .text_size(theme.typography.size_caption)
-                .letter_spacing(1.2)
-                .color(theme.palette.text_muted);
-            let cell = aligned_cell(Box::new(header_label), slot.width, slot.align);
-            flex_item(cell, 0.0).into()
-        })
+        .enumerate()
+        .map(|(idx, slot)| header_cell(idx, slot, sortable[idx], sort, &sort_lens, &theme))
         .collect();
     let header = sized_box(flex_row(header_cells).cross_axis_alignment(CrossAxisAlignment::Center))
         .fixed_height(Length::px(row_height))
@@ -215,11 +231,9 @@ where
     let body = virtual_scroll(0..valid_range_end, move |state: &mut State, idx: i64| {
         let virtual_idx = usize::try_from(idx).unwrap_or(usize::MAX);
 
-        // Snapshot the sort state (Copy) and release the borrow before
-        // reborrowing `state` for the row data.
-        let sort = *sort_lens(state);
-
         // Map virtual row → source row through the active sort order.
+        // `sort` is the frame-time snapshot captured by this closure;
+        // it can't change without a rebuild (which re-captures it).
         let source_idx = resolve_source_idx(
             sort,
             &comparators,
@@ -452,4 +466,46 @@ fn aligned_cell<State: 'static>(
         .main_axis_alignment(align_to_main(align))
         .cross_axis_alignment(CrossAxisAlignment::Center);
     Box::new(sized_box(aligned).fixed_width(Length::px(width)))
+}
+
+// --- MARK: HEADER CELL -------------------------------------------------
+
+/// Builds one header cell as a fixed-width flex child.
+///
+/// Sortable columns (`sortable == true`) are wrapped in
+/// [`clickable_header`] so a click cycles `sort_lens`'s state for that
+/// column, and the active sort column gains an ascending/descending
+/// arrow. Non-sortable columns render an inert label.
+fn header_cell<State, R, FSort>(
+    idx: usize,
+    slot: &ColumnRender<R, State>,
+    sortable: bool,
+    sort: SortState,
+    sort_lens: &FSort,
+    theme: &Theme,
+) -> AnyFlexChild<State, ()>
+where
+    State: 'static,
+    R: 'static,
+    FSort: for<'a> Fn(&'a mut State) -> &'a mut SortState + Clone + Send + Sync + 'static,
+{
+    let title = match sort.direction_for(idx) {
+        Some(SortDirection::Ascending) => format!("{}  ▲", slot.title),
+        Some(SortDirection::Descending) => format!("{}  ▼", slot.title),
+        None => slot.title.clone(),
+    };
+    let header_label = label(title)
+        .text_size(theme.typography.size_caption)
+        .letter_spacing(1.2)
+        .color(theme.palette.text_muted);
+    let cell = aligned_cell(Box::new(header_label), slot.width, slot.align);
+    if sortable {
+        let lens = sort_lens.clone();
+        let clickable = clickable_header(cell, move |state: &mut State| {
+            lens(state).cycle(idx);
+        });
+        flex_item(clickable, 0.0).into()
+    } else {
+        flex_item(cell, 0.0).into()
+    }
 }
