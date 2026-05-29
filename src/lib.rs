@@ -21,10 +21,10 @@ pub mod pointer_inert;
 pub mod theme;
 
 pub use components::{
-    Button, ButtonVariant, ButtonView, CellAlign, ColumnDef, DataGrid, ScrollContainer,
-    ScrollContainerView, SelectionState, SidebarItem, SidebarItemView, SortDirection, SortState,
-    Tooltip, TooltipView, button, optional_text_column, scroll_container, sidebar_item,
-    text_column, tooltip,
+    Button, ButtonVariant, ButtonView, CellAlign, ColumnDef, DataGrid, FilterState,
+    ScrollContainer, ScrollContainerView, SelectionState, SidebarItem, SidebarItemView,
+    SortDirection, SortState, Tooltip, TooltipView, button, filtered_indices, optional_text_column,
+    scroll_container, sidebar_item, text_column, tooltip,
 };
 pub use floating::{FloatingOverlay, FloatingOverlayView, floating, interactive_floating};
 pub use gallery::code_block;

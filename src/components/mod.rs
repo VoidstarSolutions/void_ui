@@ -23,8 +23,8 @@ pub mod tooltip;
 pub use button::{Button, ButtonVariant, ButtonView, button};
 pub use checkbox::{Checkbox, CheckboxView, checkbox};
 pub use data_grid::{
-    CellAlign, ColumnDef, DataGrid, SelectionState, SortDirection, SortState, optional_text_column,
-    text_column,
+    CellAlign, ColumnDef, DataGrid, FilterState, SelectionState, SortDirection, SortState,
+    filtered_indices, optional_text_column, text_column,
 };
 pub use scroll_container::{
     ScrollBarVisibility, ScrollContainer, ScrollContainerView, scroll_container,

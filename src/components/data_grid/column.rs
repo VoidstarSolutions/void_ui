@@ -67,6 +67,15 @@ pub type TextProjector<R> = Box<dyn Fn(&R) -> String + Send + Sync + 'static>;
 /// builder closure.
 pub type RowComparator<R> = Box<dyn Fn(&R, &R) -> Ordering + Send + Sync + 'static>;
 
+/// Predicate that tests a row against a column's filter query.
+///
+/// Given a row and the active query string for this column, returns
+/// whether the row should survive the filter. The grid never calls this
+/// itself — the host runs it via
+/// [`filtered_indices`](super::filter::filtered_indices). `Send + Sync`
+/// for the same reason as [`CellRenderer`].
+pub type RowFilter<R> = Box<dyn Fn(&R, &str) -> bool + Send + Sync + 'static>;
+
 /// Describes one column in a [`super::data_grid`] view.
 ///
 /// `R` is the row type — every column in a single grid renders from the
@@ -103,6 +112,13 @@ pub struct ColumnDef<R, State> {
     /// comparator from its display text. Sortable columns opt in with
     /// a key that reflects the underlying value.
     pub comparator: Option<RowComparator<R>>,
+    /// Optional predicate that makes this column filterable. `None`
+    /// (the default) leaves the column unfilterable. Attach one via
+    /// [`ColumnDef::filterable_by`] or [`ColumnDef::filterable_by_text`].
+    /// The host applies it through
+    /// [`filtered_indices`](super::filter::filtered_indices); the grid
+    /// uses its presence to decide whether to show a filter affordance.
+    pub filter: Option<RowFilter<R>>,
 }
 
 impl<R, State> ColumnDef<R, State> {
@@ -119,7 +135,34 @@ impl<R, State> ColumnDef<R, State> {
             render: Box::new(render),
             text: None,
             comparator: None,
+            filter: None,
         }
+    }
+
+    /// Makes this column filterable with an explicit predicate:
+    /// `Fn(&row, &query) -> bool`. Reach for this when matching needs
+    /// more than a case-insensitive substring (numeric thresholds,
+    /// ranges, custom parsing); most callers want
+    /// [`ColumnDef::filterable_by_text`].
+    pub fn filterable_by<F>(mut self, predicate: F) -> Self
+    where
+        F: Fn(&R, &str) -> bool + Send + Sync + 'static,
+    {
+        self.filter = Some(Box::new(predicate));
+        self
+    }
+
+    /// Makes this column filterable by a case-insensitive substring
+    /// match against text projected from each row — the common case
+    /// (`.filterable_by_text(|r| r.symbol.clone())`). A row passes when
+    /// the projected text contains the query, ignoring case.
+    pub fn filterable_by_text<F>(self, key: F) -> Self
+    where
+        F: Fn(&R) -> String + Send + Sync + 'static,
+    {
+        self.filterable_by(move |row, query| {
+            key(row).to_lowercase().contains(&query.to_lowercase())
+        })
     }
 
     /// Makes this column sortable using an explicit ascending-order
