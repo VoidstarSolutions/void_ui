@@ -12,6 +12,8 @@
 //! the common case (plain text driven by a `Fn(&R) -> String`
 //! projection) without making callers think about boxing.
 
+use std::cmp::Ordering;
+
 use xilem::AnyWidgetView;
 
 use crate::Theme;
@@ -52,6 +54,19 @@ pub type CellRenderer<R, State> =
 /// row's columns line up in the spreadsheet target).
 pub type TextProjector<R> = Box<dyn Fn(&R) -> String + Send + Sync + 'static>;
 
+/// Total order over two rows for a sortable column.
+///
+/// Returning a comparator rather than a key projector keeps the column
+/// generic over the row type without forcing the sort key to be an
+/// owned, `'static` value — the closure borrows each row only for the
+/// duration of the comparison. The grid wraps the result with the
+/// active [`SortDirection`](super::sort::SortDirection): the comparator
+/// always describes the *ascending* order, and descending is the
+/// reverse. `Send + Sync` for the same reason as
+/// [`CellRenderer`] — xilem propagates the bound through the row
+/// builder closure.
+pub type RowComparator<R> = Box<dyn Fn(&R, &R) -> Ordering + Send + Sync + 'static>;
+
 /// Describes one column in a [`super::data_grid`] view.
 ///
 /// `R` is the row type — every column in a single grid renders from the
@@ -77,6 +92,17 @@ pub struct ColumnDef<R, State> {
     /// can attach one via [`ColumnDef::with_text`]. Columns without a
     /// text projector contribute an empty TSV cell.
     pub text: Option<TextProjector<R>>,
+    /// Optional ascending-order comparator that makes this column
+    /// sortable. `None` (the default) leaves the column unsortable —
+    /// its header doesn't react to clicks. Attach one via
+    /// [`ColumnDef::sortable_by`] or [`ColumnDef::sortable_by_key`].
+    ///
+    /// Deliberately *not* auto-populated by [`text_column`]: a column
+    /// whose cells render a formatted number (e.g. `"$100.00"`) would
+    /// sort lexicographically — wrong — if it inherited a string
+    /// comparator from its display text. Sortable columns opt in with
+    /// a key that reflects the underlying value.
+    pub comparator: Option<RowComparator<R>>,
 }
 
 impl<R, State> ColumnDef<R, State> {
@@ -92,7 +118,39 @@ impl<R, State> ColumnDef<R, State> {
             align,
             render: Box::new(render),
             text: None,
+            comparator: None,
         }
+    }
+
+    /// Makes this column sortable using an explicit ascending-order
+    /// comparator. The grid applies the active
+    /// [`SortDirection`](super::sort::SortDirection) on top — pass the
+    /// comparator that describes the *ascending* order and the grid
+    /// reverses it for descending.
+    ///
+    /// Most callers want [`ColumnDef::sortable_by_key`]; reach for this
+    /// when ordering needs more than a single `Ord` key (e.g. a custom
+    /// collation or a multi-field tiebreak).
+    pub fn sortable_by<F>(mut self, comparator: F) -> Self
+    where
+        F: Fn(&R, &R) -> Ordering + Send + Sync + 'static,
+    {
+        self.comparator = Some(Box::new(comparator));
+        self
+    }
+
+    /// Makes this column sortable by a comparable key projected from
+    /// each row. The common case: `.sortable_by_key(|r| r.price_units)`.
+    ///
+    /// The key is computed twice per comparison rather than cached, so
+    /// keep the projection cheap (a field read or a `Copy` value). For
+    /// expensive keys, precompute them onto the row type instead.
+    pub fn sortable_by_key<K, F>(self, key: F) -> Self
+    where
+        K: Ord,
+        F: Fn(&R) -> K + Send + Sync + 'static,
+    {
+        self.sortable_by(move |a, b| key(a).cmp(&key(b)))
     }
 
     /// Attaches a text projector for clipboard copy. Builders chain

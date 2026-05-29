@@ -30,7 +30,8 @@ pub use checkbox::{Checkbox, CheckboxView, checkbox};
 pub use clipboard::{Clipboard, ClipboardView, clipboard};
 pub use code_view::{ReadOnlyText, ReadOnlyTextView, RustHighlighter, read_only_text};
 pub use data_grid::{
-    CellAlign, ColumnDef, SelectionState, data_grid, optional_text_column, text_column,
+    CellAlign, ColumnDef, SelectionState, SortDirection, SortState, data_grid,
+    optional_text_column, text_column,
 };
 pub use label::{Label, LabelAlignment, label};
 pub use scroll_container::{

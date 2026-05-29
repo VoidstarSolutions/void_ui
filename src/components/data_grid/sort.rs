@@ -1,0 +1,154 @@
+//! Sort model for [`super::data_grid`].
+//!
+//! Sorting is single-column in this first increment, following the
+//! same "host owns the state, the grid reads it through a lens" shape
+//! that [`super::selection::SelectionState`] already uses. The grid
+//! itself stays presentation-only: it never mutates the host's row
+//! data. Instead it derives a *display order* (a permutation of source
+//! indices) each rebuild from the active [`SortState`] and the sorted
+//! column's [`RowComparator`](super::column::RowComparator), and maps
+//! virtual rows through it.
+//!
+//! The header-click cycle matches the convention every spreadsheet and
+//! the Kendo grid use: clicking a column's header advances
+//! **unsorted → ascending → descending → unsorted**, and clicking a
+//! *different* column jumps straight to ascending on that column.
+//!
+//! Columns are identified by their index in the `Vec<ColumnDef>` handed
+//! to [`data_grid`](super::data_grid) — the same positional identity the
+//! header and row builders already use.
+
+/// Ascending or descending order for the sorted column.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SortDirection {
+    /// Smallest-first (A→Z, 0→9, oldest→newest).
+    #[default]
+    Ascending,
+    /// Largest-first (Z→A, 9→0, newest→oldest).
+    Descending,
+}
+
+impl SortDirection {
+    /// The opposite direction.
+    #[must_use]
+    pub const fn reversed(self) -> Self {
+        match self {
+            Self::Ascending => Self::Descending,
+            Self::Descending => Self::Ascending,
+        }
+    }
+}
+
+/// Which column is currently sorted, and in which direction.
+///
+/// A `column` of `None` means the grid is unsorted and rows display in
+/// their natural source order. Held in the host's app state and read by
+/// the grid through a lens (mirroring
+/// [`SelectionState`](super::selection::SelectionState)).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SortState {
+    column: Option<usize>,
+    direction: SortDirection,
+}
+
+impl SortState {
+    /// An unsorted state (natural source order).
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The index of the sorted column, or `None` when unsorted.
+    #[must_use]
+    pub fn column(&self) -> Option<usize> {
+        self.column
+    }
+
+    /// The active sort direction. Only meaningful when
+    /// [`Self::column`] is `Some`.
+    #[must_use]
+    pub fn direction(&self) -> SortDirection {
+        self.direction
+    }
+
+    /// The direction `column` is sorted in, or `None` if `column` is
+    /// not the currently-sorted one. Header rendering uses this to
+    /// decide whether (and which way) to draw a sort arrow.
+    #[must_use]
+    pub fn direction_for(&self, column: usize) -> Option<SortDirection> {
+        (self.column == Some(column)).then_some(self.direction)
+    }
+
+    /// Advance the sort state as if the user clicked `column`'s header.
+    ///
+    /// - Clicking the already-sorted column advances
+    ///   ascending → descending → unsorted.
+    /// - Clicking any other column starts a fresh ascending sort on it.
+    pub fn cycle(&mut self, column: usize) {
+        if self.column == Some(column) {
+            match self.direction {
+                SortDirection::Ascending => self.direction = SortDirection::Descending,
+                SortDirection::Descending => *self = Self::new(),
+            }
+        } else {
+            self.column = Some(column);
+            self.direction = SortDirection::Ascending;
+        }
+    }
+
+    /// Reset to the unsorted state.
+    pub fn clear(&mut self) {
+        *self = Self::new();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SortDirection, SortState};
+
+    #[test]
+    fn cycle_advances_asc_desc_then_clears() {
+        let mut s = SortState::new();
+        assert_eq!(s.column(), None);
+
+        s.cycle(2);
+        assert_eq!(s.column(), Some(2));
+        assert_eq!(s.direction(), SortDirection::Ascending);
+
+        s.cycle(2);
+        assert_eq!(s.direction(), SortDirection::Descending);
+
+        s.cycle(2);
+        assert_eq!(s.column(), None, "third click on same column clears the sort");
+    }
+
+    #[test]
+    fn cycle_to_different_column_starts_ascending() {
+        let mut s = SortState::new();
+        s.cycle(1);
+        s.cycle(1); // now descending on column 1
+        assert_eq!(s.direction(), SortDirection::Descending);
+
+        s.cycle(3);
+        assert_eq!(s.column(), Some(3));
+        assert_eq!(
+            s.direction(),
+            SortDirection::Ascending,
+            "switching columns resets to ascending"
+        );
+    }
+
+    #[test]
+    fn direction_for_only_matches_active_column() {
+        let mut s = SortState::new();
+        s.cycle(0);
+        assert_eq!(s.direction_for(0), Some(SortDirection::Ascending));
+        assert_eq!(s.direction_for(1), None);
+    }
+
+    #[test]
+    fn reversed_flips() {
+        assert_eq!(SortDirection::Ascending.reversed(), SortDirection::Descending);
+        assert_eq!(SortDirection::Descending.reversed(), SortDirection::Ascending);
+    }
+}
