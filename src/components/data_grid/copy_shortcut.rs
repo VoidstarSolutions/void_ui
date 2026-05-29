@@ -9,10 +9,13 @@
 //! to plumb, and no `arboard` dependency, because masonry's
 //! [`EventCtx::set_clipboard`] already speaks to the platform.
 //!
-//! `accepts_focus = true`, but focus is only acquired on pointer
-//! down inside the wrapper — letting the keyboard shortcut work after
-//! the user clicks anywhere in the grid. Other events pass through
-//! to the child; `measure` / `layout` / `paint` delegate verbatim.
+//! `accepts_focus = true`. Focus is taken only on a pointer-down that
+//! lands *directly* on this wrapper, never when the click hits a
+//! focusable descendant (a filter text input, a clickable row) — those
+//! must keep their own focus, and the copy shortcut still works because
+//! the key event bubbles up to this wrapper from the focused descendant.
+//! Other events pass through to the child; `measure` / `layout` /
+//! `paint` delegate verbatim.
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::keyboard::{Key, KeyState};
@@ -103,10 +106,18 @@ impl Widget for CopyOnShortcut {
         _props: &mut PropertiesMut<'_>,
         event: &PointerEvent,
     ) {
-        if let PointerEvent::Down(..) = event {
-            // Take focus so subsequent keyboard events route here. We
-            // don't capture the pointer — the child still gets to
-            // handle its own clicks (row selection lives inside).
+        // Take focus on a pointer-down that lands *directly* on this
+        // wrapper (empty grid chrome) so a later Ctrl/Cmd+C routes here.
+        // Crucially, do NOT grab focus when the click lands on a
+        // focusable descendant — a filter text input or a clickable row.
+        // Those run their own `request_focus` first; since this widget
+        // is their ancestor it would otherwise override them (event
+        // bubbling reaches ancestors last), stealing focus and breaking
+        // text entry. Copy still works in that case because the keyboard
+        // event bubbles up to this wrapper from the focused descendant.
+        if let PointerEvent::Down(..) = event
+            && ctx.target() == ctx.widget_id()
+        {
             ctx.request_focus();
         }
     }

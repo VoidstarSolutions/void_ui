@@ -26,7 +26,7 @@ use xilem::peniko::Color;
 use xilem::style::Style as _;
 use xilem::view::{
     AnyFlexChild, CrossAxisAlignment, MainAxisAlignment, flex_col, flex_item, flex_row, label,
-    sized_box, virtual_scroll,
+    sized_box, text_input, virtual_scroll,
 };
 use xilem::{AnyWidgetView, Pod, ViewCtx};
 
@@ -49,6 +49,11 @@ type SelectionLens<State> =
 /// Boxed sort lens (`Fn(&mut State) -> &mut SortState`), the write path
 /// for header-click cycling.
 type SortLens<State> = Arc<dyn for<'a> Fn(&'a mut State) -> &'a mut SortState + Send + Sync>;
+/// Boxed filter-change callback (`Fn(&mut State, column, query)`). The
+/// grid emits filter edits through this so the host can update its
+/// [`FilterState`] *and* recompute its filtered view — the grid never
+/// applies the filter to data itself.
+type FilterChange<State> = Arc<dyn Fn(&mut State, usize, String) + Send + Sync>;
 
 /// One column's rendering + layout slot — the half of [`ColumnDef`]
 /// that's needed at row-build time. Shared (via `Arc`) between the
@@ -158,6 +163,7 @@ pub struct DataGrid<State, R> {
     sort: SortState,
     sort_lens: Option<SortLens<State>>,
     filter: FilterState,
+    filter_change: Option<FilterChange<State>>,
 }
 
 /// Default fixed row height when [`DataGrid::row_height`] is unset.
@@ -180,6 +186,7 @@ where
             sort: SortState::new(),
             sort_lens: None,
             filter: FilterState::new(),
+            filter_change: None,
         }
     }
 
@@ -235,15 +242,27 @@ where
         self
     }
 
-    /// Supplies the active [`FilterState`] snapshot so the grid can mark
-    /// filtered columns with a persistent indicator. Filtering itself is
-    /// applied host-side (see
-    /// [`filtered_indices`](super::filter::filtered_indices)); this is
-    /// the *display* half — a column with an active query gets an
+    /// Enables filtering. `filter` is the current [`FilterState`]
+    /// snapshot (drives the per-column filter inputs and the persistent
+    /// "filtered" indicator), and `on_change` is invoked as
+    /// `(state, column, query)` whenever the user edits a column's
+    /// filter input.
+    ///
+    /// Per the grid's host-filters model, `on_change` must update the
+    /// host's `FilterState` *and* recompute whatever filtered view the
+    /// grid's `rows` accessor serves — the grid never touches the data
+    /// itself. A filter input is shown only for columns whose
+    /// [`ColumnDef`] carries a predicate (see
+    /// [`ColumnDef::filterable_by_text`]); filtered columns also get an
     /// always-visible accent + marker so a filtered view is never
     /// mistaken for the full data set.
-    pub fn filter(mut self, filter: FilterState) -> Self {
+    pub fn filter<F>(mut self, filter: FilterState, on_change: F) -> Self
+    where
+        F: Fn(&mut State, usize, String) + Send + Sync + 'static,
+    {
+        let on_change: FilterChange<State> = Arc::new(on_change);
         self.filter = filter;
+        self.filter_change = Some(on_change);
         self
     }
 
@@ -256,25 +275,32 @@ where
 
 /// The parts of a `Vec<ColumnDef>` the view layer needs, decomposed
 /// into parallel, `Arc`-shared vectors: per-column rendering slots,
-/// clipboard text projectors, a `sortable` flag, and comparators.
+/// clipboard text projectors, a `sortable` flag, comparators, and a
+/// `filterable` flag.
 type DecomposedColumns<R, State> = (
     Arc<Vec<ColumnRender<R, State>>>,
     Arc<Vec<Option<TextProjector<R>>>>,
     Vec<bool>,
     Arc<Vec<Option<RowComparator<R>>>>,
+    Vec<bool>,
 );
 
 /// Splits each [`ColumnDef`] into its rendering slot, clipboard text
-/// projector, and comparator (positionally aligned), plus a `sortable`
-/// flag per column. The `Arc`s are shared between the synchronous
-/// header builder and the `virtual_scroll` row-builder closure.
+/// projector, and comparator (positionally aligned), plus `sortable` /
+/// `filterable` flags per column. The filter *predicate* is dropped —
+/// the host applies filtering — so the grid keeps only the flag (to
+/// decide whether to show a filter input). The `Arc`s are shared
+/// between the synchronous header builder and the `virtual_scroll`
+/// row-builder closure.
 fn decompose_columns<R, State>(columns: Vec<ColumnDef<R, State>>) -> DecomposedColumns<R, State> {
     let mut render_slots: Vec<ColumnRender<R, State>> = Vec::with_capacity(columns.len());
     let mut text_projectors: Vec<Option<TextProjector<R>>> = Vec::with_capacity(columns.len());
     let mut comparators: Vec<Option<RowComparator<R>>> = Vec::with_capacity(columns.len());
+    let mut filterable: Vec<bool> = Vec::with_capacity(columns.len());
     for col in columns {
         text_projectors.push(col.text);
         comparators.push(col.comparator);
+        filterable.push(col.filter.is_some());
         render_slots.push(ColumnRender {
             title: col.title,
             width: col.width,
@@ -288,6 +314,7 @@ fn decompose_columns<R, State>(columns: Vec<ColumnDef<R, State>>) -> DecomposedC
         Arc::new(text_projectors),
         sortable,
         Arc::new(comparators),
+        filterable,
     )
 }
 
@@ -311,6 +338,7 @@ where
         sort,
         sort_lens,
         filter,
+        filter_change,
     } = grid;
 
     // Default the data accessor to an empty slice when unset.
@@ -319,7 +347,8 @@ where
         empty
     });
 
-    let (render_slots, text_projectors, sortable, comparators) = decompose_columns(columns);
+    let (render_slots, text_projectors, sortable, comparators, filterable) =
+        decompose_columns(columns);
 
     // --- Header row. Sortable columns get a clickable header that
     //     cycles the column's sort, plus an arrow on the active
@@ -338,98 +367,26 @@ where
         .background_color(theme.palette.surface_2)
         .border(theme.palette.border, Length::px(1.0));
 
-    // --- Body: virtual_scroll. The row builder captures the
-    //     rendering slots Arc, the data accessor, the per-column
-    //     comparators, the selection + sort lenses, and a shared
-    //     sort-order memo. Each visible row is mapped from its
-    //     *virtual* position to a *source* row index through the
-    //     active sort order; selection styling, rendering, and the
-    //     click handler all operate on that source index.
-    let valid_range_end = i64::try_from(row_count).unwrap_or(i64::MAX);
-    let render_slots_for_body = Arc::clone(&render_slots);
-    let rows_for_body = rows.clone();
-    let selection_lens_for_body = selection_lens.clone();
-    let sort_cache = Arc::new(Mutex::new(SortOrderCache::default()));
-    let body = virtual_scroll(0..valid_range_end, move |state: &mut State, idx: i64| {
-        let virtual_idx = usize::try_from(idx).unwrap_or(usize::MAX);
-
-        // Map virtual row → source row through the active sort order.
-        // `sort` is the frame-time snapshot captured by this closure;
-        // it can't change without a rebuild (which re-captures it).
-        let source_idx = resolve_source_idx(
-            sort,
-            &comparators,
-            &sort_cache,
-            (*rows_for_body)(state),
-            virtual_idx,
-        );
-
-        let is_selected = match (selection_lens_for_body.as_ref(), source_idx) {
-            (Some(sel), Some(s)) => (**sel)(state).contains(u64::try_from(s).unwrap_or(u64::MAX)),
-            _ => false,
-        };
-
-        let data = (*rows_for_body)(state);
-        let cells: Vec<AnyFlexChild<State, ()>> =
-            if let Some(row) = source_idx.and_then(|s| data.get(s)) {
-                render_slots_for_body
-                    .iter()
-                    .map(|slot| {
-                        let cell_view = (slot.render)(row, &theme);
-                        let cell = aligned_cell(cell_view, slot.width, slot.align);
-                        flex_item(cell, 0.0).into()
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
-
-        let row_bg = if is_selected {
-            theme.palette.surface_2
-        } else {
-            Color::TRANSPARENT
-        };
-        let row_view = sized_box(flex_row(cells).cross_axis_alignment(CrossAxisAlignment::Center))
-            .fixed_height(Length::px(row_height))
-            .background_color(row_bg);
-
-        // Each row's click handler closes over the (cloned) selection
-        // lens + the row's *source* index. Modifiers route to the
-        // matching SelectionState op.
-        //
-        // KNOWN LIMITATION (v1): shift-extend fills an inclusive range
-        // in *source-index* space, so under an active sort it does not
-        // track the visual range between anchor and target. Single
-        // click and ctrl/cmd-toggle are order-independent and correct.
-        // Visual-range extend is deferred to a follow-up.
-        let lens_for_click = selection_lens_for_body.clone();
-        clickable_row(row_view, move |state: &mut State, action| {
-            let Some(source) = source_idx else { return };
-            let Ok(row) = u64::try_from(source) else {
-                return;
-            };
-            let Some(sel_lens) = lens_for_click.as_ref() else {
-                return;
-            };
-            let sel = (**sel_lens)(state);
-            if action.shift {
-                sel.extend_to(row);
-            } else if action.action_mod {
-                sel.toggle(row);
-            } else {
-                sel.replace_with(row);
-            }
-        })
+    let body = build_body(BodyParams {
+        row_count,
+        row_height,
+        theme,
+        sort,
+        render_slots: Arc::clone(&render_slots),
+        comparators,
+        rows: rows.clone(),
+        selection_lens: selection_lens.clone(),
     });
 
-    // The body flexes to fill the height the grid is given; the header
-    // keeps its fixed row height. A virtualized grid must fill a
-    // *bounded* viewport (it can't size itself to the full row count),
-    // so callers should place the grid in a bounded-height slot — e.g.
-    // `sized_box(grid).flex(1.0)`. In an unbounded-height parent the
-    // body falls back to its intrinsic size (a few rows).
-    let stack =
-        flex_col((header, flex_item(body, 1.0))).cross_axis_alignment(CrossAxisAlignment::Start);
+    // Build the filter-input row only when filtering is configured and
+    // at least one column is filterable.
+    let filter_row = filter_change.as_ref().and_then(|on_change| {
+        filterable
+            .iter()
+            .any(|&f| f)
+            .then(|| build_filter_row(&render_slots, &filterable, &filter, on_change, &theme))
+    });
+    let stack = assemble_grid_stack(header, filter_row, body);
 
     // --- Wrap in OverflowWarn so a viewport narrower than the sum of
     //     column widths emits a one-shot tracing::warn! — backs the
@@ -655,4 +612,193 @@ where
         }
         _ => flex_item(cell, 0.0).into(),
     }
+}
+
+// --- MARK: BODY --------------------------------------------------------
+
+/// Inputs for [`build_body`], grouped into a struct to keep the call
+/// readable (and under the argument-count lint).
+struct BodyParams<State, R> {
+    row_count: u64,
+    row_height: f64,
+    theme: Theme,
+    sort: SortState,
+    render_slots: Arc<Vec<ColumnRender<R, State>>>,
+    comparators: Arc<Vec<Option<RowComparator<R>>>>,
+    rows: RowsFn<State, R>,
+    selection_lens: Option<SelectionLens<State>>,
+}
+
+/// Builds the virtualized body. Each visible row is mapped from its
+/// *virtual* position to a *source* row index through the active sort
+/// order (via a shared, memoized [`SortOrderCache`]); selection
+/// styling, cell rendering, and the click handler all operate on that
+/// source index.
+fn build_body<State, R>(params: BodyParams<State, R>) -> impl WidgetView<State, ()> + use<State, R>
+where
+    State: 'static,
+    R: 'static,
+{
+    let BodyParams {
+        row_count,
+        row_height,
+        theme,
+        sort,
+        render_slots,
+        comparators,
+        rows,
+        selection_lens,
+    } = params;
+    let valid_range_end = i64::try_from(row_count).unwrap_or(i64::MAX);
+    let sort_cache = Arc::new(Mutex::new(SortOrderCache::default()));
+    virtual_scroll(0..valid_range_end, move |state: &mut State, idx: i64| {
+        let virtual_idx = usize::try_from(idx).unwrap_or(usize::MAX);
+
+        // Map virtual row → source row through the active sort order.
+        // `sort` is the frame-time snapshot captured by this closure;
+        // it can't change without a rebuild (which re-captures it).
+        let source_idx =
+            resolve_source_idx(sort, &comparators, &sort_cache, (*rows)(state), virtual_idx);
+
+        let is_selected = match (selection_lens.as_ref(), source_idx) {
+            (Some(sel), Some(s)) => (**sel)(state).contains(u64::try_from(s).unwrap_or(u64::MAX)),
+            _ => false,
+        };
+
+        let data = (*rows)(state);
+        let cells: Vec<AnyFlexChild<State, ()>> =
+            if let Some(row) = source_idx.and_then(|s| data.get(s)) {
+                render_slots
+                    .iter()
+                    .map(|slot| {
+                        let cell_view = (slot.render)(row, &theme);
+                        let cell = aligned_cell(cell_view, slot.width, slot.align);
+                        flex_item(cell, 0.0).into()
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+        let row_bg = if is_selected {
+            theme.palette.surface_2
+        } else {
+            Color::TRANSPARENT
+        };
+        let row_view = sized_box(flex_row(cells).cross_axis_alignment(CrossAxisAlignment::Center))
+            .fixed_height(Length::px(row_height))
+            .background_color(row_bg);
+
+        // Each row's click handler closes over the (cloned) selection
+        // lens + the row's *source* index. Modifiers route to the
+        // matching SelectionState op.
+        //
+        // KNOWN LIMITATION (v1): shift-extend fills an inclusive range
+        // in *source-index* space, so under an active sort it does not
+        // track the visual range between anchor and target. Single
+        // click and ctrl/cmd-toggle are order-independent and correct.
+        // Visual-range extend is deferred to a follow-up.
+        let lens_for_click = selection_lens.clone();
+        clickable_row(row_view, move |state: &mut State, action| {
+            let Some(source) = source_idx else { return };
+            let Ok(row) = u64::try_from(source) else {
+                return;
+            };
+            let Some(sel_lens) = lens_for_click.as_ref() else {
+                return;
+            };
+            let sel = (**sel_lens)(state);
+            if action.shift {
+                sel.extend_to(row);
+            } else if action.action_mod {
+                sel.toggle(row);
+            } else {
+                sel.replace_with(row);
+            }
+        })
+    })
+}
+
+// --- MARK: STACK ASSEMBLY ----------------------------------------------
+
+/// Stacks header → (optional filter row) → body into the grid column.
+///
+/// The body flexes to fill the height the grid is given; the header and
+/// filter row keep their fixed heights. A virtualized grid must fill a
+/// *bounded* viewport (it can't size itself to the full row count), so
+/// callers place it in a bounded-height slot — e.g.
+/// `sized_box(grid).flex(1.0)`; an unbounded parent falls back to the
+/// body's intrinsic size.
+fn assemble_grid_stack<State, H, F, B>(
+    header: H,
+    filter_row: Option<F>,
+    body: B,
+) -> impl WidgetView<State, ()> + use<State, H, F, B>
+where
+    State: 'static,
+    H: WidgetView<State, ()>,
+    F: WidgetView<State, ()>,
+    B: WidgetView<State, ()>,
+{
+    let mut children: Vec<AnyFlexChild<State, ()>> = Vec::with_capacity(3);
+    children.push(flex_item(header, 0.0).into());
+    if let Some(filter_row) = filter_row {
+        children.push(flex_item(filter_row, 0.0).into());
+    }
+    children.push(flex_item(body, 1.0).into());
+    flex_col(children).cross_axis_alignment(CrossAxisAlignment::Start)
+}
+
+// --- MARK: FILTER ROW --------------------------------------------------
+
+/// Builds the per-column filter-input row shown beneath the header.
+///
+/// Each filterable column gets a `text_input` seeded from its current
+/// query; editing it calls `on_change(state, column, query)` so the
+/// host updates its [`FilterState`] and re-derives the filtered view.
+/// Non-filterable columns render a blank slot of the same width so the
+/// inputs line up under their columns.
+fn build_filter_row<State, R>(
+    render_slots: &[ColumnRender<R, State>],
+    filterable: &[bool],
+    filter: &FilterState,
+    on_change: &FilterChange<State>,
+    theme: &Theme,
+) -> impl WidgetView<State, ()> + use<State, R>
+where
+    State: 'static,
+    R: 'static,
+{
+    let cells: Vec<AnyFlexChild<State, ()>> = render_slots
+        .iter()
+        .enumerate()
+        .map(|(idx, slot)| {
+            let cell: Box<AnyWidgetView<State>> = if filterable[idx] {
+                let current = filter.get(idx).unwrap_or_default().to_string();
+                let on_change = Arc::clone(on_change);
+                // Don't override the input's text size: masonry renders
+                // the placeholder as a separate Label at the *default*
+                // font size (it doesn't inherit `text_size`), so a
+                // smaller `text_size` here would leave the placeholder
+                // mismatched and clipped. Default size keeps typed text
+                // and placeholder consistent. A theme-wide UI scale is
+                // the proper future lever for sizing.
+                let input = text_input(current, move |state: &mut State, text: String| {
+                    (*on_change)(state, idx, text);
+                })
+                .text_color(theme.palette.text)
+                .placeholder("Filter");
+                Box::new(sized_box(input).fixed_width(Length::px(slot.width)))
+            } else {
+                Box::new(sized_box(label("")).fixed_width(Length::px(slot.width)))
+            };
+            flex_item(cell, 0.0).into()
+        })
+        .collect();
+    // No fixed height: the row sizes to the text input's natural height
+    // (font + the widget's internal padding). Forcing it to the compact
+    // data-row height clips the glyphs vertically.
+    sized_box(flex_row(cells).cross_axis_alignment(CrossAxisAlignment::Center))
+        .background_color(theme.palette.surface)
+        .border(theme.palette.border, Length::px(1.0))
 }

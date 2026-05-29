@@ -224,9 +224,9 @@ fn main_pane(
 /// grid itself. The toolbar's bulk-selection buttons are convenient
 /// alternates to mouse selection — clicking rows (with optional
 /// shift / ctrl-cmd modifiers) updates the same `SelectionState`.
-/// Click a column header (Time / Price / Size) to cycle its sort. The
-/// "Filter:" buttons demonstrate host-side filtering on the Side
-/// column (a real per-column filter UI lands in a later chunk).
+/// Click a column header (Time / Price / Size) to cycle its sort. Type
+/// in a column's filter input (e.g. "B"/"S" under Side) to filter the
+/// rows; filtered columns show a persistent accent + marker.
 fn data_grid_panel(
     theme: &Theme,
     row_count: u64,
@@ -258,23 +258,6 @@ fn data_grid_panel(
         })
         .label("Clear selection")
         .render(theme),
-        // Temporary host-side filter triggers (Side column = index 3).
-        // F3 replaces these with per-column filter inputs in the grid.
-        button(|s: &mut State| {
-            s.data_grid.set_filter(3, "B");
-        })
-        .label("Filter: Buys")
-        .render(theme),
-        button(|s: &mut State| {
-            s.data_grid.set_filter(3, "S");
-        })
-        .label("Filter: Sells")
-        .render(theme),
-        button(|s: &mut State| {
-            s.data_grid.clear_filter();
-        })
-        .label("Clear filter")
-        .render(theme),
         FlexSpacer::Flex(1.0),
         label(format!("{row_count} rows"))
             .text_size(theme.typography.size_caption)
@@ -297,7 +280,9 @@ fn data_grid_panel(
         .row_count(row_count)
         .selection(|s: &mut State| &mut s.data_grid.selection)
         .sort(sort, |s: &mut State| &mut s.data_grid.sort)
-        .filter(filter)
+        .filter(filter, |s: &mut State, col: usize, query: String| {
+            s.data_grid.set_filter(col, query);
+        })
         .row_height(22.0)
         .render(&theme_copy);
 
