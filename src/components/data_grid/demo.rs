@@ -20,6 +20,7 @@
 
 use super::column::{CellAlign, ColumnDef, optional_text_column, text_column};
 use super::selection::SelectionState;
+use super::sort::SortState;
 
 const START_PRICE_UNITS: i64 = 100_000_000_000; // $100.00 in 1e-9 units.
 const TICK_INTERVAL_NS: i64 = 100_000_000; // 100 ms between synthetic trades.
@@ -55,6 +56,8 @@ pub struct Demo {
     pub ticks: Vec<DemoTick>,
     /// Currently-selected row indices.
     pub selection: SelectionState,
+    /// Active column sort (which column + direction).
+    pub sort: SortState,
     rng_state: u64,
     last_time_ns: i64,
     last_price_units: i64,
@@ -69,6 +72,7 @@ impl Demo {
         let mut demo = Self {
             ticks: Vec::with_capacity(initial_count.max(64)),
             selection: SelectionState::new(),
+            sort: SortState::new(),
             rng_state: 0x0005_DEEC_E66D_u64.wrapping_mul(0xB16B_00B5),
             last_time_ns: 0,
             last_price_units: START_PRICE_UNITS,
@@ -152,21 +156,29 @@ fn xorshift64(state: &mut u64) -> u64 {
 #[must_use]
 pub fn tick_columns<State: 'static>(base_time_ns: i64) -> Vec<ColumnDef<DemoTick, State>> {
     vec![
+        // Columns sort by their *underlying* value, not the formatted
+        // display string — `event_ns`/`price_units` sort numerically
+        // rather than lexicographically (e.g. so "$9.00" < "$100.00").
         text_column("Time (ms)", 100.0, CellAlign::End, move |t: &DemoTick| {
             let delta_ns = t.event_ns.saturating_sub(base_time_ns);
             // ns → ms with one decimal.
             #[expect(clippy::cast_precision_loss, reason = "Display only")]
             let ms = delta_ns as f64 / 1_000_000.0;
             format!("{ms:.1}")
-        }),
+        })
+        .sortable_by_key(|t: &DemoTick| t.event_ns),
         text_column("Price", 90.0, CellAlign::End, |t: &DemoTick| {
             #[expect(clippy::cast_precision_loss, reason = "Display only")]
             let dollars = t.price_units as f64 / PRICE_UNITS_PER_DOLLAR;
             format!("${dollars:.2}")
-        }),
+        })
+        .sortable_by_key(|t: &DemoTick| t.price_units),
         optional_text_column("Size", 80.0, CellAlign::End, |t: &DemoTick| {
             t.size.map(|v| v.to_string())
-        }),
+        })
+        // `Option<u64>` is `Ord` (None sorts before Some), so unknown
+        // sizes cluster at the ascending end.
+        .sortable_by_key(|t: &DemoTick| t.size),
         optional_text_column("Side", 60.0, CellAlign::Center, |t: &DemoTick| {
             t.side.map(|s| match s {
                 DemoSide::Buy => "B".to_string(),

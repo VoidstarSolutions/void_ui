@@ -18,6 +18,8 @@
 //! to [`data_grid`](super::data_grid) — the same positional identity the
 //! header and row builders already use.
 
+use super::column::RowComparator;
+
 /// Ascending or descending order for the sorted column.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SortDirection {
@@ -102,9 +104,37 @@ impl SortState {
     }
 }
 
+/// Compute the display order — a permutation of `0..rows.len()` — for
+/// `rows` under `comparator` and `direction`.
+///
+/// Uses a *stable* sort so rows the comparator deems equal keep their
+/// source order, which keeps the view from reshuffling ties on every
+/// rebuild. When `comparator` is `None` (the active column isn't
+/// sortable) the identity order is returned so the caller can use a
+/// single code path; the grid's unsorted path skips this entirely and
+/// indexes source rows directly.
+pub(crate) fn display_order<R>(
+    rows: &[R],
+    comparator: Option<&RowComparator<R>>,
+    direction: SortDirection,
+) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..rows.len()).collect();
+    if let Some(cmp) = comparator {
+        order.sort_by(|&a, &b| {
+            let ord = cmp(&rows[a], &rows[b]);
+            match direction {
+                SortDirection::Ascending => ord,
+                SortDirection::Descending => ord.reverse(),
+            }
+        });
+    }
+    order
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{SortDirection, SortState};
+    use super::{display_order, SortDirection, SortState};
+    use crate::components::data_grid::column::RowComparator;
 
     #[test]
     fn cycle_advances_asc_desc_then_clears() {
@@ -150,5 +180,34 @@ mod tests {
     fn reversed_flips() {
         assert_eq!(SortDirection::Ascending.reversed(), SortDirection::Descending);
         assert_eq!(SortDirection::Descending.reversed(), SortDirection::Ascending);
+    }
+
+    #[test]
+    fn display_order_none_comparator_is_identity() {
+        let rows = vec![3, 1, 2];
+        let order = display_order::<i32>(&rows, None, SortDirection::Ascending);
+        assert_eq!(order, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn display_order_sorts_ascending_and_descending() {
+        let rows = vec![30, 10, 20];
+        let cmp: RowComparator<i32> = Box::new(i32::cmp);
+
+        let asc = display_order(&rows, Some(&cmp), SortDirection::Ascending);
+        assert_eq!(asc, vec![1, 2, 0], "indices ordered by ascending value");
+
+        let desc = display_order(&rows, Some(&cmp), SortDirection::Descending);
+        assert_eq!(desc, vec![0, 2, 1], "indices ordered by descending value");
+    }
+
+    #[test]
+    fn display_order_is_stable_on_ties() {
+        // Rows compare equal on the key (all 0); stable sort must keep
+        // source order rather than reshuffle.
+        let rows = vec![0, 0, 0, 0];
+        let cmp: RowComparator<i32> = Box::new(i32::cmp);
+        let order = display_order(&rows, Some(&cmp), SortDirection::Descending);
+        assert_eq!(order, vec![0, 1, 2, 3]);
     }
 }

@@ -264,6 +264,25 @@ fn data_grid_panel(
         })
         .label("Clear selection")
         .render(theme),
+        // Temporary sort triggers — cycle a column's sort
+        // (asc → desc → off). Chunk 3 replaces these with clickable
+        // column headers. Indices match `tick_columns` order:
+        // 0 = Time, 1 = Price, 2 = Size.
+        button(|s: &mut State| {
+            s.data_grid.sort.cycle(0);
+        })
+        .label("Sort: Time")
+        .render(theme),
+        button(|s: &mut State| {
+            s.data_grid.sort.cycle(1);
+        })
+        .label("Sort: Price")
+        .render(theme),
+        button(|s: &mut State| {
+            s.data_grid.sort.cycle(2);
+        })
+        .label("Sort: Size")
+        .render(theme),
         FlexSpacer::Flex(1.0),
         label(format!("{row_count} ticks"))
             .text_size(theme.typography.size_caption)
@@ -278,6 +297,7 @@ fn data_grid_panel(
         row_count,
         |s: &State| &s.data_grid.ticks[..],
         |s: &mut State| &mut s.data_grid.selection,
+        |s: &mut State| &mut s.data_grid.sort,
         &theme_copy,
         22.0,
     );
