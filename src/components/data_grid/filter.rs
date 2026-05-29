@@ -131,13 +131,19 @@ mod tests {
 
     fn columns() -> Vec<ColumnDef<Row, ()>> {
         vec![
+            // Col 0: Symbol — filterable.
             text_column::<Row, (), _>("Symbol", 10.0, CellAlign::Start, |r: &Row| {
                 r.symbol.to_string()
             })
             .filterable_by_text(|r: &Row| r.symbol.to_string()),
-            // Sector column is intentionally NOT filterable.
+            // Col 1: Sector — filterable.
             text_column::<Row, (), _>("Sector", 10.0, CellAlign::Start, |r: &Row| {
                 r.sector.to_string()
+            })
+            .filterable_by_text(|r: &Row| r.sector.to_string()),
+            // Col 2: Plain — intentionally NOT filterable.
+            text_column::<Row, (), _>("Plain", 10.0, CellAlign::Start, |r: &Row| {
+                r.symbol.to_string()
             }),
         ]
     }
@@ -178,18 +184,31 @@ mod tests {
     #[test]
     fn filter_on_column_without_predicate_is_ignored() {
         let mut f = FilterState::new();
-        // Column 1 (Sector) has no filter predicate → always-pass.
-        f.set(1, "Tech");
+        // Column 2 (Plain) has no filter predicate → always-pass.
+        f.set(2, "AAPL");
         let idx = filtered_indices(&rows(), &f, &columns());
         assert_eq!(idx, vec![0, 1, 2]);
     }
 
     #[test]
-    fn multiple_active_filters_are_anded() {
+    fn multiple_columns_are_anded() {
+        // Genuine cross-column AND: symbol contains "a" AND sector
+        // contains "tech". AAPL/Tech passes both; AMZN/Retail fails the
+        // sector filter; MSFT/Tech fails the symbol filter.
+        let mut f = FilterState::new();
+        f.set(0, "a");
+        f.set(1, "tech");
+        let idx = filtered_indices(&rows(), &f, &columns());
+        assert_eq!(idx, vec![0]);
+    }
+
+    #[test]
+    fn setting_a_column_query_twice_overwrites() {
         let mut f = FilterState::new();
         f.set(0, "m"); // matches MSFT, AMZN
-        f.set(0, "ms"); // narrow to MSFT
+        f.set(0, "ms"); // narrows the same column to MSFT
         let idx = filtered_indices(&rows(), &f, &columns());
         assert_eq!(idx, vec![1]);
+        assert_eq!(f.len(), 1, "still one active column filter");
     }
 }

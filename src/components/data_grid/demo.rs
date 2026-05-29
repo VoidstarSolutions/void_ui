@@ -18,7 +18,8 @@
 //! generic component library and must not depend on any
 //! market-data crate.
 
-use super::column::{CellAlign, ColumnDef, optional_text_column, text_column};
+use super::column::{optional_text_column, text_column, CellAlign, ColumnDef};
+use super::filter::{filtered_indices, FilterState};
 use super::selection::SelectionState;
 use super::sort::SortState;
 
@@ -58,6 +59,12 @@ pub struct Demo {
     pub selection: SelectionState,
     /// Active column sort (which column + direction).
     pub sort: SortState,
+    /// Active per-column filter queries.
+    pub filter: FilterState,
+    /// Materialized filtered rows. Only meaningful while `filter` is
+    /// non-empty; the gallery's `rows` lens reads `ticks` directly when
+    /// unfiltered (avoiding a full-dataset clone in the common case).
+    pub visible: Vec<DemoTick>,
     rng_state: u64,
     last_time_ns: i64,
     last_price_units: i64,
@@ -73,6 +80,8 @@ impl Demo {
             ticks: Vec::with_capacity(initial_count.max(64)),
             selection: SelectionState::new(),
             sort: SortState::new(),
+            filter: FilterState::new(),
+            visible: Vec::new(),
             rng_state: 0x0005_DEEC_E66D_u64.wrapping_mul(0xB16B_00B5),
             last_time_ns: 0,
             last_price_units: START_PRICE_UNITS,
@@ -81,13 +90,47 @@ impl Demo {
         demo
     }
 
-    /// Appends `n` newly-generated ticks to the tail.
+    /// Appends `n` newly-generated ticks to the tail. Refreshes the
+    /// filtered view if a filter is active so appended rows that match
+    /// become visible.
     pub fn append_n(&mut self, n: usize) {
         self.ticks.reserve(n);
         for _ in 0..n {
             let tick = self.next_tick();
             self.ticks.push(tick);
         }
+        if !self.filter.is_empty() {
+            self.refresh_visible();
+        }
+    }
+
+    /// Sets a column's filter query and refreshes the visible view.
+    /// Demonstrates the host-side filtering path: the host owns the
+    /// data and runs [`filtered_indices`] over it.
+    pub fn set_filter(&mut self, column: usize, query: impl Into<String>) {
+        self.filter.set(column, query);
+        self.refresh_visible();
+    }
+
+    /// Clears every column filter and the materialized view.
+    pub fn clear_filter(&mut self) {
+        self.filter.clear_all();
+        self.refresh_visible();
+    }
+
+    /// Recomputes [`Self::visible`] from `ticks` + `filter`. A no-op'd
+    /// (cleared) view when no filter is active — the lens falls back to
+    /// `ticks` directly in that case.
+    fn refresh_visible(&mut self) {
+        if self.filter.is_empty() {
+            self.visible.clear();
+            return;
+        }
+        // `tick_columns` carries the per-column filter predicates; the
+        // `State`/`base_time_ns` args don't affect filtering.
+        let columns = tick_columns::<()>(0);
+        let idx = filtered_indices(&self.ticks, &self.filter, &columns);
+        self.visible = idx.into_iter().map(|i| self.ticks[i]).collect();
     }
 
     /// Replaces the current selection with rows `0..n`. Bulk-
@@ -184,6 +227,47 @@ pub fn tick_columns<State: 'static>(base_time_ns: i64) -> Vec<ColumnDef<DemoTick
                 DemoSide::Buy => "B".to_string(),
                 DemoSide::Sell => "S".to_string(),
             })
+        })
+        // Filterable by side glyph: query "B" shows buys, "S" sells.
+        .filterable_by_text(|t: &DemoTick| match t.side {
+            Some(DemoSide::Buy) => "B".to_string(),
+            Some(DemoSide::Sell) => "S".to_string(),
+            None => String::new(),
         }),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Demo, DemoSide};
+
+    /// Side is column index 3 in `tick_columns`.
+    const SIDE_COL: usize = 3;
+
+    #[test]
+    fn filtering_side_keeps_only_matching_rows() {
+        let mut demo = Demo::with_initial(200);
+        demo.set_filter(SIDE_COL, "B");
+        assert!(
+            !demo.visible.is_empty(),
+            "200 deterministic ticks should include some buys"
+        );
+        assert!(
+            demo.visible
+                .iter()
+                .all(|t| matches!(t.side, Some(DemoSide::Buy))),
+            "every visible row must be a buy under the 'B' filter"
+        );
+    }
+
+    #[test]
+    fn clearing_filter_empties_the_materialized_view() {
+        let mut demo = Demo::with_initial(64);
+        demo.set_filter(SIDE_COL, "S");
+        demo.clear_filter();
+        // With no active filter the lens reads `ticks` directly, so the
+        // materialized view is dropped.
+        assert!(demo.visible.is_empty());
+        assert!(demo.filter.is_empty());
+    }
 }

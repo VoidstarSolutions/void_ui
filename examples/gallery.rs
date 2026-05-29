@@ -49,9 +49,15 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
     let theme_panel_open = state.theme_panel_open;
     // Snapshot the data-grid demo's row count and base timestamp at
     // frame time so the panel can be built without further state
-    // access. `data_grid` itself reads state via the lens closures
-    // it captures.
-    let dg_row_count = u64::try_from(state.data_grid.ticks.len()).unwrap_or(u64::MAX);
+    // access. The grid reads rows via the lens closures it captures.
+    // Row count reflects the *filtered* view when a filter is active
+    // (host-side filtering): the host owns the data + count.
+    let dg_visible_len = if state.data_grid.filter.is_empty() {
+        state.data_grid.ticks.len()
+    } else {
+        state.data_grid.visible.len()
+    };
+    let dg_row_count = u64::try_from(dg_visible_len).unwrap_or(u64::MAX);
     let dg_base_time_ns = state.data_grid.ticks.first().map_or(0, |t| t.event_ns);
     let dg_sort = state.data_grid.sort;
 
@@ -212,7 +218,9 @@ fn main_pane(
 /// grid itself. The toolbar's bulk-selection buttons are convenient
 /// alternates to mouse selection — clicking rows (with optional
 /// shift / ctrl-cmd modifiers) updates the same `SelectionState`.
-/// Click a column header (Time / Price / Size) to cycle its sort.
+/// Click a column header (Time / Price / Size) to cycle its sort. The
+/// "Filter:" buttons demonstrate host-side filtering on the Side
+/// column (a real per-column filter UI lands in a later chunk).
 fn data_grid_panel(
     theme: &Theme,
     row_count: u64,
@@ -243,8 +251,25 @@ fn data_grid_panel(
         })
         .label("Clear selection")
         .render(theme),
+        // Temporary host-side filter triggers (Side column = index 3).
+        // F3 replaces these with per-column filter inputs in the grid.
+        button(|s: &mut State| {
+            s.data_grid.set_filter(3, "B");
+        })
+        .label("Filter: Buys")
+        .render(theme),
+        button(|s: &mut State| {
+            s.data_grid.set_filter(3, "S");
+        })
+        .label("Filter: Sells")
+        .render(theme),
+        button(|s: &mut State| {
+            s.data_grid.clear_filter();
+        })
+        .label("Clear filter")
+        .render(theme),
         FlexSpacer::Flex(1.0),
-        label(format!("{row_count} ticks"))
+        label(format!("{row_count} rows"))
             .text_size(theme.typography.size_caption)
             .color(theme.palette.text_muted),
     ))
@@ -252,7 +277,16 @@ fn data_grid_panel(
     .gap(Length::px(8.0));
 
     let grid = DataGrid::new(columns)
-        .rows(|s: &State| &s.data_grid.ticks[..])
+        // Host-side filtering: when a filter is active the lens serves
+        // the materialized filtered view; otherwise the full tick slice
+        // (zero-copy in the common, unfiltered case).
+        .rows(|s: &State| {
+            if s.data_grid.filter.is_empty() {
+                &s.data_grid.ticks[..]
+            } else {
+                &s.data_grid.visible[..]
+            }
+        })
         .row_count(row_count)
         .selection(|s: &mut State| &mut s.data_grid.selection)
         .sort(sort, |s: &mut State| &mut s.data_grid.sort)
