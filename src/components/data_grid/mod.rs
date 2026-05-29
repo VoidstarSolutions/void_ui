@@ -21,6 +21,31 @@
 //! [`column::ColumnDef`] for the per-column contract,
 //! [`selection::SelectionState`] for the selection model,
 //! [`sort::SortState`] for the sort model.
+//!
+//! ## Sorting
+//!
+//! Single-column sorting is driven by [`sort::SortState`], held by the
+//! host and read by the grid each frame. Clicking a sortable column
+//! header cycles ascending → descending → unsorted; the active column
+//! shows a ▲/▼ arrow, and sortable headers highlight on hover. A column
+//! is sortable only if its [`ColumnDef`] carries a comparator
+//! (see [`column::ColumnDef::sortable_by_key`]) — the comparator orders
+//! the row's *underlying* value, independent of the cell's display
+//! formatting, so a `"$100.00"` price column sorts numerically rather
+//! than lexicographically. Selection tracks *source* row indices, so it
+//! stays attached to the same data rows across sort changes.
+//!
+//! ## Known limitations (v1)
+//!
+//! - **Shift-extend selection while sorted** fills an inclusive range in
+//!   *source-index* space, so it does not follow the visually contiguous
+//!   range between anchor and target under a non-identity sort. Plain
+//!   click and ctrl/cmd-toggle are order-independent and unaffected.
+//! - **Clipboard copy** emits the selection in ascending source-index
+//!   order, not the on-screen (sorted) order.
+//! - Sorting is single-column — there is no multi-column / tiebreak sort.
+//! - Columns are fixed-width; there is no horizontal fill, resize, or
+//!   scroll syncing yet.
 
 pub mod column;
 pub mod copy_shortcut;

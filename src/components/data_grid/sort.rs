@@ -6,8 +6,7 @@
 //! itself stays presentation-only: it never mutates the host's row
 //! data. Instead it derives a *display order* (a permutation of source
 //! indices) each rebuild from the active [`SortState`] and the sorted
-//! column's [`RowComparator`](super::column::RowComparator), and maps
-//! virtual rows through it.
+//! column's [`RowComparator`], and maps virtual rows through it.
 //!
 //! The header-click cycle matches the convention every spreadsheet and
 //! the Kendo grid use: clicking a column's header advances

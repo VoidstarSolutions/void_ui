@@ -233,3 +233,53 @@ where
     // structural absence.
     .with_text(move |row| fmt_for_text(row).unwrap_or_default())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::cmp::Ordering;
+
+    use super::{CellAlign, ColumnDef, text_column};
+
+    #[derive(Clone)]
+    struct Row {
+        n: i64,
+        name: &'static str,
+    }
+
+    #[test]
+    fn columns_are_unsortable_by_default() {
+        let col: ColumnDef<Row, ()> =
+            text_column("N", 10.0, CellAlign::End, |r: &Row| r.n.to_string());
+        assert!(
+            col.comparator.is_none(),
+            "text_column must not auto-attach a comparator"
+        );
+    }
+
+    #[test]
+    fn sortable_by_key_orders_by_the_underlying_value() {
+        // The display projection stringifies, which would sort
+        // lexicographically; the key sorts numerically instead.
+        let col: ColumnDef<Row, ()> =
+            text_column("N", 10.0, CellAlign::End, |r: &Row| r.n.to_string())
+                .sortable_by_key(|r: &Row| r.n);
+        let cmp = col.comparator.expect("sortable_by_key attaches a comparator");
+        let small = Row { n: 9, name: "a" };
+        let large = Row { n: 100, name: "b" };
+        // 9 < 100 numerically, even though "100" < "9" as strings.
+        assert_eq!(cmp(&small, &large), Ordering::Less);
+        assert_eq!(cmp(&large, &small), Ordering::Greater);
+        assert_eq!(cmp(&small, &small), Ordering::Equal);
+    }
+
+    #[test]
+    fn sortable_by_uses_the_explicit_comparator() {
+        let col: ColumnDef<Row, ()> =
+            text_column("Name", 10.0, CellAlign::Start, |r: &Row| r.name.to_string())
+                .sortable_by(|a: &Row, b: &Row| a.name.cmp(b.name));
+        let cmp = col.comparator.expect("sortable_by attaches a comparator");
+        let a = Row { n: 0, name: "alpha" };
+        let b = Row { n: 0, name: "beta" };
+        assert_eq!(cmp(&a, &b), Ordering::Less);
+    }
+}
