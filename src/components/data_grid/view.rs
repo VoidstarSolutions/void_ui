@@ -273,6 +273,25 @@ where
     }
 }
 
+/// Starts a [`DataGrid`] from its column descriptors — the free-function
+/// entry point mirroring the other components' constructors
+/// (`button(..)`, `checkbox(..)`, …). Equivalent to [`DataGrid::new`];
+/// attach data/behavior with the chained setters, then [`DataGrid::render`].
+///
+/// ```ignore
+/// data_grid(columns)
+///     .rows(|s: &State| &s.rows[..])
+///     .row_count(n)
+///     .render(&theme)
+/// ```
+pub fn data_grid<State, R>(columns: Vec<ColumnDef<R, State>>) -> DataGrid<State, R>
+where
+    State: 'static,
+    R: 'static,
+{
+    DataGrid::new(columns)
+}
+
 /// The parts of a `Vec<ColumnDef>` the view layer needs, decomposed
 /// into parallel, `Arc`-shared vectors: per-column rendering slots,
 /// clipboard text projectors, a `sortable` flag, comparators, and a

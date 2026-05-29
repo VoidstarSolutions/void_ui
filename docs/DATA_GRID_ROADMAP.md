@@ -45,6 +45,19 @@ checkin from the top, verify, commit, repeat.
   filtered columns so a filtered view is never mistaken for the full
   set *(was Tier 1.2)*
 
+## ⚠️ ARCHITECT REVIEW REQUESTED
+
+- **`DataGrid::render` returns `impl WidgetView<State, ()>`, not a named
+  view type.** Every *other* component's `render` returns a concrete
+  named view (`ButtonView`, `CheckboxView`, …). The grid differs because
+  it is a *composition* (CopyOnShortcut → OverflowWarn → flex_col → …)
+  rather than a wrapper around a single widget, so a named `DataGridView`
+  would be an awkward, churn-prone alias. **Decision needed:** accept the
+  `impl Trait` return for the grid, or introduce a named `DataGridView`
+  for strict parity with the other components. *(The entry-point gap —
+  missing a `data_grid()` free-fn constructor — has been fixed to match
+  the `button()`/`checkbox()` convention.)*
+
 ## Deferred polish (tracked, not yet scheduled)
 
 - **Filter-input discoverability** — make the filter row obviously a

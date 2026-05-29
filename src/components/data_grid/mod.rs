@@ -66,4 +66,4 @@ pub use overflow_warn::OverflowWarn;
 pub use row_click::{RowClickAction, RowClickable};
 pub use selection::SelectionState;
 pub use sort::{SortDirection, SortState};
-pub use view::DataGrid;
+pub use view::{DataGrid, data_grid};

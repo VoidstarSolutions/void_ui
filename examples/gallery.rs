@@ -18,7 +18,7 @@ use xilem::winit::error::EventLoopError;
 use xilem::{AnyWidgetView, EventLoop, WidgetView, WindowOptions, Xilem};
 
 use void_ui::components::data_grid::demo::{Demo, tick_columns};
-use void_ui::components::{ComponentKind, DataGrid, FilterState, SortState, button, sidebar_item};
+use void_ui::components::{ComponentKind, FilterState, SortState, button, data_grid, sidebar_item};
 use void_ui::layout::flex_wrap;
 use void_ui::theme::{Density, Theme};
 
@@ -266,7 +266,7 @@ fn data_grid_panel(
     .cross_axis_alignment(CrossAxisAlignment::Center)
     .gap(Length::px(8.0));
 
-    let grid = DataGrid::new(columns)
+    let grid = data_grid(columns)
         // Host-side filtering: when a filter is active the lens serves
         // the materialized filtered view; otherwise the full tick slice
         // (zero-copy in the common, unfiltered case).
