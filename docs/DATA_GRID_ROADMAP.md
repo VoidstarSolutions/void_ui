@@ -27,7 +27,7 @@ checkin from the top, verify, commit, repeat.
 - IronCalc (spreadsheet engine — cell/number formatting, data semantics) —
   <https://www.ironcalc.com/>
 
-## Done (baseline — Chunks 1–4)
+## Done
 
 - Row virtualization over `&[R]` (very large/append-only streams)
 - Row selection (anchor + shift-range + ctrl/cmd-toggle), source-indexed
@@ -36,24 +36,41 @@ checkin from the top, verify, commit, repeat.
   hover affordance, numeric-correct ordering, selection stable across sorts
 - Grid fills its container height; one-shot overflow warning
 - Rich (widget-returning) cell renderers — partial "templates"
+- **Fluent `DataGrid` builder** (`new` + chained setters + `.render`),
+  boxed lenses, optional selection/sort/filter — replaced the wide free
+  fn and cleared the `too_many_arguments` debt *(was Tier 1.1)*
+- **Column filtering** (host-filters / grid-drives-UI): `FilterState` +
+  `filtered_indices` + per-column `filterable_by_text`; an in-grid
+  per-column filter-input row; a persistent accent + ● marker on
+  filtered columns so a filtered view is never mistaken for the full
+  set *(was Tier 1.2)*
+
+## Deferred polish (tracked, not yet scheduled)
+
+- **Filter-input discoverability** — make the filter row obviously a
+  filter affordance (placeholder/funnel glyph or distinct look).
+- **Global UI zoom/scaling** — a theme/density-driven scale applied
+  across *all* components (supersedes component-local size constants,
+  e.g. the filter input). Cross-cutting, not a data_grid-only change.
+- **Filter UX**: shift-extend selection + clipboard copy currently use
+  source-index / source order, not the on-screen order (see module
+  "Known limitations").
 
 ## Prioritized backlog
 
 Each item: **value justification (≤1 sentence)** · rough size · depends-on · North Star.
 
-### Tier 1 — next up (highest value / unblockers)
+### Tier 1 — highest value / unblockers
 
-1. **`data_grid` builder refactor** — Collapse the 8-arg constructor into
-   a builder so every later feature is an additive, readable call instead
-   of another positional parameter. · S–M · — · Kendo *Configuration*.
-   *(Clears the current `#[expect(too_many_arguments)]`.)*
-2. **Column filtering** — Narrowing thousands of symbols to the ones a
-   user cares about is the single highest-value "find my data" feature.
-   · L · builder · Kendo *Filtering* (reuse `checkbox` / a text field).
-3. **Conditional cell formatting** (e.g. gain=green/loss=red, number
-   formats) — Color and number formatting are how a finance user reads
-   sign and magnitude at a glance, and the cell renderer already supports
-   it, so it's high value at low cost. · S · — · IronCalc, Kendo *Appearance/Templates*.
+*(Numbering is stable so later `depends-on` refs stay valid.)*
+
+1. ✅ **DONE — `data_grid` builder refactor.** (See Done.)
+2. ✅ **DONE — Column filtering.** (See Done.)
+3. **← NEXT: Conditional cell formatting** (e.g. gain=green/loss=red,
+   number formats) — Color and number formatting are how a finance user
+   reads sign and magnitude at a glance, and the cell renderer already
+   supports it, so it's high value at low cost. · S · — · IronCalc, Kendo
+   *Appearance/Templates*.
 
 ### Tier 2 — layout & navigation for wide tables
 
