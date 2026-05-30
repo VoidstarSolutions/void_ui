@@ -95,6 +95,10 @@ pub struct CodeViewWidget {
 impl CodeViewWidget {
     /// Builds a new widget. `brushes` must have exactly [`BRUSH_PALETTE_LEN`]
     /// entries — see [`brush_index_for_kind`] for the index assignment.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `brushes.len()` is not [`BRUSH_PALETTE_LEN`].
     #[expect(
         clippy::too_many_arguments,
         reason = "render-only widget needs all chrome + text inputs up front; \
@@ -113,7 +117,7 @@ impl CodeViewWidget {
         font_size: f32,
         selection_color: Color,
     ) -> Self {
-        debug_assert_eq!(
+        assert_eq!(
             brushes.len(),
             BRUSH_PALETTE_LEN,
             "brush palette must have exactly {BRUSH_PALETTE_LEN} entries"
@@ -162,8 +166,12 @@ impl CodeViewWidget {
 
     /// Replaces the brush palette. Indexed by [`brush_index_for_kind`].
     /// Repaint only — the glyph layout is unchanged.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `brushes.len()` is not [`BRUSH_PALETTE_LEN`].
     pub fn set_brushes(this: &mut WidgetMut<'_, Self>, brushes: Vec<Brush>) {
-        debug_assert_eq!(
+        assert_eq!(
             brushes.len(),
             BRUSH_PALETTE_LEN,
             "brush palette must have exactly {BRUSH_PALETTE_LEN} entries"
@@ -228,10 +236,20 @@ impl CodeViewWidget {
             FontFamilyName::Generic(GenericFamily::Monospace),
         )));
         builder.push_default(StyleProperty::Brush(BrushIndex(0)));
+        // Spans come from a pluggable `Highlighter`, so a third-party impl may
+        // hand us empty or out-of-bounds ranges. Skip empty/inverted ranges and
+        // clamp the end to the text length; overlapping spans are fine (a later
+        // push overrides an earlier one).
+        let text_len = self.text.len();
         for span in &self.spans {
+            let start = span.range.start;
+            let end = span.range.end.min(text_len);
+            if start >= end {
+                continue;
+            }
             builder.push(
                 StyleProperty::Brush(BrushIndex(brush_index_for_kind(span.kind) as usize)),
-                span.range.clone(),
+                start..end,
             );
         }
         builder.build_into(&mut self.layout, &self.text);

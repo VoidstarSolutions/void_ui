@@ -26,8 +26,10 @@ use super::rust::RustHighlighter;
 use super::widget::{BRUSH_PALETTE_LEN, CodeViewWidget};
 use crate::Theme;
 
+/// Hairline border around the field. Component-local like every other
+/// bordered widget (tooltip, button, checkbox); a 1px stroke doesn't scale
+/// with density. Inner padding, by contrast, is read from `Theme.density.pad`.
 const BORDER_WIDTH: f32 = 1.0;
-const PADDING: f32 = 12.0;
 
 static DEFAULT_RUST_HIGHLIGHTER: LazyLock<Arc<dyn Highlighter>> =
     LazyLock::new(|| Arc::new(RustHighlighter));
@@ -112,7 +114,7 @@ where
             self.theme.palette.border,
             BORDER_WIDTH,
             self.theme.radius.small,
-            PADDING,
+            self.theme.density.pad,
             self.theme.typography.size_caption,
             self.theme.palette.teal_soft,
         );
@@ -144,14 +146,17 @@ where
         if self.theme.code != prev.theme.code {
             CodeViewWidget::set_brushes(&mut element, build_brushes(&self.theme));
         }
-        if self.theme.palette != prev.theme.palette || self.theme.radius != prev.theme.radius {
+        if self.theme.palette != prev.theme.palette
+            || self.theme.radius != prev.theme.radius
+            || (self.theme.density.pad - prev.theme.density.pad).abs() > f32::EPSILON
+        {
             CodeViewWidget::set_chrome(
                 &mut element,
                 self.theme.palette.bg_deep,
                 self.theme.palette.border,
                 BORDER_WIDTH,
                 self.theme.radius.small,
-                PADDING,
+                self.theme.density.pad,
                 self.theme.palette.teal_soft,
             );
         }
