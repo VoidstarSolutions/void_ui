@@ -50,7 +50,12 @@ checkin from the top, verify, commit, repeat.
 - **Horizontal scrolling**: the header+filter+body stack is wrapped in a
   horizontal-only `scroll_container`, so columns wider than the viewport
   are reachable and header/body share the offset automatically; replaced
-  the `OverflowWarn` warning *(part of Tier 2 #4)*
+  the `OverflowWarn` warning *(Tier 2 #4)*
+- **Drag-to-resize columns**: `ColumnWidths` override model +
+  `MIN_COLUMN_WIDTH` clamp; a `ResizeHandle` drag widget on each header
+  edge reports the new width via `.on_column_resize`; effective widths
+  feed header / filter / body / scroll-extent uniformly; EwResize cursor
+  on the handle *(Tier 2 #4)*
 
 ## ⚠️ ARCHITECT REVIEW REQUESTED
 
@@ -67,12 +72,32 @@ checkin from the top, verify, commit, repeat.
 
 ## Deferred polish (tracked, not yet scheduled)
 
-- **Sortable-header hover highlight stops short after resize** — the
-  resize handle takes the trailing ~7px of the header via flex, so the
-  `HeaderClickable` hover tint covers only the content area, not the full
-  column (column boundary + body alignment are correct; visual only).
-  Fix in #4 Step 5: overlay the handle on the full-width header (small
-  ZStack) instead of stealing flex width.
+- **Sortable-header hover highlight stops ~7px short of the right edge**
+  — the resize handle is a sibling of the `HeaderClickable` (which is
+  pointer-inert toward its child, so the handle *must* be a sibling to
+  receive its own cursor/drag). The hover tint therefore covers only the
+  content area, not under the handle. Column boundary + body alignment
+  are correct; visual only. A full-width highlight needs a ZStack overlay
+  of the handle, or making `HeaderClickable` propagate pointer events to
+  its child. *(An attempt to nest the handle inside the header was
+  reverted — it killed the handle's cursor/drag on sortable columns.)*
+- **Filter-input column alignment / sizing** — the per-column filter
+  inputs don't line up cleanly with their header/body columns (offset
+  grows toward the right), and the box doesn't size/track perfectly on
+  resize. Root cause appears structural: masonry's `text_input` (current
+  `main`) is *fill-greedy* and renders its placeholder as a separate
+  Label with its own intrinsic width, so it doesn't clamp inside a
+  fixed-width grid cell the way a `label` does. Body/header cells use
+  `aligned_cell` = `sized_box(flex_row(content)).fixed_width(W)`; filter
+  cells use `sized_box(input).fixed_width(W)` — and the input still
+  overflows W. **Several in-place fixes failed; do NOT keep guessing.**
+  Next attempt must be empirical: build a throwaway 2-row harness (one
+  `label`, one `text_input`, both in identical `aligned_cell` wrappers)
+  and observe actual geometry before changing grid code. Candidate
+  fixes to test there: (a) wrap input in an inner `flex_row((flex_item(
+  input, 1.0),))` so the box drives width; (b) a clip/constrain widget
+  around the input; (c) a custom fixed-width container. Current grid
+  code is reverted to the last working commit (pre-existing offset).
 - **Global UI zoom/scaling** — a theme/density-driven scale applied
   across *all* components (supersedes component-local size constants,
   e.g. the filter input). Cross-cutting, not a data_grid-only change.
@@ -101,13 +126,10 @@ Each item: **value justification (≤1 sentence)** · rough size · depends-on �
 
 ### Tier 2 — layout & navigation for wide tables
 
-4. **← NEXT: Horizontal scroll + column resize** — Financial tables are
-   wide (price, Δ, %Δ, vol, bid/ask…); users must scroll and resize
-   columns to fit their screen. · L · — (resolves fixed-width limit) ·
-   Kendo *Columns / Scroll Modes*, Longbridge table.
-5. **Column pin / freeze** — Keeping the Symbol/identifier column frozen
-   while metric columns scroll is essential for wide quote tables. · M ·
-   #4 · Kendo *Columns (locked)*.
+4. ✅ **DONE — Horizontal scroll + column resize.** (See Done.)
+5. **← NEXT: Column pin / freeze** — Keeping the Symbol/identifier column
+   frozen while metric columns scroll is essential for wide quote tables.
+   · M · #4 · Kendo *Columns (locked)*.
 6. **Column show/hide + reorder** — Traders curate which metrics they
    watch; show/hide + reorder lets them build their own layout. · M ·
    builder, #4 · Kendo *Columns*.

@@ -3,21 +3,23 @@
 //!
 //! The grid is read-only (no cell editing) with row-only selection,
 //! TSV clipboard copy, single-column sorting via clickable headers,
-//! per-column filtering, and horizontal scrolling for wide tables.
-//! The widget is generic over the row type so the same grid can browse
-//! synthetic tick streams (see [`demo::DemoTick`]), event logs, or
-//! any other in-memory `&[R]` exposed by the host's app state.
+//! per-column filtering, horizontal scrolling for wide tables, and
+//! drag-to-resize columns. The widget is generic over the row type so
+//! the same grid can browse synthetic tick streams (see
+//! [`demo::DemoTick`]), event logs, or any other in-memory `&[R]`
+//! exposed by the host's app state.
 //!
 //! Backed by masonry's [`VirtualScroll`][masonry::widgets::VirtualScroll]
 //! for row virtualization, and wrapped in a horizontal-only
 //! [`scroll_container`](crate::components::scroll_container) so columns
 //! wider than the viewport are reachable. Mostly composed of xilem
-//! stock, with three small custom masonry wrappers:
+//! stock, with four small custom masonry wrappers:
 //! [`copy_shortcut::CopyOnShortcut`] (catches Ctrl/Cmd+C and dumps a
 //! TSV payload to the clipboard), [`row_click::RowClickable`] (emits
-//! modifier-aware row clicks for selection), and
+//! modifier-aware row clicks for selection),
 //! [`header_click::HeaderClickable`] (emits a plain click on a column
-//! header to cycle its sort).
+//! header to cycle its sort), and [`resize::ResizeHandle`] (a draggable
+//! header-edge strip that emits a column's new width).
 //!
 //! Entry points: [`view::data_grid`] for the xilem view,
 //! [`column::ColumnDef`] for the per-column contract,
@@ -37,6 +39,19 @@
 //! than lexicographically. Selection tracks *source* row indices, so it
 //! stays attached to the same data rows across sort changes.
 //!
+//! ## Resizing & widths
+//!
+//! Each column starts at its [`ColumnDef`] width. A
+//! [`width::ColumnWidths`] override map (held by the host, supplied via
+//! [`DataGrid::column_widths`](view::DataGrid::column_widths)) gives the
+//! *effective* width per column — resolved once and shared by the
+//! header, filter inputs, body cells, and the total content width. When
+//! [`DataGrid::on_column_resize`](view::DataGrid::on_column_resize) is
+//! set, each header gets a trailing drag handle ([`resize::ResizeHandle`])
+//! that reports the column's proposed absolute width; the host stores it
+//! in `ColumnWidths` (clamped to
+//! [`width::MIN_COLUMN_WIDTH`]) and passes the snapshot back.
+//!
 //! ## Known limitations (v1)
 //!
 //! - **Shift-extend selection while sorted** fills an inclusive range in
@@ -46,9 +61,10 @@
 //! - **Clipboard copy** emits the selection in ascending source-index
 //!   order, not the on-screen (sorted) order.
 //! - Sorting is single-column — there is no multi-column / tiebreak sort.
-//! - Columns are a fixed width per `ColumnDef`; the grid scrolls
-//!   horizontally when they exceed the viewport. Drag-to-resize and
-//!   width auto-fit are not implemented yet.
+//! - Columns start at their `ColumnDef` width and can be drag-resized
+//!   (see [`width::ColumnWidths`]); the grid scrolls horizontally when
+//!   the total exceeds the viewport. Width auto-fit (double-click to fit
+//!   content) is not implemented yet.
 
 pub mod column;
 pub mod copy_shortcut;

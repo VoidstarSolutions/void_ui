@@ -21,9 +21,9 @@
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
-    AccessCtx, AccessEvent, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, PaintCtx, PointerButton,
-    PointerButtonEvent, PointerEvent, PointerUpdate, PropertiesMut, PropertiesRef, RegisterCtx,
-    TextEvent, Update, UpdateCtx, Widget, WidgetMut,
+    AccessCtx, AccessEvent, ChildrenIds, CursorIcon, EventCtx, LayoutCtx, MeasureCtx, PaintCtx,
+    PointerButton, PointerButtonEvent, PointerEvent, PointerUpdate, PropertiesMut, PropertiesRef,
+    QueryCtx, RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetMut,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, Size};
@@ -234,9 +234,11 @@ impl Widget for ResizeHandle {
         painter.fill(rect, color).draw();
     }
 
-    // NOTE: a `get_cursor` override returning a column-resize cursor is a
-    // deferred polish item (needs `QueryCtx`; see roadmap). The hover
-    // grip-line brightening already signals the handle is draggable.
+    fn get_cursor(&self, _ctx: &QueryCtx<'_>, _pos: Point) -> CursorIcon {
+        // East-west resize cursor over the strip — the standard
+        // column-resize affordance (matches masonry's `Split`).
+        CursorIcon::EwResize
+    }
 
     fn accessibility_role(&self) -> Role {
         Role::Splitter
