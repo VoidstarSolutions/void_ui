@@ -58,7 +58,10 @@ pub mod selection;
 pub mod sort;
 mod view;
 
-pub use column::{CellAlign, ColumnDef, RowComparator, RowFilter, optional_text_column, text_column};
+pub use column::{
+    CellAlign, ColumnDef, RowComparator, RowFilter, colored_text_column, optional_text_column,
+    text_column,
+};
 pub use copy_shortcut::CopyOnShortcut;
 pub use filter::{FilterState, filtered_indices};
 pub use header_click::{HeaderClickable, HeaderClicked};

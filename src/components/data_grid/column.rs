@@ -15,9 +15,11 @@
 use std::cmp::Ordering;
 
 use xilem::AnyWidgetView;
+use xilem::peniko::Color;
+use xilem::style::Style as _;
+use xilem::view::label;
 
 use crate::Theme;
-use crate::label;
 
 /// In-cell horizontal alignment.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -233,8 +235,7 @@ where
         let text = fmt_for_render(row);
         let view = label(text)
             .text_size(theme.typography.size_body)
-            .color(theme.palette.text)
-            .render(theme);
+            .color(theme.palette.text);
         Box::new(view)
     })
     .with_text(move |row| fmt_for_text(row))
@@ -267,14 +268,48 @@ where
         };
         let view = label(text)
             .text_size(theme.typography.size_body)
-            .color(color)
-            .render(theme);
+            .color(color);
         Box::new(view)
     })
     // Clipboard cells get an empty string for None, not "—" — the
     // em dash is presentation-only; a spreadsheet target wants the
     // structural absence.
     .with_text(move |row| fmt_for_text(row).unwrap_or_default())
+}
+
+/// A text column whose label color is computed per row — the building
+/// block for conditional formatting (e.g. green gains / red losses, or
+/// categorical coloring).
+///
+/// `fmt` projects the displayed (and clipboard) text exactly like
+/// [`text_column`]; `color` picks the label color from the row and the
+/// active [`Theme`] (so it resolves correctly across theme variants —
+/// pass `theme.palette.green` / `theme.palette.coral`, etc.). Number
+/// and string *formatting* is just the `fmt` closure; this adds the
+/// conditional *color* on top.
+pub fn colored_text_column<R, State, F, C>(
+    title: impl Into<String>,
+    width: f64,
+    align: CellAlign,
+    fmt: F,
+    color: C,
+) -> ColumnDef<R, State>
+where
+    R: 'static,
+    State: 'static,
+    F: Fn(&R) -> String + Send + Sync + 'static,
+    C: Fn(&R, &Theme) -> Color + Send + Sync + 'static,
+{
+    let fmt = std::sync::Arc::new(fmt);
+    let fmt_for_render = std::sync::Arc::clone(&fmt);
+    let fmt_for_text = std::sync::Arc::clone(&fmt);
+    ColumnDef::new(title, width, align, move |row, theme| {
+        let view = label(fmt_for_render(row))
+            .text_size(theme.typography.size_body)
+            .color(color(row, theme));
+        Box::new(view)
+    })
+    .with_text(move |row| fmt_for_text(row))
 }
 
 #[cfg(test)]

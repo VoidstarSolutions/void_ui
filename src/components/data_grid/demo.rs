@@ -18,10 +18,13 @@
 //! generic component library and must not depend on any
 //! market-data crate.
 
-use super::column::{optional_text_column, text_column, CellAlign, ColumnDef};
+use xilem::peniko::Color;
+
+use super::column::{colored_text_column, optional_text_column, text_column, CellAlign, ColumnDef};
 use super::filter::{filtered_indices, FilterState};
 use super::selection::SelectionState;
 use super::sort::SortState;
+use crate::Theme;
 
 const START_PRICE_UNITS: i64 = 100_000_000_000; // $100.00 in 1e-9 units.
 const TICK_INTERVAL_NS: i64 = 100_000_000; // 100 ms between synthetic trades.
@@ -188,6 +191,18 @@ fn xorshift64(state: &mut u64) -> u64 {
     x
 }
 
+/// Conditional color for the `Side` column: buys green, sells coral
+/// (the classic trading convention), unknown faint. Theme-aware so it
+/// resolves correctly across variants. Exercised by the `Side` column's
+/// `colored_text_column` and unit-tested below.
+fn side_color(side: Option<DemoSide>, theme: &Theme) -> Color {
+    match side {
+        Some(DemoSide::Buy) => theme.palette.green,
+        Some(DemoSide::Sell) => theme.palette.coral,
+        None => theme.palette.text_faint,
+    }
+}
+
 /// Builds the four column descriptors for browsing a [`DemoTick`]
 /// stream: `Time` (relative ms from `base_time_ns`), `Price`
 /// (`$X.XX`), `Size`, and `Side` (`B`/`S`/`—`).
@@ -222,12 +237,19 @@ pub fn tick_columns<State: 'static>(base_time_ns: i64) -> Vec<ColumnDef<DemoTick
         // `Option<u64>` is `Ord` (None sorts before Some), so unknown
         // sizes cluster at the ascending end.
         .sortable_by_key(|t: &DemoTick| t.size),
-        optional_text_column("Side", 60.0, CellAlign::Center, |t: &DemoTick| {
-            t.side.map(|s| match s {
-                DemoSide::Buy => "B".to_string(),
-                DemoSide::Sell => "S".to_string(),
-            })
-        })
+        // Conditional formatting: buys green, sells coral (the classic
+        // trading convention), unknown faint — see `side_color`.
+        colored_text_column(
+            "Side",
+            60.0,
+            CellAlign::Center,
+            |t: &DemoTick| match t.side {
+                Some(DemoSide::Buy) => "B".to_string(),
+                Some(DemoSide::Sell) => "S".to_string(),
+                None => "—".to_string(),
+            },
+            |t: &DemoTick, theme: &Theme| side_color(t.side, theme),
+        )
         // Filterable by side glyph: query "B" shows buys, "S" sells.
         .filterable_by_text(|t: &DemoTick| match t.side {
             Some(DemoSide::Buy) => "B".to_string(),
@@ -239,10 +261,19 @@ pub fn tick_columns<State: 'static>(base_time_ns: i64) -> Vec<ColumnDef<DemoTick
 
 #[cfg(test)]
 mod tests {
-    use super::{Demo, DemoSide};
+    use super::{side_color, Demo, DemoSide};
+    use crate::Theme;
 
     /// Side is column index 3 in `tick_columns`.
     const SIDE_COL: usize = 3;
+
+    #[test]
+    fn side_color_uses_trading_palette() {
+        let theme = Theme::default();
+        assert_eq!(side_color(Some(DemoSide::Buy), &theme), theme.palette.green);
+        assert_eq!(side_color(Some(DemoSide::Sell), &theme), theme.palette.coral);
+        assert_eq!(side_color(None, &theme), theme.palette.text_faint);
+    }
 
     #[test]
     fn filtering_side_keeps_only_matching_rows() {
