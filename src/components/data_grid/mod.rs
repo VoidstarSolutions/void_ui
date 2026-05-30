@@ -55,6 +55,7 @@ pub mod copy_shortcut;
 pub mod demo;
 pub mod filter;
 pub mod header_click;
+pub mod resize;
 pub mod row_click;
 pub mod selection;
 pub mod sort;
@@ -68,6 +69,7 @@ pub use column::{
 pub use copy_shortcut::CopyOnShortcut;
 pub use filter::{FilterState, filtered_indices};
 pub use header_click::{HeaderClickable, HeaderClicked};
+pub use resize::{ResizeDrag, ResizeHandle};
 pub use row_click::{RowClickAction, RowClickable};
 pub use selection::SelectionState;
 pub use sort::{SortDirection, SortState};
