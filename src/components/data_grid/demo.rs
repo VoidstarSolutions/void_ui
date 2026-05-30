@@ -24,6 +24,7 @@ use super::column::{colored_text_column, optional_text_column, text_column, Cell
 use super::filter::{filtered_indices, FilterState};
 use super::selection::SelectionState;
 use super::sort::SortState;
+use super::width::ColumnWidths;
 use crate::Theme;
 
 const START_PRICE_UNITS: i64 = 100_000_000_000; // $100.00 in 1e-9 units.
@@ -64,6 +65,8 @@ pub struct Demo {
     pub sort: SortState,
     /// Active per-column filter queries.
     pub filter: FilterState,
+    /// Per-column width overrides (drag-to-resize).
+    pub column_widths: ColumnWidths,
     /// Materialized filtered rows. Only meaningful while `filter` is
     /// non-empty; the gallery's `rows` lens reads `ticks` directly when
     /// unfiltered (avoiding a full-dataset clone in the common case).
@@ -84,6 +87,7 @@ impl Demo {
             selection: SelectionState::new(),
             sort: SortState::new(),
             filter: FilterState::new(),
+            column_widths: ColumnWidths::new(),
             visible: Vec::new(),
             rng_state: 0x0005_DEEC_E66D_u64.wrapping_mul(0xB16B_00B5),
             last_time_ns: 0,
@@ -119,6 +123,12 @@ impl Demo {
     pub fn clear_filter(&mut self) {
         self.filter.clear_all();
         self.refresh_visible();
+    }
+
+    /// Sets a column's width override (drag-to-resize). `ColumnWidths`
+    /// clamps to the minimum width; no data refresh is needed.
+    pub fn resize_column(&mut self, column: usize, new_width: f64) {
+        self.column_widths.set(column, new_width);
     }
 
     /// Recomputes [`Self::visible`] from `ticks` + `filter`. A no-op'd

@@ -18,7 +18,9 @@ use xilem::winit::error::EventLoopError;
 use xilem::{AnyWidgetView, EventLoop, WidgetView, WindowOptions, Xilem};
 
 use void_ui::components::data_grid::demo::{Demo, tick_columns};
-use void_ui::components::{ComponentKind, FilterState, SortState, button, data_grid, sidebar_item};
+use void_ui::components::{
+    ColumnWidths, ComponentKind, FilterState, SortState, button, data_grid, sidebar_item,
+};
 use void_ui::layout::flex_wrap;
 use void_ui::theme::{Density, Theme};
 
@@ -61,15 +63,19 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
     let dg_base_time_ns = state.data_grid.ticks.first().map_or(0, |t| t.event_ns);
     let dg_sort = state.data_grid.sort;
     let dg_filter = state.data_grid.filter.clone();
+    let dg_widths = state.data_grid.column_widths.clone();
 
     let workspace = workspace_row(
         focused,
         theme_panel_open,
         &theme,
-        dg_row_count,
-        dg_base_time_ns,
-        dg_sort,
-        dg_filter,
+        DataGridSnapshot {
+            row_count: dg_row_count,
+            base_time_ns: dg_base_time_ns,
+            sort: dg_sort,
+            filter: dg_filter,
+            widths: dg_widths,
+        },
     );
 
     let outer = flex_col((topbar(theme_panel_open, &theme), workspace.flex(1.0)))
@@ -79,27 +85,28 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
     sized_box(outer).background_color(theme.palette.bg_deep)
 }
 
+/// Frame-time snapshot of the data-grid demo's interaction state,
+/// threaded from `app_logic` down to the grid panel. Grouped so the
+/// intervening layout functions take one argument instead of five.
+struct DataGridSnapshot {
+    row_count: u64,
+    base_time_ns: i64,
+    sort: SortState,
+    filter: FilterState,
+    widths: ColumnWidths,
+}
+
 fn workspace_row(
     focused: ComponentKind,
     theme_panel_open: bool,
     theme: &Theme,
-    dg_row_count: u64,
-    dg_base_time_ns: i64,
-    dg_sort: SortState,
-    dg_filter: FilterState,
+    dg: DataGridSnapshot,
 ) -> Box<AnyWidgetView<State>> {
     let sidebar_view = sized_box(sidebar(focused, theme))
         .fixed_width(Length::px(180.0))
         .padding(Length::px(12.0))
         .background_color(theme.palette.surface);
-    let main = sized_box(main_pane(
-        focused,
-        theme,
-        dg_row_count,
-        dg_base_time_ns,
-        dg_sort,
-        dg_filter,
-    ))
+    let main = sized_box(main_pane(focused, theme, dg))
     .padding(Length::px(20.0))
     .background_color(theme.palette.bg);
 
@@ -196,21 +203,12 @@ fn sidebar(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State> + us
 fn main_pane(
     focused: ComponentKind,
     theme: &Theme,
-    dg_row_count: u64,
-    dg_base_time_ns: i64,
-    dg_sort: SortState,
-    dg_filter: FilterState,
+    dg: DataGridSnapshot,
 ) -> Box<AnyWidgetView<State>> {
     match focused {
         ComponentKind::Button => Box::new(void_ui::components::button::demo::panel(theme)),
         ComponentKind::Checkbox => Box::new(void_ui::components::checkbox::demo::panel(theme)),
-        ComponentKind::DataGrid => Box::new(data_grid_panel(
-            theme,
-            dg_row_count,
-            dg_base_time_ns,
-            dg_sort,
-            dg_filter,
-        )),
+        ComponentKind::DataGrid => Box::new(data_grid_panel(theme, dg)),
         ComponentKind::Radio => Box::new(void_ui::components::radio::demo::panel(theme)),
         ComponentKind::ScrollContainer => {
             Box::new(void_ui::components::scroll_container::demo::panel(theme))
@@ -227,13 +225,14 @@ fn main_pane(
 /// Click a column header (Time / Price / Size) to cycle its sort. Type
 /// in a column's filter input (e.g. "B"/"S" under Side) to filter the
 /// rows; filtered columns show a persistent accent + marker.
-fn data_grid_panel(
-    theme: &Theme,
-    row_count: u64,
-    base_time_ns: i64,
-    sort: SortState,
-    filter: FilterState,
-) -> impl WidgetView<State> + use<> {
+fn data_grid_panel(theme: &Theme, dg: DataGridSnapshot) -> impl WidgetView<State> + use<> {
+    let DataGridSnapshot {
+        row_count,
+        base_time_ns,
+        sort,
+        filter,
+        widths,
+    } = dg;
     let columns = tick_columns::<State>(base_time_ns);
     let theme_copy = *theme;
 
@@ -282,6 +281,10 @@ fn data_grid_panel(
         .sort(sort, |s: &mut State| &mut s.data_grid.sort)
         .filter(filter, |s: &mut State, col: usize, query: String| {
             s.data_grid.set_filter(col, query);
+        })
+        .column_widths(widths)
+        .on_column_resize(|s: &mut State, col: usize, new_width: f64| {
+            s.data_grid.resize_column(col, new_width);
         })
         .row_height(22.0)
         .render(&theme_copy);

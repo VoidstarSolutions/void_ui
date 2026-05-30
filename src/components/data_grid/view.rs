@@ -35,6 +35,7 @@ use super::column::{CellAlign, CellRenderer, ColumnDef, RowComparator, TextProje
 use super::copy_shortcut::CopyOnShortcut;
 use super::filter::FilterState;
 use super::header_click::clickable_header;
+use super::resize::{ResizeHandle, resize_handle};
 use super::row_click::clickable_row;
 use super::selection::SelectionState;
 use super::sort::{SortDirection, SortState, display_order};
@@ -56,6 +57,11 @@ type SortLens<State> = Arc<dyn for<'a> Fn(&'a mut State) -> &'a mut SortState + 
 /// [`FilterState`] *and* recompute its filtered view — the grid never
 /// applies the filter to data itself.
 type FilterChange<State> = Arc<dyn Fn(&mut State, usize, String) + Send + Sync>;
+/// Boxed column-resize callback (`Fn(&mut State, column, new_width)`).
+/// A header resize handle emits the column's proposed absolute width
+/// through this so the host can update its
+/// [`ColumnWidths`](super::width::ColumnWidths) (which clamps).
+type WidthChange<State> = Arc<dyn Fn(&mut State, usize, f64) + Send + Sync>;
 
 /// One column's rendering + layout slot — the half of [`ColumnDef`]
 /// that's needed at row-build time. Shared (via `Arc`) between the
@@ -167,6 +173,7 @@ pub struct DataGrid<State, R> {
     filter: FilterState,
     filter_change: Option<FilterChange<State>>,
     column_widths: ColumnWidths,
+    width_change: Option<WidthChange<State>>,
 }
 
 /// Default fixed row height when [`DataGrid::row_height`] is unset.
@@ -191,6 +198,7 @@ where
             filter: FilterState::new(),
             filter_change: None,
             column_widths: ColumnWidths::new(),
+            width_change: None,
         }
     }
 
@@ -277,6 +285,21 @@ where
     /// empty (every column at its default width).
     pub fn column_widths(mut self, widths: ColumnWidths) -> Self {
         self.column_widths = widths;
+        self
+    }
+
+    /// Enables drag-to-resize columns. Each header cell gains a
+    /// trailing-edge handle; dragging it calls
+    /// `on_resize(state, column, new_width)` with the proposed absolute
+    /// width. The host applies it to its [`ColumnWidths`] (which clamps
+    /// to [`MIN_COLUMN_WIDTH`](super::width::MIN_COLUMN_WIDTH)) and
+    /// passes the updated snapshot back via [`Self::column_widths`].
+    /// Omit to leave columns non-resizable.
+    pub fn on_column_resize<F>(mut self, on_resize: F) -> Self
+    where
+        F: Fn(&mut State, usize, f64) + Send + Sync + 'static,
+    {
+        self.width_change = Some(Arc::new(on_resize));
         self
     }
 
@@ -379,6 +402,7 @@ where
         filter,
         filter_change,
         column_widths,
+        width_change,
     } = grid;
 
     // Default the data accessor to an empty slice when unset.
@@ -393,13 +417,21 @@ where
     // --- Header row. Sortable columns get a clickable header that
     //     cycles the column's sort, plus an arrow on the active
     //     column; columns with an active filter get a persistent
-    //     accent + marker. Non-sortable columns render an inert label.
+    //     accent + marker; with resize enabled, each header gets a
+    //     trailing drag handle. Non-sortable columns render an inert
+    //     label.
+    let header_ctx = HeaderCtx {
+        sort,
+        sort_lens: sort_lens.as_ref(),
+        width_change: width_change.as_ref(),
+        theme: &theme,
+    };
     let header_cells: Vec<AnyFlexChild<State, ()>> = render_slots
         .iter()
         .enumerate()
         .map(|(idx, slot)| {
             let filtered = filter.get(idx).is_some();
-            header_cell(idx, slot, sortable[idx], filtered, sort, sort_lens.as_ref(), &theme)
+            header_cell(idx, slot, sortable[idx], filtered, &header_ctx)
         })
         .collect();
     let header = sized_box(flex_row(header_cells).cross_axis_alignment(CrossAxisAlignment::Center))
@@ -597,6 +629,15 @@ fn aligned_cell<State: 'static>(
 
 // --- MARK: HEADER CELL -------------------------------------------------
 
+/// Shared (non-per-column) inputs for [`header_cell`], grouped to keep
+/// the call short and under the argument-count lint.
+struct HeaderCtx<'a, State> {
+    sort: SortState,
+    sort_lens: Option<&'a SortLens<State>>,
+    width_change: Option<&'a WidthChange<State>>,
+    theme: &'a Theme,
+}
+
 /// Builds one header cell as a fixed-width flex child.
 ///
 /// Sortable columns (`sortable == true`) are wrapped in
@@ -604,21 +645,23 @@ fn aligned_cell<State: 'static>(
 /// column, and the active sort column gains an ascending/descending
 /// arrow. A column with an active filter (`filtered == true`) is drawn
 /// in the theme accent with a trailing marker, so a filtered view is
-/// always unmistakable. Non-sortable columns render an inert label.
+/// always unmistakable. When resize is enabled (`ctx.width_change` is
+/// set) a trailing drag handle is appended *inside* the column's width,
+/// so column boundaries stay aligned with the body cells. Non-sortable
+/// columns render an inert label.
 fn header_cell<State, R>(
     idx: usize,
     slot: &ColumnRender<R, State>,
     sortable: bool,
     filtered: bool,
-    sort: SortState,
-    sort_lens: Option<&SortLens<State>>,
-    theme: &Theme,
+    ctx: &HeaderCtx<'_, State>,
 ) -> AnyFlexChild<State, ()>
 where
     State: 'static,
     R: 'static,
 {
-    let mut title = match sort.direction_for(idx) {
+    let theme = ctx.theme;
+    let mut title = match ctx.sort.direction_for(idx) {
         Some(SortDirection::Ascending) => format!("{}  ▲", slot.title),
         Some(SortDirection::Descending) => format!("{}  ▼", slot.title),
         None => slot.title.clone(),
@@ -638,22 +681,52 @@ where
         .text_size(theme.typography.size_caption)
         .letter_spacing(1.2)
         .color(title_color);
-    let cell = aligned_cell(Box::new(header_label), slot.width, slot.align);
-    // Interactive only when the column is sortable *and* a write lens
-    // is available; otherwise an inert label.
-    match (sortable, sort_lens) {
+
+    // When resizable, reserve the handle's width *inside* the column so
+    // the right edge (and thus the column boundary) still lands at
+    // `slot.width`, matching the body cells.
+    let content_width = if ctx.width_change.is_some() {
+        (slot.width - ResizeHandle::width()).max(0.0)
+    } else {
+        slot.width
+    };
+    let cell = aligned_cell(Box::new(header_label), content_width, slot.align);
+
+    // Interactive (sort) only when the column is sortable *and* a write
+    // lens is available; otherwise an inert label.
+    let content: Box<AnyWidgetView<State>> = match (sortable, ctx.sort_lens) {
         (true, Some(lens)) => {
             let lens = Arc::clone(lens);
-            let clickable = clickable_header(
+            Box::new(clickable_header(
                 cell,
                 theme.palette.border_strong,
                 move |state: &mut State| {
                     (*lens)(state).cycle(idx);
                 },
-            );
-            flex_item(clickable, 0.0).into()
+            ))
         }
-        _ => flex_item(cell, 0.0).into(),
+        _ => cell,
+    };
+
+    // Append the resize handle as a sibling at the trailing edge. It's a
+    // separate hit target from the sort click (and consumes its own
+    // press), so dragging never triggers a sort.
+    match ctx.width_change {
+        Some(width_change) => {
+            let width_change = Arc::clone(width_change);
+            let handle = resize_handle(
+                slot.width,
+                theme.palette.border,
+                theme.palette.teal,
+                move |state: &mut State, new_width: f64| {
+                    width_change(state, idx, new_width);
+                },
+            );
+            let row = flex_row((flex_item(content, 0.0), flex_item(handle, 0.0)))
+                .cross_axis_alignment(CrossAxisAlignment::Center);
+            flex_item(row, 0.0).into()
+        }
+        None => flex_item(content, 0.0).into(),
     }
 }
 

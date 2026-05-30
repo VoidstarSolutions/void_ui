@@ -67,8 +67,12 @@ checkin from the top, verify, commit, repeat.
 
 ## Deferred polish (tracked, not yet scheduled)
 
-- **Filter-input discoverability** — make the filter row obviously a
-  filter affordance (placeholder/funnel glyph or distinct look).
+- **Sortable-header hover highlight stops short after resize** — the
+  resize handle takes the trailing ~7px of the header via flex, so the
+  `HeaderClickable` hover tint covers only the content area, not the full
+  column (column boundary + body alignment are correct; visual only).
+  Fix in #4 Step 5: overlay the handle on the full-width header (small
+  ZStack) instead of stealing flex width.
 - **Global UI zoom/scaling** — a theme/density-driven scale applied
   across *all* components (supersedes component-local size constants,
   e.g. the filter input). Cross-cutting, not a data_grid-only change.
