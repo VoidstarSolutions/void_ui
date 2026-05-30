@@ -2,20 +2,22 @@
 //! append-only data streams.
 //!
 //! The grid is read-only (no cell editing) with row-only selection,
-//! TSV clipboard copy, and single-column sorting via clickable headers.
+//! TSV clipboard copy, single-column sorting via clickable headers,
+//! per-column filtering, and horizontal scrolling for wide tables.
 //! The widget is generic over the row type so the same grid can browse
 //! synthetic tick streams (see [`demo::DemoTick`]), event logs, or
 //! any other in-memory `&[R]` exposed by the host's app state.
 //!
 //! Backed by masonry's [`VirtualScroll`][masonry::widgets::VirtualScroll]
-//! for row virtualization. Mostly composed of xilem stock, with four
-//! small custom masonry wrappers: [`copy_shortcut::CopyOnShortcut`]
-//! (catches Ctrl/Cmd+C and dumps a TSV payload to the clipboard),
-//! [`row_click::RowClickable`] (emits modifier-aware row clicks for
-//! selection), [`header_click::HeaderClickable`] (emits a plain click
-//! on a column header to cycle its sort), and
-//! [`overflow_warn::OverflowWarn`] (one-shot `tracing::warn!` when the
-//! viewport is narrower than the sum of column widths).
+//! for row virtualization, and wrapped in a horizontal-only
+//! [`scroll_container`](crate::components::scroll_container) so columns
+//! wider than the viewport are reachable. Mostly composed of xilem
+//! stock, with three small custom masonry wrappers:
+//! [`copy_shortcut::CopyOnShortcut`] (catches Ctrl/Cmd+C and dumps a
+//! TSV payload to the clipboard), [`row_click::RowClickable`] (emits
+//! modifier-aware row clicks for selection), and
+//! [`header_click::HeaderClickable`] (emits a plain click on a column
+//! header to cycle its sort).
 //!
 //! Entry points: [`view::data_grid`] for the xilem view,
 //! [`column::ColumnDef`] for the per-column contract,
@@ -44,19 +46,19 @@
 //! - **Clipboard copy** emits the selection in ascending source-index
 //!   order, not the on-screen (sorted) order.
 //! - Sorting is single-column — there is no multi-column / tiebreak sort.
-//! - Columns are fixed-width; there is no horizontal fill, resize, or
-//!   scroll syncing yet.
+//! - Columns are a fixed width per `ColumnDef`; the grid scrolls
+//!   horizontally when they exceed the viewport. Drag-to-resize and
+//!   width auto-fit are not implemented yet.
 
 pub mod column;
 pub mod copy_shortcut;
 pub mod demo;
 pub mod filter;
 pub mod header_click;
-pub mod overflow_warn;
 pub mod row_click;
 pub mod selection;
 pub mod sort;
-mod view;
+pub mod view;
 
 pub use column::{
     CellAlign, ColumnDef, RowComparator, RowFilter, colored_text_column, optional_text_column,
@@ -65,7 +67,6 @@ pub use column::{
 pub use copy_shortcut::CopyOnShortcut;
 pub use filter::{FilterState, filtered_indices};
 pub use header_click::{HeaderClickable, HeaderClicked};
-pub use overflow_warn::OverflowWarn;
 pub use row_click::{RowClickAction, RowClickable};
 pub use selection::SelectionState;
 pub use sort::{SortDirection, SortState};

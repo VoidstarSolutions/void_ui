@@ -256,7 +256,51 @@ pub fn tick_columns<State: 'static>(base_time_ns: i64) -> Vec<ColumnDef<DemoTick
             Some(DemoSide::Sell) => "S".to_string(),
             None => String::new(),
         }),
+        // --- Extra derived columns: a realistic wide blotter that
+        //     overflows the viewport horizontally (Tier 2: H-scroll).
+        //     All are pure functions of existing fields — no new data.
+        text_column("Bid", 100.0, CellAlign::End, |t: &DemoTick| {
+            #[expect(clippy::cast_precision_loss, reason = "Display only")]
+            let bid = (t.price_units - 10_000_000) as f64 / PRICE_UNITS_PER_DOLLAR;
+            format!("${bid:.2}")
+        })
+        .sortable_by_key(|t: &DemoTick| t.price_units),
+        text_column("Ask", 100.0, CellAlign::End, |t: &DemoTick| {
+            #[expect(clippy::cast_precision_loss, reason = "Display only")]
+            let ask = (t.price_units + 10_000_000) as f64 / PRICE_UNITS_PER_DOLLAR;
+            format!("${ask:.2}")
+        })
+        .sortable_by_key(|t: &DemoTick| t.price_units),
+        text_column("Spread", 90.0, CellAlign::End, |_t: &DemoTick| {
+            "$0.02".to_string()
+        }),
+        text_column("Notional", 130.0, CellAlign::End, |t: &DemoTick| {
+            #[expect(clippy::cast_precision_loss, reason = "Display only")]
+            let px = t.price_units as f64 / PRICE_UNITS_PER_DOLLAR;
+            #[expect(clippy::cast_precision_loss, reason = "Display only")]
+            let sz = t.size.unwrap_or(0) as f64;
+            format!("${:.0}", px * sz)
+        }),
+        text_column("Exchange", 120.0, CellAlign::Start, |t: &DemoTick| {
+            demo_exchange(t.event_ns).to_string()
+        })
+        .filterable_by_text(|t: &DemoTick| demo_exchange(t.event_ns).to_string()),
+        text_column("VWAP", 100.0, CellAlign::End, |t: &DemoTick| {
+            #[expect(clippy::cast_precision_loss, reason = "Display only")]
+            let v = t.price_units as f64 / PRICE_UNITS_PER_DOLLAR;
+            format!("${v:.2}")
+        }),
     ]
+}
+
+/// Synthetic exchange code for the demo blotter, rotated by event time
+/// so the `Exchange` column has a few distinct filterable values.
+fn demo_exchange(event_ns: i64) -> &'static str {
+    match (event_ns / TICK_INTERVAL_NS) % 3 {
+        0 => "NYSE",
+        1 => "NSDQ",
+        _ => "ARCA",
+    }
 }
 
 #[cfg(test)]

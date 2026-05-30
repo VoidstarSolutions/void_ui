@@ -6,9 +6,10 @@
 //!   wrapped in [`super::row_click::clickable_row`] so primary clicks
 //!   (with optional shift / ctrl-cmd modifiers) update the
 //!   [`SelectionState`].
-//! - The grid is wrapped in [`super::overflow_warn::OverflowWarn`]
-//!   to log a one-shot `tracing::warn!` when the viewport is
-//!   narrower than the sum of column widths, then in
+//! - The header + filter + body stack is wrapped in a horizontal-only
+//!   [`scroll_container`](crate::components::scroll_container) so columns
+//!   wider than the viewport are reachable (header and body share the
+//!   horizontal offset because they're one child subtree), then in
 //!   [`CopyOnShortcutView`], a private wrapper for the
 //!   [`CopyOnShortcut`](super::CopyOnShortcut) masonry widget that
 //!   pushes a fresh TSV projection of the current selection on every
@@ -32,13 +33,13 @@ use xilem::{AnyWidgetView, Pod, ViewCtx};
 
 use super::column::{CellAlign, CellRenderer, ColumnDef, RowComparator, TextProjector};
 use super::copy_shortcut::CopyOnShortcut;
+use super::filter::FilterState;
 use super::header_click::clickable_header;
-use super::overflow_warn::overflow_warn;
 use super::row_click::clickable_row;
 use super::selection::SelectionState;
-use super::filter::FilterState;
 use super::sort::{SortDirection, SortState, display_order};
 use crate::Theme;
+use crate::components::scroll_container::scroll_container;
 
 /// Boxed row-data accessor (`Fn(&State) -> &[R]`), shared via `Arc`
 /// across the body and clipboard closures.
@@ -407,12 +408,15 @@ where
     });
     let stack = assemble_grid_stack(header, filter_row, body);
 
-    // --- Wrap in OverflowWarn so a viewport narrower than the sum of
-    //     column widths emits a one-shot tracing::warn! — backs the
-    //     doc claim on ColumnDef and helps callers notice when their
-    //     column configuration silently clips on the right.
-    let sum_widths: f64 = render_slots.iter().map(|slot| slot.width).sum();
-    let inner = overflow_warn(stack, sum_widths);
+    // --- Horizontal scroll: wrap the whole header+filter+body stack in
+    //     a horizontal-only scroll so columns wider than the viewport
+    //     are reachable. Because header/filter/body are a single child
+    //     subtree, they share the horizontal offset automatically — no
+    //     manual sync. Vertical virtualization stays inside the body
+    //     (`constrain_vertical` leaves the vertical axis to it).
+    let inner = scroll_container(stack)
+        .constrain_vertical(true)
+        .render(&theme);
 
     // --- Wrap in CopyOnShortcut so Ctrl/Cmd+C dumps the
     //     selection-projected TSV. The wrapper captures the text

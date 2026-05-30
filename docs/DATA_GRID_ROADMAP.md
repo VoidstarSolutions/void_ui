@@ -34,7 +34,7 @@ checkin from the top, verify, commit, repeat.
 - TSV clipboard copy of the selection (Ctrl/Cmd+C)
 - **Single-column sorting**: click-to-cycle asc→desc→off, ▲/▼ arrow,
   hover affordance, numeric-correct ordering, selection stable across sorts
-- Grid fills its container height; one-shot overflow warning
+- Grid fills its container height
 - Rich (widget-returning) cell renderers — partial "templates"
 - **Fluent `DataGrid` builder** (`new` + chained setters + `.render`),
   boxed lenses, optional selection/sort/filter — replaced the wide free
@@ -47,13 +47,17 @@ checkin from the top, verify, commit, repeat.
 - **Conditional cell formatting**: `colored_text_column(fmt, color)` —
   per-row label color from `(&R, &Theme)`, theme-aware across variants
   (demo Side column: buys green / sells coral) *(was Tier 1.3)*
+- **Horizontal scrolling**: the header+filter+body stack is wrapped in a
+  horizontal-only `scroll_container`, so columns wider than the viewport
+  are reachable and header/body share the offset automatically; replaced
+  the `OverflowWarn` warning *(part of Tier 2 #4)*
 
 ## ⚠️ ARCHITECT REVIEW REQUESTED
 
 - **`DataGrid::render` returns `impl WidgetView<State, ()>`, not a named
   view type.** Every *other* component's `render` returns a concrete
   named view (`ButtonView`, `CheckboxView`, …). The grid differs because
-  it is a *composition* (CopyOnShortcut → OverflowWarn → flex_col → …)
+  it is a *composition* (CopyOnShortcut → scroll_container → flex_col → …)
   rather than a wrapper around a single widget, so a named `DataGridView`
   would be an awkward, churn-prone alias. **Decision needed:** accept the
   `impl Trait` return for the grid, or introduce a named `DataGridView`
@@ -71,6 +75,13 @@ checkin from the top, verify, commit, repeat.
 - **Filter UX**: shift-extend selection + clipboard copy currently use
   source-index / source order, not the on-screen order (see module
   "Known limitations").
+- **Scroll-perf profiling** — mild scroll lag observed at 100K rows in a
+  *debug* gallery build. Body still virtualizes (only visible rows
+  render), so this is likely (1) the unoptimized build and (2) 12 columns
+  × per-row widget rebuilds. Expected use-case max is ~15K rows. **Before
+  optimizing:** re-check with `cargo run --release --example gallery`. If
+  still laggy in release, profile the row-builder for per-rebuild
+  allocations. Not worth optimizing pre-measurement.
 
 ## Prioritized backlog
 
