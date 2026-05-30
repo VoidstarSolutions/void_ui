@@ -38,6 +38,7 @@ use super::header_click::clickable_header;
 use super::row_click::clickable_row;
 use super::selection::SelectionState;
 use super::sort::{SortDirection, SortState, display_order};
+use super::width::ColumnWidths;
 use crate::Theme;
 use crate::components::scroll_container::scroll_container;
 
@@ -165,6 +166,7 @@ pub struct DataGrid<State, R> {
     sort_lens: Option<SortLens<State>>,
     filter: FilterState,
     filter_change: Option<FilterChange<State>>,
+    column_widths: ColumnWidths,
 }
 
 /// Default fixed row height when [`DataGrid::row_height`] is unset.
@@ -188,6 +190,7 @@ where
             sort_lens: None,
             filter: FilterState::new(),
             filter_change: None,
+            column_widths: ColumnWidths::new(),
         }
     }
 
@@ -267,6 +270,16 @@ where
         self
     }
 
+    /// Supplies the current [`ColumnWidths`] snapshot. Columns with an
+    /// override render at that width; the rest use their [`ColumnDef`]
+    /// default. Drives both the per-column layout and the total content
+    /// width that the horizontal scroll extent is based on. Defaults to
+    /// empty (every column at its default width).
+    pub fn column_widths(mut self, widths: ColumnWidths) -> Self {
+        self.column_widths = widths;
+        self
+    }
+
     /// Materializes the xilem view at the supplied theme.
     #[must_use]
     pub fn render(self, theme: &Theme) -> impl WidgetView<State, ()> + use<State, R> {
@@ -309,21 +322,27 @@ type DecomposedColumns<R, State> = (
 /// projector, and comparator (positionally aligned), plus `sortable` /
 /// `filterable` flags per column. The filter *predicate* is dropped —
 /// the host applies filtering — so the grid keeps only the flag (to
-/// decide whether to show a filter input). The `Arc`s are shared
+/// decide whether to show a filter input). Each slot's `width` is the
+/// *effective* width (override from `widths`, else the column default),
+/// so every width consumer — header, body cells, filter inputs, and the
+/// total content width — reads it uniformly. The `Arc`s are shared
 /// between the synchronous header builder and the `virtual_scroll`
 /// row-builder closure.
-fn decompose_columns<R, State>(columns: Vec<ColumnDef<R, State>>) -> DecomposedColumns<R, State> {
+fn decompose_columns<R, State>(
+    columns: Vec<ColumnDef<R, State>>,
+    widths: &ColumnWidths,
+) -> DecomposedColumns<R, State> {
     let mut render_slots: Vec<ColumnRender<R, State>> = Vec::with_capacity(columns.len());
     let mut text_projectors: Vec<Option<TextProjector<R>>> = Vec::with_capacity(columns.len());
     let mut comparators: Vec<Option<RowComparator<R>>> = Vec::with_capacity(columns.len());
     let mut filterable: Vec<bool> = Vec::with_capacity(columns.len());
-    for col in columns {
+    for (idx, col) in columns.into_iter().enumerate() {
         text_projectors.push(col.text);
         comparators.push(col.comparator);
         filterable.push(col.filter.is_some());
         render_slots.push(ColumnRender {
             title: col.title,
-            width: col.width,
+            width: widths.effective(idx, col.width),
             align: col.align,
             render: col.render,
         });
@@ -359,6 +378,7 @@ where
         sort_lens,
         filter,
         filter_change,
+        column_widths,
     } = grid;
 
     // Default the data accessor to an empty slice when unset.
@@ -368,7 +388,7 @@ where
     });
 
     let (render_slots, text_projectors, sortable, comparators, filterable) =
-        decompose_columns(columns);
+        decompose_columns(columns, &column_widths);
 
     // --- Header row. Sortable columns get a clickable header that
     //     cycles the column's sort, plus an arrow on the active

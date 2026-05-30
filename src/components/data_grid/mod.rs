@@ -59,6 +59,7 @@ pub mod row_click;
 pub mod selection;
 pub mod sort;
 pub mod view;
+pub mod width;
 
 pub use column::{
     CellAlign, ColumnDef, RowComparator, RowFilter, colored_text_column, optional_text_column,
@@ -71,3 +72,4 @@ pub use row_click::{RowClickAction, RowClickable};
 pub use selection::SelectionState;
 pub use sort::{SortDirection, SortState};
 pub use view::{DataGrid, data_grid};
+pub use width::{ColumnWidths, MIN_COLUMN_WIDTH};
