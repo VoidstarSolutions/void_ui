@@ -44,6 +44,9 @@ checkin from the top, verify, commit, repeat.
   per-column filter-input row; a persistent accent + ● marker on
   filtered columns so a filtered view is never mistaken for the full
   set *(was Tier 1.2)*
+- **Conditional cell formatting**: `colored_text_column(fmt, color)` —
+  per-row label color from `(&R, &Theme)`, theme-aware across variants
+  (demo Side column: buys green / sells coral) *(was Tier 1.3)*
 
 ## ⚠️ ARCHITECT REVIEW REQUESTED
 
@@ -79,18 +82,14 @@ Each item: **value justification (≤1 sentence)** · rough size · depends-on �
 
 1. ✅ **DONE — `data_grid` builder refactor.** (See Done.)
 2. ✅ **DONE — Column filtering.** (See Done.)
-3. **← NEXT: Conditional cell formatting** (e.g. gain=green/loss=red,
-   number formats) — Color and number formatting are how a finance user
-   reads sign and magnitude at a glance, and the cell renderer already
-   supports it, so it's high value at low cost. · S · — · IronCalc, Kendo
-   *Appearance/Templates*.
+3. ✅ **DONE — Conditional cell formatting.** (See Done.)
 
 ### Tier 2 — layout & navigation for wide tables
 
-4. **Horizontal scroll + column resize** — Financial tables are wide
-   (price, Δ, %Δ, vol, bid/ask…); users must scroll and resize columns to
-   fit their screen. · L · — (resolves fixed-width limit) · Kendo
-   *Columns / Scroll Modes*, Longbridge table.
+4. **← NEXT: Horizontal scroll + column resize** — Financial tables are
+   wide (price, Δ, %Δ, vol, bid/ask…); users must scroll and resize
+   columns to fit their screen. · L · — (resolves fixed-width limit) ·
+   Kendo *Columns / Scroll Modes*, Longbridge table.
 5. **Column pin / freeze** — Keeping the Symbol/identifier column frozen
    while metric columns scroll is essential for wide quote tables. · M ·
    #4 · Kendo *Columns (locked)*.
