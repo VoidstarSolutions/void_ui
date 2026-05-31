@@ -329,28 +329,32 @@ where
     DataGrid::new(columns)
 }
 
-/// The parts of a `Vec<ColumnDef>` the view layer needs, decomposed
-/// into parallel, `Arc`-shared vectors: per-column rendering slots,
-/// clipboard text projectors, a `sortable` flag, comparators, and a
-/// `filterable` flag.
-type DecomposedColumns<R, State> = (
-    Arc<Vec<ColumnRender<R, State>>>,
-    Arc<Vec<Option<TextProjector<R>>>>,
-    Vec<bool>,
-    Arc<Vec<Option<RowComparator<R>>>>,
-    Vec<bool>,
-);
+/// The per-column data the view layer needs, decomposed from a
+/// `Vec<ColumnDef>` into parallel, index-aligned collections. A named
+/// struct (rather than a tuple) so callers read fields by name and
+/// reordering can't silently swap two same-typed members.
+///
+/// The `Arc`-wrapped members are shared between the synchronous header
+/// builder and the `virtual_scroll` row-builder closure.
+struct DecomposedColumns<R, State> {
+    /// Per-column rendering slot (title, effective width, align, renderer).
+    render_slots: Arc<Vec<ColumnRender<R, State>>>,
+    /// Per-column clipboard text projector (`None` ⇒ empty TSV cell).
+    text_projectors: Arc<Vec<Option<TextProjector<R>>>>,
+    /// Per-column "is sortable" flag (a comparator is present).
+    sortable: Vec<bool>,
+    /// Per-column comparators, used by the body to derive sort order.
+    comparators: Arc<Vec<Option<RowComparator<R>>>>,
+    /// Per-column "is filterable" flag (a predicate is present). The
+    /// predicate itself is dropped — the host applies filtering — so the
+    /// grid keeps only the flag (to decide whether to show a filter input).
+    filterable: Vec<bool>,
+}
 
-/// Splits each [`ColumnDef`] into its rendering slot, clipboard text
-/// projector, and comparator (positionally aligned), plus `sortable` /
-/// `filterable` flags per column. The filter *predicate* is dropped —
-/// the host applies filtering — so the grid keeps only the flag (to
-/// decide whether to show a filter input). Each slot's `width` is the
-/// *effective* width (override from `widths`, else the column default),
-/// so every width consumer — header, body cells, filter inputs, and the
-/// total content width — reads it uniformly. The `Arc`s are shared
-/// between the synchronous header builder and the `virtual_scroll`
-/// row-builder closure.
+/// Splits each [`ColumnDef`] into the parallel collections of
+/// [`DecomposedColumns`]. Each slot's `width` is the *effective* width
+/// (override from `widths`, else the column default), so every width
+/// consumer reads it uniformly.
 fn decompose_columns<R, State>(
     columns: Vec<ColumnDef<R, State>>,
     widths: &ColumnWidths,
@@ -371,13 +375,13 @@ fn decompose_columns<R, State>(
         });
     }
     let sortable: Vec<bool> = comparators.iter().map(Option::is_some).collect();
-    (
-        Arc::new(render_slots),
-        Arc::new(text_projectors),
+    DecomposedColumns {
+        render_slots: Arc::new(render_slots),
+        text_projectors: Arc::new(text_projectors),
         sortable,
-        Arc::new(comparators),
+        comparators: Arc::new(comparators),
         filterable,
-    )
+    }
 }
 
 /// Turns a finished [`DataGrid`] builder into the view tree. Kept as a
@@ -411,8 +415,13 @@ where
         empty
     });
 
-    let (render_slots, text_projectors, sortable, comparators, filterable) =
-        decompose_columns(columns, &column_widths);
+    let DecomposedColumns {
+        render_slots,
+        text_projectors,
+        sortable,
+        comparators,
+        filterable,
+    } = decompose_columns(columns, &column_widths);
 
     // --- Header row. Sortable columns get a clickable header that
     //     cycles the column's sort, plus an arrow on the active column;
@@ -438,7 +447,9 @@ where
     // width), so the header lines up with the body/filter strips by
     // construction. Made resizable when a resize callback is supplied.
     let mut header_strip = column_strip(header_widths, row_height, header_cells);
-    if let Some(width_change) = width_change.clone() {
+    // Move (don't clone) the resize callback: this is its only use, so a
+    // clone would bump the `Arc` refcount only to drop the original.
+    if let Some(width_change) = width_change {
         let style = SeparatorStyle {
             line: theme.palette.border,
             active: theme.palette.teal,
