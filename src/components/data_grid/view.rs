@@ -506,6 +506,55 @@ where
     }
 }
 
+// --- MARK: Row-index boundaries ----------------------------------------
+//
+// A row index is logically *one* quantity — a 0-based position into the
+// host's row slice — but three crates impose three integer types on it,
+// so the body builder is forced to convert between them:
+//
+// - `usize` is the native form: it indexes the data slice (`data.get`)
+//   and the sort-order vector. We treat it as canonical inside the body.
+// - `u64` is the **selection domain**: [`SelectionState`] stores `u64`
+//   so a selection is independent of any particular slice length (see
+//   its module doc). This is the public API type, hence the domain pick.
+// - `i64` is forced by xilem's `virtual_scroll`, whose range bound *and*
+//   callback index are `i64`.
+//
+// (Column indices are a *separate* domain and are uniformly `usize`
+// everywhere — see `filter`/`sort` — so they need no conversion.)
+//
+// All conversions go through the four named helpers below so the casts
+// aren't scattered and unexplained. Each saturates an out-of-range value
+// to its type's max; downstream lookups (`slice.get`, `order.get`,
+// `selection.contains`) then treat that as "past the end" — the exact
+// behavior wanted for a row scrolled past a shrinking dataset. On 64-bit
+// targets `usize`↔`u64` is lossless, but the checked form keeps us
+// correct on 32-bit and satisfies `clippy::pedantic` uniformly.
+
+/// `virtual_scroll` range bound: row count (`u64`) → `i64`. Saturates to
+/// `i64::MAX` (a ~9.2e18-row grid is not reachable in practice).
+fn scroll_range_end(row_count: u64) -> i64 {
+    i64::try_from(row_count).unwrap_or(i64::MAX)
+}
+
+/// `virtual_scroll` callback index (`i64`) → slice index (`usize`).
+/// Saturates so a stray negative/oversized index reads as past-the-end.
+fn scroll_idx_to_slice(idx: i64) -> usize {
+    usize::try_from(idx).unwrap_or(usize::MAX)
+}
+
+/// Slice index (`usize`) → selection domain (`u64`). Saturates to
+/// `u64::MAX`.
+fn slice_to_selection(idx: usize) -> u64 {
+    u64::try_from(idx).unwrap_or(u64::MAX)
+}
+
+/// Selection domain (`u64`) → slice index (`usize`). Saturates to
+/// `usize::MAX`, which the subsequent `slice.get` rejects as past-the-end.
+fn selection_to_slice(idx: u64) -> usize {
+    usize::try_from(idx).unwrap_or(usize::MAX)
+}
+
 // --- MARK: TSV projection ----------------------------------------------
 
 fn project_tsv<R>(
@@ -519,7 +568,7 @@ fn project_tsv<R>(
     let mut out = String::new();
     let mut first_row = true;
     for idx_u64 in selection.iter() {
-        let i = usize::try_from(idx_u64).unwrap_or(usize::MAX);
+        let i = selection_to_slice(idx_u64);
         let Some(row) = data.get(i) else { continue };
         if !first_row {
             out.push('\n');
@@ -764,10 +813,10 @@ where
         rows,
         selection_lens,
     } = params;
-    let valid_range_end = i64::try_from(row_count).unwrap_or(i64::MAX);
+    let valid_range_end = scroll_range_end(row_count);
     let sort_cache = Arc::new(Mutex::new(SortOrderCache::default()));
     virtual_scroll(0..valid_range_end, move |state: &mut State, idx: i64| {
-        let virtual_idx = usize::try_from(idx).unwrap_or(usize::MAX);
+        let virtual_idx = scroll_idx_to_slice(idx);
 
         // Map virtual row → source row through the active sort order.
         // `sort` is the frame-time snapshot captured by this closure;
@@ -776,7 +825,7 @@ where
             resolve_source_idx(sort, &comparators, &sort_cache, (*rows)(state), virtual_idx);
 
         let is_selected = match (selection_lens.as_ref(), source_idx) {
-            (Some(sel), Some(s)) => (**sel)(state).contains(u64::try_from(s).unwrap_or(u64::MAX)),
+            (Some(sel), Some(s)) => (**sel)(state).contains(slice_to_selection(s)),
             _ => false,
         };
 
@@ -819,9 +868,7 @@ where
         let lens_for_click = selection_lens.clone();
         clickable_row(row_view, move |state: &mut State, action| {
             let Some(source) = source_idx else { return };
-            let Ok(row) = u64::try_from(source) else {
-                return;
-            };
+            let row = slice_to_selection(source);
             let Some(sel_lens) = lens_for_click.as_ref() else {
                 return;
             };
