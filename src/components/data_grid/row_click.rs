@@ -19,8 +19,10 @@ use masonry::core::{
     TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Point, Size};
-use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
+use masonry::kurbo::{Axis, Size};
+use masonry::layout::{LenReq, Length};
+
+use super::single_child;
 
 /// Action emitted by [`RowClickable`] on primary-button release. The
 /// receiver inspects the modifiers to decide whether this is a plain
@@ -120,7 +122,7 @@ impl Widget for RowClickable {
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.child);
+        single_child::register_children(ctx, &mut self.child);
     }
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
@@ -133,21 +135,11 @@ impl Widget for RowClickable {
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        let auto_length = len_req.into();
-        ctx.compute_length(
-            &mut self.child,
-            auto_length,
-            LayoutSize::maybe(axis.cross(), cross_length),
-            axis,
-            cross_length,
-        )
+        single_child::measure(ctx, &mut self.child, axis, len_req, cross_length)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let child_size = ctx.compute_size(&mut self.child, SizeDef::fixed(size), size.into());
-        ctx.run_layout(&mut self.child, child_size);
-        ctx.place_child(&mut self.child, Point::ORIGIN);
-        ctx.derive_baselines(&self.child);
+        single_child::layout(ctx, &mut self.child, size);
     }
 
     fn paint(
@@ -171,7 +163,7 @@ impl Widget for RowClickable {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.child.id()])
+        single_child::children_ids(&self.child)
     }
 
     fn accepts_focus(&self) -> bool {

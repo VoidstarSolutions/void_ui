@@ -79,6 +79,7 @@ pub mod filter;
 pub mod header_click;
 pub mod row_click;
 pub mod selection;
+mod single_child;
 pub mod sort;
 pub mod view;
 pub mod width;
