@@ -51,11 +51,22 @@ checkin from the top, verify, commit, repeat.
   horizontal-only `scroll_container`, so columns wider than the viewport
   are reachable and header/body share the offset automatically; replaced
   the `OverflowWarn` warning *(Tier 2 #4)*
+- **Shared column geometry via `ColumnStrip`**: every row (header, body,
+  filter) is laid out by a `ColumnStrip` widget that places cells at
+  authoritative x-positions from a shared width list (multi-child
+  `CollectionWidget` + `ViewSequence`, mirroring `flex_wrap`). Rows align
+  *by construction* — fixing the long-standing filter-input drift that
+  independent flex-rows caused (they only lined up by coincidence). Cells
+  are force-sized via `run_layout`, so even a fill-greedy `text_input`
+  can't widen its column. *(Tier 2 #4 foundation)*
 - **Drag-to-resize columns**: `ColumnWidths` override model +
-  `MIN_COLUMN_WIDTH` clamp; a `ResizeHandle` drag widget on each header
-  edge reports the new width via `.on_column_resize`; effective widths
-  feed header / filter / body / scroll-extent uniformly; EwResize cursor
-  on the handle *(Tier 2 #4)*
+  `MIN_COLUMN_WIDTH` clamp. The header `ColumnStrip` *itself* owns the
+  resize — it hit-tests a grab zone at each column boundary, draws a
+  separator (teal on hover/drag), shows the EwResize cursor, and emits
+  the new width via `.on_column_resize` (returning `MessageResult::Action`
+  to re-run app_logic). No overlay/handle widgets — same pattern as
+  masonry's `Split` owning its bar. Effective widths feed header / filter
+  / body / scroll-extent uniformly *(Tier 2 #4)*
 
 ## ⚠️ ARCHITECT REVIEW REQUESTED
 
@@ -72,32 +83,6 @@ checkin from the top, verify, commit, repeat.
 
 ## Deferred polish (tracked, not yet scheduled)
 
-- **Sortable-header hover highlight stops ~7px short of the right edge**
-  — the resize handle is a sibling of the `HeaderClickable` (which is
-  pointer-inert toward its child, so the handle *must* be a sibling to
-  receive its own cursor/drag). The hover tint therefore covers only the
-  content area, not under the handle. Column boundary + body alignment
-  are correct; visual only. A full-width highlight needs a ZStack overlay
-  of the handle, or making `HeaderClickable` propagate pointer events to
-  its child. *(An attempt to nest the handle inside the header was
-  reverted — it killed the handle's cursor/drag on sortable columns.)*
-- **Filter-input column alignment / sizing** — the per-column filter
-  inputs don't line up cleanly with their header/body columns (offset
-  grows toward the right), and the box doesn't size/track perfectly on
-  resize. Root cause appears structural: masonry's `text_input` (current
-  `main`) is *fill-greedy* and renders its placeholder as a separate
-  Label with its own intrinsic width, so it doesn't clamp inside a
-  fixed-width grid cell the way a `label` does. Body/header cells use
-  `aligned_cell` = `sized_box(flex_row(content)).fixed_width(W)`; filter
-  cells use `sized_box(input).fixed_width(W)` — and the input still
-  overflows W. **Several in-place fixes failed; do NOT keep guessing.**
-  Next attempt must be empirical: build a throwaway 2-row harness (one
-  `label`, one `text_input`, both in identical `aligned_cell` wrappers)
-  and observe actual geometry before changing grid code. Candidate
-  fixes to test there: (a) wrap input in an inner `flex_row((flex_item(
-  input, 1.0),))` so the box drives width; (b) a clip/constrain widget
-  around the input; (c) a custom fixed-width container. Current grid
-  code is reverted to the last working commit (pre-existing offset).
 - **Global UI zoom/scaling** — a theme/density-driven scale applied
   across *all* components (supersedes component-local size constants,
   e.g. the filter input). Cross-cutting, not a data_grid-only change.

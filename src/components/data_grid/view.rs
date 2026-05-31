@@ -32,10 +32,10 @@ use xilem::view::{
 use xilem::{AnyWidgetView, Pod, ViewCtx};
 
 use super::column::{CellAlign, CellRenderer, ColumnDef, RowComparator, TextProjector};
+use super::column_strip::{SeparatorStyle, column_strip};
 use super::copy_shortcut::CopyOnShortcut;
 use super::filter::FilterState;
 use super::header_click::clickable_header;
-use super::resize::{ResizeHandle, resize_handle};
 use super::row_click::clickable_row;
 use super::selection::SelectionState;
 use super::sort::{SortDirection, SortState, display_order};
@@ -415,18 +415,18 @@ where
         decompose_columns(columns, &column_widths);
 
     // --- Header row. Sortable columns get a clickable header that
-    //     cycles the column's sort, plus an arrow on the active
-    //     column; columns with an active filter get a persistent
-    //     accent + marker; with resize enabled, each header gets a
-    //     trailing drag handle. Non-sortable columns render an inert
-    //     label.
+    //     cycles the column's sort, plus an arrow on the active column;
+    //     columns with an active filter get a persistent accent + marker.
+    //     When resize is enabled the header ColumnStrip itself owns the
+    //     column-boundary grab zones + separators (like masonry's Split
+    //     owns its bar) — no overlay, so cell hover/sort are untouched.
     let header_ctx = HeaderCtx {
         sort,
         sort_lens: sort_lens.as_ref(),
-        width_change: width_change.as_ref(),
         theme: &theme,
     };
-    let header_cells: Vec<AnyFlexChild<State, ()>> = render_slots
+    let header_widths: Vec<f64> = render_slots.iter().map(|s| s.width).collect();
+    let header_cells: Vec<Box<AnyWidgetView<State>>> = render_slots
         .iter()
         .enumerate()
         .map(|(idx, slot)| {
@@ -434,8 +434,20 @@ where
             header_cell(idx, slot, sortable[idx], filtered, &header_ctx)
         })
         .collect();
-    let header = sized_box(flex_row(header_cells).cross_axis_alignment(CrossAxisAlignment::Center))
-        .fixed_height(Length::px(row_height))
+    // ColumnStrip places each cell at an authoritative x (= cumulative
+    // width), so the header lines up with the body/filter strips by
+    // construction. Made resizable when a resize callback is supplied.
+    let mut header_strip = column_strip(header_widths, row_height, header_cells);
+    if let Some(width_change) = width_change.clone() {
+        let style = SeparatorStyle {
+            line: theme.palette.border,
+            active: theme.palette.teal,
+        };
+        header_strip = header_strip.resizable(style, move |state: &mut State, col, new_width| {
+            width_change(state, col, new_width);
+        });
+    }
+    let header = sized_box(header_strip)
         .background_color(theme.palette.surface_2)
         .border(theme.palette.border, Length::px(1.0));
 
@@ -634,7 +646,6 @@ fn aligned_cell<State: 'static>(
 struct HeaderCtx<'a, State> {
     sort: SortState,
     sort_lens: Option<&'a SortLens<State>>,
-    width_change: Option<&'a WidthChange<State>>,
     theme: &'a Theme,
 }
 
@@ -655,7 +666,7 @@ fn header_cell<State, R>(
     sortable: bool,
     filtered: bool,
     ctx: &HeaderCtx<'_, State>,
-) -> AnyFlexChild<State, ()>
+) -> Box<AnyWidgetView<State>>
 where
     State: 'static,
     R: 'static,
@@ -682,19 +693,17 @@ where
         .letter_spacing(1.2)
         .color(title_color);
 
-    // When resizable, reserve the handle's width *inside* the column so
-    // the right edge (and thus the column boundary) still lands at
-    // `slot.width`, matching the body cells.
-    let content_width = if ctx.width_change.is_some() {
-        (slot.width - ResizeHandle::width()).max(0.0)
-    } else {
-        slot.width
-    };
-    let cell = aligned_cell(Box::new(header_label), content_width, slot.align);
+    // The enclosing ColumnStrip cell is exactly `slot.width` and fills
+    // it. The resize grab zone + separator are owned by the strip itself
+    // (it hit-tests the trailing edge), so the cell content needn't
+    // reserve any width and the hover highlight spans the full column.
+    let cell = aligned_cell(Box::new(header_label), slot.width, slot.align);
 
     // Interactive (sort) only when the column is sortable *and* a write
-    // lens is available; otherwise an inert label.
-    let content: Box<AnyWidgetView<State>> = match (sortable, ctx.sort_lens) {
+    // lens is available; otherwise an inert label. The clickable wrapper
+    // now spans the full column width, so the hover highlight covers the
+    // whole header cell.
+    match (sortable, ctx.sort_lens) {
         (true, Some(lens)) => {
             let lens = Arc::clone(lens);
             Box::new(clickable_header(
@@ -706,27 +715,6 @@ where
             ))
         }
         _ => cell,
-    };
-
-    // Append the resize handle as a sibling at the trailing edge. It's a
-    // separate hit target from the sort click (and consumes its own
-    // press), so dragging never triggers a sort.
-    match ctx.width_change {
-        Some(width_change) => {
-            let width_change = Arc::clone(width_change);
-            let handle = resize_handle(
-                slot.width,
-                theme.palette.border,
-                theme.palette.teal,
-                move |state: &mut State, new_width: f64| {
-                    width_change(state, idx, new_width);
-                },
-            );
-            let row = flex_row((flex_item(content, 0.0), flex_item(handle, 0.0)))
-                .cross_axis_alignment(CrossAxisAlignment::Center);
-            flex_item(row, 0.0).into()
-        }
-        None => flex_item(content, 0.0).into(),
     }
 }
 
@@ -782,14 +770,16 @@ where
         };
 
         let data = (*rows)(state);
-        let cells: Vec<AnyFlexChild<State, ()>> =
+        let widths: Vec<f64> = render_slots.iter().map(|s| s.width).collect();
+        let cells: Vec<Box<AnyWidgetView<State>>> =
             if let Some(row) = source_idx.and_then(|s| data.get(s)) {
                 render_slots
                     .iter()
                     .map(|slot| {
-                        let cell_view = (slot.render)(row, &theme);
-                        let cell = aligned_cell(cell_view, slot.width, slot.align);
-                        flex_item(cell, 0.0).into()
+                        // Cell content only; ColumnStrip owns the width.
+                        // Keep the per-cell alignment wrapper so Start/
+                        // Center/End still position text within the cell.
+                        aligned_cell((slot.render)(row, &theme), slot.width, slot.align)
                     })
                     .collect()
             } else {
@@ -801,8 +791,9 @@ where
         } else {
             Color::TRANSPARENT
         };
-        let row_view = sized_box(flex_row(cells).cross_axis_alignment(CrossAxisAlignment::Center))
-            .fixed_height(Length::px(row_height))
+        // ColumnStrip gives every body row the same authoritative column
+        // x-positions as the header/filter strips.
+        let row_view = sized_box(column_strip(widths, row_height, cells))
             .background_color(row_bg);
 
         // Each row's click handler closes over the (cloned) selection
@@ -885,36 +876,39 @@ where
     State: 'static,
     R: 'static,
 {
-    let cells: Vec<AnyFlexChild<State, ()>> = render_slots
+    let widths: Vec<f64> = render_slots.iter().map(|s| s.width).collect();
+    let cells: Vec<Box<AnyWidgetView<State>>> = render_slots
         .iter()
         .enumerate()
-        .map(|(idx, slot)| {
-            let cell: Box<AnyWidgetView<State>> = if filterable[idx] {
+        .map(|(idx, slot)| -> Box<AnyWidgetView<State>> {
+            let _ = slot;
+            if filterable[idx] {
                 let current = filter.get(idx).unwrap_or_default().to_string();
                 let on_change = Arc::clone(on_change);
-                // Don't override the input's text size: masonry renders
-                // the placeholder as a separate Label at the *default*
-                // font size (it doesn't inherit `text_size`), so a
-                // smaller `text_size` here would leave the placeholder
-                // mismatched and clipped. Default size keeps typed text
-                // and placeholder consistent. A theme-wide UI scale is
-                // the proper future lever for sizing.
+                // Default text size: masonry renders the placeholder as a
+                // separate Label at the default font size (it doesn't
+                // inherit `text_size`), so overriding it would clip the
+                // placeholder. ColumnStrip force-sizes the cell to the
+                // column width, so the input can't overflow its column —
+                // this is what finally fixed the filter-alignment bug.
                 let input = text_input(current, move |state: &mut State, text: String| {
                     (*on_change)(state, idx, text);
                 })
                 .text_color(theme.palette.text)
                 .placeholder("Filter");
-                Box::new(sized_box(input).fixed_width(Length::px(slot.width)))
+                Box::new(input)
             } else {
-                Box::new(sized_box(label("")).fixed_width(Length::px(slot.width)))
-            };
-            flex_item(cell, 0.0).into()
+                Box::new(label(""))
+            }
         })
         .collect();
-    // No fixed height: the row sizes to the text input's natural height
-    // (font + the widget's internal padding). Forcing it to the compact
-    // data-row height clips the glyphs vertically.
-    sized_box(flex_row(cells).cross_axis_alignment(CrossAxisAlignment::Center))
+    // Filter row uses the body's fixed row height (matches data rows);
+    // ColumnStrip enforces both per-column width and row height.
+    sized_box(column_strip(widths, FILTER_ROW_HEIGHT, cells))
         .background_color(theme.palette.surface)
         .border(theme.palette.border, Length::px(1.0))
 }
+
+/// Fixed height for the filter-input row. Slightly taller than a data
+/// row so the `text_input` (font + its internal padding) isn't clipped.
+const FILTER_ROW_HEIGHT: f64 = 30.0;

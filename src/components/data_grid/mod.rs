@@ -12,14 +12,18 @@
 //! Backed by masonry's [`VirtualScroll`][masonry::widgets::VirtualScroll]
 //! for row virtualization, and wrapped in a horizontal-only
 //! [`scroll_container`](crate::components::scroll_container) so columns
-//! wider than the viewport are reachable. Mostly composed of xilem
-//! stock, with four small custom masonry wrappers:
-//! [`copy_shortcut::CopyOnShortcut`] (catches Ctrl/Cmd+C and dumps a
-//! TSV payload to the clipboard), [`row_click::RowClickable`] (emits
-//! modifier-aware row clicks for selection),
+//! wider than the viewport are reachable. Each row (header, body, filter)
+//! is a [`column_strip::ColumnStrip`] — a multi-child widget that places
+//! cells at authoritative x-positions from a shared width list, so the
+//! three rows share column geometry *by construction* (independent
+//! flex-rows only line up by coincidence). A resizable `ColumnStrip`
+//! also owns its column-boundary drag zones, like masonry's `Split` owns
+//! its bar. The rest is xilem stock plus three small custom masonry
+//! wrappers: [`copy_shortcut::CopyOnShortcut`] (catches Ctrl/Cmd+C and
+//! dumps a TSV payload to the clipboard), [`row_click::RowClickable`]
+//! (emits modifier-aware row clicks for selection), and
 //! [`header_click::HeaderClickable`] (emits a plain click on a column
-//! header to cycle its sort), and [`resize::ResizeHandle`] (a draggable
-//! header-edge strip that emits a column's new width).
+//! header to cycle its sort).
 //!
 //! Entry points: [`view::data_grid`] for the xilem view,
 //! [`column::ColumnDef`] for the per-column contract,
@@ -47,9 +51,10 @@
 //! *effective* width per column — resolved once and shared by the
 //! header, filter inputs, body cells, and the total content width. When
 //! [`DataGrid::on_column_resize`](view::DataGrid::on_column_resize) is
-//! set, each header gets a trailing drag handle ([`resize::ResizeHandle`])
-//! that reports the column's proposed absolute width; the host stores it
-//! in `ColumnWidths` (clamped to
+//! set, the header [`column_strip::ColumnStrip`] becomes resizable: it
+//! hit-tests a grab zone at each column's trailing edge (drawing a
+//! separator there) and reports the column's proposed absolute width as
+//! it's dragged; the host stores it in `ColumnWidths` (clamped to
 //! [`width::MIN_COLUMN_WIDTH`]) and passes the snapshot back.
 //!
 //! ## Known limitations (v1)
@@ -67,11 +72,11 @@
 //!   content) is not implemented yet.
 
 pub mod column;
+pub mod column_strip;
 pub mod copy_shortcut;
 pub mod demo;
 pub mod filter;
 pub mod header_click;
-pub mod resize;
 pub mod row_click;
 pub mod selection;
 pub mod sort;
@@ -82,10 +87,10 @@ pub use column::{
     CellAlign, ColumnDef, RowComparator, RowFilter, colored_text_column, optional_text_column,
     text_column,
 };
+pub use column_strip::{ColumnResize, ColumnStrip, SeparatorStyle};
 pub use copy_shortcut::CopyOnShortcut;
 pub use filter::{FilterState, filtered_indices};
 pub use header_click::{HeaderClickable, HeaderClicked};
-pub use resize::{ResizeDrag, ResizeHandle};
 pub use row_click::{RowClickAction, RowClickable};
 pub use selection::SelectionState;
 pub use sort::{SortDirection, SortState};
