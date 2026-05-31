@@ -32,14 +32,14 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     };
 
     let both_axes = with_source!(theme, {
-        sized_box(scroll_container(content_grid::<S>(theme, 12, 8)).render(theme))
+        sized_box(scroll_container(content_grid::<S>(theme, 12, 8).boxed()).render(theme))
             .fixed_width(Length::px(320.0))
             .fixed_height(Length::px(200.0))
     });
 
     let vertical_only = with_source!(theme, {
         sized_box(
-            scroll_container(content_grid::<S>(theme, 12, 8))
+            scroll_container(content_grid::<S>(theme, 12, 8).boxed())
                 .constrain_horizontal(true)
                 .render(theme),
         )
@@ -126,7 +126,7 @@ impl<S: 'static> View<S, (), ViewCtx> for ScrollContainerDemoPanel {
 
     fn build(&self, ctx: &mut ViewCtx, _: &mut S) -> (Self::Element, Self::ViewState) {
         let mut local: DemoState = DemoState::default();
-        let view: InnerView = make_inner_view(&self.theme,local).boxed();
+        let view: InnerView = make_inner_view(&self.theme, local).boxed();
         let (element, view_state) = view.build(ctx, &mut local);
         (
             element,
@@ -146,7 +146,7 @@ impl<S: 'static> View<S, (), ViewCtx> for ScrollContainerDemoPanel {
         element: Mut<'_, Self::Element>,
         _: &mut S,
     ) {
-        let new_view: InnerView = make_inner_view(&self.theme,vs.local).boxed();
+        let new_view: InnerView = make_inner_view(&self.theme, vs.local).boxed();
         new_view.rebuild(&vs.view, &mut vs.view_state, ctx, element, &mut vs.local);
         vs.view = new_view;
     }
@@ -184,12 +184,17 @@ fn make_inner_view(theme: &Theme, vis: DemoState) -> impl WidgetView<DemoState> 
         })
         .active(vis == ScrollBarVisibility::OnActivity)
         .render(theme),
+        radio("Always hidden", move |s: &mut DemoState| {
+            *s = ScrollBarVisibility::AlwaysHidden;
+        })
+        .active(vis == ScrollBarVisibility::AlwaysHidden)
+        .render(theme),
     ))
     .cross_axis_alignment(CrossAxisAlignment::Center)
     .gap(Length::px(16.0));
 
     let scroll = sized_box(
-        scroll_container(content_grid::<DemoState>(theme, 12, 8))
+        scroll_container(content_grid::<DemoState>(theme, 12, 8).boxed())
             .constrain_horizontal(true)
             .scroll_bar_visibility(vis)
             .render(theme),

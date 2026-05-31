@@ -1,9 +1,8 @@
 //! Scroll container — a clipping viewport with themed scrollbars on both axes.
 //!
-//! Wraps masonry's [`Portal`](masonry::widgets::Portal) widget in a `void_ui`
-//! builder so it fits the `.render(&theme)` API convention. The scrollbars
-//! are drawn by masonry; theme is stored for future color/width customization
-//! via masonry's property system.
+//! Wraps [`ScrollView`] in a builder so it fits the `.render(&theme)` API
+//! convention. The clip rect excludes scrollbar track areas, so content is
+//! never rendered behind scrollbars.
 //!
 //! ```ignore
 //! use void_ui::components::scroll_container;
@@ -13,11 +12,13 @@
 
 use std::marker::PhantomData;
 
-use masonry::properties::{AutoHideScrollBar, Collapsible};
-use masonry::widgets;
+use masonry::core::FromDynWidget;
+use masonry::properties::AutoHideScrollBar;
+
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
+use super::widget::{ContentClip, ScrollView};
 use crate::Theme;
 
 /// Controls when scrollbars are shown in a [`ScrollContainer`].
@@ -28,6 +29,8 @@ pub enum ScrollBarVisibility {
     AlwaysVisible,
     /// Scrollbars appear on pointer activity and fade out after a short delay.
     OnActivity,
+    /// Scrollbars are never shown; content fills the full viewport.
+    AlwaysHidden,
 }
 
 impl ScrollBarVisibility {
@@ -35,8 +38,8 @@ impl ScrollBarVisibility {
         matches!(self, Self::OnActivity)
     }
 
-    fn collapsible(self) -> bool {
-        matches!(self, Self::OnActivity)
+    fn always_hidden(self) -> bool {
+        matches!(self, Self::AlwaysHidden)
     }
 }
 
@@ -128,19 +131,24 @@ impl<V, State, Action> ViewMarker for ScrollContainerView<V, State, Action> {}
 impl<V, State, Action> View<State, Action, ViewCtx> for ScrollContainerView<V, State, Action>
 where
     V: WidgetView<State, Action>,
+    V::Widget: FromDynWidget + Sized,
     State: 'static,
     Action: 'static,
 {
-    type Element = Pod<widgets::Portal<V::Widget>>;
+    type Element = Pod<ScrollView<V::Widget>>;
     type ViewState = V::ViewState;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let (child_pod, child_state) = self.child.build(ctx, app_state);
-        let widget = widgets::Portal::new(child_pod.new_widget)
+        let scroll_view = ScrollView::new(child_pod.new_widget)
             .constrain_horizontal(self.constrain_horizontal)
             .constrain_vertical(self.constrain_vertical)
-            .content_must_fill(self.fill);
-        let pod = Pod::new_with_props(widget, AutoHideScrollBar(self.scroll_bar_visibility.auto_hide()));
+            .content_must_fill(self.fill)
+            .always_hide_scrollbars(self.scroll_bar_visibility.always_hidden());
+        let pod = Pod::new_with_props(
+            scroll_view,
+            AutoHideScrollBar(self.scroll_bar_visibility.auto_hide()),
+        );
         (pod, child_state)
     }
 
@@ -153,28 +161,27 @@ where
         app_state: &mut State,
     ) {
         if self.constrain_horizontal != prev.constrain_horizontal {
-            widgets::Portal::set_constrain_horizontal(&mut element, self.constrain_horizontal);
+            ScrollView::set_constrain_horizontal(&mut element, self.constrain_horizontal);
         }
         if self.constrain_vertical != prev.constrain_vertical {
-            widgets::Portal::set_constrain_vertical(&mut element, self.constrain_vertical);
+            ScrollView::set_constrain_vertical(&mut element, self.constrain_vertical);
         }
         if self.fill != prev.fill {
-            widgets::Portal::set_content_must_fill(&mut element, self.fill);
+            ScrollView::set_content_must_fill(&mut element, self.fill);
         }
         if self.scroll_bar_visibility != prev.scroll_bar_visibility {
             element.insert_prop(AutoHideScrollBar(self.scroll_bar_visibility.auto_hide()));
+            ScrollView::set_always_hide_scrollbars(
+                &mut element,
+                self.scroll_bar_visibility.always_hidden(),
+            );
         }
         {
-            let mut h = widgets::Portal::horizontal_scrollbar_mut(&mut element);
-            h.insert_prop(Collapsible(self.scroll_bar_visibility.collapsible()));
+            let mut clip = ScrollView::child_mut(&mut element);
+            let mut child = ContentClip::child_mut(&mut clip);
+            self.child
+                .rebuild(&prev.child, view_state, ctx, child.downcast(), app_state);
         }
-        {
-            let mut v = widgets::Portal::vertical_scrollbar_mut(&mut element);
-            v.insert_prop(Collapsible(self.scroll_bar_visibility.collapsible()));
-        }
-        let child_element = widgets::Portal::child_mut(&mut element);
-        self.child
-            .rebuild(&prev.child, view_state, ctx, child_element, app_state);
     }
 
     fn teardown(
@@ -183,8 +190,9 @@ where
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
     ) {
-        let child_element = widgets::Portal::child_mut(&mut element);
-        self.child.teardown(view_state, ctx, child_element);
+        let mut clip = ScrollView::child_mut(&mut element);
+        let mut child = ContentClip::child_mut(&mut clip);
+        self.child.teardown(view_state, ctx, child.downcast());
     }
 
     fn message(
@@ -194,8 +202,9 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        let child_element = widgets::Portal::child_mut(&mut element);
+        let mut clip = ScrollView::child_mut(&mut element);
+        let mut child = ContentClip::child_mut(&mut clip);
         self.child
-            .message(view_state, message, child_element, app_state)
+            .message(view_state, message, child.downcast(), app_state)
     }
 }
