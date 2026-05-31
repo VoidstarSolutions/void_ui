@@ -144,7 +144,13 @@ impl Widget for ClipboardWidget {
         Length::px(f64::from(self.theme.density.ui_font_size))
     }
 
-    fn layout(&mut self, _ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, _size: masonry::kurbo::Size) {}
+    fn layout(
+        &mut self,
+        _ctx: &mut LayoutCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        _size: masonry::kurbo::Size,
+    ) {
+    }
 
     fn paint(
         &mut self,
@@ -161,12 +167,13 @@ impl Widget for ClipboardWidget {
         };
 
         let icon_size = f64::from(self.theme.density.ui_font_size);
+        let stroke_width = icon_size / 10.0; // or another scaling factor
         let icon_x = (size.width - icon_size) * 0.5;
         let icon_y = (size.height - icon_size) * 0.5;
         let transform = Affine::translate((icon_x, icon_y)) * Affine::scale(icon_size);
 
         painter
-            .stroke(transform * icon, &Stroke::new(1.5), color)
+            .stroke(transform * icon, &Stroke::new(stroke_width), color)
             .draw();
     }
 
