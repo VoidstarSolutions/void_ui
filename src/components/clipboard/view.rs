@@ -1,5 +1,5 @@
-//! Xilem view that wraps [`ClipboardWidget`] and forwards the copy action
-//! to a caller-supplied callback.
+//! Xilem view that wraps a [`ThemedButton`] containing a [`ClipboardWidget`]
+//! icon child, and forwards the copy action to a caller-supplied callback.
 //!
 //! ```ignore
 //! use void_ui::components::clipboard;
@@ -8,15 +8,19 @@
 //! })
 //! .render(&theme)
 //! ```
+//!
+//! [`ThemedButton`]: crate::components::button::widget::ThemedButton
 
 use std::marker::PhantomData;
 
-use masonry::core::ArcStr;
+use masonry::core::{ArcStr, NewWidget};
+use masonry::widgets::ButtonPress;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx};
 
-use super::widget::{ClipboardPress, ClipboardWidget};
+use super::widget::ClipboardWidget;
 use crate::Theme;
+use crate::components::button::widget::ThemedButton;
 
 /// Builder for a clipboard icon button.
 ///
@@ -75,11 +79,13 @@ where
     Action: 'static,
     F: Fn(&mut State, &str) -> Action + Send + Sync + 'static,
 {
-    type Element = Pod<ClipboardWidget>;
+    type Element = Pod<ThemedButton>;
     type ViewState = ();
 
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
-        let widget = ClipboardWidget::new(&self.theme);
+        let icon = NewWidget::new(ClipboardWidget::new(&self.theme));
+        let widget = ThemedButton::new(icon.erased(), &self.theme)
+            .with_accessibility_label(Some("Copy to clipboard".into()));
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, ())
     }
@@ -93,7 +99,10 @@ where
         _app_state: &mut State,
     ) {
         if self.theme != prev.theme {
-            ClipboardWidget::set_theme(&mut element, &self.theme);
+            ThemedButton::set_theme(&mut element, &self.theme);
+            let mut child = ThemedButton::child_mut(&mut element);
+            let mut icon = child.downcast::<ClipboardWidget>();
+            ClipboardWidget::set_theme(&mut icon, &self.theme);
         }
     }
 
@@ -113,9 +122,11 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        match message.take_message::<ClipboardPress>() {
+        match message.take_message::<ButtonPress>() {
             Some(_) => {
-                ClipboardWidget::set_copied(&mut element, true);
+                let mut child = ThemedButton::child_mut(&mut element);
+                let mut icon = child.downcast::<ClipboardWidget>();
+                ClipboardWidget::set_copied(&mut icon, true);
                 MessageResult::Action((self.callback)(app_state, &self.value))
             }
             None => MessageResult::Stale,
