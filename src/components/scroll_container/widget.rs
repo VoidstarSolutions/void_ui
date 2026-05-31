@@ -649,7 +649,7 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
 
         match event {
             PointerEvent::Scroll(PointerScrollEvent { delta, .. }) => {
-                let scale = ctx.get_scale_factor();
+                let scale = ctx.scale_factor();
                 let line = PhysicalPosition {
                     x: 120.0 * scale,
                     y: 120.0 * scale,
