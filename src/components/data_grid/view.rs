@@ -931,15 +931,15 @@ where
                 // anchor id, resolve the inclusive id span from the
                 // ordered slice, then apply — each borrow disjoint.
                 let anchor = (**sel_lens)(state).anchor();
-                match anchor {
-                    Some(anchor_id) => {
-                        let ids = {
-                            let data = (*rows_for_click)(state);
-                            visual_range_ids(data, &row_id_for_click, anchor_id, target_id)
-                        };
-                        (**sel_lens)(state).extend_range(ids);
-                    }
-                    // No anchor yet: behave like a plain click.
+                let range = anchor.and_then(|anchor_id| {
+                    let data = (*rows_for_click)(state);
+                    visual_range_ids(data, &row_id_for_click, anchor_id, target_id)
+                });
+                match range {
+                    Some(ids) => (**sel_lens)(state).extend_range(ids),
+                    // No anchor yet, or the anchor isn't in the current
+                    // view (e.g. filtered out): plain-select the target,
+                    // which reseats the anchor there for the next extend.
                     None => (**sel_lens)(state).replace_with(target_id),
                 }
             } else if action.action_mod {
@@ -957,9 +957,14 @@ where
 ///
 /// This is what makes shift-extend follow on-screen order regardless of
 /// sort/filter: it locates both rows' positions in the ordered slice and
-/// collects every id between them. If the anchor isn't in the current
-/// view (e.g. it was filtered out), the range has no on-screen start, so
-/// it degrades to just the target id — shift becomes a single select.
+/// collects every id between them.
+///
+/// Returns `None` when either endpoint isn't present in the current view
+/// — most importantly when the anchor was filtered out. The range then
+/// has no on-screen start, so the caller falls back to a plain select on
+/// the target (which also *reseats* the anchor there); leaving the stale
+/// off-screen anchor in place would wedge every later shift-click on a
+/// single select.
 ///
 /// O(n) over the slice, but only on a shift-click (never per frame).
 fn visual_range_ids<R>(
@@ -967,7 +972,7 @@ fn visual_range_ids<R>(
     row_id: &RowIdByPosition<R>,
     anchor_id: u64,
     target_id: u64,
-) -> Vec<u64> {
+) -> Option<Vec<u64>> {
     let mut anchor_pos = None;
     let mut target_pos = None;
     for (pos, row) in data.iter().enumerate() {
@@ -979,13 +984,9 @@ fn visual_range_ids<R>(
             target_pos = Some(pos);
         }
     }
-    let (Some(a), Some(t)) = (anchor_pos, target_pos) else {
-        return vec![target_id];
-    };
+    let (a, t) = (anchor_pos?, target_pos?);
     let (lo, hi) = if a <= t { (a, t) } else { (t, a) };
-    (lo..=hi)
-        .map(|pos| row_id.id_of(pos, &data[pos]))
-        .collect()
+    Some((lo..=hi).map(|pos| row_id.id_of(pos, &data[pos])).collect())
 }
 
 // --- MARK: STACK ASSEMBLY ----------------------------------------------
@@ -1074,3 +1075,61 @@ where
 /// Fixed height for the filter-input row. Slightly taller than a data
 /// row so the `text_input` (font + its internal padding) isn't clipped.
 const FILTER_ROW_HEIGHT: f64 = 30.0;
+
+#[cfg(test)]
+mod tests {
+    use super::{visual_range_ids, RowIdByPosition};
+    use std::sync::Arc;
+
+    /// Row id == the row value itself, so test slices read naturally:
+    /// `[10, 20, 30]` are rows with ids 10/20/30 in that display order.
+    fn id_is_value() -> RowIdByPosition<u64> {
+        RowIdByPosition::Explicit(Arc::new(|r: &u64| *r))
+    }
+
+    #[test]
+    fn visual_range_spans_anchor_to_target_in_display_order() {
+        let data = [10_u64, 20, 30, 40, 50];
+        // Anchor at id 20 (pos 1), target id 40 (pos 3): inclusive span.
+        let ids = visual_range_ids(&data, &id_is_value(), 20, 40);
+        assert_eq!(ids, Some(vec![20, 30, 40]));
+    }
+
+    #[test]
+    fn visual_range_is_orientation_independent() {
+        let data = [10_u64, 20, 30, 40, 50];
+        // Target *above* the anchor yields the same span, in display order.
+        let ids = visual_range_ids(&data, &id_is_value(), 40, 20);
+        assert_eq!(ids, Some(vec![20, 30, 40]));
+    }
+
+    #[test]
+    fn visual_range_single_row_when_anchor_equals_target() {
+        let data = [10_u64, 20, 30];
+        assert_eq!(visual_range_ids(&data, &id_is_value(), 20, 20), Some(vec![20]));
+    }
+
+    #[test]
+    fn visual_range_none_when_anchor_filtered_out() {
+        // Simulate a filtered view: id 20 (a prior anchor) is no longer
+        // present. The range can't be resolved → None, so the caller
+        // reseats the anchor with a plain select instead of wedging.
+        let data = [10_u64, 30, 40, 50];
+        assert_eq!(visual_range_ids(&data, &id_is_value(), 20, 40), None);
+    }
+
+    #[test]
+    fn visual_range_none_when_target_missing() {
+        let data = [10_u64, 20, 30];
+        assert_eq!(visual_range_ids(&data, &id_is_value(), 10, 99), None);
+    }
+
+    #[test]
+    fn visual_range_position_fallback_ids_are_slice_positions() {
+        // With no explicit projector, the id *is* the slice position.
+        // Anchor pos 1, target pos 3 → ids [1, 2, 3].
+        let data = ["a", "b", "c", "d", "e"];
+        let ids = visual_range_ids(&data, &RowIdByPosition::Position, 1, 3);
+        assert_eq!(ids, Some(vec![1, 2, 3]));
+    }
+}
