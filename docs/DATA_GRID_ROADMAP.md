@@ -112,6 +112,17 @@ checkin from the top, verify, commit, repeat.
   optimizing:** re-check with `cargo run --release --example gallery`. If
   still laggy in release, profile the row-builder for per-rebuild
   allocations. Not worth optimizing pre-measurement.
+- **Clipboard TSV recomputed every rebuild** — `CopyOnShortcutView::
+  compute_payload` (`view.rs`) clones the selection and, when non-empty,
+  scans all rows in display order to rebuild the TSV string on *every*
+  rebuild, though the payload is only consumed on Ctrl/Cmd+C. Cost scales
+  with row count × selection size. **Deliberately deferred, not done:**
+  consistent with the scroll-perf item above, this is a *measure-first*
+  optimization — the empty-selection case (the common one) is cheap, and
+  we have no release-build signal that the populated case bites at the
+  ~15K expected max. If it shows up, make the payload lazy (recompute on
+  the copy event, or gate on a selection-version dirty flag) rather than
+  per rebuild. Flagged by the post-merge adversarial review (item "M4").
 
 ## Prioritized backlog
 

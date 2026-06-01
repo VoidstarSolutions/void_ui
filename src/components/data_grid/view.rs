@@ -66,7 +66,7 @@ type SortChange<State> = Arc<dyn Fn(&mut State, usize) + Send + Sync>;
 /// Resolving needs *both* candidates available — the explicit projector
 /// reads the row, the fallback uses the position — so [`Self::id_of`]
 /// takes both and picks. Clone is cheap (an `Arc` bump or a unit).
-enum RowIdByPosition<R> {
+enum RowIdSource<R> {
     /// Host-supplied `getRowId`.
     Explicit(RowIdFn<R>),
     /// No projector: use the row's current slice position as its id.
@@ -75,7 +75,7 @@ enum RowIdByPosition<R> {
 
 // Hand-written so the bound is on the `Arc` (always `Clone`), not on `R`
 // — a derived `Clone` would wrongly require `R: Clone`.
-impl<R> Clone for RowIdByPosition<R> {
+impl<R> Clone for RowIdSource<R> {
     fn clone(&self) -> Self {
         match self {
             Self::Explicit(f) => Self::Explicit(Arc::clone(f)),
@@ -84,12 +84,12 @@ impl<R> Clone for RowIdByPosition<R> {
     }
 }
 
-impl<R> RowIdByPosition<R> {
+impl<R> RowIdSource<R> {
     /// The stable id of `row`, which sits at slice position `pos`.
     fn id_of(&self, pos: usize, row: &R) -> u64 {
         match self {
             Self::Explicit(f) => f(row),
-            Self::Position => slice_to_selection(pos),
+            Self::Position => position_fallback_id(pos),
         }
     }
 }
@@ -483,9 +483,9 @@ where
     // host doesn't supply one. Correct only for a static (unsorted,
     // unfiltered) grid; documented on `DataGrid::row_id`. Boxed once here
     // so the body closure captures a single uniform `RowIdFn`.
-    let row_id: RowIdByPosition<R> = match row_id {
-        Some(f) => RowIdByPosition::Explicit(f),
-        None => RowIdByPosition::Position,
+    let row_id: RowIdSource<R> = match row_id {
+        Some(f) => RowIdSource::Explicit(f),
+        None => RowIdSource::Position,
     };
 
     let DecomposedColumns {
@@ -548,10 +548,10 @@ where
     // Build the filter-input row only when filtering is configured and
     // at least one column is filterable.
     let filter_row = filter_change.as_ref().and_then(|on_change| {
-        filterable
-            .iter()
-            .any(|&f| f)
-            .then(|| build_filter_row(&render_slots, &filterable, &filter, on_change, &theme))
+        filterable.iter().any(|&f| f).then(|| {
+            let widths: Vec<f64> = render_slots.iter().map(|s| s.width).collect();
+            build_filter_row(&widths, &filterable, &filter, on_change, &theme)
+        })
     });
     let stack = assemble_grid_stack(header, filter_row, body);
 
@@ -590,8 +590,8 @@ where
 // Separately, a row's **stable id** is a `u64` ([`SelectionState`] is
 // keyed by it). Id and position are *different* quantities now that the
 // host owns order — they coincide only under the position fallback
-// ([`RowIdByPosition::Position`]), which is the one place `usize → u64`
-// happens (`slice_to_selection`). We never convert an id *back* to a
+// ([`RowIdSource::Position`]), which is the one place `usize → u64`
+// happens (`position_fallback_id`). We never convert an id *back* to a
 // position by casting (an id isn't a position); the copy path resolves
 // id→row by scanning instead. (Column indices are a separate domain,
 // uniformly `usize` — see `filter`/`sort`.)
@@ -615,9 +615,9 @@ fn scroll_idx_to_slice(idx: i64) -> usize {
 }
 
 /// Slice position (`usize`) → row id (`u64`), used only by the
-/// position-fallback row id ([`RowIdByPosition::Position`]). Saturates to
+/// position-fallback row id ([`RowIdSource::Position`]). Saturates to
 /// `u64::MAX`.
-fn slice_to_selection(idx: usize) -> u64 {
+fn position_fallback_id(idx: usize) -> u64 {
     u64::try_from(idx).unwrap_or(u64::MAX)
 }
 
@@ -626,7 +626,7 @@ fn slice_to_selection(idx: usize) -> u64 {
 /// Builds the clipboard TSV for the current selection.
 ///
 /// Iterates `data` **in its current (display) order** and emits a line
-/// for each row whose [`row_id`](RowIdByPosition)-derived id is selected.
+/// for each row whose [`row_id`](RowIdSource)-derived id is selected.
 /// Walking the data (rather than the selection set) means the copy comes
 /// out in the on-screen order the host arranged — not in id order — which
 /// is what a user pasting into a spreadsheet expects.
@@ -634,7 +634,7 @@ fn project_tsv<R>(
     text_projectors: &[Option<TextProjector<R>>],
     data: &[R],
     selection: &SelectionState,
-    row_id: &RowIdByPosition<R>,
+    row_id: &RowIdSource<R>,
 ) -> Option<String> {
     if selection.is_empty() {
         return None;
@@ -693,7 +693,7 @@ struct CopyOnShortcutView<V, R, State> {
     text_projectors: Arc<Vec<Option<TextProjector<R>>>>,
     rows: RowsFn<State, R>,
     selection_lens: Option<SelectionLens<State>>,
-    row_id: RowIdByPosition<R>,
+    row_id: RowIdSource<R>,
     phantom: PhantomData<fn() -> State>,
 }
 
@@ -759,12 +759,18 @@ where
     State: 'static,
 {
     fn compute_payload(&self, app_state: &mut State) -> Option<String> {
+        // PERF (tracked, deliberately deferred — see DATA_GRID_ROADMAP.md
+        // "Clipboard TSV recomputed every rebuild"): this runs on every
+        // rebuild, but the payload is only consumed on Ctrl/Cmd+C. The
+        // empty-selection early return below keeps the common case cheap;
+        // the populated case scans all rows (in `project_tsv`). Make it
+        // lazy only if a release-build profile shows it matters.
+        //
         // No selection lens → nothing to copy.
         let selection_lens = self.selection_lens.as_ref()?;
         // We need both `&[R]` and `&SelectionState` simultaneously,
         // but the lenses return references whose lifetimes overlap
-        // app_state. Walk the selection first to copy out the
-        // indices, then look up rows.
+        // app_state. Snapshot the selection first, then look up rows.
         let selection_snapshot = (**selection_lens)(app_state).clone();
         let data = (*self.rows)(app_state);
         project_tsv(
@@ -889,13 +895,13 @@ struct BodyParams<State, R> {
     render_slots: Arc<Vec<ColumnRender<R, State>>>,
     rows: RowsFn<State, R>,
     selection_lens: Option<SelectionLens<State>>,
-    row_id: RowIdByPosition<R>,
+    row_id: RowIdSource<R>,
 }
 
 /// Builds the virtualized body. The host supplies rows **already in
 /// display order** (filtered then sorted host-side), so virtual position
 /// *is* slice position — the body does no reordering. Each row's stable
-/// id (via [`RowIdByPosition`]) drives selection styling and the click
+/// id (via [`RowIdSource`]) drives selection styling and the click
 /// handler, so a selection follows its rows across host reordering.
 fn build_body<State, R>(params: BodyParams<State, R>) -> impl WidgetView<State, ()> + use<State, R>
 where
@@ -912,6 +918,12 @@ where
         row_id,
     } = params;
     let valid_range_end = scroll_range_end(row_count);
+    // Column widths are identical for every row and don't change between
+    // rebuilds of this body, so compute them once and share the `Arc` into
+    // the per-row closure rather than re-deriving from `render_slots` on
+    // every visible row. `column_strip` needs an owned `Vec`, so each row
+    // clones the inner vec — but that's a flat memcpy, not a re-projection.
+    let widths: Arc<Vec<f64>> = Arc::new(render_slots.iter().map(|s| s.width).collect());
     virtual_scroll(0..valid_range_end, move |state: &mut State, idx: i64| {
         // Host owns order: virtual position is the slice position.
         let pos = scroll_idx_to_slice(idx);
@@ -931,7 +943,6 @@ where
         // `&mut State` through the selection lens, ending the earlier
         // `&[R]` borrow, so we fetch the rows again for cell rendering.
         let data = (*rows)(state);
-        let widths: Vec<f64> = render_slots.iter().map(|s| s.width).collect();
         let cells: Vec<Box<AnyWidgetView<State>>> = if let Some(row) = data.get(pos) {
             render_slots
                 .iter()
@@ -952,8 +963,9 @@ where
             Color::TRANSPARENT
         };
         // ColumnStrip gives every body row the same authoritative column
-        // x-positions as the header/filter strips.
-        let row_view = sized_box(column_strip(widths, row_height, cells))
+        // x-positions as the header/filter strips. Clone the shared
+        // width vec (flat memcpy) since column_strip takes it by value.
+        let row_view = sized_box(column_strip((*widths).clone(), row_height, cells))
             .background_color(row_bg);
 
         // Click handler: route modifiers to the matching SelectionState
@@ -1019,7 +1031,7 @@ where
 /// O(n) over the slice, but only on a shift-click (never per frame).
 fn visual_range_ids<R>(
     data: &[R],
-    row_id: &RowIdByPosition<R>,
+    row_id: &RowIdSource<R>,
     anchor_id: u64,
     target_id: u64,
 ) -> Option<Vec<u64>> {
@@ -1078,23 +1090,18 @@ where
 /// host updates its [`FilterState`] and re-derives the filtered view.
 /// Non-filterable columns render a blank slot of the same width so the
 /// inputs line up under their columns.
-fn build_filter_row<State, R>(
-    render_slots: &[ColumnRender<R, State>],
+fn build_filter_row<State>(
+    widths: &[f64],
     filterable: &[bool],
     filter: &FilterState,
     on_change: &FilterChange<State>,
     theme: &Theme,
-) -> impl WidgetView<State, ()> + use<State, R>
+) -> impl WidgetView<State, ()> + use<State>
 where
     State: 'static,
-    R: 'static,
 {
-    let widths: Vec<f64> = render_slots.iter().map(|s| s.width).collect();
-    let cells: Vec<Box<AnyWidgetView<State>>> = render_slots
-        .iter()
-        .enumerate()
-        .map(|(idx, slot)| -> Box<AnyWidgetView<State>> {
-            let _ = slot;
+    let cells: Vec<Box<AnyWidgetView<State>>> = (0..widths.len())
+        .map(|idx| -> Box<AnyWidgetView<State>> {
             if filterable[idx] {
                 let current = filter.get(idx).unwrap_or_default().to_string();
                 let on_change = Arc::clone(on_change);
@@ -1117,7 +1124,7 @@ where
         .collect();
     // Filter row uses the body's fixed row height (matches data rows);
     // ColumnStrip enforces both per-column width and row height.
-    sized_box(column_strip(widths, FILTER_ROW_HEIGHT, cells))
+    sized_box(column_strip(widths.to_vec(), FILTER_ROW_HEIGHT, cells))
         .background_color(theme.palette.surface)
         .border(theme.palette.border, Length::px(1.0))
 }
@@ -1128,15 +1135,15 @@ const FILTER_ROW_HEIGHT: f64 = 30.0;
 
 #[cfg(test)]
 mod tests {
-    use super::{project_tsv, visual_range_ids, RowIdByPosition};
+    use super::{project_tsv, visual_range_ids, RowIdSource};
     use crate::components::data_grid::column::TextProjector;
     use crate::components::data_grid::selection::SelectionState;
     use std::sync::Arc;
 
     /// Row id == the row value itself, so test slices read naturally:
     /// `[10, 20, 30]` are rows with ids 10/20/30 in that display order.
-    fn id_is_value() -> RowIdByPosition<u64> {
-        RowIdByPosition::Explicit(Arc::new(|r: &u64| *r))
+    fn id_is_value() -> RowIdSource<u64> {
+        RowIdSource::Explicit(Arc::new(|r: &u64| *r))
     }
 
     /// A single text projector that stringifies the `u64` row.
@@ -1186,7 +1193,7 @@ mod tests {
         // With no explicit projector, the id *is* the slice position.
         // Anchor pos 1, target pos 3 → ids [1, 2, 3].
         let data = ["a", "b", "c", "d", "e"];
-        let ids = visual_range_ids(&data, &RowIdByPosition::Position, 1, 3);
+        let ids = visual_range_ids(&data, &RowIdSource::Position, 1, 3);
         assert_eq!(ids, Some(vec![1, 2, 3]));
     }
 
