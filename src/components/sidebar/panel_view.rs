@@ -1,23 +1,21 @@
-//! Animated sidebar panel — xilem view wrapper.
+//! Animated collapsible sidebar panel — xilem view wrapper.
 //!
-//! Wraps [`ThemedSidebarPanel`] in a builder so it fits the `.render(&theme)`
-//! API convention. Pass any child `WidgetView` (typically a `flex_col` of
-//! [`super::sidebar_item`]s with a [`super::sidebar_collapse_button`] at the
-//! top) and a host-controlled `collapsed` flag.
+//! Wraps [`ThemedSidebarPanel`] so it fits the `.render(&theme)` API
+//! convention. Provide the sidebar's content as a child `WidgetView` and a
+//! callback that is invoked when the user clicks the built-in toggle strip.
 //!
 //! ```ignore
 //! sidebar_panel(
 //!     flex_col((
-//!         sidebar_collapse_button(|s: &mut State| s.sidebar_collapsed = true)
-//!             .render(&theme),
 //!         sidebar_item("Dashboard", |s: &mut State| s.nav = Nav::Dashboard)
 //!             .active(s.nav == Nav::Dashboard)
 //!             .render(&theme),
 //!     ))
 //!     .cross_axis_alignment(CrossAxisAlignment::Stretch)
 //!     .gap(Length::px(2.0)),
-//!     state.sidebar_collapsed,
+//!     |s: &mut State| s.sidebar_collapsed = !s.sidebar_collapsed,
 //! )
+//! .collapsed(state.sidebar_collapsed)
 //! .render(&theme)
 //! ```
 
@@ -27,39 +25,51 @@ use masonry::core::FromDynWidget;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
-use super::panel_widget::ThemedSidebarPanel;
+use super::panel_widget::{SidebarContent, SidebarTogglePressed, ThemedSidebarPanel};
 use crate::Theme;
 
-/// Builder for an animated sidebar panel.
+/// Builder for an animated collapsible sidebar panel.
 ///
 /// Created with [`sidebar_panel`]. Returns a xilem `WidgetView` via
 /// [`Self::render`].
 #[must_use = "SidebarPanel does nothing until rendered with .render(&theme)"]
-pub struct SidebarPanel<V> {
+pub struct SidebarPanel<V, F> {
     child: V,
     collapsed: bool,
+    on_toggle: F,
 }
 
-/// Wrap `child` in an animated sidebar panel.
+/// Wrap `child` in an animated sidebar panel with a built-in toggle strip.
 ///
-/// `collapsed` is the host-controlled target state. When it toggles the panel
-/// slides its width to 0 (hidden) or back to the child's natural width over
-/// ~250 ms.
-pub fn sidebar_panel<V>(child: V, collapsed: bool) -> SidebarPanel<V> {
-    SidebarPanel { child, collapsed }
+/// `on_toggle` is called when the user clicks the right-edge strip. Use
+/// `.collapsed(bool)` to set the initial / current state.
+pub fn sidebar_panel<V, F>(child: V, on_toggle: F) -> SidebarPanel<V, F> {
+    SidebarPanel {
+        child,
+        collapsed: false,
+        on_toggle,
+    }
 }
 
-impl<V> SidebarPanel<V> {
+impl<V, F> SidebarPanel<V, F> {
+    /// Set the collapsed state. Defaults to `false` (expanded).
+    pub fn collapsed(mut self, collapsed: bool) -> Self {
+        self.collapsed = collapsed;
+        self
+    }
+
     /// Materialize the xilem view at the supplied theme.
-    pub fn render<State, Action>(self, theme: &Theme) -> SidebarPanelView<V, State, Action>
+    pub fn render<State, Action>(self, theme: &Theme) -> SidebarPanelView<V, F, State, Action>
     where
         State: 'static,
         Action: 'static,
         V: WidgetView<State, Action>,
+        F: Fn(&mut State) -> Action + Send + Sync + 'static,
     {
         SidebarPanelView {
             child: self.child,
             collapsed: self.collapsed,
+            on_toggle: self.on_toggle,
             theme: *theme,
             phantom: PhantomData,
         }
@@ -70,31 +80,32 @@ impl<V> SidebarPanel<V> {
 ///
 /// Built only through [`SidebarPanel::render`]; not constructed directly.
 #[must_use = "View values do nothing unless provided to Xilem."]
-pub struct SidebarPanelView<V, State, Action> {
+pub struct SidebarPanelView<V, F, State, Action> {
     child: V,
     collapsed: bool,
+    on_toggle: F,
     theme: Theme,
     phantom: PhantomData<fn(State) -> Action>,
 }
 
-impl<V, State, Action> ViewMarker for SidebarPanelView<V, State, Action> {}
+impl<V, F, State, Action> ViewMarker for SidebarPanelView<V, F, State, Action> {}
 
-impl<V, State, Action> View<State, Action, ViewCtx> for SidebarPanelView<V, State, Action>
+impl<V, F, State, Action> View<State, Action, ViewCtx> for SidebarPanelView<V, F, State, Action>
 where
     V: WidgetView<State, Action>,
     V::Widget: FromDynWidget + Sized,
     State: 'static,
     Action: 'static,
+    F: Fn(&mut State) -> Action + Send + Sync + 'static,
 {
     type Element = Pod<ThemedSidebarPanel<V::Widget>>;
     type ViewState = V::ViewState;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let (child_pod, child_state) = self.child.build(ctx, app_state);
-        let panel = ThemedSidebarPanel::new(child_pod.new_widget, &self.theme)
-            .with_collapsed(self.collapsed);
-        let pod = Pod::new(panel);
-        (pod, child_state)
+        let panel = ThemedSidebarPanel::new(child_pod.new_widget, &self.theme, self.collapsed);
+        let element = ctx.with_action_widget(|ctx| ctx.create_pod(panel));
+        (element, child_state)
     }
 
     fn rebuild(
@@ -112,7 +123,8 @@ where
             ThemedSidebarPanel::set_collapsed(&mut element, self.collapsed);
         }
         {
-            let mut child = ThemedSidebarPanel::child_mut(&mut element);
+            let mut content = ThemedSidebarPanel::content_mut(&mut element);
+            let mut child = SidebarContent::child_mut(&mut content);
             self.child
                 .rebuild(&prev.child, view_state, ctx, child.downcast(), app_state);
         }
@@ -124,8 +136,12 @@ where
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
     ) {
-        let mut child = ThemedSidebarPanel::child_mut(&mut element);
-        self.child.teardown(view_state, ctx, child.downcast());
+        {
+            let mut content = ThemedSidebarPanel::content_mut(&mut element);
+            let mut child = SidebarContent::child_mut(&mut content);
+            self.child.teardown(view_state, ctx, child.downcast());
+        }
+        ctx.teardown_action_source(element);
     }
 
     fn message(
@@ -135,7 +151,11 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        let mut child = ThemedSidebarPanel::child_mut(&mut element);
+        if message.take_message::<SidebarTogglePressed>().is_some() {
+            return MessageResult::Action((self.on_toggle)(app_state));
+        }
+        let mut content = ThemedSidebarPanel::content_mut(&mut element);
+        let mut child = SidebarContent::child_mut(&mut content);
         self.child
             .message(view_state, message, child.downcast(), app_state)
     }

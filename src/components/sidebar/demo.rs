@@ -7,9 +7,8 @@ use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, MainAxisAlignment, flex_col, flex_row};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
+use super::{sidebar_item, sidebar_panel};
 use crate::label;
-
-use super::{sidebar_collapse_button, sidebar_item, sidebar_panel};
 use crate::Theme;
 use crate::with_source;
 
@@ -72,7 +71,7 @@ pub struct SidebarPanelDemoState {
     inner_state: InnerViewState,
 }
 
-/// Holds theme for the stateful panel demo panel.
+/// Holds theme for the stateful panel demo.
 pub struct SidebarPanelDemo {
     theme: Theme,
 }
@@ -82,7 +81,6 @@ fn build_panel_inner(
     state: &CollapseDemoState,
 ) -> impl WidgetView<CollapseDemoState> + use<> {
     let items = flex_col((
-        sidebar_collapse_button(|s: &mut CollapseDemoState| s.collapsed = true).render(theme),
         sidebar_item("Dashboard", |_: &mut CollapseDemoState| {})
             .active(true)
             .render(theme),
@@ -92,20 +90,15 @@ fn build_panel_inner(
     .cross_axis_alignment(CrossAxisAlignment::Stretch)
     .gap(Length::px(2.0));
 
-    let sidebar = sidebar_panel(items, state.collapsed).render(theme);
-
-    let reopen_btn = sidebar_item("›  Expand", |s: &mut CollapseDemoState| s.collapsed = false)
+    let sidebar = sidebar_panel(items, |s: &mut CollapseDemoState| s.collapsed = !s.collapsed)
+        .collapsed(state.collapsed)
         .render(theme);
 
-    let content_area = flex_col((
-        label("Content area")
-            .text_size(theme.typography.size_caption)
-            .color(theme.palette.text_muted)
-            .render(theme),
-        if state.collapsed { Some(reopen_btn) } else { None },
-    ))
-    .cross_axis_alignment(CrossAxisAlignment::Start)
-    .gap(Length::px(8.0));
+    let content_area = flex_col((label("Content area")
+        .text_size(theme.typography.size_caption)
+        .color(theme.palette.text_muted)
+        .render(theme),))
+    .cross_axis_alignment(CrossAxisAlignment::Start);
 
     flex_row((sidebar, content_area))
         .main_axis_alignment(MainAxisAlignment::Start)
@@ -169,9 +162,6 @@ impl<S: 'static> View<S, (), ViewCtx> for SidebarPanelDemo {
 // --- MARK: COMBINED GALLERY PANEL
 
 /// Renders the full Sidebar demo panel (items + collapsible panel).
-///
-/// Shown in the gallery under the "Sidebar" entry. Static item examples appear
-/// above; the interactive collapsible panel demo appears below.
 #[must_use]
 pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     let header = |text: &'static str| {
@@ -185,7 +175,7 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     flex_col((
         header("Items — active and default states"),
         item_demo_view(theme),
-        header("Collapsible panel — click ‹ to collapse, › Expand to reopen"),
+        header("Collapsible panel — click the ‹ strip to collapse, › to expand"),
         SidebarPanelDemo { theme: *theme },
     ))
     .cross_axis_alignment(CrossAxisAlignment::Start)

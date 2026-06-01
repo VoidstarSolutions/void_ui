@@ -1,86 +1,96 @@
-//! Masonry widget for the animated sidebar panel.
+//! Masonry widget for the animated collapsible sidebar panel.
 //!
-//! [`ThemedSidebarPanel`] wraps any child widget and animates its own width
-//! between 0 (collapsed) and the child's natural width (expanded). The child
-//! is always laid out at its natural width; a clip path restricts what is
-//! visible during the slide animation so adjacent content reflowes smoothly.
+//! [`ThemedSidebarPanel`] wraps any child widget and renders a narrow toggle
+//! strip on its right edge. The strip contains a `‹` chevron when expanded and
+//! `›` when collapsed. Clicking the strip animates the content width between
+//! its natural size (expanded) and 0 (collapsed) over 250 ms; the strip itself
+//! is always visible so users can always reopen the sidebar.
 
 use std::any::TypeId;
+use std::sync::LazyLock;
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
     AccessCtx, AccessEvent, ChildrenIds, EventCtx, FromDynWidget, LayoutCtx, MeasureCtx, NewWidget,
-    NoAction, PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update,
-    UpdateCtx, Widget, WidgetMut, WidgetPod,
+    NoAction, PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut,
+    PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
+    WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Point, Size};
+use masonry::kurbo::{Affine, Axis, BezPath, Point, Rect, Size, Stroke};
 use masonry::layout::{LayoutSize, LenReq, Length};
+use masonry::peniko::Color;
 
 use crate::Theme;
 
+// --- MARK: CONSTANTS
+
+/// Width of the collapse/expand toggle strip on the right edge.
+const STRIP_WIDTH: f64 = 20.0;
 /// Duration of the collapse/expand slide animation.
 const SLIDE_MILLIS: f32 = 250.0;
+/// Width of the strip's left separator line.
+const SEPARATOR_WIDTH: f64 = 1.0;
 
-/// Container widget that slides its content off-screen when collapsed.
+// --- MARK: ACTION
+
+/// Action emitted by [`ThemedSidebarPanel`] when the toggle strip is clicked.
+#[derive(Debug, Clone)]
+pub struct SidebarTogglePressed;
+
+// --- MARK: CHEVRONS
+
+/// `‹` chevron in unit-square (0..1) coords.
+static CHEVRON_LEFT: LazyLock<BezPath> = LazyLock::new(|| {
+    let mut p = BezPath::new();
+    p.move_to((0.65, 0.2));
+    p.line_to((0.35, 0.5));
+    p.line_to((0.65, 0.8));
+    p
+});
+
+/// `›` chevron in unit-square (0..1) coords.
+static CHEVRON_RIGHT: LazyLock<BezPath> = LazyLock::new(|| {
+    let mut p = BezPath::new();
+    p.move_to((0.35, 0.2));
+    p.line_to((0.65, 0.5));
+    p.line_to((0.35, 0.8));
+    p
+});
+
+// --- MARK: SidebarContent
+
+/// Internal widget that clips its child to an animated width.
 ///
-/// The `collapsed` flag is host-controlled. When it changes, the widget
-/// animates `collapse_progress` from 0.0 (fully visible) toward 1.0 (fully
-/// hidden) or vice versa over [`SLIDE_MILLIS`] milliseconds. Width reported to
-/// the parent tracks `natural_width * (1 − collapse_progress)` so siblings
-/// fill the freed space during the animation.
-pub struct ThemedSidebarPanel<W: Widget + ?Sized> {
+/// This is intentionally private; only [`ThemedSidebarPanel`] constructs it.
+pub(crate) struct SidebarContent<W: Widget + ?Sized> {
     child: WidgetPod<W>,
-    #[allow(dead_code)]
-    theme: Theme,
-    /// Host-controlled target: `true` → animate toward hidden.
     collapsed: bool,
-    /// Animation progress: 0.0 = fully visible, 1.0 = fully hidden.
+    /// 0.0 = fully visible, 1.0 = fully hidden.
     collapse_progress: f32,
-    /// Child's natural (unexpanded) width from the most recent measure pass.
+    /// Child's natural width from the most recent measure pass.
     natural_width: f64,
 }
 
-// --- MARK: BUILDERS
-impl<W: Widget + ?Sized> ThemedSidebarPanel<W> {
-    #[must_use]
-    pub fn new(child: NewWidget<W>, theme: &Theme) -> Self {
+impl<W: Widget + ?Sized> SidebarContent<W> {
+    pub(crate) fn new(child: NewWidget<W>, collapsed: bool) -> Self {
         Self {
             child: child.to_pod(),
-            theme: *theme,
-            collapsed: false,
-            collapse_progress: 0.0,
+            collapsed,
+            collapse_progress: if collapsed { 1.0 } else { 0.0 },
             natural_width: 0.0,
         }
     }
-
-    #[must_use]
-    pub fn with_collapsed(mut self, collapsed: bool) -> Self {
-        self.collapsed = collapsed;
-        if collapsed {
-            self.collapse_progress = 1.0;
-        }
-        self
-    }
 }
 
-// --- MARK: WIDGETMUT
-impl<W: Widget + FromDynWidget> ThemedSidebarPanel<W> {
-    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, W> {
+impl<W: Widget + FromDynWidget> SidebarContent<W> {
+    pub(crate) fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, W> {
         this.ctx.get_mut(&mut this.widget.child)
     }
 }
 
-impl<W: Widget + ?Sized> ThemedSidebarPanel<W> {
-    pub fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
-        if this.widget.theme != *theme {
-            this.widget.theme = *theme;
-            this.ctx.request_layout();
-            this.ctx.request_paint_only();
-        }
-    }
-
-    pub fn set_collapsed(this: &mut WidgetMut<'_, Self>, collapsed: bool) {
+impl<W: Widget + ?Sized> SidebarContent<W> {
+    pub(crate) fn set_collapsed(this: &mut WidgetMut<'_, Self>, collapsed: bool) {
         if this.widget.collapsed != collapsed {
             this.widget.collapsed = collapsed;
             let target: f32 = if collapsed { 1.0 } else { 0.0 };
@@ -89,35 +99,14 @@ impl<W: Widget + ?Sized> ThemedSidebarPanel<W> {
             }
         }
     }
+
+    fn animated_width(&self) -> f64 {
+        (self.natural_width * f64::from(1.0 - self.collapse_progress)).max(0.0)
+    }
 }
 
-// --- MARK: IMPL WIDGET
-impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
+impl<W: Widget + ?Sized> Widget for SidebarContent<W> {
     type Action = NoAction;
-
-    fn on_pointer_event(
-        &mut self,
-        _ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &PointerEvent,
-    ) {
-    }
-
-    fn on_text_event(
-        &mut self,
-        _ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &TextEvent,
-    ) {
-    }
-
-    fn on_access_event(
-        &mut self,
-        _ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &AccessEvent,
-    ) {
-    }
 
     fn on_anim_frame(
         &mut self,
@@ -126,7 +115,8 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
         interval: u64,
     ) {
         let target: f32 = if self.collapsed { 1.0 } else { 0.0 };
-        let delta = (interval as f32 / 1_000_000.0) / SLIDE_MILLIS;
+        let ms = u16::try_from(interval / 1_000_000).unwrap_or(u16::MAX);
+        let delta = f32::from(ms) / SLIDE_MILLIS;
         let diff = target - self.collapse_progress;
         if diff.abs() > 1e-4 {
             self.collapse_progress = if diff > 0.0 {
@@ -141,16 +131,16 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
         }
     }
 
+    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
+        ctx.register_child(&mut self.child);
+    }
+
     fn update(
         &mut self,
         _ctx: &mut UpdateCtx<'_>,
         _props: &mut PropertiesMut<'_>,
         _event: &Update,
     ) {
-    }
-
-    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.child);
     }
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: TypeId) {}
@@ -171,7 +161,7 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
             if natural > 0.0 {
                 self.natural_width = natural;
             }
-            Length::px((natural * (1.0 - f64::from(self.collapse_progress))).max(0.0))
+            Length::px(self.animated_width())
         } else {
             child_length
         }
@@ -179,11 +169,12 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         // Always lay out the child at full natural width so content doesn't
-        // reflow during the slide animation. The clip path set below
-        // restricts what is actually visible to the current animated width.
-        let child_size = Size::new(self.natural_width.max(size.width), size.height);
+        // reflow during the slide animation.
+        let child_width = self.natural_width.max(size.width);
+        let child_size = Size::new(child_width, size.height);
         ctx.run_layout(&mut self.child, child_size);
         ctx.place_child(&mut self.child, Point::ORIGIN);
+        // Clip to the currently animated width so content slides off-screen.
         ctx.set_clip_path(size.to_rect());
     }
 
@@ -217,5 +208,278 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
 
     fn accepts_text_input(&self) -> bool {
         false
+    }
+}
+
+// --- MARK: ThemedSidebarPanel
+
+/// Sidebar container that animates its content width and renders a persistent
+/// toggle strip on its right edge.
+///
+/// The strip always occupies [`STRIP_WIDTH`] pixels; the content area
+/// transitions between 0 and its natural width when `collapsed` changes.
+///
+/// Emits [`SidebarTogglePressed`] when the strip is clicked.
+pub struct ThemedSidebarPanel<W: Widget + ?Sized> {
+    content: WidgetPod<SidebarContent<W>>,
+    theme: Theme,
+    collapsed: bool,
+    /// True while the pointer is inside the strip area.
+    strip_hovered: bool,
+    /// True while the strip is being pressed.
+    strip_pressed: bool,
+    /// Left x coordinate of the strip in the last layout pass.
+    current_strip_x: f64,
+    /// Widget height from the last layout pass.
+    current_height: f64,
+}
+
+// --- MARK: BUILDERS
+impl<W: Widget + ?Sized> ThemedSidebarPanel<W> {
+    #[must_use]
+    pub fn new(child: NewWidget<W>, theme: &Theme, collapsed: bool) -> Self {
+        Self {
+            content: WidgetPod::new(SidebarContent::new(child, collapsed)),
+            theme: *theme,
+            collapsed,
+            strip_hovered: false,
+            strip_pressed: false,
+            current_strip_x: 0.0,
+            current_height: 0.0,
+        }
+    }
+}
+
+// --- MARK: WIDGETMUT
+impl<W: Widget + ?Sized> ThemedSidebarPanel<W> {
+    pub fn content_mut<'t>(
+        this: &'t mut WidgetMut<'_, Self>,
+    ) -> WidgetMut<'t, SidebarContent<W>> {
+        this.ctx.get_mut(&mut this.widget.content)
+    }
+}
+
+impl<W: Widget + ?Sized> ThemedSidebarPanel<W> {
+    pub fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
+        if this.widget.theme != *theme {
+            this.widget.theme = *theme;
+            this.ctx.request_paint_only();
+        }
+    }
+
+    pub fn set_collapsed(this: &mut WidgetMut<'_, Self>, collapsed: bool) {
+        if this.widget.collapsed != collapsed {
+            this.widget.collapsed = collapsed;
+            this.ctx.request_paint_only();
+            let mut content = this.ctx.get_mut(&mut this.widget.content);
+            SidebarContent::set_collapsed(&mut content, collapsed);
+        }
+    }
+}
+
+// --- MARK: STRIP PAINT STATE
+impl<W: Widget + ?Sized> ThemedSidebarPanel<W> {
+    fn strip_bg(&self) -> Color {
+        let p = &self.theme.palette;
+        if self.strip_pressed && self.strip_hovered {
+            p.surface_hi
+        } else if self.strip_hovered {
+            p.surface_2
+        } else {
+            Color::TRANSPARENT
+        }
+    }
+}
+
+// --- MARK: IMPL WIDGET
+impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
+    type Action = SidebarTogglePressed;
+
+    fn on_pointer_event(
+        &mut self,
+        ctx: &mut EventCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        event: &PointerEvent,
+    ) {
+        match event {
+            PointerEvent::Move(update) => {
+                let pos = ctx.local_position(update.current.position);
+                let in_strip = pos.x >= self.current_strip_x;
+                if in_strip != self.strip_hovered {
+                    self.strip_hovered = in_strip;
+                    ctx.request_paint_only();
+                }
+            }
+            PointerEvent::Down(PointerButtonEvent {
+                button: Some(PointerButton::Primary),
+                state,
+                ..
+            }) => {
+                let pos = ctx.local_position(state.position);
+                if pos.x >= self.current_strip_x {
+                    self.strip_pressed = true;
+                    ctx.request_focus();
+                    ctx.capture_pointer();
+                    ctx.request_paint_only();
+                }
+            }
+            PointerEvent::Up(PointerButtonEvent {
+                button: Some(PointerButton::Primary),
+                ..
+            }) => {
+                if self.strip_pressed {
+                    if ctx.is_hovered() && self.strip_hovered {
+                        ctx.submit_action::<Self::Action>(SidebarTogglePressed);
+                    }
+                    self.strip_pressed = false;
+                    ctx.request_paint_only();
+                }
+            }
+            PointerEvent::Leave(_) => {
+                if self.strip_hovered {
+                    self.strip_hovered = false;
+                    ctx.request_paint_only();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn on_text_event(
+        &mut self,
+        _ctx: &mut EventCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _event: &TextEvent,
+    ) {
+    }
+
+    fn on_access_event(
+        &mut self,
+        _ctx: &mut EventCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _event: &AccessEvent,
+    ) {
+    }
+
+    fn update(
+        &mut self,
+        ctx: &mut UpdateCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        event: &Update,
+    ) {
+        if let Update::HoveredChanged(false) = event {
+            if self.strip_hovered {
+                self.strip_hovered = false;
+                ctx.request_paint_only();
+            }
+        }
+    }
+
+    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
+        ctx.register_child(&mut self.content);
+    }
+
+    fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: TypeId) {}
+
+    fn measure(
+        &mut self,
+        ctx: &mut MeasureCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        axis: Axis,
+        len_req: LenReq,
+        cross_length: Option<Length>,
+    ) -> Length {
+        let context_size = LayoutSize::maybe(axis.cross(), cross_length);
+        let content_length =
+            ctx.compute_length(&mut self.content, len_req.into(), context_size, axis, cross_length);
+        if axis == Axis::Horizontal {
+            Length::px(content_length.get() + STRIP_WIDTH)
+        } else {
+            content_length
+        }
+    }
+
+    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
+        let content_width = (size.width - STRIP_WIDTH).max(0.0);
+        let content_size = Size::new(content_width, size.height);
+        ctx.run_layout(&mut self.content, content_size);
+        ctx.place_child(&mut self.content, Point::ORIGIN);
+        self.current_strip_x = content_width;
+        self.current_height = size.height;
+    }
+
+    fn paint(
+        &mut self,
+        _ctx: &mut PaintCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        painter: &mut Painter<'_>,
+    ) {
+        let strip_x = self.current_strip_x;
+        let h = self.current_height;
+        let p = &self.theme.palette;
+
+        // Separator line on the left edge of the strip.
+        let sep_rect = Rect::from_origin_size(
+            Point::new(strip_x, 0.0),
+            Size::new(SEPARATOR_WIDTH, h),
+        );
+        painter.fill(sep_rect, p.border).draw();
+
+        // Strip background (hover/press feedback).
+        let bg = self.strip_bg();
+        if bg.components[3] > 0.0 {
+            let bg_rect = Rect::from_origin_size(
+                Point::new(strip_x + SEPARATOR_WIDTH, 0.0),
+                Size::new(STRIP_WIDTH - SEPARATOR_WIDTH, h),
+            );
+            painter.fill(bg_rect, bg).draw();
+        }
+
+        // Chevron icon centered in the strip.
+        let icon_size = f64::from(self.theme.density.ui_font_size) * 0.9;
+        let strip_center_x = strip_x + STRIP_WIDTH * 0.5;
+        let icon_x = strip_center_x - icon_size * 0.5;
+        let icon_y = (h - icon_size) * 0.5;
+        let transform = Affine::translate((icon_x, icon_y)) * Affine::scale(icon_size);
+        let chevron = if self.collapsed {
+            &*CHEVRON_RIGHT
+        } else {
+            &*CHEVRON_LEFT
+        };
+        painter
+            .stroke(transform * chevron, &Stroke::new(1.5), p.text_muted)
+            .draw();
+    }
+
+    fn accessibility_role(&self) -> Role {
+        Role::GenericContainer
+    }
+
+    fn accessibility(
+        &mut self,
+        _ctx: &mut AccessCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        _node: &mut Node,
+    ) {
+    }
+
+    fn children_ids(&self) -> ChildrenIds {
+        ChildrenIds::from_slice(&[self.content.id()])
+    }
+
+    fn propagates_pointer_interaction(&self) -> bool {
+        true
+    }
+
+    fn accepts_focus(&self) -> bool {
+        false
+    }
+
+    fn accepts_text_input(&self) -> bool {
+        false
+    }
+
+    fn make_trace_span(&self, id: WidgetId) -> tracing::Span {
+        tracing::trace_span!("ThemedSidebarPanel", id = id.trace())
     }
 }
