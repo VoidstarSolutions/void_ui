@@ -86,6 +86,8 @@ pub struct ThemedButton {
     spinner_t: f64,
     /// Explicit accessibility label for icon-only buttons.
     accessibility_label: Option<ArcStr>,
+    /// When set, written to the system clipboard whenever the button fires.
+    clipboard_payload: Option<ArcStr>,
 }
 
 // --- MARK: BUILDERS
@@ -107,6 +109,7 @@ impl ThemedButton {
             loading: false,
             spinner_t: 0.0,
             accessibility_label: None,
+            clipboard_payload: None,
         }
     }
 
@@ -156,6 +159,13 @@ impl ThemedButton {
     #[must_use]
     pub fn with_accessibility_label(mut self, name: Option<ArcStr>) -> Self {
         self.accessibility_label = name;
+        self
+    }
+
+    /// Sets a string to write to the system clipboard whenever the button fires.
+    #[must_use]
+    pub fn with_clipboard_payload(mut self, payload: Option<ArcStr>) -> Self {
+        self.clipboard_payload = payload;
         self
     }
 }
@@ -246,6 +256,11 @@ impl ThemedButton {
             this.widget.accessibility_label = name;
             this.ctx.request_accessibility_update();
         }
+    }
+
+    /// Updates the clipboard payload. No visual side effects — only matters at event time.
+    pub fn set_clipboard_payload(this: &mut WidgetMut<'_, Self>, payload: Option<ArcStr>) {
+        this.widget.clipboard_payload = payload;
     }
 
     /// Returns a mutable reference to the child widget.
@@ -402,6 +417,9 @@ impl Widget for ThemedButton {
                 // (pointer is still inside the button) before firing. This lets
                 // the user drag out of the button to cancel the press.
                 if ctx.is_active() && ctx.is_hovered() {
+                    if let Some(payload) = &self.clipboard_payload {
+                        ctx.set_clipboard(payload.to_string());
+                    }
                     ctx.submit_action::<Self::Action>(ButtonPress { button: *button });
                 }
                 ctx.request_paint_only();
@@ -424,6 +442,9 @@ impl Widget for ThemedButton {
             && (matches!(&event.key, Key::Character(c) if c == " ")
                 || event.key == Key::Named(NamedKey::Enter))
         {
+            if let Some(payload) = &self.clipboard_payload {
+                ctx.set_clipboard(payload.to_string());
+            }
             ctx.submit_action::<Self::Action>(ButtonPress { button: None });
         }
     }
@@ -438,6 +459,9 @@ impl Widget for ThemedButton {
             return;
         }
         if event.action == accesskit::Action::Click {
+            if let Some(payload) = &self.clipboard_payload {
+                ctx.set_clipboard(payload.to_string());
+            }
             ctx.submit_action::<Self::Action>(ButtonPress { button: None });
         }
     }

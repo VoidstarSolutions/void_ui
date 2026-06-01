@@ -33,9 +33,9 @@ pub struct Clipboard<F> {
 
 /// Create a clipboard icon button.
 ///
-/// `value` is the string passed to `callback` when the user activates the
-/// button. The component does not write to the system clipboard itself —
-/// the callback decides what to do with the value.
+/// `value` is written to the system clipboard when the user activates the
+/// button. `callback` is called afterward so the host can react (e.g. update
+/// UI state, show a toast).
 pub fn clipboard<F>(value: impl Into<ArcStr>, callback: F) -> Clipboard<F> {
     Clipboard {
         value: value.into(),
@@ -85,7 +85,8 @@ where
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
         let icon = NewWidget::new(ClipboardWidget::new(&self.theme));
         let widget = ThemedButton::new(icon.erased(), &self.theme)
-            .with_accessibility_label(Some("Copy to clipboard".into()));
+            .with_accessibility_label(Some("Copy to clipboard".into()))
+            .with_clipboard_payload(Some(self.value.clone()));
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, ())
     }
@@ -98,6 +99,9 @@ where
         mut element: Mut<'_, Self::Element>,
         _app_state: &mut State,
     ) {
+        if self.value != prev.value {
+            ThemedButton::set_clipboard_payload(&mut element, Some(self.value.clone()));
+        }
         if self.theme != prev.theme {
             ThemedButton::set_theme(&mut element, &self.theme);
             let mut child = ThemedButton::child_mut(&mut element);
