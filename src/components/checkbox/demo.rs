@@ -3,7 +3,9 @@
 use xilem::masonry::layout::Length;
 use xilem::masonry::widgets::Passthrough;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, flex_col, flex_row, label};
+use xilem::view::{CrossAxisAlignment, flex_col, flex_row};
+
+use crate::label;
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 
@@ -56,6 +58,7 @@ fn build_inner(theme: &Theme, state: &CheckboxDemo) -> impl WidgetView<CheckboxD
             .text_size(theme.typography.size_caption)
             .letter_spacing(1.2)
             .color(theme.palette.text_faint)
+            .render(theme)
     };
 
     let [bare_a, bare_b] = state.bare;

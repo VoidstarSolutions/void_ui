@@ -7,8 +7,9 @@ use masonry::layout::Length;
 use masonry::parley::{FontFamily, FontFamilyName, GenericFamily};
 use xilem::WidgetView;
 use xilem::style::Style as _;
-use xilem::view::{label, sized_box};
+use xilem::view::sized_box;
 
+use crate::label;
 use crate::Theme;
 
 /// Renders `source` in a styled monospace code panel.
@@ -23,7 +24,8 @@ pub fn code_block<S: 'static>(source: &str, theme: &Theme) -> impl WidgetView<S>
         .font(FontFamily::Single(FontFamilyName::Generic(
             GenericFamily::Monospace,
         )))
-        .color(theme.palette.text_muted);
+        .color(theme.palette.text_muted)
+        .render(theme);
 
     sized_box(text)
         .padding(Length::px(12.0))

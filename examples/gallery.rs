@@ -11,14 +11,15 @@ use xilem::masonry::layout::Length;
 use xilem::peniko::Color;
 use xilem::style::Style as _;
 use xilem::view::{
-    CrossAxisAlignment, FlexExt as _, FlexSpacer, MainAxisAlignment, flex_col, flex_row, label,
-    portal, sized_box,
+    CrossAxisAlignment, FlexExt as _, FlexSpacer, MainAxisAlignment, flex_col, flex_row, portal,
+    sized_box,
 };
 use xilem::winit::error::EventLoopError;
 use xilem::{AnyWidgetView, EventLoop, WidgetView, WindowOptions, Xilem};
 
 use void_ui::components::data_grid::demo::{Demo, tick_columns};
 use void_ui::components::{ComponentKind, button, data_grid, sidebar_item};
+use void_ui::label;
 use void_ui::layout::flex_wrap;
 use void_ui::theme::{Density, Theme};
 
@@ -107,10 +108,12 @@ fn workspace_row(
 fn topbar(theme_panel_open: bool, theme: &Theme) -> impl WidgetView<State> + use<> {
     let title = label("void-ui · components")
         .text_size(16.0)
-        .color(theme.palette.text);
+        .color(theme.palette.text)
+        .render(theme);
     let subtitle = label("Tessera-styled widget library")
         .text_size(theme.typography.size_caption)
-        .color(theme.palette.text_faint);
+        .color(theme.palette.text_faint)
+        .render(theme);
     let header = flex_col((title, subtitle))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(2.0));
@@ -241,7 +244,8 @@ fn data_grid_panel(
         FlexSpacer::Flex(1.0),
         label(format!("{row_count} ticks"))
             .text_size(theme.typography.size_caption)
-            .color(theme.palette.text_muted),
+            .color(theme.palette.text_muted)
+            .render(theme),
     ))
     .cross_axis_alignment(CrossAxisAlignment::Center)
     .gap(Length::px(8.0));
@@ -288,6 +292,7 @@ fn section_header(title: &'static str, theme: &Theme) -> impl WidgetView<State> 
         .text_size(theme.typography.size_caption)
         .letter_spacing(1.2)
         .color(theme.palette.text_faint)
+        .render(theme)
 }
 
 fn theme_variant_row(theme: &Theme) -> impl WidgetView<State> + use<> {
@@ -399,10 +404,12 @@ fn text_block(theme: &Theme) -> impl WidgetView<State> + use<> {
         flex_col((
             label("Aa 0123 — $184.62")
                 .text_size(theme.typography.size_body)
-                .color(color),
+                .color(color)
+                .render(theme),
             label(name)
                 .text_size(theme.typography.size_caption)
-                .color(theme.palette.text_faint),
+                .color(theme.palette.text_faint)
+                .render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(2.0))
@@ -423,10 +430,12 @@ fn density_radii_block(theme: &Theme) -> impl WidgetView<State> + use<> {
         flex_row((
             label(k)
                 .text_size(theme.typography.size_caption)
-                .color(theme.palette.text_faint),
+                .color(theme.palette.text_faint)
+                .render(theme),
             label(v)
                 .text_size(theme.typography.size_body)
-                .color(theme.palette.text),
+                .color(theme.palette.text)
+                .render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(8.0))
@@ -444,7 +453,7 @@ fn density_radii_block(theme: &Theme) -> impl WidgetView<State> + use<> {
 }
 
 fn swatch_tile(name: &'static str, color: Color, theme: &Theme) -> impl WidgetView<State> + use<> {
-    let block = sized_box(label(""))
+    let block = sized_box(label("").render(theme))
         .fixed_width(Length::px(96.0))
         .fixed_height(Length::px(32.0))
         .background_color(color)
@@ -452,7 +461,8 @@ fn swatch_tile(name: &'static str, color: Color, theme: &Theme) -> impl WidgetVi
         .corner_radius(Length::px(f64::from(theme.radius.small)));
     let caption = label(name)
         .text_size(theme.typography.size_caption)
-        .color(theme.palette.text_muted);
+        .color(theme.palette.text_muted)
+        .render(theme);
     flex_col((block, caption))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(2.0))

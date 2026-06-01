@@ -10,7 +10,9 @@ use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::layout::Length;
 use xilem::masonry::widgets::Passthrough;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, flex_col, flex_row, label};
+use xilem::view::{CrossAxisAlignment, flex_col, flex_row};
+
+use crate::label;
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::button;
@@ -153,6 +155,7 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
             .text_size(theme.typography.size_caption)
             .letter_spacing(1.2)
             .color(theme.palette.text_faint)
+            .render(theme)
     };
 
     let disabled_bool = state.disabled;

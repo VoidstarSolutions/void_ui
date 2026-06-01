@@ -8,8 +8,8 @@ use xilem::view::{CrossAxisAlignment, flex_col, label as xl_label};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::{LabelAlignment, label};
-use crate::components::checkbox::checkbox;
 use crate::components::ScrollBarVisibility;
+use crate::components::checkbox::checkbox;
 use crate::with_source;
 use crate::{Theme, scroll_container};
 
@@ -45,19 +45,16 @@ fn section_header(text: &'static str, theme: &Theme) -> impl WidgetView<LabelDem
         .color(theme.palette.text_faint)
 }
 
-fn build_inner(
-    theme: &Theme,
-    state: &LabelDemoState,
-) -> impl WidgetView<LabelDemoState> + use<> {
+fn build_inner(theme: &Theme, state: &LabelDemoState) -> impl WidgetView<LabelDemoState> + use<> {
     let sizes = with_source!(theme, {
         flex_col((
             label("Caption text — 10 px")
-                .size(theme.typography.size_caption)
+                .text_size(theme.typography.size_caption)
                 .render(theme),
             label("Body text — 13 px")
-                .size(theme.typography.size_body)
+                .text_size(theme.typography.size_body)
                 .render(theme),
-            label("Custom size — 18 px").size(18.0).render(theme),
+            label("Custom size — 18 px").text_size(18.0).render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(6.0))
@@ -72,9 +69,7 @@ fn build_inner(
             label("text_faint")
                 .color(theme.palette.text_faint)
                 .render(theme),
-            label("teal accent")
-                .color(theme.palette.teal)
-                .render(theme),
+            label("teal accent").color(theme.palette.teal).render(theme),
             label("coral accent")
                 .color(theme.palette.coral)
                 .render(theme),
@@ -85,11 +80,10 @@ fn build_inner(
 
     let secondary = with_source!(theme, {
         flex_col((
-            label("API key").secondary("sk-proj-abc123xyz").render(theme),
-            label("Status").secondary("active").render(theme),
-            label("Owner")
-                .secondary("shannon@voidstarsolutions.com")
+            label("Primary text")
+                .secondary("Secondary text")
                 .render(theme),
+            label("Status").secondary("active").render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(6.0))
@@ -169,7 +163,7 @@ impl<S: 'static> View<S, (), ViewCtx> for LabelDemoPanel {
     type Element = Pod<Passthrough>;
 
     fn build(&self, ctx: &mut ViewCtx, _: &mut S) -> (Self::Element, Self::ViewState) {
-        let mut state = LabelDemoState { masked: false };
+        let mut state = LabelDemoState { masked: true };
         let inner_view: InnerView = Box::new(build_inner(&self.theme, &state));
         let (element, inner_state) = inner_view.build(ctx, &mut state);
         (

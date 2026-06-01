@@ -13,9 +13,8 @@
 //! projection) without making callers think about boxing.
 
 use xilem::AnyWidgetView;
-use xilem::style::Style as _;
-use xilem::view::label;
 
+use crate::label;
 use crate::Theme;
 
 /// In-cell horizontal alignment.
@@ -133,7 +132,8 @@ where
         let text = fmt_for_render(row);
         let view = label(text)
             .text_size(theme.typography.size_body)
-            .color(theme.palette.text);
+            .color(theme.palette.text)
+            .render(theme);
         Box::new(view)
     })
     .with_text(move |row| fmt_for_text(row))
@@ -166,7 +166,8 @@ where
         };
         let view = label(text)
             .text_size(theme.typography.size_body)
-            .color(color);
+            .color(color)
+            .render(theme);
         Box::new(view)
     })
     // Clipboard cells get an empty string for None, not "—" — the

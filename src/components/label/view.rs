@@ -7,7 +7,7 @@
 //! single-label case.
 
 use masonry::core::ArcStr;
-use masonry::parley::{Alignment, LineHeight};
+use masonry::parley::{Alignment, FontFamily, LineHeight};
 use masonry::properties::LineBreaking;
 use masonry::widgets::Passthrough;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewId, ViewMarker, ViewPathTracker};
@@ -28,7 +28,9 @@ pub struct Label {
     text: ArcStr,
     secondary: Option<ArcStr>,
     color: Option<Color>,
-    size: Option<f32>,
+    text_size: Option<f32>,
+    letter_spacing: f32,
+    font: Option<FontFamily<'static>>,
     alignment: LabelAlignment,
     line_height: Option<f32>,
     multiline: bool,
@@ -44,7 +46,9 @@ pub fn label(text: impl Into<ArcStr>) -> Label {
         text: text.into(),
         secondary: None,
         color: None,
-        size: None,
+        text_size: None,
+        letter_spacing: 0.0,
+        font: None,
         alignment: LabelAlignment::default(),
         line_height: None,
         multiline: false,
@@ -69,8 +73,23 @@ impl Label {
     }
 
     /// Override the font size in px. Defaults to `typography.size_body`.
-    pub fn size(mut self, size: f32) -> Self {
-        self.size = Some(size);
+    pub fn text_size(mut self, size: f32) -> Self {
+        self.text_size = Some(size);
+        self
+    }
+
+    /// Set letter spacing (tracking) in px. Defaults to `0.0`.
+    pub fn letter_spacing(mut self, spacing: f32) -> Self {
+        self.letter_spacing = spacing;
+        self
+    }
+
+    /// Override the font family.
+    ///
+    /// Useful for monospace code labels; most UI labels should use the
+    /// theme's sans-serif stack and do not need to call this.
+    pub fn font(mut self, font: FontFamily<'static>) -> Self {
+        self.font = Some(font);
         self
     }
 
@@ -105,14 +124,16 @@ impl Label {
         Action: 'static,
     {
         let color = self.color.unwrap_or(theme.palette.text);
-        let size = self.size.unwrap_or(theme.typography.size_body);
+        let text_size = self.text_size.unwrap_or(theme.typography.size_body);
         let secondary_color = theme.palette.text_muted;
         LabelView {
             text: self.text,
             secondary: self.secondary,
             color,
             secondary_color,
-            size,
+            text_size,
+            letter_spacing: self.letter_spacing,
+            font: self.font,
             alignment: self.alignment.into_text_align(),
             line_height: self.line_height,
             multiline: self.multiline,
@@ -131,7 +152,9 @@ pub struct LabelView<State, Action> {
     secondary: Option<ArcStr>,
     color: Color,
     secondary_color: Color,
-    size: f32,
+    text_size: f32,
+    letter_spacing: f32,
+    font: Option<FontFamily<'static>>,
     alignment: Alignment,
     line_height: Option<f32>,
     multiline: bool,
@@ -153,12 +176,21 @@ fn mask(text: &str) -> ArcStr {
 fn make_single<S: 'static, A: 'static>(
     text: ArcStr,
     color: Color,
-    size: f32,
+    text_size: f32,
+    letter_spacing: f32,
+    font: Option<FontFamily<'static>>,
     alignment: Alignment,
     line_height: Option<f32>,
     multiline: bool,
 ) -> Box<AnyWidgetView<S, A>> {
-    let base = xl_label(text).text_size(size).text_alignment(alignment);
+    let base = xl_label(text)
+        .text_size(text_size)
+        .text_alignment(alignment)
+        .letter_spacing(letter_spacing);
+    let base = match font {
+        Some(f) => base.font(f),
+        None => base,
+    };
     let base = match line_height {
         Some(lh) => base.line_height(LineHeight::FontSizeRelative(lh)),
         None => base,
@@ -181,7 +213,9 @@ fn build_inner<S: 'static, A: 'static>(view: &LabelView<S, A>) -> Box<AnyWidgetV
         None => make_single(
             main_text,
             view.color,
-            view.size,
+            view.text_size,
+            view.letter_spacing,
+            view.font.clone(),
             view.alignment,
             view.line_height,
             view.multiline,
@@ -191,14 +225,16 @@ fn build_inner<S: 'static, A: 'static>(view: &LabelView<S, A>) -> Box<AnyWidgetV
             let main_label = make_single(
                 main_text,
                 view.color,
-                view.size,
+                view.text_size,
+                view.letter_spacing,
+                view.font.clone(),
                 view.alignment,
                 view.line_height,
                 view.multiline,
             );
             let sec_label: Box<AnyWidgetView<S, A>> = Box::new(
                 xl_label(sec_text)
-                    .text_size(view.size)
+                    .text_size(view.text_size)
                     .color(view.secondary_color),
             );
             Box::new(
