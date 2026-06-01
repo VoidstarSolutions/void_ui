@@ -16,6 +16,7 @@ pub mod button;
 pub mod checkbox;
 pub mod clipboard;
 pub mod data_grid;
+pub mod label;
 pub mod radio;
 pub mod scroll_container;
 pub mod sidebar;
@@ -29,6 +30,7 @@ pub use data_grid::{
 };
 pub use scroll_container::{ScrollBarVisibility, ScrollContainer, ScrollContainerView, scroll_container};
 pub use sidebar::{SidebarItem, SidebarItemView, sidebar_item};
+pub use label::{Label, LabelAlignment, LabelView, LabelViewState, label};
 pub use tooltip::{Tooltip, TooltipView, tooltip};
 
 /// One entry per component the gallery exposes.
@@ -44,6 +46,7 @@ pub enum ComponentKind {
     Checkbox,
     Clipboard,
     DataGrid,
+    Label,
     Radio,
     ScrollContainer,
     Sidebar,
@@ -59,6 +62,7 @@ impl ComponentKind {
             Self::Checkbox => "Checkbox",
             Self::Clipboard => "Clipboard",
             Self::DataGrid => "Data Grid",
+            Self::Label => "Label",
             Self::Radio => "Radio",
             Self::ScrollContainer => "Scroll Container",
             Self::Sidebar => "Sidebar",
@@ -73,6 +77,7 @@ impl ComponentKind {
             Self::Button,
             Self::Checkbox,
             Self::Clipboard,
+            Self::Label,
             Self::Radio,
             Self::DataGrid,
             Self::ScrollContainer,
