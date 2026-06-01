@@ -17,7 +17,7 @@ use xilem::view::{
 use xilem::winit::error::EventLoopError;
 use xilem::{AnyWidgetView, EventLoop, WidgetView, WindowOptions, Xilem};
 
-use void_ui::components::data_grid::demo::{Demo, tick_columns};
+use void_ui::components::data_grid::demo::{Demo, DemoTick, tick_columns};
 use void_ui::components::{
     ColumnWidths, ComponentKind, FilterState, SortState, button, data_grid, sidebar_item,
 };
@@ -52,12 +52,12 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
     // Snapshot the data-grid demo's row count and base timestamp at
     // frame time so the panel can be built without further state
     // access. The grid reads rows via the lens closures it captures.
-    // Row count reflects the *filtered* view when a filter is active
-    // (host-side filtering): the host owns the data + count.
-    let dg_visible_len = if state.data_grid.filter.is_empty() {
-        state.data_grid.ticks.len()
-    } else {
+    // Row count reflects the materialized (filtered and/or sorted) view
+    // when one is active: the host owns the row order + count.
+    let dg_visible_len = if state.data_grid.view_is_materialized() {
         state.data_grid.visible.len()
+    } else {
+        state.data_grid.ticks.len()
     };
     let dg_row_count = u64::try_from(dg_visible_len).unwrap_or(u64::MAX);
     let dg_base_time_ns = state.data_grid.ticks.first().map_or(0, |t| t.event_ns);
@@ -266,19 +266,27 @@ fn data_grid_panel(theme: &Theme, dg: DataGridSnapshot) -> impl WidgetView<State
     .gap(Length::px(8.0));
 
     let grid = data_grid(columns)
-        // Host-side filtering: when a filter is active the lens serves
-        // the materialized filtered view; otherwise the full tick slice
-        // (zero-copy in the common, unfiltered case).
+        // Host owns row order: when the view is reordered (a filter is
+        // active *or* a sort column is set) the lens serves the
+        // materialized filtered-then-sorted view; otherwise the full tick
+        // slice (zero-copy in the common, unordered case).
         .rows(|s: &State| {
-            if s.data_grid.filter.is_empty() {
-                &s.data_grid.ticks[..]
-            } else {
+            if s.data_grid.view_is_materialized() {
                 &s.data_grid.visible[..]
+            } else {
+                &s.data_grid.ticks[..]
             }
         })
         .row_count(row_count)
+        // Stable row id = the tick's monotonic seq. Selection is keyed by
+        // this, so it follows rows across sort/filter reordering.
+        .row_id(|t: &DemoTick| t.id)
         .selection(|s: &mut State| &mut s.data_grid.selection)
-        .sort(sort, |s: &mut State| &mut s.data_grid.sort)
+        // Host-side sorting: a header click cycles the host's SortState
+        // and re-derives the ordered view (mirror of the filter callback).
+        .sort(sort, |s: &mut State, col: usize| {
+            s.data_grid.cycle_sort(col);
+        })
         .filter(filter, |s: &mut State, col: usize, query: String| {
             s.data_grid.set_filter(col, query);
         })

@@ -30,10 +30,24 @@ checkin from the top, verify, commit, repeat.
 ## Done
 
 - Row virtualization over `&[R]` (very large/append-only streams)
-- Row selection (anchor + shift-range + ctrl/cmd-toggle), source-indexed
-- TSV clipboard copy of the selection (Ctrl/Cmd+C)
+- Row selection (anchor + shift-range + ctrl/cmd-toggle), **stable-id keyed**
+- TSV clipboard copy of the selection (Ctrl/Cmd+C), **in display order**
 - **Single-column sorting**: click-to-cycle asc→desc→off, ▲/▼ arrow,
   hover affordance, numeric-correct ordering, selection stable across sorts
+- **Host owns row order (sort + filter unified) + stable-id selection**
+  *(resolves architect review #1 + #2)*: the grid is presentation-only and
+  renders rows in the order the host serves. Sorting joined filtering on
+  the host side — a header click fires the `.sort(state, on_sort)`
+  callback (mirror of `.filter`); the host cycles `SortState` and composes
+  `filtered_indices` → `sort_indices` to re-derive its view. Selection is
+  keyed by a stable row id via `.row_id` (the `getRowId` contract), so it
+  follows rows across reordering. Removed the per-frame in-grid sort cache
+  (#2: it re-sorted every rebuild) and positional selection keys (#1: they
+  pointed at the wrong rows once the filtered slice changed identity).
+  Decision rationale + multi-source research recorded in the team note and
+  commit; this is the mainstream pattern (AG Grid server-side row model,
+  Kendo, `TanStack` `manualSorting`; egui/gpui-component/xilem keep order
+  app-side)
 - Grid fills its container height
 - Rich (widget-returning) cell renderers — partial "templates"
 - **Fluent `DataGrid` builder** (`new` + chained setters + `.render`),
@@ -86,9 +100,11 @@ checkin from the top, verify, commit, repeat.
 - **Global UI zoom/scaling** — a theme/density-driven scale applied
   across *all* components (supersedes component-local size constants,
   e.g. the filter input). Cross-cutting, not a data_grid-only change.
-- **Filter UX**: shift-extend selection + clipboard copy currently use
-  source-index / source order, not the on-screen order (see module
-  "Known limitations").
+- ~~**Filter UX**: shift-extend selection + clipboard copy use source
+  order, not on-screen order.~~ **RESOLVED** by the host-owns-order +
+  stable-id work: both now follow display order. The only residual is
+  shift-extend when the *anchor* row isn't in the current (filtered) view
+  — it degrades to a single select (see module "Known limitations").
 - **Scroll-perf profiling** — mild scroll lag observed at 100K rows in a
   *debug* gallery build. Body still virtualizes (only visible rows
   render), so this is likely (1) the unoptimized build and (2) 12 columns

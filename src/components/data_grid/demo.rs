@@ -23,7 +23,7 @@ use xilem::peniko::Color;
 use super::column::{colored_text_column, optional_text_column, text_column, CellAlign, ColumnDef};
 use super::filter::{filtered_indices, FilterState};
 use super::selection::SelectionState;
-use super::sort::SortState;
+use super::sort::{sort_indices, SortState};
 use super::width::ColumnWidths;
 use crate::Theme;
 
@@ -44,6 +44,11 @@ pub enum DemoSide {
 /// `void_ui` doesn't depend on a market-data crate.
 #[derive(Debug, Clone, Copy)]
 pub struct DemoTick {
+    /// Stable, unique row id assigned at creation (a monotonic sequence).
+    /// This is the grid's `getRowId` source — selection is keyed by it,
+    /// so a selected row stays selected across sort/filter reordering.
+    /// Assigned in creation order, so id order is also natural row order.
+    pub id: u64,
     /// Event time in nanoseconds since an arbitrary epoch.
     pub event_ns: i64,
     /// Price in 1e-9 units of the quoted currency.
@@ -67,13 +72,17 @@ pub struct Demo {
     pub filter: FilterState,
     /// Per-column width overrides (drag-to-resize).
     pub column_widths: ColumnWidths,
-    /// Materialized filtered rows. Only meaningful while `filter` is
-    /// non-empty; the gallery's `rows` lens reads `ticks` directly when
-    /// unfiltered (avoiding a full-dataset clone in the common case).
+    /// Materialized filtered-then-sorted rows. Meaningful while the view
+    /// is reordered (a filter is active *or* a sort column is set); the
+    /// gallery's `rows` lens reads `ticks` directly in the plain
+    /// unfiltered+unsorted case (avoiding a full-dataset clone). See
+    /// [`Self::view_is_materialized`].
     pub visible: Vec<DemoTick>,
     rng_state: u64,
     last_time_ns: i64,
     last_price_units: i64,
+    /// Next stable row id to hand out (monotonic; never reused).
+    next_id: u64,
 }
 
 impl Demo {
@@ -92,21 +101,30 @@ impl Demo {
             rng_state: 0x0005_DEEC_E66D_u64.wrapping_mul(0xB16B_00B5),
             last_time_ns: 0,
             last_price_units: START_PRICE_UNITS,
+            next_id: 0,
         };
         demo.append_n(initial_count);
         demo
     }
 
+    /// Whether the displayed view is a materialized reorder of `ticks`
+    /// (a filter is active or a sort column is set). When `false`, the
+    /// grid reads `ticks` directly in natural order.
+    #[must_use]
+    pub fn view_is_materialized(&self) -> bool {
+        !self.filter.is_empty() || self.sort.column().is_some()
+    }
+
     /// Appends `n` newly-generated ticks to the tail. Refreshes the
-    /// filtered view if a filter is active so appended rows that match
-    /// become visible.
+    /// materialized view when one is active so appended rows that match
+    /// the filter / fall into the sort order show up.
     pub fn append_n(&mut self, n: usize) {
         self.ticks.reserve(n);
         for _ in 0..n {
             let tick = self.next_tick();
             self.ticks.push(tick);
         }
-        if !self.filter.is_empty() {
+        if self.view_is_materialized() {
             self.refresh_visible();
         }
     }
@@ -119,9 +137,18 @@ impl Demo {
         self.refresh_visible();
     }
 
-    /// Clears every column filter and the materialized view.
+    /// Clears every column filter and refreshes the view.
     pub fn clear_filter(&mut self) {
         self.filter.clear_all();
+        self.refresh_visible();
+    }
+
+    /// Cycles the sort on `column` (the grid's `on_sort` callback) and
+    /// re-derives the ordered view. Demonstrates the host-side sorting
+    /// path — the mirror of [`Self::set_filter`]: the host owns row order
+    /// and composes [`filtered_indices`] then [`sort_indices`].
+    pub fn cycle_sort(&mut self, column: usize) {
+        self.sort.cycle(column);
         self.refresh_visible();
     }
 
@@ -131,32 +158,46 @@ impl Demo {
         self.column_widths.set(column, new_width);
     }
 
-    /// Recomputes [`Self::visible`] from `ticks` + `filter`. A no-op'd
-    /// (cleared) view when no filter is active — the lens falls back to
-    /// `ticks` directly in that case.
+    /// Recomputes [`Self::visible`] as the host-ordered view: filter
+    /// first, then sort (the canonical pipeline order). Cleared when no
+    /// reorder is active — the lens falls back to `ticks` directly then.
+    ///
+    /// This is the host-owns-order contract the grid expects: the grid
+    /// renders `visible` in the order given and never reorders itself.
     fn refresh_visible(&mut self) {
-        if self.filter.is_empty() {
+        if !self.view_is_materialized() {
             self.visible.clear();
             return;
         }
-        // `tick_columns` carries the per-column filter predicates; the
-        // `State`/`base_time_ns` args don't affect filtering.
+        // `tick_columns` carries the per-column filter predicates and
+        // comparators; the `State`/`base_time_ns` args don't affect
+        // ordering.
         let columns = tick_columns::<()>(0);
-        let idx = filtered_indices(&self.ticks, &self.filter, &columns);
+        // 1. Filter to surviving indices, 2. sort those indices.
+        let mut idx = filtered_indices(&self.ticks, &self.filter, &columns);
+        sort_indices(&mut idx, &self.ticks, self.sort, &columns);
         self.visible = idx.into_iter().map(|i| self.ticks[i]).collect();
     }
 
-    /// Replaces the current selection with rows `0..n`. Bulk-
-    /// selection helper used by the gallery demo's toolbar as a
-    /// quick alternate to clicking individual rows.
-    pub fn select_first(&mut self, n: u64) {
+    /// Replaces the current selection with the first `n` rows *in the
+    /// current display order*, keyed by their stable ids. Bulk-selection
+    /// helper used by the gallery demo's toolbar.
+    pub fn select_first(&mut self, n: usize) {
         self.selection.clear();
         if n == 0 {
             return;
         }
-        self.selection.replace_with(0);
-        if n > 1 {
-            self.selection.extend_to(n - 1);
+        // Read ids from whichever slice the grid is currently showing, so
+        // "first n" matches what the user sees under sort/filter.
+        let ids: Vec<u64> = if self.view_is_materialized() {
+            self.visible.iter().take(n).map(|t| t.id).collect()
+        } else {
+            self.ticks.iter().take(n).map(|t| t.id).collect()
+        };
+        if let Some(&first) = ids.first() {
+            // Anchor at the first row, then select the whole id set.
+            self.selection.replace_with(first);
+            self.selection.extend_range(ids);
         }
     }
 
@@ -182,7 +223,10 @@ impl Demo {
         } else {
             DemoSide::Sell
         };
+        let id = self.next_id;
+        self.next_id += 1;
         DemoTick {
+            id,
             event_ns: self.last_time_ns,
             price_units: self.last_price_units,
             size: Some(trade_size),
@@ -350,9 +394,51 @@ mod tests {
         let mut demo = Demo::with_initial(64);
         demo.set_filter(SIDE_COL, "S");
         demo.clear_filter();
-        // With no active filter the lens reads `ticks` directly, so the
-        // materialized view is dropped.
+        // With no active filter *or* sort the lens reads `ticks`
+        // directly, so the materialized view is dropped.
         assert!(demo.visible.is_empty());
         assert!(demo.filter.is_empty());
+    }
+
+    /// Price is column index 1 in `tick_columns`.
+    const PRICE_COL: usize = 1;
+
+    #[test]
+    fn sorting_materializes_the_view_in_price_order() {
+        let mut demo = Demo::with_initial(200);
+        demo.cycle_sort(PRICE_COL); // ascending
+        assert_eq!(demo.visible.len(), demo.ticks.len());
+        assert!(
+            demo.visible.windows(2).all(|w| w[0].price_units <= w[1].price_units),
+            "visible rows must be in ascending price order"
+        );
+        // A second cycle flips to descending.
+        demo.cycle_sort(PRICE_COL);
+        assert!(
+            demo.visible.windows(2).all(|w| w[0].price_units >= w[1].price_units),
+            "visible rows must be in descending price order"
+        );
+        // A third cycle clears the sort; with no filter either, the view
+        // de-materializes back to reading `ticks` directly.
+        demo.cycle_sort(PRICE_COL);
+        assert!(demo.visible.is_empty());
+        assert_eq!(demo.sort.column(), None);
+    }
+
+    #[test]
+    fn select_first_keys_by_stable_id_in_display_order() {
+        let mut demo = Demo::with_initial(50);
+        // Sort descending by price so display order differs from natural.
+        demo.cycle_sort(PRICE_COL);
+        demo.cycle_sort(PRICE_COL);
+        demo.select_first(3);
+        // The selected ids must be exactly the first three visible rows'
+        // ids — i.e. selection tracks what the user sees, not positions.
+        let want: Vec<u64> = demo.visible.iter().take(3).map(|t| t.id).collect();
+        let mut got: Vec<u64> = demo.selection.iter().collect();
+        got.sort_unstable();
+        let mut want_sorted = want.clone();
+        want_sorted.sort_unstable();
+        assert_eq!(got, want_sorted);
     }
 }

@@ -23,25 +23,60 @@
 //! dumps a TSV payload to the clipboard), [`row_click::RowClickable`]
 //! (emits modifier-aware row clicks for selection), and
 //! [`header_click::HeaderClickable`] (emits a plain click on a column
-//! header to cycle its sort).
+//! header to emit a sort-cycle request).
 //!
 //! Entry points: [`view::data_grid`] for the xilem view,
 //! [`column::ColumnDef`] for the per-column contract,
 //! [`selection::SelectionState`] for the selection model,
 //! [`sort::SortState`] for the sort model.
 //!
+//! ## The host owns row order (sorting *and* filtering)
+//!
+//! This grid is presentation-only: **the host owns the row order**, and
+//! the grid renders rows in exactly the order it is handed. Both sorting
+//! and filtering follow one contract — the grid emits an *intent* (a
+//! header-click cycle, a filter-input edit) and the host recomputes its
+//! ordered/filtered view and serves it back. The grid never reorders or
+//! hides data itself. This is the prevailing data-grid architecture
+//! (AG Grid's server-side row model, Kendo, `TanStack` Table's
+//! `manualSorting`/`manualFiltering`) and the universal Rust-GUI idiom
+//! (egui, gpui-component, xilem all keep ordering app-side); it also
+//! keeps the component product-agnostic, since comparators and predicates
+//! are domain logic that lives with the host's data.
+//!
+//! The host composes the two stages in the canonical order — **filter,
+//! then sort** — using the two mirror helpers
+//! [`filtered_indices`](filter::filtered_indices) and
+//! [`sort_indices`](sort::sort_indices) over an index list, then
+//! materializes the surviving rows. The grid virtualizes over that
+//! ordered slice.
+//!
 //! ## Sorting
 //!
 //! Single-column sorting is driven by [`sort::SortState`], held by the
-//! host and read by the grid each frame. Clicking a sortable column
-//! header cycles ascending → descending → unsorted; the active column
-//! shows a ▲/▼ arrow, and sortable headers highlight on hover. A column
-//! is sortable only if its [`ColumnDef`] carries a comparator
-//! (see [`column::ColumnDef::sortable_by_key`]) — the comparator orders
-//! the row's *underlying* value, independent of the cell's display
+//! host. Clicking a sortable column header invokes the
+//! [`DataGrid::sort`](view::DataGrid::sort) callback with the column; the
+//! host cycles its `SortState` (ascending → descending → unsorted, via
+//! [`SortState::cycle`](sort::SortState::cycle)) and re-derives its view
+//! with [`sort_indices`](sort::sort_indices). The active column shows a
+//! ▲/▼ arrow, and sortable headers highlight on hover. A column is
+//! sortable only if its [`ColumnDef`] carries a comparator (see
+//! [`column::ColumnDef::sortable_by_key`]) — the comparator orders the
+//! row's *underlying* value, independent of the cell's display
 //! formatting, so a `"$100.00"` price column sorts numerically rather
-//! than lexicographically. Selection tracks *source* row indices, so it
-//! stays attached to the same data rows across sort changes.
+//! than lexicographically.
+//!
+//! ## Selection is keyed by stable row id
+//!
+//! Selection ([`selection::SelectionState`]) is keyed by a **stable row
+//! id** supplied via [`DataGrid::row_id`](view::DataGrid::row_id) — the
+//! `getRowId` contract from `TanStack`/AG Grid/Kendo — *not* by slice
+//! position. Because the host reorders the slice when sorting/filtering,
+//! a positional key would point at a different row after any reorder
+//! (the documented index-keying bug); an id key makes the selection
+//! follow its rows for free. If no `row_id` is supplied the grid falls
+//! back to slice position, which is correct only for a static, unsorted,
+//! unfiltered grid.
 //!
 //! ## Resizing & widths
 //!
@@ -59,12 +94,14 @@
 //!
 //! ## Known limitations (v1)
 //!
-//! - **Shift-extend selection while sorted** fills an inclusive range in
-//!   *source-index* space, so it does not follow the visually contiguous
-//!   range between anchor and target under a non-identity sort. Plain
-//!   click and ctrl/cmd-toggle are order-independent and unaffected.
-//! - **Clipboard copy** emits the selection in ascending source-index
-//!   order, not the on-screen (sorted) order.
+//! - **Shift-extend across not-yet-loaded rows.** Shift-extend now
+//!   follows the *visual* order (the grid resolves the inclusive id span
+//!   from the ordered slice the host serves), so it is correct whenever
+//!   both the anchor and target rows are present in that slice. If the
+//!   anchor was filtered out of the current view, the range has no
+//!   on-screen start and shift degrades to a single select. (This
+//!   supersedes the earlier "shift-extend ignores sort order" limitation,
+//!   which the host-owns-order + stable-id model fixed.)
 //! - Sorting is single-column — there is no multi-column / tiebreak sort.
 //! - Columns start at their `ColumnDef` width and can be drag-resized
 //!   (see [`width::ColumnWidths`]); the grid scrolls horizontally when
@@ -94,6 +131,6 @@ pub use filter::{FilterState, filtered_indices};
 pub use header_click::{HeaderClickable, HeaderClicked};
 pub use row_click::{RowClickAction, RowClickable};
 pub use selection::SelectionState;
-pub use sort::{SortDirection, SortState};
+pub use sort::{SortDirection, SortState, sort_indices};
 pub use view::{DataGrid, data_grid};
 pub use width::{ColumnWidths, MIN_COLUMN_WIDTH};

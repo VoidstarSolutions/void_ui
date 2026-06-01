@@ -18,7 +18,7 @@
 //!   color.
 
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 
 use xilem::WidgetView;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
@@ -31,14 +31,14 @@ use xilem::view::{
 };
 use xilem::{AnyWidgetView, Pod, ViewCtx};
 
-use super::column::{CellAlign, CellRenderer, ColumnDef, RowComparator, TextProjector};
+use super::column::{CellAlign, CellRenderer, ColumnDef, TextProjector};
 use super::column_strip::{SeparatorStyle, column_strip};
 use super::copy_shortcut::CopyOnShortcut;
 use super::filter::FilterState;
 use super::header_click::clickable_header;
 use super::row_click::clickable_row;
 use super::selection::SelectionState;
-use super::sort::{SortDirection, SortState, display_order};
+use super::sort::{SortDirection, SortState};
 use super::width::ColumnWidths;
 use crate::Theme;
 use crate::components::scroll_container::scroll_container;
@@ -49,9 +49,49 @@ type RowsFn<State, R> = Arc<dyn for<'a> Fn(&'a State) -> &'a [R] + Send + Sync>;
 /// Boxed selection lens (`Fn(&mut State) -> &mut SelectionState`).
 type SelectionLens<State> =
     Arc<dyn for<'a> Fn(&'a mut State) -> &'a mut SelectionState + Send + Sync>;
-/// Boxed sort lens (`Fn(&mut State) -> &mut SortState`), the write path
-/// for header-click cycling.
-type SortLens<State> = Arc<dyn for<'a> Fn(&'a mut State) -> &'a mut SortState + Send + Sync>;
+/// Boxed stable row-id projector (`Fn(&R) -> u64`). Supplied by the host
+/// (the `getRowId` contract); selection is keyed by this id rather than
+/// by slice position, so it follows rows across host-side sort/filter.
+type RowIdFn<R> = Arc<dyn Fn(&R) -> u64 + Send + Sync>;
+/// Boxed sort-change callback (`Fn(&mut State, column)`). A header click
+/// emits the clicked column through this; the host cycles its
+/// [`SortState`] *and* re-derives its ordered view — the grid never
+/// reorders data itself (the same host-side shape as [`FilterChange`]).
+type SortChange<State> = Arc<dyn Fn(&mut State, usize) + Send + Sync>;
+
+/// How the body derives a row's stable id: either the host's projector,
+/// or a fallback to the row's slice position when none was supplied.
+///
+/// Resolving needs *both* candidates available — the explicit projector
+/// reads the row, the fallback uses the position — so [`Self::id_of`]
+/// takes both and picks. Clone is cheap (an `Arc` bump or a unit).
+enum RowIdByPosition<R> {
+    /// Host-supplied `getRowId`.
+    Explicit(RowIdFn<R>),
+    /// No projector: use the row's current slice position as its id.
+    Position,
+}
+
+// Hand-written so the bound is on the `Arc` (always `Clone`), not on `R`
+// — a derived `Clone` would wrongly require `R: Clone`.
+impl<R> Clone for RowIdByPosition<R> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Explicit(f) => Self::Explicit(Arc::clone(f)),
+            Self::Position => Self::Position,
+        }
+    }
+}
+
+impl<R> RowIdByPosition<R> {
+    /// The stable id of `row`, which sits at slice position `pos`.
+    fn id_of(&self, pos: usize, row: &R) -> u64 {
+        match self {
+            Self::Explicit(f) => f(row),
+            Self::Position => slice_to_selection(pos),
+        }
+    }
+}
 /// Boxed filter-change callback (`Fn(&mut State, column, query)`). The
 /// grid emits filter edits through this so the host can update its
 /// [`FilterState`] *and* recompute its filtered view — the grid never
@@ -82,55 +122,6 @@ const fn align_to_main(align: CellAlign) -> MainAxisAlignment {
         CellAlign::Center => MainAxisAlignment::Center,
         CellAlign::End => MainAxisAlignment::End,
     }
-}
-
-/// Memoized sorted display order, shared (behind a `Mutex`) into the
-/// `virtual_scroll` row builder.
-///
-/// `virtual_scroll` invokes the row builder once per *visible* row.
-/// Re-sorting the whole dataset inside each call would be O(n log n)
-/// *per row*; instead we recompute only when the sort inputs change —
-/// keyed on `(column, direction, row_count)` — so a rebuild sorts at
-/// most once and every row after the first reuses the cached `Arc`.
-///
-/// `row_count` is a sufficient data-version proxy for the append-only
-/// streams this grid targets (see the module docs): an append changes
-/// the length and invalidates the cache. In-place row mutation that
-/// preserves length is out of scope for v1 (the grid is read-only).
-#[derive(Default)]
-struct SortOrderCache {
-    key: Option<(Option<usize>, SortDirection, usize)>,
-    order: Arc<Vec<usize>>,
-}
-
-/// Map a virtual (on-screen) row index to its source row index under
-/// the active sort, recomputing the memoized order only when the sort
-/// inputs change.
-///
-/// Returns `None` when the virtual index falls outside the data (e.g.
-/// a row scrolled into view past the end of a shrinking dataset). The
-/// unsorted case is the hot path: an identity mapping with no lock and
-/// no allocation.
-fn resolve_source_idx<R>(
-    sort: SortState,
-    comparators: &[Option<RowComparator<R>>],
-    cache: &Mutex<SortOrderCache>,
-    data: &[R],
-    virtual_idx: usize,
-) -> Option<usize> {
-    let Some(col) = sort.column() else {
-        return Some(virtual_idx);
-    };
-    let key = (Some(col), sort.direction(), data.len());
-    // Recover the guard if a prior holder panicked — the critical
-    // section can't itself panic, so the cached order is still valid.
-    let mut cache = cache.lock().unwrap_or_else(PoisonError::into_inner);
-    if cache.key != Some(key) {
-        let comparator = comparators.get(col).and_then(Option::as_ref);
-        cache.order = Arc::new(display_order(data, comparator, sort.direction()));
-        cache.key = Some(key);
-    }
-    cache.order.get(virtual_idx).copied()
 }
 
 /// Builder for a virtualized, theme-driven data grid view.
@@ -168,8 +159,9 @@ pub struct DataGrid<State, R> {
     row_height: f64,
     rows: Option<RowsFn<State, R>>,
     selection_lens: Option<SelectionLens<State>>,
+    row_id: Option<RowIdFn<R>>,
     sort: SortState,
-    sort_lens: Option<SortLens<State>>,
+    sort_change: Option<SortChange<State>>,
     filter: FilterState,
     filter_change: Option<FilterChange<State>>,
     column_widths: ColumnWidths,
@@ -193,8 +185,9 @@ where
             row_height: DEFAULT_ROW_HEIGHT,
             rows: None,
             selection_lens: None,
+            row_id: None,
             sort: SortState::new(),
-            sort_lens: None,
+            sort_change: None,
             filter: FilterState::new(),
             filter_change: None,
             column_widths: ColumnWidths::new(),
@@ -227,9 +220,13 @@ where
     }
 
     /// Enables row selection via a lens into the host's
-    /// [`SelectionState`]. Selection tracks *source* row indices, so it
-    /// stays attached to the same data rows across sort changes. Omit
-    /// for a non-selectable grid.
+    /// [`SelectionState`]. Selection is keyed by the **stable row id**
+    /// from [`Self::row_id`], so it follows its rows across host-side
+    /// sort/filter reordering. Omit for a non-selectable grid.
+    ///
+    /// Pair this with [`Self::row_id`]: without a row-id projector the
+    /// grid falls back to using each row's slice position as its id,
+    /// which is only correct for a static, unsorted, unfiltered grid.
     pub fn selection<F>(mut self, lens: F) -> Self
     where
         F: for<'a> Fn(&'a mut State) -> &'a mut SelectionState + Send + Sync + 'static,
@@ -239,18 +236,46 @@ where
         self
     }
 
-    /// Enables sorting: `state` is the current [`SortState`] snapshot
-    /// (drives the header arrow + the virtual→source row order) and
-    /// `lens` is the write path for header-click cycling. A column is
-    /// only sortable if its [`ColumnDef`] carries a comparator (see
-    /// [`ColumnDef::sortable_by_key`]). Omit for an unsorted grid.
-    pub fn sort<F>(mut self, state: SortState, lens: F) -> Self
+    /// Supplies a **stable, unique row id** for each row — the grid's
+    /// `getRowId` (the same contract as `TanStack` Table / AG Grid / Kendo).
+    ///
+    /// Selection is keyed by this id, so it stays attached to the right
+    /// rows when the host reorders the slice via sorting or filtering.
+    /// The id must be **stable** (the same row always yields the same id)
+    /// and **unique** across the dataset; a database key or a monotonic
+    /// sequence assigned at row creation is ideal.
+    ///
+    /// If omitted, the grid uses each row's current slice position as its
+    /// id — fine for a static grid, but under sorting/filtering a
+    /// positional key makes the selection point at whatever row now
+    /// occupies that slot (the documented index-keying failure mode).
+    pub fn row_id<F>(mut self, id: F) -> Self
     where
-        F: for<'a> Fn(&'a mut State) -> &'a mut SortState + Send + Sync + 'static,
+        F: Fn(&R) -> u64 + Send + Sync + 'static,
     {
-        let lens: SortLens<State> = Arc::new(lens);
+        self.row_id = Some(Arc::new(id));
+        self
+    }
+
+    /// Enables sorting. `state` is the current [`SortState`] snapshot
+    /// (drives the header arrow), and `on_sort` is invoked as
+    /// `(state, column)` when the user clicks a sortable column's header.
+    ///
+    /// Per the grid's host-owns-order model (the same shape as
+    /// [`Self::filter`]), `on_sort` must cycle the host's [`SortState`]
+    /// (via [`SortState::cycle`]) *and* re-derive whatever ordered view
+    /// the grid's `rows` accessor serves — typically by composing
+    /// [`filtered_indices`](super::filter::filtered_indices) then
+    /// [`sort_indices`](super::sort::sort_indices) over the host's data.
+    /// The grid never reorders data itself. A column is only sortable if
+    /// its [`ColumnDef`] carries a comparator (see
+    /// [`ColumnDef::sortable_by_key`]). Omit for an unsorted grid.
+    pub fn sort<F>(mut self, state: SortState, on_sort: F) -> Self
+    where
+        F: Fn(&mut State, usize) + Send + Sync + 'static,
+    {
         self.sort = state;
-        self.sort_lens = Some(lens);
+        self.sort_change = Some(Arc::new(on_sort));
         self
     }
 
@@ -341,10 +366,11 @@ struct DecomposedColumns<R, State> {
     render_slots: Arc<Vec<ColumnRender<R, State>>>,
     /// Per-column clipboard text projector (`None` ⇒ empty TSV cell).
     text_projectors: Arc<Vec<Option<TextProjector<R>>>>,
-    /// Per-column "is sortable" flag (a comparator is present).
+    /// Per-column "is sortable" flag (the column carries a comparator).
+    /// Only the *flag* survives: the host owns sorting now, so the grid
+    /// keeps the comparator only long enough to decide whether the header
+    /// is clickable — it never reorders data itself.
     sortable: Vec<bool>,
-    /// Per-column comparators, used by the body to derive sort order.
-    comparators: Arc<Vec<Option<RowComparator<R>>>>,
     /// Per-column "is filterable" flag (a predicate is present). The
     /// predicate itself is dropped — the host applies filtering — so the
     /// grid keeps only the flag (to decide whether to show a filter input).
@@ -361,11 +387,13 @@ fn decompose_columns<R, State>(
 ) -> DecomposedColumns<R, State> {
     let mut render_slots: Vec<ColumnRender<R, State>> = Vec::with_capacity(columns.len());
     let mut text_projectors: Vec<Option<TextProjector<R>>> = Vec::with_capacity(columns.len());
-    let mut comparators: Vec<Option<RowComparator<R>>> = Vec::with_capacity(columns.len());
+    let mut sortable: Vec<bool> = Vec::with_capacity(columns.len());
     let mut filterable: Vec<bool> = Vec::with_capacity(columns.len());
     for (idx, col) in columns.into_iter().enumerate() {
         text_projectors.push(col.text);
-        comparators.push(col.comparator);
+        // Comparator presence ⇒ sortable; the comparator itself is the
+        // host's (via `sort_indices`), so we drop it here.
+        sortable.push(col.comparator.is_some());
         filterable.push(col.filter.is_some());
         render_slots.push(ColumnRender {
             title: col.title,
@@ -374,12 +402,10 @@ fn decompose_columns<R, State>(
             render: col.render,
         });
     }
-    let sortable: Vec<bool> = comparators.iter().map(Option::is_some).collect();
     DecomposedColumns {
         render_slots: Arc::new(render_slots),
         text_projectors: Arc::new(text_projectors),
         sortable,
-        comparators: Arc::new(comparators),
         filterable,
     }
 }
@@ -401,8 +427,9 @@ where
         row_height,
         rows,
         selection_lens,
+        row_id,
         sort,
-        sort_lens,
+        sort_change,
         filter,
         filter_change,
         column_widths,
@@ -415,23 +442,32 @@ where
         empty
     });
 
+    // Default the row-id projector to each row's slice position when the
+    // host doesn't supply one. Correct only for a static (unsorted,
+    // unfiltered) grid; documented on `DataGrid::row_id`. Boxed once here
+    // so the body closure captures a single uniform `RowIdFn`.
+    let row_id: RowIdByPosition<R> = match row_id {
+        Some(f) => RowIdByPosition::Explicit(f),
+        None => RowIdByPosition::Position,
+    };
+
     let DecomposedColumns {
         render_slots,
         text_projectors,
         sortable,
-        comparators,
         filterable,
     } = decompose_columns(columns, &column_widths);
 
     // --- Header row. Sortable columns get a clickable header that
-    //     cycles the column's sort, plus an arrow on the active column;
+    //     emits the clicked column to the host (which cycles the sort and
+    //     re-derives its order), plus an arrow on the active column;
     //     columns with an active filter get a persistent accent + marker.
     //     When resize is enabled the header ColumnStrip itself owns the
     //     column-boundary grab zones + separators (like masonry's Split
     //     owns its bar) — no overlay, so cell hover/sort are untouched.
     let header_ctx = HeaderCtx {
         sort,
-        sort_lens: sort_lens.as_ref(),
+        sort_change: sort_change.as_ref(),
         theme: &theme,
     };
     let header_widths: Vec<f64> = render_slots.iter().map(|s| s.width).collect();
@@ -466,11 +502,10 @@ where
         row_count,
         row_height,
         theme,
-        sort,
         render_slots: Arc::clone(&render_slots),
-        comparators,
         rows: rows.clone(),
         selection_lens: selection_lens.clone(),
+        row_id: row_id.clone(),
     });
 
     // Build the filter-input row only when filtering is configured and
@@ -502,34 +537,33 @@ where
         text_projectors,
         rows,
         selection_lens,
+        row_id,
         phantom: PhantomData,
     }
 }
 
-// --- MARK: Row-index boundaries ----------------------------------------
+// --- MARK: Integer-domain boundaries -----------------------------------
 //
-// A row index is logically *one* quantity — a 0-based position into the
-// host's row slice — but three crates impose three integer types on it,
-// so the body builder is forced to convert between them:
+// Two crates impose integer types on a row's *position*:
 //
-// - `usize` is the native form: it indexes the data slice (`data.get`)
-//   and the sort-order vector. We treat it as canonical inside the body.
-// - `u64` is the **selection domain**: [`SelectionState`] stores `u64`
-//   so a selection is independent of any particular slice length (see
-//   its module doc). This is the public API type, hence the domain pick.
+// - `usize` is the native slice-position form (`data.get`, enumerate).
 // - `i64` is forced by xilem's `virtual_scroll`, whose range bound *and*
 //   callback index are `i64`.
 //
-// (Column indices are a *separate* domain and are uniformly `usize`
-// everywhere — see `filter`/`sort` — so they need no conversion.)
+// Separately, a row's **stable id** is a `u64` ([`SelectionState`] is
+// keyed by it). Id and position are *different* quantities now that the
+// host owns order — they coincide only under the position fallback
+// ([`RowIdByPosition::Position`]), which is the one place `usize → u64`
+// happens (`slice_to_selection`). We never convert an id *back* to a
+// position by casting (an id isn't a position); the copy path resolves
+// id→row by scanning instead. (Column indices are a separate domain,
+// uniformly `usize` — see `filter`/`sort`.)
 //
-// All conversions go through the four named helpers below so the casts
-// aren't scattered and unexplained. Each saturates an out-of-range value
-// to its type's max; downstream lookups (`slice.get`, `order.get`,
-// `selection.contains`) then treat that as "past the end" — the exact
-// behavior wanted for a row scrolled past a shrinking dataset. On 64-bit
-// targets `usize`↔`u64` is lossless, but the checked form keeps us
-// correct on 32-bit and satisfies `clippy::pedantic` uniformly.
+// The conversions go through named helpers so the casts aren't scattered.
+// Each saturates an out-of-range value to its type's max; downstream
+// lookups then treat that as "past the end." On 64-bit targets the casts
+// are lossless, but the checked form keeps us correct on 32-bit and
+// satisfies `clippy::pedantic` uniformly.
 
 /// `virtual_scroll` range bound: row count (`u64`) → `i64`. Saturates to
 /// `i64::MAX` (a ~9.2e18-row grid is not reachable in practice).
@@ -543,33 +577,37 @@ fn scroll_idx_to_slice(idx: i64) -> usize {
     usize::try_from(idx).unwrap_or(usize::MAX)
 }
 
-/// Slice index (`usize`) → selection domain (`u64`). Saturates to
+/// Slice position (`usize`) → row id (`u64`), used only by the
+/// position-fallback row id ([`RowIdByPosition::Position`]). Saturates to
 /// `u64::MAX`.
 fn slice_to_selection(idx: usize) -> u64 {
     u64::try_from(idx).unwrap_or(u64::MAX)
 }
 
-/// Selection domain (`u64`) → slice index (`usize`). Saturates to
-/// `usize::MAX`, which the subsequent `slice.get` rejects as past-the-end.
-fn selection_to_slice(idx: u64) -> usize {
-    usize::try_from(idx).unwrap_or(usize::MAX)
-}
-
 // --- MARK: TSV projection ----------------------------------------------
 
+/// Builds the clipboard TSV for the current selection.
+///
+/// Iterates `data` **in its current (display) order** and emits a line
+/// for each row whose [`row_id`](RowIdByPosition)-derived id is selected.
+/// Walking the data (rather than the selection set) means the copy comes
+/// out in the on-screen order the host arranged — not in id order — which
+/// is what a user pasting into a spreadsheet expects.
 fn project_tsv<R>(
     text_projectors: &[Option<TextProjector<R>>],
     data: &[R],
     selection: &SelectionState,
+    row_id: &RowIdByPosition<R>,
 ) -> Option<String> {
     if selection.is_empty() {
         return None;
     }
     let mut out = String::new();
     let mut first_row = true;
-    for idx_u64 in selection.iter() {
-        let i = selection_to_slice(idx_u64);
-        let Some(row) = data.get(i) else { continue };
+    for (pos, row) in data.iter().enumerate() {
+        if !selection.contains(row_id.id_of(pos, row)) {
+            continue;
+        }
         if !first_row {
             out.push('\n');
         }
@@ -588,7 +626,10 @@ fn project_tsv<R>(
             }
         }
     }
-    Some(out)
+    // Selected ids that aren't in the current (e.g. filtered) view simply
+    // don't appear — copy reflects what's visible, matching the grid's
+    // host-owned-view model.
+    (!first_row).then_some(out)
 }
 
 // --- MARK: CopyOnShortcutView ------------------------------------------
@@ -602,6 +643,7 @@ struct CopyOnShortcutView<V, R, State> {
     text_projectors: Arc<Vec<Option<TextProjector<R>>>>,
     rows: RowsFn<State, R>,
     selection_lens: Option<SelectionLens<State>>,
+    row_id: RowIdByPosition<R>,
     phantom: PhantomData<fn() -> State>,
 }
 
@@ -675,7 +717,12 @@ where
         // indices, then look up rows.
         let selection_snapshot = (**selection_lens)(app_state).clone();
         let data = (*self.rows)(app_state);
-        project_tsv(&self.text_projectors, data, &selection_snapshot)
+        project_tsv(
+            &self.text_projectors,
+            data,
+            &selection_snapshot,
+            &self.row_id,
+        )
     }
 }
 
@@ -705,15 +752,16 @@ fn aligned_cell<State: 'static>(
 /// the call short and under the argument-count lint.
 struct HeaderCtx<'a, State> {
     sort: SortState,
-    sort_lens: Option<&'a SortLens<State>>,
+    sort_change: Option<&'a SortChange<State>>,
     theme: &'a Theme,
 }
 
 /// Builds one header cell as a fixed-width flex child.
 ///
 /// Sortable columns (`sortable == true`) are wrapped in
-/// [`clickable_header`] so a click cycles `sort_lens`'s state for that
-/// column, and the active sort column gains an ascending/descending
+/// [`clickable_header`] so a click emits the column through
+/// `sort_change` (the host cycles its [`SortState`] and re-derives its
+/// order), and the active sort column gains an ascending/descending
 /// arrow. A column with an active filter (`filtered == true`) is drawn
 /// in the theme accent with a trailing marker, so a filtered view is
 /// always unmistakable. When resize is enabled (`ctx.width_change` is
@@ -759,18 +807,20 @@ where
     // reserve any width and the hover highlight spans the full column.
     let cell = aligned_cell(Box::new(header_label), slot.width, slot.align);
 
-    // Interactive (sort) only when the column is sortable *and* a write
-    // lens is available; otherwise an inert label. The clickable wrapper
-    // now spans the full column width, so the hover highlight covers the
-    // whole header cell.
-    match (sortable, ctx.sort_lens) {
-        (true, Some(lens)) => {
-            let lens = Arc::clone(lens);
+    // Interactive (sort) only when the column is sortable *and* a sort
+    // callback is available; otherwise an inert label. The clickable
+    // wrapper spans the full column width, so the hover highlight covers
+    // the whole header cell. The click emits the column to the host,
+    // which cycles the sort and re-derives its order — the grid doesn't
+    // reorder data itself.
+    match (sortable, ctx.sort_change) {
+        (true, Some(on_sort)) => {
+            let on_sort = Arc::clone(on_sort);
             Box::new(clickable_header(
                 cell,
                 theme.palette.border_strong,
                 move |state: &mut State| {
-                    (*lens)(state).cycle(idx);
+                    on_sort(state, idx);
                 },
             ))
         }
@@ -786,18 +836,17 @@ struct BodyParams<State, R> {
     row_count: u64,
     row_height: f64,
     theme: Theme,
-    sort: SortState,
     render_slots: Arc<Vec<ColumnRender<R, State>>>,
-    comparators: Arc<Vec<Option<RowComparator<R>>>>,
     rows: RowsFn<State, R>,
     selection_lens: Option<SelectionLens<State>>,
+    row_id: RowIdByPosition<R>,
 }
 
-/// Builds the virtualized body. Each visible row is mapped from its
-/// *virtual* position to a *source* row index through the active sort
-/// order (via a shared, memoized [`SortOrderCache`]); selection
-/// styling, cell rendering, and the click handler all operate on that
-/// source index.
+/// Builds the virtualized body. The host supplies rows **already in
+/// display order** (filtered then sorted host-side), so virtual position
+/// *is* slice position — the body does no reordering. Each row's stable
+/// id (via [`RowIdByPosition`]) drives selection styling and the click
+/// handler, so a selection follows its rows across host reordering.
 fn build_body<State, R>(params: BodyParams<State, R>) -> impl WidgetView<State, ()> + use<State, R>
 where
     State: 'static,
@@ -807,44 +856,42 @@ where
         row_count,
         row_height,
         theme,
-        sort,
         render_slots,
-        comparators,
         rows,
         selection_lens,
+        row_id,
     } = params;
     let valid_range_end = scroll_range_end(row_count);
-    let sort_cache = Arc::new(Mutex::new(SortOrderCache::default()));
     virtual_scroll(0..valid_range_end, move |state: &mut State, idx: i64| {
-        let virtual_idx = scroll_idx_to_slice(idx);
+        // Host owns order: virtual position is the slice position.
+        let pos = scroll_idx_to_slice(idx);
 
-        // Map virtual row → source row through the active sort order.
-        // `sort` is the frame-time snapshot captured by this closure;
-        // it can't change without a rebuild (which re-captures it).
-        let source_idx =
-            resolve_source_idx(sort, &comparators, &sort_cache, (*rows)(state), virtual_idx);
+        let data = (*rows)(state);
+        // The clicked row's stable id, resolved from the current ordered
+        // slice. `None` when `pos` is past the end (a row scrolled past a
+        // shrinking dataset) — that row renders empty and is inert.
+        let row_id_at_pos = data.get(pos).map(|row| row_id.id_of(pos, row));
 
-        let is_selected = match (selection_lens.as_ref(), source_idx) {
-            (Some(sel), Some(s)) => (**sel)(state).contains(slice_to_selection(s)),
+        let is_selected = match (selection_lens.as_ref(), row_id_at_pos) {
+            (Some(sel), Some(id)) => (**sel)(state).contains(id),
             _ => false,
         };
 
         let data = (*rows)(state);
         let widths: Vec<f64> = render_slots.iter().map(|s| s.width).collect();
-        let cells: Vec<Box<AnyWidgetView<State>>> =
-            if let Some(row) = source_idx.and_then(|s| data.get(s)) {
-                render_slots
-                    .iter()
-                    .map(|slot| {
-                        // Cell content only; ColumnStrip owns the width.
-                        // Keep the per-cell alignment wrapper so Start/
-                        // Center/End still position text within the cell.
-                        aligned_cell((slot.render)(row, &theme), slot.width, slot.align)
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
+        let cells: Vec<Box<AnyWidgetView<State>>> = if let Some(row) = data.get(pos) {
+            render_slots
+                .iter()
+                .map(|slot| {
+                    // Cell content only; ColumnStrip owns the width.
+                    // Keep the per-cell alignment wrapper so Start/
+                    // Center/End still position text within the cell.
+                    aligned_cell((slot.render)(row, &theme), slot.width, slot.align)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         let row_bg = if is_selected {
             theme.palette.surface_2
@@ -856,32 +903,86 @@ where
         let row_view = sized_box(column_strip(widths, row_height, cells))
             .background_color(row_bg);
 
-        // Each row's click handler closes over the (cloned) selection
-        // lens + the row's *source* index. Modifiers route to the
-        // matching SelectionState op.
-        //
-        // KNOWN LIMITATION (v1): shift-extend fills an inclusive range
-        // in *source-index* space, so under an active sort it does not
-        // track the visual range between anchor and target. Single
-        // click and ctrl/cmd-toggle are order-independent and correct.
-        // Visual-range extend is deferred to a follow-up.
+        // Click handler: route modifiers to the matching SelectionState
+        // op, all keyed by the row's *stable id*. Borrows of `state` are
+        // kept disjoint (id/data reads vs. the mutable selection borrow)
+        // by snapshotting Copy values between them.
         let lens_for_click = selection_lens.clone();
+        let row_id_for_click = row_id.clone();
+        let rows_for_click = rows.clone();
         clickable_row(row_view, move |state: &mut State, action| {
-            let Some(source) = source_idx else { return };
-            let row = slice_to_selection(source);
             let Some(sel_lens) = lens_for_click.as_ref() else {
                 return;
             };
-            let sel = (**sel_lens)(state);
+            // Re-resolve the target id at click time from the live slice
+            // (the captured `pos` is stable for this row's lifetime).
+            let Some(target_id) = ({
+                let data = (*rows_for_click)(state);
+                data.get(pos).map(|row| row_id_for_click.id_of(pos, row))
+            }) else {
+                return;
+            };
+
             if action.shift {
-                sel.extend_to(row);
+                // Shift-extend over the *visual* range. Snapshot the
+                // anchor id, resolve the inclusive id span from the
+                // ordered slice, then apply — each borrow disjoint.
+                let anchor = (**sel_lens)(state).anchor();
+                match anchor {
+                    Some(anchor_id) => {
+                        let ids = {
+                            let data = (*rows_for_click)(state);
+                            visual_range_ids(data, &row_id_for_click, anchor_id, target_id)
+                        };
+                        (**sel_lens)(state).extend_range(ids);
+                    }
+                    // No anchor yet: behave like a plain click.
+                    None => (**sel_lens)(state).replace_with(target_id),
+                }
             } else if action.action_mod {
-                sel.toggle(row);
+                (**sel_lens)(state).toggle(target_id);
             } else {
-                sel.replace_with(row);
+                (**sel_lens)(state).replace_with(target_id);
             }
         })
     })
+}
+
+/// Resolves the stable ids of the rows spanning the **visual** range
+/// between `anchor_id` and `target_id` (inclusive), in the slice's
+/// current display order.
+///
+/// This is what makes shift-extend follow on-screen order regardless of
+/// sort/filter: it locates both rows' positions in the ordered slice and
+/// collects every id between them. If the anchor isn't in the current
+/// view (e.g. it was filtered out), the range has no on-screen start, so
+/// it degrades to just the target id — shift becomes a single select.
+///
+/// O(n) over the slice, but only on a shift-click (never per frame).
+fn visual_range_ids<R>(
+    data: &[R],
+    row_id: &RowIdByPosition<R>,
+    anchor_id: u64,
+    target_id: u64,
+) -> Vec<u64> {
+    let mut anchor_pos = None;
+    let mut target_pos = None;
+    for (pos, row) in data.iter().enumerate() {
+        let id = row_id.id_of(pos, row);
+        if id == anchor_id {
+            anchor_pos = Some(pos);
+        }
+        if id == target_id {
+            target_pos = Some(pos);
+        }
+    }
+    let (Some(a), Some(t)) = (anchor_pos, target_pos) else {
+        return vec![target_id];
+    };
+    let (lo, hi) = if a <= t { (a, t) } else { (t, a) };
+    (lo..=hi)
+        .map(|pos| row_id.id_of(pos, &data[pos]))
+        .collect()
 }
 
 // --- MARK: STACK ASSEMBLY ----------------------------------------------
