@@ -146,12 +146,12 @@ const fn align_to_main(align: CellAlign) -> MainAxisAlignment {
 ///
 /// # Notes
 ///
-/// - If `sum(column.width) > viewport_width`, columns clip off the
-///   right edge (a one-shot `tracing::warn!` fires). Horizontal
-///   scroll/resize is a roadmap item.
-/// - The clipboard (TSV) payload is rebuilt every frame from the
-///   current selection; columns without a `text` projector contribute
-///   empty cells so spreadsheet paste keeps the column layout.
+/// - Columns wider than the viewport are reachable via the grid's
+///   horizontal scroll (the header/filter/body stack scrolls together).
+/// - The clipboard (TSV) payload is recomputed on each rebuild from the
+///   current selection, in display order; columns without a `text`
+///   projector contribute empty cells so spreadsheet paste keeps the
+///   column layout.
 #[must_use = "DataGrid does nothing until rendered with .render(&theme)"]
 pub struct DataGrid<State, R> {
     columns: Vec<ColumnDef<R, State>>,
@@ -877,6 +877,9 @@ where
             _ => false,
         };
 
+        // Re-borrow the slice: the `is_selected` arm above took a
+        // `&mut State` through the selection lens, ending the earlier
+        // `&[R]` borrow, so we fetch the rows again for cell rendering.
         let data = (*rows)(state);
         let widths: Vec<f64> = render_slots.iter().map(|s| s.width).collect();
         let cells: Vec<Box<AnyWidgetView<State>>> = if let Some(row) = data.get(pos) {

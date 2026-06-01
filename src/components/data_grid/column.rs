@@ -88,10 +88,9 @@ pub type RowFilter<R> = Box<dyn Fn(&R, &str) -> bool + Send + Sync + 'static>;
 pub struct ColumnDef<R, State> {
     /// Display title shown in the sticky header row.
     pub title: String,
-    /// Fixed pixel width. The caller is responsible for ensuring the
-    /// sum across columns fits the grid's viewport; otherwise the
-    /// rightmost columns clip (a `tracing::warn!` is emitted in debug
-    /// builds on first under-sized layout).
+    /// Fixed pixel width. When the column total exceeds the viewport the
+    /// grid scrolls horizontally (header/filter/body share the offset),
+    /// so wide tables stay reachable rather than clipping.
     pub width: f64,
     /// In-cell text alignment.
     pub align: CellAlign,

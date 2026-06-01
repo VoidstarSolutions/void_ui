@@ -84,8 +84,8 @@ impl SelectionState {
     ///
     /// Replacing (rather than unioning) matches the spreadsheet model:
     /// a shift-click defines the whole range from the anchor, it doesn't
-    /// accrete. Pass an empty iterator to clear (the grid does this only
-    /// when there's no resolvable range).
+    /// accrete. An empty iterator clears the row set (the anchor is left
+    /// untouched — it's independent of which rows are selected).
     pub fn extend_range(&mut self, ids: impl IntoIterator<Item = u64>) {
         self.rows.clear();
         self.rows.extend(ids);

@@ -64,7 +64,9 @@ pub struct DemoTick {
 pub struct Demo {
     /// The synthetic tick history.
     pub ticks: Vec<DemoTick>,
-    /// Currently-selected row indices.
+    /// Currently-selected rows, keyed by stable row id (see
+    /// [`DemoTick::id`]) — not by position, so selection follows rows
+    /// across sort/filter reordering.
     pub selection: SelectionState,
     /// Active column sort (which column + direction).
     pub sort: SortState,
