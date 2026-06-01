@@ -88,20 +88,21 @@ fn build_inner(theme: &Theme, state: &SidebarDemo) -> impl WidgetView<SidebarDem
     .cross_axis_alignment(CrossAxisAlignment::Stretch)
     .gap(Length::px(2.0));
 
-    let sidebar = sidebar_panel(items, |s: &mut SidebarDemo| s.collapsed = !s.collapsed)
-        .collapsed(state.collapsed)
-        .render(theme);
-
-    let content_placeholder = flex_col((label("Content area")
+    let content = flex_col((label("Content area")
         .text_size(theme.typography.size_caption)
         .color(theme.palette.text_muted)
         .render(theme),))
     .cross_axis_alignment(CrossAxisAlignment::Start);
 
     let panel_row = with_source!(theme, {
-        flex_row((sidebar, content_placeholder))
-            .main_axis_alignment(MainAxisAlignment::Start)
-            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        flex_row((
+            sidebar_panel(items, |s: &mut SidebarDemo| s.collapsed = !s.collapsed)
+                .collapsed(state.collapsed)
+                .render(theme),
+            content,
+        ))
+        .main_axis_alignment(MainAxisAlignment::Start)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
     });
 
     flex_col((
