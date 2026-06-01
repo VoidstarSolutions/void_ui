@@ -19,6 +19,7 @@
 
 use std::marker::PhantomData;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use xilem::WidgetView;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
@@ -90,6 +91,22 @@ impl<R> RowIdByPosition<R> {
             Self::Explicit(f) => f(row),
             Self::Position => slice_to_selection(pos),
         }
+    }
+}
+
+/// One-shot warning that the grid is configured with selection + a
+/// reorder source but no stable `row_id`. Emitted at most once per
+/// process (an `AtomicBool` latch) so it surfaces the misconfiguration
+/// without spamming on every rebuild.
+fn warn_missing_row_id() {
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if !WARNED.swap(true, Ordering::Relaxed) {
+        tracing::warn!(
+            "data_grid: selection is enabled with sorting/filtering but no \
+             `.row_id(...)` was supplied — selection is keyed by slice \
+             position and will point at the wrong rows after a reorder. \
+             Supply a stable, unique row id (the `getRowId` contract)."
+        );
     }
 }
 /// Boxed filter-change callback (`Fn(&mut State, column, query)`). The
@@ -248,7 +265,14 @@ where
     /// If omitted, the grid uses each row's current slice position as its
     /// id — fine for a static grid, but under sorting/filtering a
     /// positional key makes the selection point at whatever row now
-    /// occupies that slot (the documented index-keying failure mode).
+    /// occupies that slot (the documented index-keying failure mode). The
+    /// grid emits a one-shot `tracing::warn!` if selection and a reorder
+    /// source (sort/filter) are wired without a `row_id`.
+    ///
+    /// Uniqueness matters: if two rows project the same id, they share a
+    /// selection membership — selecting or copying one acts on both. A
+    /// debug build asserts uniqueness across the *selected* rows during
+    /// clipboard copy; in release the contract is the caller's to keep.
     pub fn row_id<F>(mut self, id: F) -> Self
     where
         F: Fn(&R) -> u64 + Send + Sync + 'static,
@@ -442,6 +466,19 @@ where
         empty
     });
 
+    // Footgun guard: selection + a reorder source (sort/filter) but no
+    // stable `row_id` means selection is keyed by slice position, which
+    // points at the wrong row once the host reorders — the exact
+    // index-keying bug `row_id` exists to prevent. Warn once (not per
+    // rebuild) so it's visible without spamming. Static grids that never
+    // reorder are fine and don't trip this.
+    if selection_lens.is_some()
+        && row_id.is_none()
+        && (sort_change.is_some() || filter_change.is_some())
+    {
+        warn_missing_row_id();
+    }
+
     // Default the row-id projector to each row's slice position when the
     // host doesn't supply one. Correct only for a static (unsorted,
     // unfiltered) grid; documented on `DataGrid::row_id`. Boxed once here
@@ -604,10 +641,23 @@ fn project_tsv<R>(
     }
     let mut out = String::new();
     let mut first_row = true;
+    // Debug-only row-id uniqueness check, free-riding on this scan (which
+    // only runs on copy, never per frame). If two distinct rows project
+    // the *same* selected id, the `row_id` contract is violated and copy
+    // would emit both for one logical selection — flag it loudly in debug.
+    #[cfg(debug_assertions)]
+    let mut seen_selected_ids = std::collections::BTreeSet::<u64>::new();
     for (pos, row) in data.iter().enumerate() {
-        if !selection.contains(row_id.id_of(pos, row)) {
+        let id = row_id.id_of(pos, row);
+        if !selection.contains(id) {
             continue;
         }
+        #[cfg(debug_assertions)]
+        debug_assert!(
+            seen_selected_ids.insert(id),
+            "data_grid: row_id is not unique — id {id} maps to more than \
+             one row; selection/copy will misbehave (see DataGrid::row_id)"
+        );
         if !first_row {
             out.push('\n');
         }
@@ -1078,13 +1128,20 @@ const FILTER_ROW_HEIGHT: f64 = 30.0;
 
 #[cfg(test)]
 mod tests {
-    use super::{visual_range_ids, RowIdByPosition};
+    use super::{project_tsv, visual_range_ids, RowIdByPosition};
+    use crate::components::data_grid::column::TextProjector;
+    use crate::components::data_grid::selection::SelectionState;
     use std::sync::Arc;
 
     /// Row id == the row value itself, so test slices read naturally:
     /// `[10, 20, 30]` are rows with ids 10/20/30 in that display order.
     fn id_is_value() -> RowIdByPosition<u64> {
         RowIdByPosition::Explicit(Arc::new(|r: &u64| *r))
+    }
+
+    /// A single text projector that stringifies the `u64` row.
+    fn value_projectors() -> Vec<Option<TextProjector<u64>>> {
+        vec![Some(Box::new(|r: &u64| r.to_string()))]
     }
 
     #[test]
@@ -1131,5 +1188,36 @@ mod tests {
         let data = ["a", "b", "c", "d", "e"];
         let ids = visual_range_ids(&data, &RowIdByPosition::Position, 1, 3);
         assert_eq!(ids, Some(vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn project_tsv_emits_selected_rows_in_display_order() {
+        // Display order is the slice order; selection holds ids 30 and 10.
+        // Copy must come out in display order (30 then 10), not id order.
+        let data = [30_u64, 20, 10];
+        let mut sel = SelectionState::new();
+        sel.replace_with(30);
+        sel.extend_range([30, 10]);
+        let tsv = project_tsv(&value_projectors(), &data, &sel, &id_is_value());
+        assert_eq!(tsv.as_deref(), Some("30\n10"));
+    }
+
+    #[test]
+    fn project_tsv_is_none_when_nothing_selected() {
+        let data = [1_u64, 2, 3];
+        let sel = SelectionState::new();
+        assert_eq!(project_tsv(&value_projectors(), &data, &sel, &id_is_value()), None);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "row_id is not unique")]
+    fn project_tsv_debug_asserts_unique_row_ids() {
+        // Two rows project the same id (5) and that id is selected — the
+        // contract is violated, so debug builds must trip the assertion.
+        let data = [5_u64, 5];
+        let mut sel = SelectionState::new();
+        sel.replace_with(5);
+        let _ = project_tsv(&value_projectors(), &data, &sel, &id_is_value());
     }
 }
