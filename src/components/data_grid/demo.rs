@@ -443,4 +443,95 @@ mod tests {
         want_sorted.sort_unstable();
         assert_eq!(got, want_sorted);
     }
+
+    /// THE #1 guarantee, end-to-end through the real host path: a
+    /// selection keyed by stable id follows its row across a sort, where
+    /// a positional key would have pointed at a different row.
+    #[test]
+    fn selection_follows_the_row_across_a_sort() {
+        let mut demo = Demo::with_initial(200);
+
+        // Pick the row with the globally-max price, at its *natural*
+        // position. Under an ascending price sort it must land at the
+        // very end, so unless it was already last its display position
+        // provably changes — no reliance on seed luck. (max_by gives the
+        // first max on ties, a single deterministic row.)
+        let picked_pos = demo
+            .ticks
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.price_units.cmp(&b.price_units))
+            .map(|(i, _)| i)
+            .expect("non-empty");
+        let picked_id = demo.ticks[picked_pos].id;
+        assert!(picked_pos < demo.ticks.len() - 1, "max-price row isn't already last");
+        demo.selection.replace_with(picked_id);
+
+        // Sort ascending by price; the host materializes `visible`.
+        demo.cycle_sort(PRICE_COL);
+        assert!(
+            demo.visible.windows(2).all(|w| w[0].price_units <= w[1].price_units),
+            "precondition: a real reorder happened"
+        );
+
+        // The id is still selected — selection followed the row.
+        assert!(
+            demo.selection.contains(picked_id),
+            "the selected id must survive the sort"
+        );
+
+        // It tracked the *row*, not the slot: the max-price row is now
+        // last, a provably different display position. A positional key
+        // (still pointing at the old natural index) would select whatever
+        // row now occupies that slot — a different row.
+        let new_pos = demo
+            .visible
+            .iter()
+            .position(|t| t.id == picked_id)
+            .expect("selected row must still be present in the view");
+        assert_eq!(new_pos, demo.visible.len() - 1, "max-price row sorts to the end");
+        assert_ne!(
+            new_pos, picked_pos,
+            "the selected row moved; an index key would now mis-select"
+        );
+        assert_ne!(
+            demo.visible[picked_pos].id, picked_id,
+            "a different row occupies the old slot — index keying would break here"
+        );
+    }
+
+    /// Selection is id-keyed and independent of the current view: a row
+    /// filtered out of view keeps its selection and is still selected
+    /// when it returns. (Complements the `visual_range_ids` unit test for
+    /// the anchor-filtered-out shift-extend degrade.)
+    #[test]
+    fn selection_persists_across_a_filter_that_hides_the_row() {
+        let mut demo = Demo::with_initial(200);
+
+        // Find a buy and a sell so we can filter one out deterministically.
+        let buy_id = demo
+            .ticks
+            .iter()
+            .find(|t| matches!(t.side, Some(DemoSide::Buy)))
+            .expect("200 ticks include a buy")
+            .id;
+        demo.selection.replace_with(buy_id);
+
+        // Filter to sells only — the selected buy leaves the view.
+        demo.set_filter(SIDE_COL, "S");
+        assert!(
+            !demo.visible.iter().any(|t| t.id == buy_id),
+            "the selected buy must be filtered out of the view"
+        );
+        // The selection set still holds the id (it's view-independent).
+        assert!(
+            demo.selection.contains(buy_id),
+            "selection is id-keyed, so a filtered-out row stays selected"
+        );
+
+        // Clear the filter; the row returns and is still selected.
+        demo.clear_filter();
+        assert!(demo.selection.contains(buy_id));
+        assert!(demo.ticks.iter().any(|t| t.id == buy_id));
+    }
 }
