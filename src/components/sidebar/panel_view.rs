@@ -151,8 +151,15 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        if message.take_message::<SidebarTogglePressed>().is_some() {
-            return MessageResult::Action((self.on_toggle)(app_state));
+        // `take_message` asserts that the message has reached its final target
+        // (remaining_path is empty). Only call it when we're the target; otherwise
+        // the message is destined for a child action widget (e.g. a sidebar item)
+        // and must be routed further.
+        if message.remaining_path().is_empty() {
+            if message.take_message::<SidebarTogglePressed>().is_some() {
+                return MessageResult::Action((self.on_toggle)(app_state));
+            }
+            return MessageResult::Stale;
         }
         let mut content = ThemedSidebarPanel::content_mut(&mut element);
         let mut child = SidebarContent::child_mut(&mut content);
