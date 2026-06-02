@@ -1,35 +1,44 @@
 //! Sort model for [`super::data_grid`].
 //!
-//! Sorting is single-column in this first increment. It follows the
-//! **same host-side contract as filtering** (see [`super::filter`]): the
-//! grid is presentation-only and never reorders data itself. The host
-//! owns the row order — it composes [`sort_indices`] after
-//! [`filtered_indices`](super::filter::filtered_indices) where its data
-//! lives, materializes the ordered rows, and serves them to the grid.
-//! The grid keeps [`SortState`] only as the *descriptor* it draws the
-//! header arrow from and emits header-click cycles through (mirroring how
-//! a controlled `state` + `onSortingChange` works in headless table
-//! libraries such as `TanStack` Table).
+//! Supports **multi-column (tiebreak) sort**: [`SortState`] is an ordered
+//! list of `(column, direction)` levels where position = priority (the
+//! first level is primary, the rest break ties). An empty list is the
+//! unsorted state; a single level is plain single-column sort.
 //!
-//! This replaced an earlier design where the grid sorted internally each
-//! rebuild via a per-frame order cache — which re-sorted the whole
-//! dataset on every rebuild and left selection keyed to a slice whose
-//! identity flipped under filtering. Moving order to the host unifies
-//! sort with the already-host-side filtering, fixes both, and matches the
-//! prevailing data-grid architecture (AG Grid server-side row model,
-//! Kendo, `TanStack` `manualSorting`; and every surveyed Rust GUI —
-//! egui/gpui-component/xilem — keeps ordering app-side).
+//! It follows the **same host-side contract as filtering** (see
+//! [`super::filter`]): the grid is presentation-only and never reorders
+//! data itself. The host owns the row order — it composes [`sort_indices`]
+//! after [`filtered_indices`](super::filter::filtered_indices) where its
+//! data lives, materializes the ordered rows, and serves them to the
+//! grid. The grid keeps [`SortState`] only as the *descriptor* it draws
+//! the header arrows from and emits header-click cycles through (mirroring
+//! a controlled `state` + `onSortingChange` in headless table libraries
+//! such as `TanStack` Table, whose `SortingState` is likewise an ordered
+//! `[{id, desc}]` list).
 //!
-//! The header-click cycle matches the convention every spreadsheet and
-//! the Kendo grid use: clicking a column's header advances
-//! **unsorted → ascending → descending → unsorted**, and clicking a
-//! *different* column jumps straight to ascending on that column.
+//! Header-click semantics match the cross-grid standard (AG Grid,
+//! `TanStack`):
+//! - **Plain click** replaces the whole sort with just that column,
+//!   cycling **unsorted → ascending → descending → unsorted** ([`cycle`]).
+//! - **Shift+click** adds/updates that column as a tiebreaker without
+//!   disturbing the others: append ascending, then cycle its own
+//!   direction asc → desc → removed in place ([`cycle_additive`]).
+//!   Removing a level leaves the remaining levels' relative priority
+//!   intact.
+//!
+//! Single-column sort stays the default; multi-sort is opt-in per click
+//! via Shift, so the unmodified UX is unchanged.
 //!
 //! Columns are identified by their stable [`ColumnId`], so an active sort
 //! stays attached to its column across reorder/hide — the same identity
 //! contract selection, filter, and widths use.
+//!
+//! [`cycle`]: SortState::cycle
+//! [`cycle_additive`]: SortState::cycle_additive
 
-use super::column::{ColumnDef, ColumnId};
+use std::cmp::Ordering;
+
+use super::column::{ColumnDef, ColumnId, RowComparator};
 
 /// Ascending or descending order for the sorted column.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -52,21 +61,30 @@ impl SortDirection {
     }
 }
 
-/// Which column is currently sorted, and in which direction.
+/// One level of the sort: a column and the direction it's sorted in.
+/// Levels are ordered by priority within [`SortState`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SortLevel {
+    /// The sorted column's stable id.
+    pub column: ColumnId,
+    /// Ascending or descending for this level.
+    pub direction: SortDirection,
+}
+
+/// The active multi-column sort: an **ordered list of levels**, where
+/// position is priority (level 0 is primary, later levels break ties).
+/// An empty list is the unsorted state.
 ///
-/// The sorted column is identified by its stable [`ColumnId`], not its
-/// position — so an active sort stays attached to its column when the
-/// host reorders or hides columns (the same identity contract as
+/// Columns are identified by stable [`ColumnId`], not position — so an
+/// active sort stays attached to its column when the host reorders or
+/// hides columns (the same identity contract as
 /// [`SelectionState`](super::selection::SelectionState) /
 /// [`FilterState`](super::filter::FilterState) /
-/// [`ColumnWidths`](super::width::ColumnWidths)). A `column` of `None`
-/// means the grid is unsorted and rows display in their natural source
-/// order. Held in the host's app state and read by the grid through a
-/// lens.
+/// [`ColumnWidths`](super::width::ColumnWidths)). Held in the host's app
+/// state and read by the grid through a lens.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SortState {
-    column: Option<ColumnId>,
-    direction: SortDirection,
+    levels: Vec<SortLevel>,
 }
 
 impl SortState {
@@ -76,47 +94,104 @@ impl SortState {
         Self::default()
     }
 
-    /// The id of the sorted column, or `None` when unsorted.
+    /// `true` when nothing is sorted.
     #[must_use]
-    pub fn column(&self) -> Option<&ColumnId> {
-        self.column.as_ref()
+    pub fn is_empty(&self) -> bool {
+        self.levels.is_empty()
     }
 
-    /// The active sort direction. Only meaningful when
-    /// [`Self::column`] is `Some`.
+    /// Number of active sort levels.
     #[must_use]
-    pub fn direction(&self) -> SortDirection {
-        self.direction
+    pub fn len(&self) -> usize {
+        self.levels.len()
     }
 
-    /// The direction `column` is sorted in, or `None` if `column` is
-    /// not the currently-sorted one. Header rendering uses this to
-    /// decide whether (and which way) to draw a sort arrow.
+    /// The sort levels in priority order (primary first).
+    #[must_use]
+    pub fn levels(&self) -> &[SortLevel] {
+        &self.levels
+    }
+
+    /// The id of the *primary* (highest-priority) sorted column, or
+    /// `None` when unsorted.
+    #[must_use]
+    pub fn primary(&self) -> Option<&ColumnId> {
+        self.levels.first().map(|l| &l.column)
+    }
+
+    /// The direction `column` is sorted in, or `None` if it isn't part
+    /// of the sort. Header rendering uses this to decide whether (and
+    /// which way) to draw a sort arrow.
     #[must_use]
     pub fn direction_for(&self, column: &ColumnId) -> Option<SortDirection> {
-        (self.column.as_ref() == Some(column)).then_some(self.direction)
+        self.levels
+            .iter()
+            .find(|l| &l.column == column)
+            .map(|l| l.direction)
     }
 
-    /// Advance the sort state as if the user clicked `column`'s header.
+    /// The 0-based priority of `column` within the sort, or `None` if it
+    /// isn't sorted. `0` is the primary column. Header rendering uses
+    /// this to draw a priority badge (1, 2, 3 …) when multi-sorting.
+    #[must_use]
+    pub fn priority_of(&self, column: &ColumnId) -> Option<usize> {
+        self.levels.iter().position(|l| &l.column == column)
+    }
+
+    /// Plain-click cycle: **replace** the whole sort with just `column`,
+    /// advancing unsorted → ascending → descending → unsorted.
     ///
-    /// - Clicking the already-sorted column advances
-    ///   ascending → descending → unsorted.
-    /// - Clicking any other column starts a fresh ascending sort on it.
+    /// - Clicking the current sole-primary column advances its direction,
+    ///   then clears on the third click.
+    /// - Clicking any other column (or when multi-sorted) collapses to a
+    ///   fresh ascending single-column sort on it.
     pub fn cycle(&mut self, column: ColumnId) {
-        if self.column.as_ref() == Some(&column) {
-            match self.direction {
-                SortDirection::Ascending => self.direction = SortDirection::Descending,
-                SortDirection::Descending => *self = Self::new(),
+        // Collapse-to-single is the plain-click contract. Only when this
+        // column is *already the lone sort* do we advance/clear it.
+        if let [level] = self.levels.as_slice()
+            && level.column == column
+        {
+            match level.direction {
+                SortDirection::Ascending => self.levels[0].direction = SortDirection::Descending,
+                SortDirection::Descending => self.levels.clear(),
             }
         } else {
-            self.column = Some(column);
-            self.direction = SortDirection::Ascending;
+            self.levels = vec![SortLevel {
+                column,
+                direction: SortDirection::Ascending,
+            }];
+        }
+    }
+
+    /// Shift-click cycle: add or update `column` as a tiebreaker
+    /// **without disturbing the other levels**.
+    ///
+    /// - If `column` isn't sorted yet, append it ascending at the lowest
+    ///   priority.
+    /// - If it is, advance its own direction ascending → descending →
+    ///   removed (in place; the remaining levels keep their relative
+    ///   order).
+    pub fn cycle_additive(&mut self, column: ColumnId) {
+        if let Some(pos) = self.levels.iter().position(|l| l.column == column) {
+            match self.levels[pos].direction {
+                SortDirection::Ascending => {
+                    self.levels[pos].direction = SortDirection::Descending;
+                }
+                SortDirection::Descending => {
+                    self.levels.remove(pos);
+                }
+            }
+        } else {
+            self.levels.push(SortLevel {
+                column,
+                direction: SortDirection::Ascending,
+            });
         }
     }
 
     /// Reset to the unsorted state.
     pub fn clear(&mut self) {
-        *self = Self::new();
+        self.levels.clear();
     }
 }
 
@@ -131,33 +206,51 @@ impl SortState {
 /// filtered-then-sorted slice. (Filter-before-sort is the canonical
 /// pipeline order; see `TanStack`'s row-model pipeline.)
 ///
-/// A no-op when the grid is unsorted (`sort.column()` is `None`), when no
-/// column matches the sorted id (e.g. it was hidden), or when that column
-/// carries no comparator (it isn't sortable) — in every such case
-/// `indices` is left in its incoming (natural or filtered) order.
+/// Each sort level is applied in priority order: rows are compared by the
+/// primary column, ties broken by the next level, and so on. A level
+/// whose column isn't found (e.g. it was hidden) or carries no comparator
+/// (it isn't sortable) is skipped. When *no* level resolves to a usable
+/// comparator, `indices` is left in its incoming (natural or filtered)
+/// order.
 ///
-/// The sort is **stable**, so rows the comparator deems equal keep their
-/// incoming relative order rather than reshuffling on each recompute.
+/// The sort is **stable**, so rows that compare equal on *every* active
+/// level keep their incoming relative order rather than reshuffling on
+/// each recompute.
 pub fn sort_indices<R, State>(
     indices: &mut [usize],
     rows: &[R],
     sort: &SortState,
     columns: &[ColumnDef<R, State>],
 ) {
-    let Some(id) = sort.column() else { return };
-    let Some(comparator) = columns
+    // Resolve each level's comparator + direction once, up front (not per
+    // comparison). Levels with no matching/sortable column are dropped.
+    let resolved: Vec<(&RowComparator<R>, SortDirection)> = sort
+        .levels()
         .iter()
-        .find(|c| &c.effective_id() == id)
-        .and_then(|c| c.comparator.as_ref())
-    else {
+        .filter_map(|level| {
+            columns
+                .iter()
+                .find(|c| c.effective_id() == level.column)
+                .and_then(|c| c.comparator.as_ref())
+                .map(|cmp| (cmp, level.direction))
+        })
+        .collect();
+    if resolved.is_empty() {
         return;
-    };
+    }
     indices.sort_by(|&a, &b| {
-        let ord = comparator(&rows[a], &rows[b]);
-        match sort.direction() {
-            SortDirection::Ascending => ord,
-            SortDirection::Descending => ord.reverse(),
+        // Compare by each level in priority order; first non-Equal wins.
+        for (comparator, direction) in &resolved {
+            let ord = comparator(&rows[a], &rows[b]);
+            let ord = match direction {
+                SortDirection::Ascending => ord,
+                SortDirection::Descending => ord.reverse(),
+            };
+            if ord != Ordering::Equal {
+                return ord;
+            }
         }
+        Ordering::Equal
     });
 }
 
@@ -194,17 +287,18 @@ mod tests {
     #[test]
     fn cycle_advances_asc_desc_then_clears() {
         let mut s = SortState::new();
-        assert_eq!(s.column(), None);
+        assert_eq!(s.primary(), None);
 
         s.cycle(id("price"));
-        assert_eq!(s.column(), Some(&id("price")));
-        assert_eq!(s.direction(), SortDirection::Ascending);
+        assert_eq!(s.primary(), Some(&id("price")));
+        assert_eq!(s.direction_for(&id("price")), Some(SortDirection::Ascending));
 
         s.cycle(id("price"));
-        assert_eq!(s.direction(), SortDirection::Descending);
+        assert_eq!(s.direction_for(&id("price")), Some(SortDirection::Descending));
 
         s.cycle(id("price"));
-        assert_eq!(s.column(), None, "third click on same column clears the sort");
+        assert_eq!(s.primary(), None, "third click on same column clears the sort");
+        assert!(s.is_empty());
     }
 
     #[test]
@@ -212,15 +306,16 @@ mod tests {
         let mut s = SortState::new();
         s.cycle(id("size"));
         s.cycle(id("size")); // now descending on size
-        assert_eq!(s.direction(), SortDirection::Descending);
+        assert_eq!(s.direction_for(&id("size")), Some(SortDirection::Descending));
 
         s.cycle(id("price"));
-        assert_eq!(s.column(), Some(&id("price")));
+        assert_eq!(s.primary(), Some(&id("price")));
         assert_eq!(
-            s.direction(),
-            SortDirection::Ascending,
+            s.direction_for(&id("price")),
+            Some(SortDirection::Ascending),
             "switching columns resets to ascending"
         );
+        assert_eq!(s.len(), 1, "plain click collapses to a single column");
     }
 
     #[test]
@@ -229,6 +324,58 @@ mod tests {
         s.cycle(id("price"));
         assert_eq!(s.direction_for(&id("price")), Some(SortDirection::Ascending));
         assert_eq!(s.direction_for(&id("size")), None);
+    }
+
+    #[test]
+    fn cycle_additive_appends_then_cycles_then_removes_in_place() {
+        let mut s = SortState::new();
+        s.cycle(id("price")); // primary: price asc
+        s.cycle_additive(id("size")); // tiebreaker: size asc (appended)
+        assert_eq!(s.len(), 2);
+        assert_eq!(s.priority_of(&id("price")), Some(0));
+        assert_eq!(s.priority_of(&id("size")), Some(1));
+        assert_eq!(s.direction_for(&id("size")), Some(SortDirection::Ascending));
+
+        // Shift-click size again: its own direction flips, priority kept.
+        s.cycle_additive(id("size"));
+        assert_eq!(s.direction_for(&id("size")), Some(SortDirection::Descending));
+        assert_eq!(s.priority_of(&id("size")), Some(1), "priority unchanged");
+        // Price (primary) is untouched throughout.
+        assert_eq!(s.direction_for(&id("price")), Some(SortDirection::Ascending));
+
+        // Third shift-click removes size; price stays primary.
+        s.cycle_additive(id("size"));
+        assert_eq!(s.priority_of(&id("size")), None, "removed");
+        assert_eq!(s.primary(), Some(&id("price")));
+        assert_eq!(s.len(), 1);
+    }
+
+    #[test]
+    fn removing_a_middle_level_keeps_others_relative_priority() {
+        let mut s = SortState::new();
+        s.cycle(id("a")); // a (0)
+        s.cycle_additive(id("b")); // b (1)
+        s.cycle_additive(id("c")); // c (2)
+        // Remove b: a stays primary, c closes up to priority 1.
+        s.cycle_additive(id("b")); // b → desc
+        s.cycle_additive(id("b")); // b → removed
+        assert_eq!(s.priority_of(&id("a")), Some(0));
+        assert_eq!(s.priority_of(&id("c")), Some(1));
+        assert_eq!(s.priority_of(&id("b")), None);
+    }
+
+    #[test]
+    fn plain_cycle_collapses_a_multi_sort() {
+        let mut s = SortState::new();
+        s.cycle(id("a"));
+        s.cycle_additive(id("b"));
+        s.cycle_additive(id("c"));
+        assert_eq!(s.len(), 3);
+        // A plain click on any column collapses to single-sort on it.
+        s.cycle(id("b"));
+        assert_eq!(s.len(), 1);
+        assert_eq!(s.primary(), Some(&id("b")));
+        assert_eq!(s.direction_for(&id("b")), Some(SortDirection::Ascending));
     }
 
     #[test]
@@ -274,6 +421,51 @@ mod tests {
         s.cycle(id("N")); // descending — ties must still hold incoming order
         sort_indices(&mut idx, &rows, &s, &int_columns());
         assert_eq!(idx, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn sort_indices_applies_tiebreakers_in_priority_order() {
+        // Two-field rows: primary "grp" (asc), tiebreak "val" (desc).
+        #[derive(Clone)]
+        struct Row {
+            grp: i32,
+            val: i32,
+        }
+        let cols: Vec<ColumnDef<Row, ()>> = vec![
+            text_column::<Row, (), _>("grp", 10.0, CellAlign::End, |r: &Row| r.grp.to_string())
+                .sortable_by_key(|r: &Row| r.grp),
+            text_column::<Row, (), _>("val", 10.0, CellAlign::End, |r: &Row| r.val.to_string())
+                .sortable_by_key(|r: &Row| r.val),
+        ];
+        // grp: 1,1,0,0 ; val: 5,9,2,7
+        let rows = vec![
+            Row { grp: 1, val: 5 }, // 0
+            Row { grp: 1, val: 9 }, // 1
+            Row { grp: 0, val: 2 }, // 2
+            Row { grp: 0, val: 7 }, // 3
+        ];
+        let mut s = SortState::new();
+        s.cycle(id("grp")); // primary: grp asc
+        s.cycle_additive(id("val")); // tiebreak: val asc
+        s.cycle_additive(id("val")); // → val desc
+        let mut idx = vec![0, 1, 2, 3];
+        sort_indices(&mut idx, &rows, &s, &cols);
+        // grp asc → group 0 first {2,3}, then group 1 {0,1}. Within each,
+        // val DESC: group0 → 7(3) then 2(2); group1 → 9(1) then 5(0).
+        assert_eq!(idx, vec![3, 2, 1, 0]);
+    }
+
+    #[test]
+    fn sort_indices_skips_an_unsortable_tiebreak_level() {
+        // Primary "N" sortable; a tiebreak on "Plain" (no comparator) is
+        // silently skipped, leaving the primary order intact.
+        let rows = vec![30, 10, 20];
+        let mut s = SortState::new();
+        s.cycle(id("N")); // N asc
+        s.cycle_additive(id("Plain")); // unsortable tiebreak
+        let mut idx = vec![0, 1, 2];
+        sort_indices(&mut idx, &rows, &s, &columns_with_unsortable());
+        assert_eq!(idx, vec![1, 2, 0], "primary order holds; bad level skipped");
     }
 
     #[test]

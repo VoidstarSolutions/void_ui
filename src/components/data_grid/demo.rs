@@ -124,7 +124,7 @@ impl Demo {
     /// grid reads `ticks` directly in natural order.
     #[must_use]
     pub fn view_is_materialized(&self) -> bool {
-        !self.filter.is_empty() || self.sort.column().is_some()
+        !self.filter.is_empty() || !self.sort.is_empty()
     }
 
     /// Appends `n` newly-generated ticks to the tail. Refreshes the
@@ -518,7 +518,7 @@ mod tests {
         // de-materializes back to reading `ticks` directly.
         demo.cycle_sort(price_id());
         assert!(demo.visible.is_empty());
-        assert_eq!(demo.sort.column(), None);
+        assert_eq!(demo.sort.primary(), None);
     }
 
     #[test]
@@ -651,7 +651,7 @@ mod tests {
         // to *another* column. (A positional key would have shifted.)
         let mut demo = Demo::with_initial(50);
         demo.cycle_sort(price_id()); // ascending by Price
-        assert_eq!(demo.sort.column(), Some(&price_id()));
+        assert_eq!(demo.sort.primary(), Some(&price_id()));
 
         // Hide, then show, an unrelated column (Notional).
         let notional = ColumnId::from("Notional");
@@ -660,7 +660,7 @@ mod tests {
 
         // Sort is still on Price, ascending — and the view is still
         // correctly ordered by price.
-        assert_eq!(demo.sort.column(), Some(&price_id()));
+        assert_eq!(demo.sort.primary(), Some(&price_id()));
         assert!(
             demo.visible.windows(2).all(|w| w[0].price_units <= w[1].price_units),
             "Price sort still holds after the column-layout change"
@@ -676,7 +676,7 @@ mod tests {
         demo.move_column_left(&price_id());
 
         // Sort still keyed to Price; order still by price.
-        assert_eq!(demo.sort.column(), Some(&price_id()));
+        assert_eq!(demo.sort.primary(), Some(&price_id()));
         assert!(
             demo.visible.windows(2).all(|w| w[0].price_units <= w[1].price_units),
             "Price sort follows the column across a reorder"
