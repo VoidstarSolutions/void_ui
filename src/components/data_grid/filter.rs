@@ -13,15 +13,16 @@
 //! [`RowFilter`](super::column::RowFilter) predicate (see
 //! [`ColumnDef::filterable_by_text`](super::column::ColumnDef::filterable_by_text)),
 //! and a row survives only if it passes *every* active column filter
-//! (logical AND — the spreadsheet/Kendo default). Columns are
-//! identified by their index in the `Vec<ColumnDef>`, the same
-//! positional identity sorting uses.
+//! (logical AND — the spreadsheet/Kendo default). Columns are identified
+//! by their stable [`ColumnId`], so a filter stays attached to its column
+//! across reorder/hide — the same identity contract sorting and widths
+//! use.
 
 use std::collections::BTreeMap;
 
-use super::column::ColumnDef;
+use super::column::{ColumnDef, ColumnId};
 
-/// The active per-column filter queries: column index → query string.
+/// The active per-column filter queries: [`ColumnId`] → query string.
 ///
 /// Held in the host's app state and read by the grid through a lens. An
 /// empty map means "no filtering" (every row is visible). A query is
@@ -29,7 +30,7 @@ use super::column::ColumnDef;
 /// any column is actually constraining the view.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FilterState {
-    queries: BTreeMap<usize, String>,
+    queries: BTreeMap<ColumnId, String>,
 }
 
 impl FilterState {
@@ -41,7 +42,7 @@ impl FilterState {
 
     /// Sets `column`'s query. A blank/whitespace-only query clears the
     /// column's filter rather than storing an always-pass entry.
-    pub fn set(&mut self, column: usize, query: impl Into<String>) {
+    pub fn set(&mut self, column: ColumnId, query: impl Into<String>) {
         let query = query.into();
         if query.trim().is_empty() {
             self.queries.remove(&column);
@@ -51,8 +52,8 @@ impl FilterState {
     }
 
     /// Clears `column`'s filter.
-    pub fn clear(&mut self, column: usize) {
-        self.queries.remove(&column);
+    pub fn clear(&mut self, column: &ColumnId) {
+        self.queries.remove(column);
     }
 
     /// Clears every column's filter.
@@ -62,8 +63,8 @@ impl FilterState {
 
     /// The active query for `column`, if any.
     #[must_use]
-    pub fn get(&self, column: usize) -> Option<&str> {
-        self.queries.get(&column).map(String::as_str)
+    pub fn get(&self, column: &ColumnId) -> Option<&str> {
+        self.queries.get(column).map(String::as_str)
     }
 
     /// `true` when no column is filtered.
@@ -78,9 +79,9 @@ impl FilterState {
         self.queries.len()
     }
 
-    /// Iterates `(column, query)` pairs in ascending column order.
-    pub fn iter(&self) -> impl Iterator<Item = (usize, &str)> + '_ {
-        self.queries.iter().map(|(col, query)| (*col, query.as_str()))
+    /// Iterates `(column_id, query)` pairs in ascending id order.
+    pub fn iter(&self) -> impl Iterator<Item = (&ColumnId, &str)> + '_ {
+        self.queries.iter().map(|(col, query)| (col, query.as_str()))
     }
 }
 
@@ -105,28 +106,44 @@ pub fn filtered_indices<R, State>(
     if filter.is_empty() {
         return (0..rows.len()).collect();
     }
+    // Resolve each active filter's ColumnId to its column's predicate
+    // once, up front, rather than per row. A query whose id matches no
+    // column, or matches a column with no predicate, is always-pass (it
+    // can't constrain anything) and is simply dropped here.
+    let active: Vec<(&super::column::RowFilter<R>, &str)> = filter
+        .iter()
+        .filter_map(|(id, query)| {
+            columns
+                .iter()
+                .find(|c| &c.effective_id() == id)
+                .and_then(|c| c.filter.as_ref())
+                .map(|predicate| (predicate, query))
+        })
+        .collect();
+    if active.is_empty() {
+        return (0..rows.len()).collect();
+    }
     (0..rows.len())
         .filter(|&i| {
             let row = &rows[i];
-            filter.iter().all(|(col, query)| {
-                columns
-                    .get(col)
-                    .and_then(|c| c.filter.as_ref())
-                    .is_none_or(|predicate| predicate(row, query))
-            })
+            active.iter().all(|(predicate, query)| predicate(row, query))
         })
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{FilterState, filtered_indices};
+    use super::{ColumnId, FilterState, filtered_indices};
     use crate::components::data_grid::column::{CellAlign, ColumnDef, text_column};
 
     #[derive(Clone)]
     struct Row {
         symbol: &'static str,
         sector: &'static str,
+    }
+
+    fn id(s: &str) -> ColumnId {
+        ColumnId::from(s)
     }
 
     fn columns() -> Vec<ColumnDef<Row, ()>> {
@@ -159,10 +176,10 @@ mod tests {
     #[test]
     fn set_blank_query_clears_the_column() {
         let mut f = FilterState::new();
-        f.set(0, "aap");
-        assert_eq!(f.get(0), Some("aap"));
-        f.set(0, "   ");
-        assert!(f.get(0).is_none());
+        f.set(id("Symbol"), "aap");
+        assert_eq!(f.get(&id("Symbol")), Some("aap"));
+        f.set(id("Symbol"), "   ");
+        assert!(f.get(&id("Symbol")).is_none());
         assert!(f.is_empty());
     }
 
@@ -176,7 +193,7 @@ mod tests {
     #[test]
     fn text_filter_is_case_insensitive_substring() {
         let mut f = FilterState::new();
-        f.set(0, "a"); // matches AAPL and AMZN, not MSFT
+        f.set(id("Symbol"), "a"); // matches AAPL and AMZN, not MSFT
         let idx = filtered_indices(&rows(), &f, &columns());
         assert_eq!(idx, vec![0, 2]);
     }
@@ -184,8 +201,17 @@ mod tests {
     #[test]
     fn filter_on_column_without_predicate_is_ignored() {
         let mut f = FilterState::new();
-        // Column 2 (Plain) has no filter predicate → always-pass.
-        f.set(2, "AAPL");
+        // "Plain" has no filter predicate → always-pass.
+        f.set(id("Plain"), "AAPL");
+        let idx = filtered_indices(&rows(), &f, &columns());
+        assert_eq!(idx, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn filter_on_unknown_column_id_is_ignored() {
+        let mut f = FilterState::new();
+        // An id that matches no column can't constrain anything.
+        f.set(id("DoesNotExist"), "AAPL");
         let idx = filtered_indices(&rows(), &f, &columns());
         assert_eq!(idx, vec![0, 1, 2]);
     }
@@ -196,8 +222,8 @@ mod tests {
         // contains "tech". AAPL/Tech passes both; AMZN/Retail fails the
         // sector filter; MSFT/Tech fails the symbol filter.
         let mut f = FilterState::new();
-        f.set(0, "a");
-        f.set(1, "tech");
+        f.set(id("Symbol"), "a");
+        f.set(id("Sector"), "tech");
         let idx = filtered_indices(&rows(), &f, &columns());
         assert_eq!(idx, vec![0]);
     }
@@ -205,10 +231,39 @@ mod tests {
     #[test]
     fn setting_a_column_query_twice_overwrites() {
         let mut f = FilterState::new();
-        f.set(0, "m"); // matches MSFT, AMZN
-        f.set(0, "ms"); // narrows the same column to MSFT
+        f.set(id("Symbol"), "m"); // matches MSFT, AMZN
+        f.set(id("Symbol"), "ms"); // narrows the same column to MSFT
         let idx = filtered_indices(&rows(), &f, &columns());
         assert_eq!(idx, vec![1]);
         assert_eq!(f.len(), 1, "still one active column filter");
+    }
+
+    #[test]
+    fn filter_follows_its_column_across_a_reorder() {
+        // THE point of id-keying: a filter set on "Sector" still filters
+        // by sector after the columns are reordered, where a positional
+        // key (col 1) would now point at a different column.
+        let mut f = FilterState::new();
+        f.set(id("Sector"), "tech"); // keeps AAPL + MSFT (both Tech)
+
+        // Reorder: Sector is now first (index 0), Symbol second.
+        let cols = columns();
+        let reordered = vec![
+            // Sector
+            text_column::<Row, (), _>("Sector", 10.0, CellAlign::Start, |r: &Row| {
+                r.sector.to_string()
+            })
+            .filterable_by_text(|r: &Row| r.sector.to_string()),
+            // Symbol
+            text_column::<Row, (), _>("Symbol", 10.0, CellAlign::Start, |r: &Row| {
+                r.symbol.to_string()
+            })
+            .filterable_by_text(|r: &Row| r.symbol.to_string()),
+        ];
+        let _ = cols; // original order unused beyond documentation
+
+        let idx = filtered_indices(&rows(), &f, &reordered);
+        // Still filtering by *sector* → Tech rows AAPL(0), MSFT(1).
+        assert_eq!(idx, vec![0, 1]);
     }
 }

@@ -133,10 +133,10 @@ impl Demo {
         }
     }
 
-    /// Sets a column's filter query and refreshes the visible view.
-    /// Demonstrates the host-side filtering path: the host owns the
-    /// data and runs [`filtered_indices`] over it.
-    pub fn set_filter(&mut self, column: usize, query: impl Into<String>) {
+    /// Sets a column's filter query (keyed by stable [`ColumnId`]) and
+    /// refreshes the visible view. Demonstrates the host-side filtering
+    /// path: the host owns the data and runs [`filtered_indices`] over it.
+    pub fn set_filter(&mut self, column: ColumnId, query: impl Into<String>) {
         self.filter.set(column, query);
         self.refresh_visible();
     }
@@ -367,8 +367,10 @@ mod tests {
     use super::{side_color, Demo, DemoSide};
     use crate::Theme;
 
-    /// Side is column index 3 in `tick_columns`.
-    const SIDE_COL: usize = 3;
+    /// The `Side` column's stable filter id is its title.
+    fn side_id() -> crate::components::data_grid::column::ColumnId {
+        crate::components::data_grid::column::ColumnId::from("Side")
+    }
 
     #[test]
     fn side_color_uses_trading_palette() {
@@ -381,7 +383,7 @@ mod tests {
     #[test]
     fn filtering_side_keeps_only_matching_rows() {
         let mut demo = Demo::with_initial(200);
-        demo.set_filter(SIDE_COL, "B");
+        demo.set_filter(side_id(), "B");
         assert!(
             !demo.visible.is_empty(),
             "200 deterministic ticks should include some buys"
@@ -397,7 +399,7 @@ mod tests {
     #[test]
     fn clearing_filter_empties_the_materialized_view() {
         let mut demo = Demo::with_initial(64);
-        demo.set_filter(SIDE_COL, "S");
+        demo.set_filter(side_id(), "S");
         demo.clear_filter();
         // With no active filter *or* sort the lens reads `ticks`
         // directly, so the materialized view is dropped.
@@ -521,7 +523,7 @@ mod tests {
         demo.selection.replace_with(buy_id);
 
         // Filter to sells only — the selected buy leaves the view.
-        demo.set_filter(SIDE_COL, "S");
+        demo.set_filter(side_id(), "S");
         assert!(
             !demo.visible.iter().any(|t| t.id == buy_id),
             "the selected buy must be filtered out of the view"

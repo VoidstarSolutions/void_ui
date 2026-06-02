@@ -288,7 +288,7 @@ fn data_grid_panel(theme: &Theme, dg: DataGridSnapshot) -> impl WidgetView<State
         .sort(sort, |s: &mut State, col: usize| {
             s.data_grid.cycle_sort(col);
         })
-        .filter(filter, |s: &mut State, col: usize, query: String| {
+        .filter(filter, |s: &mut State, col: ColumnId, query: String| {
             s.data_grid.set_filter(col, query);
         })
         .column_widths(widths)

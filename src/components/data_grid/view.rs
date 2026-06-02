@@ -109,11 +109,13 @@ fn warn_missing_row_id() {
         );
     }
 }
-/// Boxed filter-change callback (`Fn(&mut State, column, query)`). The
+/// Boxed filter-change callback (`Fn(&mut State, ColumnId, query)`). The
 /// grid emits filter edits through this so the host can update its
 /// [`FilterState`] *and* recompute its filtered view — the grid never
-/// applies the filter to data itself.
-type FilterChange<State> = Arc<dyn Fn(&mut State, usize, String) + Send + Sync>;
+/// applies the filter to data itself. Keyed by id (the view translates
+/// the filter-row's positional index to a [`ColumnId`]) so a query stays
+/// attached to its column across reorder/hide.
+type FilterChange<State> = Arc<dyn Fn(&mut State, ColumnId, String) + Send + Sync>;
 /// Boxed column-resize callback (`Fn(&mut State, ColumnId, new_width)`).
 /// A header resize handle emits the resized column's stable id + proposed
 /// absolute width through this so the host can update its
@@ -326,7 +328,7 @@ where
     /// mistaken for the full data set.
     pub fn filter<F>(mut self, filter: FilterState, on_change: F) -> Self
     where
-        F: Fn(&mut State, usize, String) + Send + Sync + 'static,
+        F: Fn(&mut State, ColumnId, String) + Send + Sync + 'static,
     {
         let on_change: FilterChange<State> = Arc::new(on_change);
         self.filter = filter;
@@ -535,7 +537,7 @@ where
         .iter()
         .enumerate()
         .map(|(idx, slot)| {
-            let filtered = filter.get(idx).is_some();
+            let filtered = filter.get(&slot.id).is_some();
             header_cell(idx, slot, sortable[idx], filtered, &header_ctx)
         })
         .collect();
@@ -580,7 +582,8 @@ where
     let filter_row = filter_change.as_ref().and_then(|on_change| {
         filterable.iter().any(|&f| f).then(|| {
             let widths: Vec<f64> = render_slots.iter().map(|s| s.width).collect();
-            build_filter_row(&widths, &filterable, &filter, on_change, &theme)
+            let ids: Vec<ColumnId> = render_slots.iter().map(|s| s.id.clone()).collect();
+            build_filter_row(&widths, &ids, &filterable, &filter, on_change, &theme)
         })
     });
     let stack = assemble_grid_stack(header, filter_row, body);
@@ -1122,6 +1125,7 @@ where
 /// inputs line up under their columns.
 fn build_filter_row<State>(
     widths: &[f64],
+    ids: &[ColumnId],
     filterable: &[bool],
     filter: &FilterState,
     on_change: &FilterChange<State>,
@@ -1133,7 +1137,8 @@ where
     let cells: Vec<Box<AnyWidgetView<State>>> = (0..widths.len())
         .map(|idx| -> Box<AnyWidgetView<State>> {
             if filterable[idx] {
-                let current = filter.get(idx).unwrap_or_default().to_string();
+                let id = ids[idx].clone();
+                let current = filter.get(&id).unwrap_or_default().to_string();
                 let on_change = Arc::clone(on_change);
                 // Default text size: masonry renders the placeholder as a
                 // separate Label at the default font size (it doesn't
@@ -1142,7 +1147,7 @@ where
                 // column width, so the input can't overflow its column —
                 // this is what finally fixed the filter-alignment bug.
                 let input = text_input(current, move |state: &mut State, text: String| {
-                    (*on_change)(state, idx, text);
+                    (*on_change)(state, id.clone(), text);
                 })
                 .text_color(theme.palette.text)
                 .placeholder("Filter");
