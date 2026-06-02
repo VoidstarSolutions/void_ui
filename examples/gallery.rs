@@ -321,8 +321,9 @@ fn data_grid_panel(theme: &Theme, dg: DataGridSnapshot) -> impl WidgetView<State
         .selection(|s: &mut State| &mut s.data_grid.selection)
         // Host-side sorting: a header click cycles the host's SortState
         // and re-derives the ordered view (mirror of the filter callback).
-        .sort(sort, |s: &mut State, col: ColumnId| {
-            s.data_grid.cycle_sort(col);
+        // `multi` (Shift+click) adds the column as a tiebreaker.
+        .sort(sort, |s: &mut State, col: ColumnId, multi: bool| {
+            s.data_grid.cycle_sort(col, multi);
         })
         .filter(filter, |s: &mut State, col: ColumnId, query: String| {
             s.data_grid.set_filter(col, query);

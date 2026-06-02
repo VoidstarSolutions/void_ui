@@ -23,10 +23,15 @@ use masonry::peniko::Color;
 use super::single_child;
 
 /// Action emitted by [`HeaderClickable`] on primary-button release
-/// inside its bounds. Carries no modifiers — a header click means
-/// "cycle this column's sort," nothing more.
+/// inside its bounds. Carries whether the Shift modifier was held, which
+/// the grid maps to multi-column (tiebreak) sort: a plain click replaces
+/// the sort; Shift+click adds/cycles the column as a tiebreaker.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct HeaderClicked;
+pub struct HeaderClicked {
+    /// Shift was held — request a multi-sort (additive) cycle rather
+    /// than a replacing single-sort cycle.
+    pub multi: bool,
+}
 
 /// Single-child wrapper that emits [`HeaderClicked`] on primary-button
 /// release inside its bounds, and paints a hover-tint background while
@@ -87,12 +92,14 @@ impl Widget for HeaderClickable {
                     ctx.capture_pointer();
                 }
             }
-            PointerEvent::Up(PointerButtonEvent { button, .. })
+            PointerEvent::Up(PointerButtonEvent { button, state, .. })
                 if matches!(button, Some(PointerButton::Primary))
                     && ctx.is_active()
                     && ctx.is_hovered() =>
             {
-                ctx.submit_action::<Self::Action>(HeaderClicked);
+                ctx.submit_action::<Self::Action>(HeaderClicked {
+                    multi: state.modifiers.shift(),
+                });
             }
             _ => {}
         }
@@ -216,7 +223,7 @@ pub fn clickable_header<V, State, F>(
 ) -> ClickableHeader<V, State, F>
 where
     V: WidgetView<State, ()>,
-    F: Fn(&mut State) + Send + Sync + 'static,
+    F: Fn(&mut State, bool) + Send + Sync + 'static,
     State: 'static,
 {
     ClickableHeader {
@@ -232,7 +239,7 @@ impl<V, State, F> ViewMarker for ClickableHeader<V, State, F> {}
 impl<V, State, F> View<State, (), ViewCtx> for ClickableHeader<V, State, F>
 where
     V: WidgetView<State, ()>,
-    F: Fn(&mut State) + Send + Sync + 'static,
+    F: Fn(&mut State, bool) + Send + Sync + 'static,
     State: 'static,
 {
     type Element = Pod<HeaderClickable>;
@@ -281,8 +288,8 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<()> {
-        if message.take_message::<HeaderClicked>().is_some() {
-            (self.on_click)(app_state);
+        if let Some(action) = message.take_message::<HeaderClicked>() {
+            (self.on_click)(app_state, action.multi);
             MessageResult::Action(())
         } else {
             let mut child = HeaderClickable::child_mut(&mut element);

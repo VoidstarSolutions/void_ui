@@ -156,11 +156,17 @@ impl Demo {
     }
 
     /// Cycles the sort on `column` (the grid's `on_sort` callback) and
-    /// re-derives the ordered view. Demonstrates the host-side sorting
-    /// path — the mirror of [`Self::set_filter`]: the host owns row order
-    /// and composes [`filtered_indices`] then [`sort_indices`].
-    pub fn cycle_sort(&mut self, column: ColumnId) {
-        self.sort.cycle(column);
+    /// re-derives the ordered view. `multi` (Shift held) adds/cycles the
+    /// column as a tiebreaker; a plain click replaces with single-sort.
+    /// Demonstrates the host-side sorting path — the mirror of
+    /// [`Self::set_filter`]: the host owns row order and composes
+    /// [`filtered_indices`] then [`sort_indices`].
+    pub fn cycle_sort(&mut self, column: ColumnId, multi: bool) {
+        if multi {
+            self.sort.cycle_additive(column);
+        } else {
+            self.sort.cycle(column);
+        }
         self.refresh_visible();
     }
 
@@ -502,21 +508,21 @@ mod tests {
     #[test]
     fn sorting_materializes_the_view_in_price_order() {
         let mut demo = Demo::with_initial(200);
-        demo.cycle_sort(price_id()); // ascending
+        demo.cycle_sort(price_id(), false); // ascending
         assert_eq!(demo.visible.len(), demo.ticks.len());
         assert!(
             demo.visible.windows(2).all(|w| w[0].price_units <= w[1].price_units),
             "visible rows must be in ascending price order"
         );
         // A second cycle flips to descending.
-        demo.cycle_sort(price_id());
+        demo.cycle_sort(price_id(), false);
         assert!(
             demo.visible.windows(2).all(|w| w[0].price_units >= w[1].price_units),
             "visible rows must be in descending price order"
         );
         // A third cycle clears the sort; with no filter either, the view
         // de-materializes back to reading `ticks` directly.
-        demo.cycle_sort(price_id());
+        demo.cycle_sort(price_id(), false);
         assert!(demo.visible.is_empty());
         assert_eq!(demo.sort.primary(), None);
     }
@@ -525,8 +531,8 @@ mod tests {
     fn select_first_keys_by_stable_id_in_display_order() {
         let mut demo = Demo::with_initial(50);
         // Sort descending by price so display order differs from natural.
-        demo.cycle_sort(price_id());
-        demo.cycle_sort(price_id());
+        demo.cycle_sort(price_id(), false);
+        demo.cycle_sort(price_id(), false);
         demo.select_first(3);
         // The selected ids must be exactly the first three visible rows'
         // ids — i.e. selection tracks what the user sees, not positions.
@@ -562,7 +568,7 @@ mod tests {
         demo.selection.replace_with(picked_id);
 
         // Sort ascending by price; the host materializes `visible`.
-        demo.cycle_sort(price_id());
+        demo.cycle_sort(price_id(), false);
         assert!(
             demo.visible.windows(2).all(|w| w[0].price_units <= w[1].price_units),
             "precondition: a real reorder happened"
@@ -650,7 +656,7 @@ mod tests {
         // The payoff: id-keyed sort state is untouched by a layout change
         // to *another* column. (A positional key would have shifted.)
         let mut demo = Demo::with_initial(50);
-        demo.cycle_sort(price_id()); // ascending by Price
+        demo.cycle_sort(price_id(), false); // ascending by Price
         assert_eq!(demo.sort.primary(), Some(&price_id()));
 
         // Hide, then show, an unrelated column (Notional).
@@ -670,7 +676,7 @@ mod tests {
     #[test]
     fn reordering_columns_preserves_an_active_sort() {
         let mut demo = Demo::with_initial(50);
-        demo.cycle_sort(price_id()); // ascending by Price
+        demo.cycle_sort(price_id(), false); // ascending by Price
 
         // Move Price one slot left — its display position changes.
         demo.move_column_left(&price_id());

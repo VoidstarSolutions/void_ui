@@ -54,13 +54,14 @@ type SelectionLens<State> =
 /// (the `getRowId` contract); selection is keyed by this id rather than
 /// by slice position, so it follows rows across host-side sort/filter.
 type RowIdFn<R> = Arc<dyn Fn(&R) -> u64 + Send + Sync>;
-/// Boxed sort-change callback (`Fn(&mut State, ColumnId)`). A header
-/// click emits the clicked column's stable id through this; the host
-/// cycles its [`SortState`] *and* re-derives its ordered view — the grid
-/// never reorders data itself (the same host-side shape as
-/// [`FilterChange`]). Keyed by id so an active sort stays attached across
-/// reorder/hide.
-type SortChange<State> = Arc<dyn Fn(&mut State, ColumnId) + Send + Sync>;
+/// Boxed sort-change callback (`Fn(&mut State, ColumnId, multi)`). A
+/// header click emits the clicked column's stable id + whether Shift was
+/// held (`multi`); the host cycles its [`SortState`] — replacing for a
+/// plain click, adding/cycling a tiebreaker for a multi (Shift) click —
+/// *and* re-derives its ordered view. The grid never reorders data itself
+/// (the same host-side shape as [`FilterChange`]). Keyed by id so an
+/// active sort stays attached across reorder/hide.
+type SortChange<State> = Arc<dyn Fn(&mut State, ColumnId, bool) + Send + Sync>;
 
 /// How the body derives a row's stable id: either the host's projector,
 /// or a fallback to the row's slice position when none was supplied.
@@ -311,21 +312,24 @@ where
     }
 
     /// Enables sorting. `state` is the current [`SortState`] snapshot
-    /// (drives the header arrow), and `on_sort` is invoked as
-    /// `(state, column)` when the user clicks a sortable column's header.
+    /// (drives the header arrows + priority badges), and `on_sort` is
+    /// invoked as `(state, column, multi)` when the user clicks a sortable
+    /// column's header — `multi` is `true` when Shift was held.
     ///
     /// Per the grid's host-owns-order model (the same shape as
     /// [`Self::filter`]), `on_sort` must cycle the host's [`SortState`]
-    /// (via [`SortState::cycle`]) *and* re-derive whatever ordered view
-    /// the grid's `rows` accessor serves — typically by composing
-    /// [`filtered_indices`](super::filter::filtered_indices) then
-    /// [`sort_indices`](super::sort::sort_indices) over the host's data.
-    /// The grid never reorders data itself. A column is only sortable if
-    /// its [`ColumnDef`] carries a comparator (see
+    /// — [`SortState::cycle`](super::sort::SortState::cycle) for a plain
+    /// click (replace), [`cycle_additive`](super::sort::SortState::cycle_additive)
+    /// for a multi (Shift) click (add/cycle a tiebreaker) — *and* re-derive
+    /// whatever ordered view the grid's `rows` accessor serves, typically
+    /// by composing [`filtered_indices`](super::filter::filtered_indices)
+    /// then [`sort_indices`](super::sort::sort_indices) over the host's
+    /// data. The grid never reorders data itself. A column is only
+    /// sortable if its [`ColumnDef`] carries a comparator (see
     /// [`ColumnDef::sortable_by_key`]). Omit for an unsorted grid.
     pub fn sort<F>(mut self, state: SortState, on_sort: F) -> Self
     where
-        F: Fn(&mut State, ColumnId) + Send + Sync + 'static,
+        F: Fn(&mut State, ColumnId, bool) + Send + Sync + 'static,
     {
         self.sort = state;
         self.sort_change = Some(Arc::new(on_sort));
@@ -935,8 +939,8 @@ where
             Box::new(clickable_header(
                 cell,
                 theme.palette.border_strong,
-                move |state: &mut State| {
-                    on_sort(state, id.clone());
+                move |state: &mut State, multi: bool| {
+                    on_sort(state, id.clone(), multi);
                 },
             ))
         }
