@@ -47,9 +47,10 @@ data_grid(columns)
     .row_id(|r: &Row| r.id)
     .selection(|s: &mut State| &mut s.selection)
     // 3. sort: cycle your SortState and re-derive your ordered view.
-    .sort(sort_snapshot, |s: &mut State, col: usize| s.cycle_sort(col))
-    // 4. filter: set your FilterState and re-derive your view.
-    .filter(filter_snapshot, |s: &mut State, col, query| s.set_filter(col, query))
+    //    The callback receives the clicked column's stable ColumnId.
+    .sort(sort_snapshot, |s: &mut State, col: ColumnId| s.cycle_sort(col))
+    // 4. filter: set your FilterState and re-derive your view (by ColumnId).
+    .filter(filter_snapshot, |s: &mut State, col: ColumnId, query| s.set_filter(col, query))
     .render(&theme)
 ```
 
@@ -63,13 +64,43 @@ fn refresh_view(&mut self) {
     if !self.view_is_materialized() { self.visible.clear(); return; }
     let cols = columns();
     let mut idx = filtered_indices(&self.data, &self.filter, &cols); // 1. filter
-    sort_indices(&mut idx, &self.data, self.sort, &cols);            // 2. sort
+    sort_indices(&mut idx, &self.data, &self.sort, &cols);           // 2. sort
     self.visible = idx.into_iter().map(|i| self.data[i].clone()).collect();
 }
 ```
 
 `view_is_materialized()` is your call: it's `true` when a filter is
 active *or* a sort column is set. (See `demo.rs` for the reference host.)
+
+## Columns are keyed by stable id — show/hide + reorder for free
+
+Every column has a stable `ColumnId` (explicit via `ColumnDef::id(..)`,
+or derived from its title). **Sort, filter, and width state are keyed by
+that id, never by column position** — the column-level analogue of
+`row_id`, and the `id`/`colId` model TanStack/AG Grid/Kendo all use. The
+`.sort`, `.filter`, and `.on_column_resize` callbacks all hand you a
+`ColumnId`.
+
+The payoff: **show/hide and reorder cost you no grid feature** — express
+them by *which* `ColumnDef`s you pass and *in what order*:
+
+```rust
+// Hide = omit the id; reorder = move it. Keep a Vec<ColumnId> in state.
+let cols: Vec<ColumnDef<Row, _>> = your_layout         // Vec<ColumnId>
+    .iter()
+    .filter_map(|id| all_defs.iter().position(|d| &d.effective_id() == id)
+                             .map(|i| all_defs.remove(i)))
+    .collect();
+data_grid(cols)/* … */
+```
+
+Because state is id-keyed, an active sort/filter/width **stays attached
+to its column** across the rearrangement — hide an unrelated column and
+your Price sort is untouched; move a column and its filter moves with it.
+(See `demo.rs`: `arrange_columns`, `column_layout`, `toggle_column`,
+`move_column_left`.) In-grid drag-to-reorder and a show/hide menu are
+*not* built in — like headless TanStack, they're optional UI you layer
+over your own order state.
 
 ## What you get for free
 
@@ -88,6 +119,9 @@ active *or* a sort column is set. (See `demo.rs` for the reference host.)
   changing a row's id, will misattribute selection.
 - **Shift-extend when the anchor is filtered out** of the current view
   degrades to a single select (there's no on-screen range to span).
+- **Column ids must be unique.** Two columns sharing an id share their
+  sort/filter/width state; a debug build asserts uniqueness. Ids default
+  to the column title, so give same-titled columns explicit `.id(..)`s.
 - The grid is **read-only** — no cell editing (by design; see roadmap).
 
 ## Pointers
@@ -95,7 +129,11 @@ active *or* a sort column is set. (See `demo.rs` for the reference host.)
 - Module docs: `src/components/data_grid/mod.rs` (the "host owns row
   order" + "stable row id" sections).
 - Helpers: `sort::sort_indices`, `filter::filtered_indices`.
-- Builder: `view::DataGrid` (`.row_id`, `.sort`, `.filter`).
+- Builder: `view::DataGrid` (`.row_id`, `.sort`, `.filter`,
+  `.on_column_resize` — all `ColumnId`-keyed).
+- Column identity: `column::ColumnId`, `ColumnDef::id`/`effective_id`.
 - Reference host: `demo.rs` (`refresh_visible`, `cycle_sort`,
-  `view_is_materialized`, the `DemoTick.id` field).
+  `view_is_materialized`, `DemoTick.id`; `arrange_columns`,
+  `column_layout`, `toggle_column`, `move_column_left` for show/hide +
+  reorder).
 - Backlog + decision trail: `docs/DATA_GRID_ROADMAP.md`.

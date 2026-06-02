@@ -81,6 +81,17 @@ checkin from the top, verify, commit, repeat.
   to re-run app_logic). No overlay/handle widgets — same pattern as
   masonry's `Split` owning its bar. Effective widths feed header / filter
   / body / scroll-extent uniformly *(Tier 2 #4)*
+- **Stable `ColumnId` + column show/hide + reorder**: every column has a
+  stable id (explicit or title-derived); sort / filter / width state is
+  keyed by it, never by position — the column-level analogue of `row_id`,
+  matching `TanStack` `id` / AG Grid `colId` (index keying is the
+  anti-pattern). Show/hide + reorder are then **host-expressed for free**:
+  the host arranges the `Vec<ColumnDef>` it passes (omit = hide, move =
+  reorder) and id-keyed state follows each column across the change. No
+  in-grid drag/menu (optional UI, deliberately deferred, per headless
+  `TanStack`). Surfaced + fixed a latent `ColumnStrip::rebuild` bug (first
+  runtime column-count change): widths must be pushed *after* the splice,
+  else a re-shown column renders 0-wide. *(Tier 2 #6)*
 
 ## ⚠️ ARCHITECT REVIEW REQUESTED
 
@@ -160,10 +171,10 @@ Each item: **value justification (≤1 sentence)** · rough size · depends-on �
    trigger:** if upstream masonry gains a sticky/pinned-child primitive
    (none exists today), this collapses from XL to ~S — reopen then.
    · L–XL · #4 · Kendo *Columns (locked)*.
-6. **← NEXT: Column show/hide + reorder** — Traders curate which metrics
-   they watch; show/hide + reorder lets them build their own layout.
-   Clean fit for the existing builder/widths architecture (no scroll
-   coupling, unlike #5). · M · builder, #4 · Kendo *Columns*.
+6. ✅ **DONE — Column show/hide + reorder** (via stable `ColumnId`). State
+   keyed by id, not position; host arranges the `Vec<ColumnDef>` to
+   show/hide/reorder and id-keyed sort/filter/width follow along. In-grid
+   drag/menu deferred as optional UI. (See Done.)
 
 ### Tier 3 — analysis
 

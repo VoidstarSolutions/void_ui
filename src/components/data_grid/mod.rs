@@ -78,6 +78,31 @@
 //! back to slice position, which is correct only for a static, unsorted,
 //! unfiltered grid.
 //!
+//! ## Columns are keyed by stable id (show/hide + reorder)
+//!
+//! Every column has a stable [`ColumnId`](column::ColumnId) — explicit
+//! (via [`ColumnDef::id`](column::ColumnDef::id)) or derived from its
+//! title. **All column state — sort, filter, and width — is keyed by
+//! that id, never by the column's position** in the `Vec<ColumnDef>`.
+//! This is the column-level analogue of the row `row_id` contract, and
+//! the `id`/`colId` model every reputable grid uses (`TanStack`, AG Grid,
+//! Kendo); index keying is the documented anti-pattern.
+//!
+//! The payoff is **show/hide and reorder for free**: the host expresses
+//! them simply by *which* `ColumnDef`s it passes to the grid and *in what
+//! order* — hide a column by omitting it, reorder by moving it in the
+//! `Vec`. Because state is id-keyed, an active sort/filter/width stays
+//! attached to its column across any rearrangement (a positional key
+//! would mis-attribute it). The grid needs no dedicated column-layout
+//! feature; the layout lives with the host like every other piece of
+//! state. (The demo's `arrange_columns` + `column_layout` show the
+//! pattern.) In-grid drag-to-reorder and a show/hide menu are deliberately
+//! *not* built in — they're optional UI layered over the host's order, as
+//! in headless `TanStack` (which ships neither).
+//!
+//! Column ids must be **unique**; a duplicate makes two columns share
+//! state, so a debug build asserts uniqueness when the grid materializes.
+//!
 //! ## Resizing & widths
 //!
 //! Each column starts at its [`ColumnDef`] width. A
