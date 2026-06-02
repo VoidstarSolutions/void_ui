@@ -476,9 +476,348 @@ fn demo_exchange(event_ns: i64) -> &'static str {
     }
 }
 
+// ===========================================================================
+// MARK: Stock-quote demo — the "value lens" product mock
+// ===========================================================================
+//
+// A second, distinct demo fixture: a static snapshot of NASDAQ-style symbol
+// quotes, shaped like the fields a `yfinance` row carries. Where `DemoTick`
+// exercises raw capability (a streaming blotter), this one shows the grid as
+// the product it was designed against — an Excel-style quote board.
+//
+// Still 100% generic from the *component's* side: `StockQuote` is a plain
+// demo fixture (like `DemoTick`), the grid knows nothing about it. The data
+// is a hand-authored static snapshot — deterministic, no network — but the
+// field shape mirrors a real quote so swapping in a live source is a
+// data-layer change, not a grid change.
+
+/// A static market-quote snapshot for one symbol — the demo's stock fixture.
+///
+/// Fields mirror a typical `yfinance` quote row. Prices are plain dollars
+/// (authored to 2 decimals, so display and sort agree without the
+/// whole-cent dance the streaming `DemoTick` needs). `None` fields render
+/// as `—` (e.g. an unprofitable company has no P/E).
+#[derive(Debug, Clone, Copy)]
+pub struct StockQuote {
+    /// Ticker symbol — unique, stable: the grid's `row_id` and the natural
+    /// freeze/pin candidate.
+    pub symbol: &'static str,
+    /// Company name.
+    pub name: &'static str,
+    /// Last / close price.
+    pub last: f64,
+    /// Day change in dollars (sign drives the conditional color).
+    pub change: f64,
+    /// Day change in percent.
+    pub change_pct: f64,
+    /// Session open.
+    pub open: f64,
+    /// Session high.
+    pub high: f64,
+    /// Session low.
+    pub low: f64,
+    /// Share volume traded this session.
+    pub volume: u64,
+    /// Trailing average daily volume.
+    pub avg_volume: u64,
+    /// Market capitalization, in dollars.
+    pub market_cap: u64,
+    /// Trailing P/E ratio (`None` when earnings are non-positive).
+    pub pe: Option<f64>,
+    /// Trailing EPS.
+    pub eps: f64,
+    /// Forward dividend yield in percent (`None` when no dividend).
+    pub div_yield: Option<f64>,
+    /// 52-week high.
+    pub week52_high: f64,
+    /// 52-week low.
+    pub week52_low: f64,
+    /// Beta vs. the broad market.
+    pub beta: f64,
+    /// GICS-style sector — a low-cardinality column, good for grouping.
+    pub sector: &'static str,
+}
+
+/// Stock-quote demo state. Mirrors [`Demo`]'s interaction-state shape
+/// (selection / sort / filter / widths / column layout) but over the
+/// static [`StockQuote`] snapshot. The grid wiring is identical — only the
+/// row type and data source differ — which is the whole point of the
+/// value-lens demo.
+#[derive(Debug, Clone)]
+pub struct StockDemo {
+    /// The static quote snapshot (never mutated after construction).
+    pub quotes: Vec<StockQuote>,
+    /// Selected rows, keyed by stable symbol id.
+    pub selection: SelectionState,
+    /// Active multi-column sort.
+    pub sort: SortState,
+    /// Active per-column filters.
+    pub filter: FilterState,
+    /// Per-column width overrides.
+    pub column_widths: ColumnWidths,
+    /// Materialized filtered-then-sorted view (see [`Self::refresh`]).
+    pub visible: Vec<StockQuote>,
+    /// Visible columns in display order (show/hide + reorder).
+    column_order: Option<Vec<ColumnId>>,
+}
+
+impl StockDemo {
+    /// Builds the demo over the bundled static snapshot.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            quotes: stock_quotes().to_vec(),
+            selection: SelectionState::new(),
+            sort: SortState::new(),
+            filter: FilterState::new(),
+            column_widths: ColumnWidths::new(),
+            visible: Vec::new(),
+            column_order: None,
+        }
+    }
+
+    /// Whether the displayed view is a materialized reorder of `quotes`
+    /// (a filter is active or a sort is set).
+    #[must_use]
+    pub fn view_is_materialized(&self) -> bool {
+        !self.filter.is_empty() || !self.sort.is_empty()
+    }
+
+    /// Cycles the sort on `column` and re-derives the view. `multi` (Shift)
+    /// adds a tiebreaker; a plain click replaces with single-sort.
+    pub fn cycle_sort(&mut self, column: ColumnId, multi: bool) {
+        if multi {
+            self.sort.cycle_additive(column);
+        } else {
+            self.sort.cycle(column);
+        }
+        self.refresh();
+    }
+
+    /// Sets a column's filter query (by stable id) and re-derives the view.
+    pub fn set_filter(&mut self, column: ColumnId, query: impl Into<String>) {
+        self.filter.set(column, query);
+        self.refresh();
+    }
+
+    /// Sets a column width override (drag-to-resize).
+    pub fn resize_column(&mut self, column: ColumnId, new_width: f64) {
+        self.column_widths.set(column, new_width);
+    }
+
+    /// The current visible column layout, defaulting to all columns in
+    /// natural order.
+    #[must_use]
+    pub fn column_layout(&self) -> Vec<ColumnId> {
+        self.column_order.clone().unwrap_or_else(|| {
+            stock_columns::<()>().iter().map(ColumnDef::effective_id).collect()
+        })
+    }
+
+    /// Recomputes [`Self::visible`] as filter-then-sort over `quotes`
+    /// (the host-owns-order contract; same shape as [`Demo::refresh_visible`]).
+    fn refresh(&mut self) {
+        if !self.view_is_materialized() {
+            self.visible.clear();
+            return;
+        }
+        let columns = stock_columns::<()>();
+        let mut idx = filtered_indices(&self.quotes, &self.filter, &columns);
+        sort_indices(&mut idx, &self.quotes, &self.sort, &columns);
+        self.visible = idx.into_iter().map(|i| self.quotes[i]).collect();
+    }
+}
+
+impl Default for StockDemo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The static NASDAQ-style quote snapshot. Hand-authored, deterministic,
+/// no network. Values are plausible but illustrative — a fixed snapshot,
+/// not live data. `change`/`change_pct` carry mixed signs so the
+/// conditional up/down coloring is visible; P/E and dividend are `None`
+/// for a few names to exercise the `—` rendering.
+#[rustfmt::skip]
+fn stock_quotes() -> &'static [StockQuote] {
+    // symbol, name, last, change, change_pct, open, high, low, volume,
+    // avg_volume, market_cap, pe, eps, div_yield, 52wH, 52wL, beta, sector
+    const Q: &[StockQuote] = &[
+        StockQuote { symbol: "AAPL", name: "Apple Inc.", last: 229.87, change: 1.32, change_pct: 0.58, open: 228.40, high: 230.72, low: 227.93, volume: 41_284_300, avg_volume: 54_900_000, market_cap: 3_480_000_000_000, pe: Some(35.1), eps: 6.55, div_yield: Some(0.43), week52_high: 237.49, week52_low: 164.08, beta: 1.24, sector: "Technology" },
+        StockQuote { symbol: "MSFT", name: "Microsoft Corp.", last: 417.22, change: -2.18, change_pct: -0.52, open: 419.80, high: 421.05, low: 415.61, volume: 18_902_100, avg_volume: 21_300_000, market_cap: 3_100_000_000_000, pe: Some(34.6), eps: 12.06, div_yield: Some(0.72), week52_high: 468.35, week52_low: 366.50, beta: 0.91, sector: "Technology" },
+        StockQuote { symbol: "NVDA", name: "NVIDIA Corp.", last: 138.07, change: 3.91, change_pct: 2.91, open: 134.60, high: 139.20, low: 134.02, volume: 245_110_800, avg_volume: 268_000_000, market_cap: 3_380_000_000_000, pe: Some(64.8), eps: 2.13, div_yield: Some(0.03), week52_high: 152.89, week52_low: 47.32, beta: 1.66, sector: "Technology" },
+        StockQuote { symbol: "AMZN", name: "Amazon.com Inc.", last: 207.89, change: 0.74, change_pct: 0.36, open: 207.10, high: 209.44, low: 206.20, volume: 33_021_500, avg_volume: 41_700_000, market_cap: 2_180_000_000_000, pe: Some(45.2), eps: 4.60, div_yield: None, week52_high: 215.90, week52_low: 144.05, beta: 1.15, sector: "Consumer Cyclical" },
+        StockQuote { symbol: "GOOGL", name: "Alphabet Inc.", last: 169.24, change: -1.05, change_pct: -0.62, open: 170.55, high: 171.02, low: 168.40, volume: 22_415_900, avg_volume: 27_800_000, market_cap: 2_070_000_000_000, pe: Some(23.4), eps: 7.23, div_yield: Some(0.47), week52_high: 191.75, week52_low: 130.67, beta: 1.03, sector: "Communication Services" },
+        StockQuote { symbol: "META", name: "Meta Platforms Inc.", last: 563.27, change: 6.83, change_pct: 1.23, open: 557.00, high: 565.90, low: 555.12, volume: 14_002_700, avg_volume: 16_900_000, market_cap: 1_430_000_000_000, pe: Some(28.0), eps: 20.12, div_yield: Some(0.35), week52_high: 602.95, week52_low: 414.50, beta: 1.21, sector: "Communication Services" },
+        StockQuote { symbol: "TSLA", name: "Tesla Inc.", last: 342.03, change: -8.47, change_pct: -2.42, open: 350.60, high: 352.10, low: 339.85, volume: 88_540_200, avg_volume: 96_400_000, market_cap: 1_090_000_000_000, pe: Some(96.3), eps: 3.55, div_yield: None, week52_high: 488.54, week52_low: 138.80, beta: 2.31, sector: "Consumer Cyclical" },
+        StockQuote { symbol: "AVGO", name: "Broadcom Inc.", last: 178.45, change: 2.10, change_pct: 1.19, open: 176.80, high: 179.33, low: 176.02, volume: 19_330_400, avg_volume: 23_100_000, market_cap: 834_000_000_000, pe: Some(168.2), eps: 1.06, div_yield: Some(1.18), week52_high: 186.42, week52_low: 84.86, beta: 1.19, sector: "Technology" },
+        StockQuote { symbol: "COST", name: "Costco Wholesale", last: 962.18, change: 4.55, change_pct: 0.47, open: 958.20, high: 965.40, low: 956.70, volume: 1_840_300, avg_volume: 2_300_000, market_cap: 427_000_000_000, pe: Some(54.7), eps: 17.59, div_yield: Some(0.49), week52_high: 1078.23, week52_low: 660.01, beta: 0.79, sector: "Consumer Defensive" },
+        StockQuote { symbol: "PEP", name: "PepsiCo Inc.", last: 151.93, change: -0.62, change_pct: -0.41, open: 152.60, high: 153.11, low: 151.20, volume: 5_210_700, avg_volume: 6_100_000, market_cap: 208_000_000_000, pe: Some(22.1), eps: 6.87, div_yield: Some(3.58), week52_high: 183.41, week52_low: 141.51, beta: 0.55, sector: "Consumer Defensive" },
+        StockQuote { symbol: "ADBE", name: "Adobe Inc.", last: 484.12, change: -3.20, change_pct: -0.66, open: 487.90, high: 489.55, low: 482.30, volume: 3_104_200, avg_volume: 3_700_000, market_cap: 213_000_000_000, pe: Some(38.9), eps: 12.45, div_yield: None, week52_high: 638.25, week52_low: 433.97, beta: 1.31, sector: "Technology" },
+        StockQuote { symbol: "NFLX", name: "Netflix Inc.", last: 897.56, change: 12.04, change_pct: 1.36, open: 886.50, high: 901.20, low: 884.00, volume: 3_660_900, avg_volume: 4_200_000, market_cap: 384_000_000_000, pe: Some(48.6), eps: 18.47, div_yield: None, week52_high: 941.75, week52_low: 542.01, beta: 1.28, sector: "Communication Services" },
+        StockQuote { symbol: "INTC", name: "Intel Corp.", last: 24.05, change: -0.41, change_pct: -1.68, open: 24.50, high: 24.62, low: 23.88, volume: 61_220_500, avg_volume: 58_900_000, market_cap: 103_000_000_000, pe: None, eps: -0.13, div_yield: None, week52_high: 45.30, week52_low: 18.51, beta: 1.07, sector: "Technology" },
+        StockQuote { symbol: "AMD", name: "Advanced Micro Devices", last: 138.61, change: 1.77, change_pct: 1.29, open: 137.10, high: 139.84, low: 136.55, volume: 38_950_100, avg_volume: 44_600_000, market_cap: 224_000_000_000, pe: Some(118.5), eps: 1.17, div_yield: None, week52_high: 227.30, week52_low: 116.37, beta: 1.70, sector: "Technology" },
+        StockQuote { symbol: "QCOM", name: "Qualcomm Inc.", last: 158.84, change: 0.92, change_pct: 0.58, open: 158.00, high: 159.77, low: 157.41, volume: 7_810_600, avg_volume: 9_200_000, market_cap: 176_000_000_000, pe: Some(17.9), eps: 8.87, div_yield: Some(2.14), week52_high: 230.63, week52_low: 149.43, beta: 1.30, sector: "Technology" },
+        StockQuote { symbol: "TXN", name: "Texas Instruments", last: 196.30, change: -1.14, change_pct: -0.58, open: 197.55, high: 198.02, low: 195.60, volume: 4_920_800, avg_volume: 5_600_000, market_cap: 179_000_000_000, pe: Some(38.4), eps: 5.11, div_yield: Some(2.77), week52_high: 220.39, week52_low: 157.10, beta: 1.02, sector: "Technology" },
+        StockQuote { symbol: "AMAT", name: "Applied Materials", last: 172.41, change: 2.63, change_pct: 1.55, open: 170.20, high: 173.10, low: 169.85, volume: 6_330_400, avg_volume: 7_400_000, market_cap: 142_000_000_000, pe: Some(21.6), eps: 7.98, div_yield: Some(0.93), week52_high: 255.89, week52_low: 158.06, beta: 1.55, sector: "Technology" },
+        StockQuote { symbol: "MU", name: "Micron Technology", last: 102.18, change: 3.05, change_pct: 3.08, open: 99.40, high: 103.22, low: 99.10, volume: 21_440_700, avg_volume: 24_800_000, market_cap: 113_000_000_000, pe: Some(146.0), eps: 0.70, div_yield: Some(0.45), week52_high: 157.54, week52_low: 79.15, beta: 1.20, sector: "Technology" },
+        StockQuote { symbol: "INTU", name: "Intuit Inc.", last: 638.45, change: -4.10, change_pct: -0.64, open: 643.00, high: 645.20, low: 635.80, volume: 1_220_500, avg_volume: 1_600_000, market_cap: 178_000_000_000, pe: Some(58.3), eps: 10.95, div_yield: Some(0.66), week52_high: 714.78, week52_low: 557.29, beta: 1.18, sector: "Technology" },
+        StockQuote { symbol: "AMGN", name: "Amgen Inc.", last: 263.74, change: 0.58, change_pct: 0.22, open: 263.00, high: 265.10, low: 262.20, volume: 2_640_900, avg_volume: 3_100_000, market_cap: 142_000_000_000, pe: Some(38.7), eps: 6.81, div_yield: Some(3.42), week52_high: 346.85, week52_low: 256.16, beta: 0.62, sector: "Healthcare" },
+        StockQuote { symbol: "GILD", name: "Gilead Sciences", last: 92.36, change: 1.21, change_pct: 1.33, open: 91.30, high: 92.80, low: 91.05, volume: 6_010_200, avg_volume: 7_000_000, market_cap: 115_000_000_000, pe: Some(22.8), eps: 4.05, div_yield: Some(3.34), week52_high: 102.07, week52_low: 63.91, beta: 0.27, sector: "Healthcare" },
+        StockQuote { symbol: "VRTX", name: "Vertex Pharmaceuticals", last: 462.08, change: -2.95, change_pct: -0.63, open: 465.50, high: 466.90, low: 460.10, volume: 1_120_400, avg_volume: 1_400_000, market_cap: 119_000_000_000, pe: Some(28.5), eps: 16.21, div_yield: None, week52_high: 519.88, week52_low: 376.80, beta: 0.42, sector: "Healthcare" },
+        StockQuote { symbol: "SBUX", name: "Starbucks Corp.", last: 98.74, change: 0.43, change_pct: 0.44, open: 98.30, high: 99.50, low: 97.90, volume: 7_540_300, avg_volume: 8_900_000, market_cap: 112_000_000_000, pe: Some(28.9), eps: 3.42, div_yield: Some(2.47), week52_high: 117.46, week52_low: 71.55, beta: 0.94, sector: "Consumer Cyclical" },
+        StockQuote { symbol: "BKNG", name: "Booking Holdings", last: 4982.11, change: 38.20, change_pct: 0.77, open: 4945.00, high: 5005.40, low: 4938.60, volume: 280_100, avg_volume: 340_000, market_cap: 165_000_000_000, pe: Some(31.2), eps: 159.68, div_yield: Some(0.70), week52_high: 5337.50, week52_low: 3118.32, beta: 1.36, sector: "Consumer Cyclical" },
+        StockQuote { symbol: "ISRG", name: "Intuitive Surgical", last: 533.62, change: 5.18, change_pct: 0.98, open: 528.90, high: 535.70, low: 527.40, volume: 1_410_600, avg_volume: 1_800_000, market_cap: 189_000_000_000, pe: Some(83.4), eps: 6.40, div_yield: None, week52_high: 549.84, week52_low: 345.59, beta: 1.45, sector: "Healthcare" },
+        StockQuote { symbol: "PYPL", name: "PayPal Holdings", last: 86.42, change: -1.33, change_pct: -1.52, open: 87.80, high: 88.10, low: 85.90, volume: 9_870_400, avg_volume: 11_500_000, market_cap: 86_000_000_000, pe: Some(20.4), eps: 4.24, div_yield: None, week52_high: 93.66, week52_low: 55.86, beta: 1.42, sector: "Financial Services" },
+        StockQuote { symbol: "CMCSA", name: "Comcast Corp.", last: 41.18, change: 0.12, change_pct: 0.29, open: 41.05, high: 41.44, low: 40.88, volume: 18_220_900, avg_volume: 20_100_000, market_cap: 158_000_000_000, pe: Some(10.7), eps: 3.85, div_yield: Some(3.01), week52_high: 47.11, week52_low: 36.43, beta: 0.94, sector: "Communication Services" },
+        StockQuote { symbol: "HON", name: "Honeywell Intl.", last: 224.55, change: -0.88, change_pct: -0.39, open: 225.60, high: 226.30, low: 223.70, volume: 2_910_700, avg_volume: 3_400_000, market_cap: 146_000_000_000, pe: Some(24.6), eps: 9.13, div_yield: Some(2.00), week52_high: 242.77, week52_low: 183.62, beta: 1.06, sector: "Industrials" },
+    ];
+    Q
+}
+
+/// Conditional color for a signed change value: positive green, negative
+/// coral, flat faint — the universal up/down convention. Theme-aware.
+fn change_color(v: f64, theme: &Theme) -> Color {
+    if v > 0.0 {
+        theme.palette.green
+    } else if v < 0.0 {
+        theme.palette.coral
+    } else {
+        theme.palette.text_faint
+    }
+}
+
+/// A stable integer sort key from a dollar `f64`, scaled to cents — `f64`
+/// isn't `Ord`, and the displayed values are 2-decimal, so cents are exact.
+#[expect(clippy::cast_possible_truncation, reason = "demo display precision")]
+fn cents(v: f64) -> i64 {
+    (v * 100.0).round() as i64
+}
+
+/// A stable integer sort key from a percent/ratio `f64`, scaled to basis
+/// points (2 decimals shown ⇒ scale by 100).
+#[expect(clippy::cast_possible_truncation, reason = "demo display precision")]
+fn bps(v: f64) -> i64 {
+    (v * 100.0).round() as i64
+}
+
+/// The column descriptors for the stock-quote board — the "value lens"
+/// layout: identity (`Symbol`/`Name`), price action (`Last`/`Chg`/`Chg%`/
+/// OHLC), liquidity (`Volume`/`Avg Vol`), and fundamentals (`Mkt Cap`/
+/// `P/E`/`EPS`/`Div %`/52-week range/`Beta`/`Sector`).
+///
+/// Numeric columns sort by their *underlying* value (via integer keys),
+/// not the formatted string; `Chg`/`Chg%` are conditionally colored by
+/// sign; the `Symbol` column is the natural `row_id`. Like
+/// [`tick_columns`], this is a plain demo helper — the grid is generic.
+#[must_use]
+pub fn stock_columns<S: 'static>() -> Vec<ColumnDef<StockQuote, S>> {
+    vec![
+        text_column("Symbol", 80.0, CellAlign::Start, |q: &StockQuote| q.symbol.to_string())
+            .sortable_by_key(|q: &StockQuote| q.symbol)
+            .filterable_by_text(|q: &StockQuote| q.symbol.to_string()),
+        text_column("Name", 190.0, CellAlign::Start, |q: &StockQuote| q.name.to_string())
+            .sortable_by_key(|q: &StockQuote| q.name)
+            .filterable_by_text(|q: &StockQuote| q.name.to_string()),
+        text_column("Last", 90.0, CellAlign::End, |q: &StockQuote| format!("${:.2}", q.last))
+            .sortable_by_key(|q: &StockQuote| cents(q.last)),
+        colored_text_column(
+            "Chg",
+            80.0,
+            CellAlign::End,
+            |q: &StockQuote| format!("{:+.2}", q.change),
+            |q: &StockQuote, theme: &Theme| change_color(q.change, theme),
+        )
+        .sortable_by_key(|q: &StockQuote| cents(q.change)),
+        colored_text_column(
+            "Chg%",
+            80.0,
+            CellAlign::End,
+            |q: &StockQuote| format!("{:+.2}%", q.change_pct),
+            |q: &StockQuote, theme: &Theme| change_color(q.change_pct, theme),
+        )
+        .sortable_by_key(|q: &StockQuote| bps(q.change_pct)),
+        text_column("Open", 90.0, CellAlign::End, |q: &StockQuote| format!("${:.2}", q.open))
+            .sortable_by_key(|q: &StockQuote| cents(q.open)),
+        text_column("High", 90.0, CellAlign::End, |q: &StockQuote| format!("${:.2}", q.high))
+            .sortable_by_key(|q: &StockQuote| cents(q.high)),
+        text_column("Low", 90.0, CellAlign::End, |q: &StockQuote| format!("${:.2}", q.low))
+            .sortable_by_key(|q: &StockQuote| cents(q.low)),
+        text_column("Volume", 110.0, CellAlign::End, |q: &StockQuote| fmt_compact(q.volume))
+            .sortable_by_key(|q: &StockQuote| q.volume),
+        text_column("Avg Vol", 110.0, CellAlign::End, |q: &StockQuote| fmt_compact(q.avg_volume))
+            .sortable_by_key(|q: &StockQuote| q.avg_volume),
+        text_column("Mkt Cap", 110.0, CellAlign::End, |q: &StockQuote| fmt_compact(q.market_cap))
+            .sortable_by_key(|q: &StockQuote| q.market_cap),
+        optional_text_column("P/E", 80.0, CellAlign::End, |q: &StockQuote| {
+            q.pe.map(|p| format!("{p:.1}"))
+        })
+        // `Option<i64>` is `Ord` (None sorts first), clustering N/A P/Es.
+        .sortable_by_key(|q: &StockQuote| q.pe.map(bps)),
+        text_column("EPS", 80.0, CellAlign::End, |q: &StockQuote| format!("${:.2}", q.eps))
+            .sortable_by_key(|q: &StockQuote| cents(q.eps)),
+        optional_text_column("Div %", 80.0, CellAlign::End, |q: &StockQuote| {
+            q.div_yield.map(|d| format!("{d:.2}%"))
+        })
+        .sortable_by_key(|q: &StockQuote| q.div_yield.map(bps)),
+        text_column("52W H", 90.0, CellAlign::End, |q: &StockQuote| {
+            format!("${:.2}", q.week52_high)
+        })
+        .sortable_by_key(|q: &StockQuote| cents(q.week52_high)),
+        text_column("52W L", 90.0, CellAlign::End, |q: &StockQuote| {
+            format!("${:.2}", q.week52_low)
+        })
+        .sortable_by_key(|q: &StockQuote| cents(q.week52_low)),
+        text_column("Beta", 70.0, CellAlign::End, |q: &StockQuote| format!("{:.2}", q.beta))
+            .sortable_by_key(|q: &StockQuote| bps(q.beta)),
+        text_column("Sector", 170.0, CellAlign::Start, |q: &StockQuote| q.sector.to_string())
+            // Low-cardinality → a great multi-sort primary ("Sector then
+            // Mkt Cap" groups by sector and ranks by size within each).
+            .sortable_by_key(|q: &StockQuote| q.sector)
+            .filterable_by_text(|q: &StockQuote| q.sector.to_string()),
+    ]
+}
+
+/// Formats a large count compactly (`41.3M`, `3.48T`) for volume / market
+/// cap cells. Display-only; the columns sort by the raw integer.
+#[expect(clippy::cast_precision_loss, reason = "Display only")]
+fn fmt_compact(n: u64) -> String {
+    let v = n as f64;
+    if v >= 1e12 {
+        format!("{:.2}T", v / 1e12)
+    } else if v >= 1e9 {
+        format!("{:.1}B", v / 1e9)
+    } else if v >= 1e6 {
+        format!("{:.1}M", v / 1e6)
+    } else if v >= 1e3 {
+        format!("{:.1}K", v / 1e3)
+    } else {
+        n.to_string()
+    }
+}
+
+/// Arranges [`stock_columns`] by a `layout` of [`ColumnId`]s — the
+/// stock-board analogue of [`arrange_columns`] (show/hide + reorder).
+#[must_use]
+pub fn arrange_stock_columns<S: 'static>(layout: &[ColumnId]) -> Vec<ColumnDef<StockQuote, S>> {
+    let mut defs = stock_columns::<S>();
+    layout
+        .iter()
+        .filter_map(|id| {
+            defs.iter()
+                .position(|d| &d.effective_id() == id)
+                .map(|pos| defs.remove(pos))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{arrange_columns, side_color, ColumnId, Demo, DemoSide, DemoTick};
+    use super::{
+        arrange_columns, arrange_stock_columns, side_color, stock_columns, ColumnId, Demo,
+        DemoSide, DemoTick, StockDemo,
+    };
     use crate::Theme;
 
     /// The `Side` column's stable filter id is its title.
@@ -767,5 +1106,98 @@ mod tests {
             }),
             "the Time tiebreaker must visibly order within a (Side,Price) group"
         );
+    }
+
+    // --- Stock-quote ("value lens") demo ---
+
+    fn sym_id() -> ColumnId {
+        ColumnId::from("Symbol")
+    }
+    fn sector_id() -> ColumnId {
+        ColumnId::from("Sector")
+    }
+    fn mktcap_id() -> ColumnId {
+        ColumnId::from("Mkt Cap")
+    }
+
+    #[test]
+    fn stock_demo_seeds_a_nonempty_snapshot_with_unique_symbols() {
+        let demo = StockDemo::new();
+        assert!(demo.quotes.len() >= 20, "a real board of symbols");
+        // Symbol is the row_id — must be unique across the snapshot.
+        let mut syms: Vec<&str> = demo.quotes.iter().map(|q| q.symbol).collect();
+        let n = syms.len();
+        syms.sort_unstable();
+        syms.dedup();
+        assert_eq!(syms.len(), n, "every symbol is unique (it's the row_id)");
+    }
+
+    #[test]
+    fn stock_columns_are_all_uniquely_identified() {
+        // ColumnId uniqueness (titles are the default ids) — else column
+        // state would collide.
+        let cols = stock_columns::<()>();
+        let mut ids: Vec<ColumnId> = cols.iter().map(super::ColumnDef::effective_id).collect();
+        let n = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), n, "every column id is unique");
+    }
+
+    #[test]
+    fn stock_demo_single_sort_orders_by_symbol() {
+        let mut demo = StockDemo::new();
+        demo.cycle_sort(sym_id(), false); // Symbol asc
+        assert!(
+            demo.visible.windows(2).all(|w| w[0].symbol <= w[1].symbol),
+            "visible rows ascend by symbol"
+        );
+        assert_eq!(demo.visible.len(), demo.quotes.len());
+    }
+
+    #[test]
+    fn stock_demo_sector_then_market_cap_multi_sort() {
+        // The canonical board view: group by Sector, rank by Mkt Cap
+        // descending within each sector.
+        let mut demo = StockDemo::new();
+        demo.cycle_sort(sector_id(), false); // 1: Sector asc
+        demo.cycle_sort(mktcap_id(), true); // 2: Mkt Cap asc...
+        demo.cycle_sort(mktcap_id(), true); // ...then desc
+        assert_eq!(demo.sort.len(), 2);
+
+        let key = |q: &super::StockQuote| (q.sector, std::cmp::Reverse(q.market_cap));
+        assert!(
+            demo.visible.windows(2).all(|w| key(&w[0]) <= key(&w[1])),
+            "grouped by sector, market-cap-desc within each"
+        );
+        // The 2nd level must actually order within a sector group.
+        assert!(
+            demo.visible.windows(2).any(|w| {
+                w[0].sector == w[1].sector && w[0].market_cap > w[1].market_cap
+            }),
+            "Mkt Cap tiebreaker orders within a Sector group"
+        );
+    }
+
+    #[test]
+    fn stock_demo_filter_by_sector_keeps_only_matches() {
+        let mut demo = StockDemo::new();
+        demo.set_filter(sector_id(), "Technology");
+        assert!(!demo.visible.is_empty());
+        assert!(
+            demo.visible.iter().all(|q| q.sector == "Technology"),
+            "only Technology rows survive the sector filter"
+        );
+    }
+
+    #[test]
+    fn arrange_stock_columns_hides_by_omission() {
+        let all: Vec<ColumnId> =
+            stock_columns::<()>().iter().map(super::ColumnDef::effective_id).collect();
+        // Drop "Beta" from the layout → it's absent from the arranged set.
+        let layout: Vec<ColumnId> =
+            all.into_iter().filter(|id| id != &ColumnId::from("Beta")).collect();
+        let cols = arrange_stock_columns::<()>(&layout);
+        assert!(!cols.iter().any(|c| c.effective_id() == ColumnId::from("Beta")));
     }
 }
