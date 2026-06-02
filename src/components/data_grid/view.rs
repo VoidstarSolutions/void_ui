@@ -111,6 +111,24 @@ fn warn_missing_row_id() {
         );
     }
 }
+
+/// One-shot warning that two columns resolved to the same [`ColumnId`]
+/// (commonly: two columns with the same title and no explicit
+/// [`ColumnDef::id`](super::column::ColumnDef::id)). The later column is
+/// silently shadowed — sort/filter/width resolution always hits the
+/// first. A debug build hard-asserts this; release builds get this warn
+/// (emitted once per process) instead of failing silently.
+fn warn_duplicate_column_id() {
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if !WARNED.swap(true, Ordering::Relaxed) {
+        tracing::warn!(
+            "data_grid: two columns share a ColumnId (same title with no \
+             explicit `.id(...)`?) — their sort/filter/width state collides \
+             and the later column is shadowed. Give columns distinct ids."
+        );
+    }
+}
+
 /// Boxed filter-change callback (`Fn(&mut State, ColumnId, query)`). The
 /// grid emits filter edits through this so the host can update its
 /// [`FilterState`] *and* recompute its filtered view — the grid never
@@ -426,20 +444,26 @@ fn decompose_columns<R, State>(
     let mut text_projectors: Vec<Option<TextProjector<R>>> = Vec::with_capacity(columns.len());
     let mut sortable: Vec<bool> = Vec::with_capacity(columns.len());
     let mut filterable: Vec<bool> = Vec::with_capacity(columns.len());
-    // Debug-only: the `ColumnId` contract requires uniqueness, since
-    // column state (sort/filter/width) is keyed by it. A duplicate id
-    // would make two columns share state. Cheap to check while we build.
-    #[cfg(debug_assertions)]
+    // The `ColumnId` contract requires uniqueness, since column state
+    // (sort/filter/width) is keyed by it; a duplicate makes two columns
+    // share state and the later one is silently shadowed (`.find()` in
+    // sort/filter resolution always hits the first). Checking is cheap
+    // (once per rebuild over a handful of columns), so unlike the per-row
+    // `row_id` case we can afford a real release-build signal: a one-shot
+    // `tracing::warn!` *plus* a debug assert for a hard fail in tests.
     let mut seen_ids = std::collections::BTreeSet::<ColumnId>::new();
     for col in columns {
         let id = col.effective_id();
-        #[cfg(debug_assertions)]
+        let first_seen = seen_ids.insert(id.clone());
         debug_assert!(
-            seen_ids.insert(id.clone()),
+            first_seen,
             "data_grid: column id {id} is not unique — two columns share \
              an id, so their sort/filter/width state would collide (set a \
              distinct ColumnDef::id; see ColumnId)"
         );
+        if !first_seen {
+            warn_duplicate_column_id();
+        }
         text_projectors.push(col.text);
         // Comparator presence ⇒ sortable; the comparator itself is the
         // host's (via `sort_indices`), so we drop it here.
@@ -855,10 +879,11 @@ struct HeaderCtx<'a, State> {
 /// order), and the active sort column gains an ascending/descending
 /// arrow. A column with an active filter (`filtered == true`) is drawn
 /// in the theme accent with a trailing marker, so a filtered view is
-/// always unmistakable. When resize is enabled (`ctx.width_change` is
-/// set) a trailing drag handle is appended *inside* the column's width,
-/// so column boundaries stay aligned with the body cells. Non-sortable
-/// columns render an inert label.
+/// always unmistakable. (Resize is owned by the header
+/// [`ColumnStrip`](super::column_strip::ColumnStrip) itself — it
+/// hit-tests a grab zone at each column boundary — not by the cell, so
+/// `header_cell` stays resize-agnostic.) Non-sortable columns render an
+/// inert label.
 fn header_cell<State, R>(
     slot: &ColumnRender<R, State>,
     sortable: bool,
@@ -1172,9 +1197,10 @@ const FILTER_ROW_HEIGHT: f64 = 30.0;
 
 #[cfg(test)]
 mod tests {
-    use super::{project_tsv, visual_range_ids, RowIdSource};
-    use crate::components::data_grid::column::TextProjector;
+    use super::{decompose_columns, project_tsv, visual_range_ids, RowIdSource};
+    use crate::components::data_grid::column::{text_column, CellAlign, TextProjector};
     use crate::components::data_grid::selection::SelectionState;
+    use crate::components::data_grid::width::ColumnWidths;
     use std::sync::Arc;
 
     /// Row id == the row value itself, so test slices read naturally:
@@ -1263,5 +1289,20 @@ mod tests {
         let mut sel = SelectionState::new();
         sel.replace_with(5);
         let _ = project_tsv(&value_projectors(), &data, &sel, &id_is_value());
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "column id Price is not unique")]
+    fn decompose_debug_asserts_unique_column_ids() {
+        // Two columns derive the same id "Price" from their titles (no
+        // explicit `.id`), so column state would collide — a debug build
+        // must trip the uniqueness assertion. (Release builds warn once
+        // instead; that path can't be asserted in a unit test.)
+        let cols = vec![
+            text_column::<u64, (), _>("Price", 80.0, CellAlign::End, |r: &u64| r.to_string()),
+            text_column::<u64, (), _>("Price", 80.0, CellAlign::End, |r: &u64| r.to_string()),
+        ];
+        let _ = decompose_columns(cols, &ColumnWidths::new());
     }
 }

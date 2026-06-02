@@ -300,6 +300,25 @@ mod tests {
     }
 
     #[test]
+    fn sort_indices_sorted_column_absent_is_a_noop() {
+        // The sorted id ("N") isn't among the passed columns (e.g. it was
+        // hidden from the arranged set) → no column matches → incoming
+        // order is left untouched (natural fallback), no panic.
+        let rows = vec![30, 10, 20];
+        let mut idx = vec![0, 1, 2];
+        let mut s = SortState::new();
+        s.cycle(id("N"));
+        let only_plain = vec![text_column::<i32, (), _>(
+            "Plain",
+            10.0,
+            CellAlign::End,
+            |r: &i32| r.to_string(),
+        )];
+        sort_indices(&mut idx, &rows, &s, &only_plain);
+        assert_eq!(idx, vec![0, 1, 2], "absent sorted column leaves order untouched");
+    }
+
+    #[test]
     fn sort_follows_its_column_across_a_reorder() {
         // A sort set on "N" still sorts by N after columns are reordered,
         // where a positional key would point at a different column.
