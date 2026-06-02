@@ -151,7 +151,7 @@ impl Demo {
     /// re-derives the ordered view. Demonstrates the host-side sorting
     /// path — the mirror of [`Self::set_filter`]: the host owns row order
     /// and composes [`filtered_indices`] then [`sort_indices`].
-    pub fn cycle_sort(&mut self, column: usize) {
+    pub fn cycle_sort(&mut self, column: ColumnId) {
         self.sort.cycle(column);
         self.refresh_visible();
     }
@@ -180,7 +180,7 @@ impl Demo {
         let columns = tick_columns::<()>(0);
         // 1. Filter to surviving indices, 2. sort those indices.
         let mut idx = filtered_indices(&self.ticks, &self.filter, &columns);
-        sort_indices(&mut idx, &self.ticks, self.sort, &columns);
+        sort_indices(&mut idx, &self.ticks, &self.sort, &columns);
         self.visible = idx.into_iter().map(|i| self.ticks[i]).collect();
     }
 
@@ -407,27 +407,29 @@ mod tests {
         assert!(demo.filter.is_empty());
     }
 
-    /// Price is column index 1 in `tick_columns`.
-    const PRICE_COL: usize = 1;
+    /// The `Price` column's stable sort id is its title.
+    fn price_id() -> crate::components::data_grid::column::ColumnId {
+        crate::components::data_grid::column::ColumnId::from("Price")
+    }
 
     #[test]
     fn sorting_materializes_the_view_in_price_order() {
         let mut demo = Demo::with_initial(200);
-        demo.cycle_sort(PRICE_COL); // ascending
+        demo.cycle_sort(price_id()); // ascending
         assert_eq!(demo.visible.len(), demo.ticks.len());
         assert!(
             demo.visible.windows(2).all(|w| w[0].price_units <= w[1].price_units),
             "visible rows must be in ascending price order"
         );
         // A second cycle flips to descending.
-        demo.cycle_sort(PRICE_COL);
+        demo.cycle_sort(price_id());
         assert!(
             demo.visible.windows(2).all(|w| w[0].price_units >= w[1].price_units),
             "visible rows must be in descending price order"
         );
         // A third cycle clears the sort; with no filter either, the view
         // de-materializes back to reading `ticks` directly.
-        demo.cycle_sort(PRICE_COL);
+        demo.cycle_sort(price_id());
         assert!(demo.visible.is_empty());
         assert_eq!(demo.sort.column(), None);
     }
@@ -436,8 +438,8 @@ mod tests {
     fn select_first_keys_by_stable_id_in_display_order() {
         let mut demo = Demo::with_initial(50);
         // Sort descending by price so display order differs from natural.
-        demo.cycle_sort(PRICE_COL);
-        demo.cycle_sort(PRICE_COL);
+        demo.cycle_sort(price_id());
+        demo.cycle_sort(price_id());
         demo.select_first(3);
         // The selected ids must be exactly the first three visible rows'
         // ids — i.e. selection tracks what the user sees, not positions.
@@ -473,7 +475,7 @@ mod tests {
         demo.selection.replace_with(picked_id);
 
         // Sort ascending by price; the host materializes `visible`.
-        demo.cycle_sort(PRICE_COL);
+        demo.cycle_sort(price_id());
         assert!(
             demo.visible.windows(2).all(|w| w[0].price_units <= w[1].price_units),
             "precondition: a real reorder happened"

@@ -54,11 +54,13 @@ type SelectionLens<State> =
 /// (the `getRowId` contract); selection is keyed by this id rather than
 /// by slice position, so it follows rows across host-side sort/filter.
 type RowIdFn<R> = Arc<dyn Fn(&R) -> u64 + Send + Sync>;
-/// Boxed sort-change callback (`Fn(&mut State, column)`). A header click
-/// emits the clicked column through this; the host cycles its
-/// [`SortState`] *and* re-derives its ordered view — the grid never
-/// reorders data itself (the same host-side shape as [`FilterChange`]).
-type SortChange<State> = Arc<dyn Fn(&mut State, usize) + Send + Sync>;
+/// Boxed sort-change callback (`Fn(&mut State, ColumnId)`). A header
+/// click emits the clicked column's stable id through this; the host
+/// cycles its [`SortState`] *and* re-derives its ordered view — the grid
+/// never reorders data itself (the same host-side shape as
+/// [`FilterChange`]). Keyed by id so an active sort stays attached across
+/// reorder/hide.
+type SortChange<State> = Arc<dyn Fn(&mut State, ColumnId) + Send + Sync>;
 
 /// How the body derives a row's stable id: either the host's projector,
 /// or a fallback to the row's slice position when none was supplied.
@@ -305,7 +307,7 @@ where
     /// [`ColumnDef::sortable_by_key`]). Omit for an unsorted grid.
     pub fn sort<F>(mut self, state: SortState, on_sort: F) -> Self
     where
-        F: Fn(&mut State, usize) + Send + Sync + 'static,
+        F: Fn(&mut State, ColumnId) + Send + Sync + 'static,
     {
         self.sort = state;
         self.sort_change = Some(Arc::new(on_sort));
@@ -538,7 +540,7 @@ where
         .enumerate()
         .map(|(idx, slot)| {
             let filtered = filter.get(&slot.id).is_some();
-            header_cell(idx, slot, sortable[idx], filtered, &header_ctx)
+            header_cell(slot, sortable[idx], filtered, &header_ctx)
         })
         .collect();
     // ColumnStrip places each cell at an authoritative x (= cumulative
@@ -858,7 +860,6 @@ struct HeaderCtx<'a, State> {
 /// so column boundaries stay aligned with the body cells. Non-sortable
 /// columns render an inert label.
 fn header_cell<State, R>(
-    idx: usize,
     slot: &ColumnRender<R, State>,
     sortable: bool,
     filtered: bool,
@@ -869,7 +870,7 @@ where
     R: 'static,
 {
     let theme = ctx.theme;
-    let mut title = match ctx.sort.direction_for(idx) {
+    let mut title = match ctx.sort.direction_for(&slot.id) {
         Some(SortDirection::Ascending) => format!("{}  ▲", slot.title),
         Some(SortDirection::Descending) => format!("{}  ▼", slot.title),
         None => slot.title.clone(),
@@ -905,11 +906,12 @@ where
     match (sortable, ctx.sort_change) {
         (true, Some(on_sort)) => {
             let on_sort = Arc::clone(on_sort);
+            let id = slot.id.clone();
             Box::new(clickable_header(
                 cell,
                 theme.palette.border_strong,
                 move |state: &mut State| {
-                    on_sort(state, idx);
+                    on_sort(state, id.clone());
                 },
             ))
         }

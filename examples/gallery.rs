@@ -62,7 +62,7 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
     };
     let dg_row_count = u64::try_from(dg_visible_len).unwrap_or(u64::MAX);
     let dg_base_time_ns = state.data_grid.ticks.first().map_or(0, |t| t.event_ns);
-    let dg_sort = state.data_grid.sort;
+    let dg_sort = state.data_grid.sort.clone();
     let dg_filter = state.data_grid.filter.clone();
     let dg_widths = state.data_grid.column_widths.clone();
 
@@ -285,7 +285,7 @@ fn data_grid_panel(theme: &Theme, dg: DataGridSnapshot) -> impl WidgetView<State
         .selection(|s: &mut State| &mut s.data_grid.selection)
         // Host-side sorting: a header click cycles the host's SortState
         // and re-derives the ordered view (mirror of the filter callback).
-        .sort(sort, |s: &mut State, col: usize| {
+        .sort(sort, |s: &mut State, col: ColumnId| {
             s.data_grid.cycle_sort(col);
         })
         .filter(filter, |s: &mut State, col: ColumnId, query: String| {
