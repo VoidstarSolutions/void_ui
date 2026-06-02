@@ -31,11 +31,14 @@ use crate::Theme;
 
 const START_PRICE_UNITS: i64 = 100_000_000_000; // $100.00 in 1e-9 units.
 const TICK_INTERVAL_NS: i64 = 100_000_000; // 100 ms between synthetic trades.
-const PRICE_STEP_UNITS: i64 = 50_000_000; // ±$0.05 per tick.
+const CENT_UNITS: i64 = 10_000_000; // $0.01 in 1e-9 units.
+const PRICE_STEP_CENTS: i64 = 5; // ±5¢ per tick.
 const PRICE_UNITS_PER_DOLLAR: f64 = 1_000_000_000.0;
 
-/// Aggressor side of a synthetic trade.
-#[derive(Debug, Clone, Copy)]
+/// Aggressor side of a synthetic trade. `Ord` (Buy < Sell) so the demo's
+/// `Side` column is sortable — a low-cardinality primary that makes the
+/// multi-column tiebreak sort obvious at a glance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DemoSide {
     Buy,
     Sell,
@@ -281,14 +284,21 @@ impl Demo {
     fn next_tick(&mut self) -> DemoTick {
         self.last_time_ns += TICK_INTERVAL_NS;
         let raw = xorshift64(&mut self.rng_state);
-        // Map raw bits into `±PRICE_STEP_UNITS`.
+        // Map raw bits into a whole number of cents in `±PRICE_STEP_CENTS`,
+        // then scale to nano-units. Snapping to whole cents keeps every
+        // price an exact multiple of a cent, so the *displayed* price
+        // (rounded to ¢) and the sort key agree — without this, sub-cent
+        // prices display as one cent but sort into a neighbouring bucket,
+        // scrambling multi-column sort ties. (See the Price column.)
         #[expect(
             clippy::cast_possible_wrap,
             reason = "Wrapping is the intended behavior"
         )]
         let raw_i = raw as i64;
-        let price_delta = (raw_i.rem_euclid(2 * PRICE_STEP_UNITS)) - PRICE_STEP_UNITS;
-        self.last_price_units = self.last_price_units.saturating_add(price_delta);
+        let delta_cents = raw_i.rem_euclid(2 * PRICE_STEP_CENTS + 1) - PRICE_STEP_CENTS;
+        self.last_price_units = self
+            .last_price_units
+            .saturating_add(delta_cents * CENT_UNITS);
         let trade_size = (xorshift64(&mut self.rng_state) % 900) + 100;
         let aggressor = if xorshift64(&mut self.rng_state) & 1 == 0 {
             DemoSide::Buy
@@ -356,6 +366,9 @@ pub fn tick_columns<State: 'static>(base_time_ns: i64) -> Vec<ColumnDef<DemoTick
             let dollars = t.price_units as f64 / PRICE_UNITS_PER_DOLLAR;
             format!("${dollars:.2}")
         })
+        // Prices snap to whole cents (see `next_tick`), so equal-priced
+        // rows genuinely tie and a 2nd-level sort visibly orders within
+        // each price. Sorting by the raw value is exact here.
         .sortable_by_key(|t: &DemoTick| t.price_units),
         optional_text_column("Size", 80.0, CellAlign::End, |t: &DemoTick| {
             t.size.map(|v| v.to_string())
@@ -376,6 +389,9 @@ pub fn tick_columns<State: 'static>(base_time_ns: i64) -> Vec<ColumnDef<DemoTick
             },
             |t: &DemoTick, theme: &Theme| side_color(t.side, theme),
         )
+        // Sortable: groups buys then sells (None first) — a low-cardinality
+        // primary that makes the multi-column tiebreak sort easy to see.
+        .sortable_by_key(|t: &DemoTick| t.side)
         // Filterable by side glyph: query "B" shows buys, "S" sells.
         .filterable_by_text(|t: &DemoTick| match t.side {
             Some(DemoSide::Buy) => "B".to_string(),
@@ -390,13 +406,13 @@ pub fn tick_columns<State: 'static>(base_time_ns: i64) -> Vec<ColumnDef<DemoTick
             let bid = (t.price_units - 10_000_000) as f64 / PRICE_UNITS_PER_DOLLAR;
             format!("${bid:.2}")
         })
-        .sortable_by_key(|t: &DemoTick| t.price_units),
+        .sortable_by_key(|t: &DemoTick| t.price_units - 10_000_000),
         text_column("Ask", 100.0, CellAlign::End, |t: &DemoTick| {
             #[expect(clippy::cast_precision_loss, reason = "Display only")]
             let ask = (t.price_units + 10_000_000) as f64 / PRICE_UNITS_PER_DOLLAR;
             format!("${ask:.2}")
         })
-        .sortable_by_key(|t: &DemoTick| t.price_units),
+        .sortable_by_key(|t: &DemoTick| t.price_units + 10_000_000),
         text_column("Spread", 90.0, CellAlign::End, |_t: &DemoTick| {
             "$0.02".to_string()
         }),
@@ -406,6 +422,11 @@ pub fn tick_columns<State: 'static>(base_time_ns: i64) -> Vec<ColumnDef<DemoTick
             #[expect(clippy::cast_precision_loss, reason = "Display only")]
             let sz = t.size.unwrap_or(0) as f64;
             format!("${:.0}", px * sz)
+        })
+        // Sortable by its own value (price × size), distinct from Price —
+        // so "Price then Notional" is a meaningful two-key sort.
+        .sortable_by_key(|t: &DemoTick| {
+            t.price_units.saturating_mul(i64::try_from(t.size.unwrap_or(0)).unwrap_or(0))
         }),
         text_column("Exchange", 120.0, CellAlign::Start, |t: &DemoTick| {
             demo_exchange(t.event_ns).to_string()
@@ -457,7 +478,7 @@ fn demo_exchange(event_ns: i64) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{arrange_columns, side_color, ColumnId, Demo, DemoSide};
+    use super::{arrange_columns, side_color, ColumnId, Demo, DemoSide, DemoTick};
     use crate::Theme;
 
     /// The `Side` column's stable filter id is its title.
@@ -505,19 +526,27 @@ mod tests {
         crate::components::data_grid::column::ColumnId::from("Price")
     }
 
+    /// Price sort key (matches the Price column's `sortable_by_key`).
+    /// Prices snap to whole cents in `next_tick`, so the raw value is an
+    /// exact cent multiple — display and sort agree, and equal-priced
+    /// rows genuinely tie.
+    fn price_cents(t: &DemoTick) -> i64 {
+        t.price_units
+    }
+
     #[test]
     fn sorting_materializes_the_view_in_price_order() {
         let mut demo = Demo::with_initial(200);
         demo.cycle_sort(price_id(), false); // ascending
         assert_eq!(demo.visible.len(), demo.ticks.len());
         assert!(
-            demo.visible.windows(2).all(|w| w[0].price_units <= w[1].price_units),
+            demo.visible.windows(2).all(|w| price_cents(&w[0]) <= price_cents(&w[1])),
             "visible rows must be in ascending price order"
         );
         // A second cycle flips to descending.
         demo.cycle_sort(price_id(), false);
         assert!(
-            demo.visible.windows(2).all(|w| w[0].price_units >= w[1].price_units),
+            demo.visible.windows(2).all(|w| price_cents(&w[0]) >= price_cents(&w[1])),
             "visible rows must be in descending price order"
         );
         // A third cycle clears the sort; with no filter either, the view
@@ -570,7 +599,7 @@ mod tests {
         // Sort ascending by price; the host materializes `visible`.
         demo.cycle_sort(price_id(), false);
         assert!(
-            demo.visible.windows(2).all(|w| w[0].price_units <= w[1].price_units),
+            demo.visible.windows(2).all(|w| price_cents(&w[0]) <= price_cents(&w[1])),
             "precondition: a real reorder happened"
         );
 
@@ -668,7 +697,7 @@ mod tests {
         // correctly ordered by price.
         assert_eq!(demo.sort.primary(), Some(&price_id()));
         assert!(
-            demo.visible.windows(2).all(|w| w[0].price_units <= w[1].price_units),
+            demo.visible.windows(2).all(|w| price_cents(&w[0]) <= price_cents(&w[1])),
             "Price sort still holds after the column-layout change"
         );
     }
@@ -684,8 +713,59 @@ mod tests {
         // Sort still keyed to Price; order still by price.
         assert_eq!(demo.sort.primary(), Some(&price_id()));
         assert!(
-            demo.visible.windows(2).all(|w| w[0].price_units <= w[1].price_units),
+            demo.visible.windows(2).all(|w| price_cents(&w[0]) <= price_cents(&w[1])),
             "Price sort follows the column across a reorder"
+        );
+    }
+
+    /// Replays the exact gallery click sequence reported as broken:
+    /// plain-click Side, Shift+click Price, Shift+click Time — and asserts
+    /// the materialized `visible` view obeys all three levels in priority
+    /// order. Proves the multi-sort works through the *real demo* path
+    /// (`columns` + `refresh_visible`), not just the isolated
+    /// `sort_indices`.
+    #[test]
+    fn gallery_three_level_sort_orders_visible_correctly() {
+        let mut demo = Demo::with_initial(500);
+        let side = ColumnId::from("Side");
+        let time = ColumnId::from("Time (ms)");
+
+        demo.cycle_sort(side.clone(), false); // 1: Side asc (plain)
+        demo.cycle_sort(price_id(), true); // 2: Price asc (shift)
+        demo.cycle_sort(time.clone(), true); // 3: Time asc (shift)
+
+        // State has the three levels in order.
+        assert_eq!(demo.sort.len(), 3, "three sort levels active");
+        assert_eq!(demo.sort.priority_of(&side), Some(0));
+        assert_eq!(demo.sort.priority_of(&price_id()), Some(1));
+        assert_eq!(demo.sort.priority_of(&time), Some(2));
+
+        // The materialized view must be ordered by (Side, Price, event_ns)
+        // lexicographically — the exact multi-key contract. Prices are
+        // whole cents, so the raw value is the exact sort key.
+        let key = |t: &DemoTick| (t.side, t.price_units, t.event_ns);
+        assert!(
+            demo.visible.windows(2).all(|w| key(&w[0]) <= key(&w[1])),
+            "visible rows must obey Side → Price → Time ordering"
+        );
+        // And the *secondary* level must actually do work: within a single
+        // Side group there must be at least one adjacent pair where Side
+        // ties and Price strictly increases (else level 2 is moot).
+        assert!(
+            demo.visible
+                .windows(2)
+                .any(|w| w[0].side == w[1].side && w[0].price_units < w[1].price_units),
+            "the Price tiebreaker must visibly order within a Side group"
+        );
+        // The *tertiary* level must also do work: a pair where Side AND
+        // Price tie but Time strictly increases — proving level 3 fires.
+        assert!(
+            demo.visible.windows(2).any(|w| {
+                w[0].side == w[1].side
+                    && w[0].price_units == w[1].price_units
+                    && w[0].event_ns < w[1].event_ns
+            }),
+            "the Time tiebreaker must visibly order within a (Side,Price) group"
         );
     }
 }

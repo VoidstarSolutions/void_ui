@@ -904,6 +904,17 @@ where
         Some(SortDirection::Descending) => format!("{}  ▼", slot.title),
         None => slot.title.clone(),
     };
+    // Multi-sort priority badge: when more than one column is sorted,
+    // append this column's 1-based priority after its arrow (1 = primary,
+    // 2+ = tiebreakers) so the sort order is legible — the convention
+    // AG Grid (`sortIndex`) and Kendo (`showIndexes`) use. Hidden for a
+    // single-column sort, where there's no ambiguity.
+    if ctx.sort.len() > 1
+        && let Some(priority) = ctx.sort.priority_of(&slot.id)
+    {
+        use std::fmt::Write as _;
+        let _ = write!(title, " {}", priority + 1);
+    }
     // Persistent filter indicator: a filtered column gets a trailing
     // marker and the theme accent color, so a hidden-data view can't be
     // mistaken for the full set (even after the trigger loses focus).

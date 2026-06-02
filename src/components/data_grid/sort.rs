@@ -456,6 +456,44 @@ mod tests {
     }
 
     #[test]
+    fn sort_indices_third_level_breaks_a_two_level_tie() {
+        // Three sortable fields. Rows are constructed so the 1st and 2nd
+        // levels leave a genuine tie that ONLY the 3rd level resolves —
+        // proving the N-level loop consults all levels, not just two.
+        #[derive(Clone)]
+        struct Row {
+            a: i32,
+            b: i32,
+            c: i32,
+        }
+        let cols: Vec<ColumnDef<Row, ()>> = vec![
+            text_column::<Row, (), _>("a", 10.0, CellAlign::End, |r: &Row| r.a.to_string())
+                .sortable_by_key(|r: &Row| r.a),
+            text_column::<Row, (), _>("b", 10.0, CellAlign::End, |r: &Row| r.b.to_string())
+                .sortable_by_key(|r: &Row| r.b),
+            text_column::<Row, (), _>("c", 10.0, CellAlign::End, |r: &Row| r.c.to_string())
+                .sortable_by_key(|r: &Row| r.c),
+        ];
+        // All share a=0, b=0 → 1st and 2nd levels tie on every row; only
+        // `c` distinguishes them. Incoming order is c-descending, so a
+        // correct asc-by-c sort must fully reverse it.
+        let rows = vec![
+            Row { a: 0, b: 0, c: 3 }, // 0
+            Row { a: 0, b: 0, c: 2 }, // 1
+            Row { a: 0, b: 0, c: 1 }, // 2
+            Row { a: 0, b: 0, c: 0 }, // 3
+        ];
+        let mut s = SortState::new();
+        s.cycle(id("a")); // a asc (all tie)
+        s.cycle_additive(id("b")); // b asc (all tie)
+        s.cycle_additive(id("c")); // c asc — the only discriminator
+        let mut idx = vec![0, 1, 2, 3];
+        sort_indices(&mut idx, &rows, &s, &cols);
+        // Ordered by c ascending: 0(3),1(2),2(1),3(0) → 3,2,1,0.
+        assert_eq!(idx, vec![3, 2, 1, 0], "3rd level resolves the 1st+2nd tie");
+    }
+
+    #[test]
     fn sort_indices_skips_an_unsortable_tiebreak_level() {
         // Primary "N" sortable; a tiebreak on "Plain" (no comparator) is
         // silently skipped, leaving the primary order intact.
