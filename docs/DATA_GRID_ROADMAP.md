@@ -139,12 +139,31 @@ Each item: **value justification (≤1 sentence)** · rough size · depends-on �
 ### Tier 2 — layout & navigation for wide tables
 
 4. ✅ **DONE — Horizontal scroll + column resize.** (See Done.)
-5. **← NEXT: Column pin / freeze** — Keeping the Symbol/identifier column
-   frozen while metric columns scroll is essential for wide quote tables.
-   · M · #4 · Kendo *Columns (locked)*.
-6. **Column show/hide + reorder** — Traders curate which metrics they
-   watch; show/hide + reorder lets them build their own layout. · M ·
-   builder, #4 · Kendo *Columns*.
+5. ⏸️ **DEFERRED INDEFINITELY — Column pin / freeze.** *(Re-estimated
+   L–XL, not M. Deliberately shelved 2026-06-02.)* Investigated to the
+   pixel and reverted a spike. **Why deferred:** it's the *only* backlog
+   feature that requires a structural change — the current shared
+   `Portal` gives header/filter/body their synchronized horizontal scroll
+   *for free*; true freeze-during-scroll would have to replace it with a
+   custom grid-owned viewport widget that scrolls only non-pinned cells.
+   That puts horizontal scroll + scrollbar input + clipping + the
+   hard-won cross-row alignment invariant all at regression risk at once,
+   and those are visual/interactive (not unit-testable — our 46 tests
+   wouldn't catch a scroll-sync or clip break). **Cost/benefit is
+   lopsided:** high structural risk to proven features for a *non-
+   foundational, leaf* convenience — **nothing else in this backlog
+   depends on #5** (verified). The cheap "ColumnStrip reads its own scroll
+   offset and counter-translates pinned cells" idea is *impossible*:
+   horizontal scroll-translation sits on the ancestor that the `Portal`
+   wraps (the whole `flex_col`), not on the strips, and `ComposeCtx`
+   exposes no way for a widget to read an ancestor's scroll. **Revisit
+   trigger:** if upstream masonry gains a sticky/pinned-child primitive
+   (none exists today), this collapses from XL to ~S — reopen then.
+   · L–XL · #4 · Kendo *Columns (locked)*.
+6. **← NEXT: Column show/hide + reorder** — Traders curate which metrics
+   they watch; show/hide + reorder lets them build their own layout.
+   Clean fit for the existing builder/widths architecture (no scroll
+   coupling, unlike #5). · M · builder, #4 · Kendo *Columns*.
 
 ### Tier 3 — analysis
 
