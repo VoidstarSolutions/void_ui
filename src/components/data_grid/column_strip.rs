@@ -603,22 +603,27 @@ where
         if self.row_height != prev.row_height {
             ColumnStrip::set_row_height(&mut element, self.row_height);
         }
-        // Push per-column width changes (the cell views themselves are
-        // diffed by the sequence splice below).
-        for (idx, &w) in self.widths.iter().enumerate() {
-            let changed = prev.widths.get(idx).is_none_or(|&pw| {
-                #[expect(clippy::float_cmp, reason = "only update changed widths")]
-                let neq = pw != w;
-                neq
-            });
-            if changed {
-                ColumnStrip::set_width(&mut element, idx, w);
-            }
+        // Splice the cell views FIRST so the widget's child set matches
+        // `self.widths` before we push widths. A new cell is inserted with
+        // a default width of 0 (see `CollectionWidget::add`), so widths
+        // must be applied *after* the splice — otherwise a freshly shown
+        // column stays 0-wide (invisible). Scoped in a block so the
+        // splice's `WidgetMut` is released before the width sync.
+        {
+            let mut splice = ColumnStripSplice::new(element.reborrow_mut(), scratch);
+            self.cells
+                .seq_rebuild(&prev.cells, seq_state, ctx, &mut splice, app_state);
+            debug_assert!(scratch.is_empty());
         }
-        let mut splice = ColumnStripSplice::new(element, scratch);
-        self.cells
-            .seq_rebuild(&prev.cells, seq_state, ctx, &mut splice, app_state);
-        debug_assert!(scratch.is_empty());
+        // Now sync every column width against the settled child set.
+        // Unconditional (not diffed against `prev.widths` positionally):
+        // a reorder/insert/delete shifts which column sits at each index,
+        // so a positional diff would miss real changes. `set_width` skips
+        // the layout request when the value is already current, so this is
+        // cheap when nothing moved.
+        for (idx, &w) in self.widths.iter().enumerate() {
+            ColumnStrip::set_width(&mut element, idx, w);
+        }
     }
 
     fn teardown(

@@ -82,6 +82,13 @@ pub struct Demo {
     /// unfiltered+unsorted case (avoiding a full-dataset clone). See
     /// [`Self::view_is_materialized`].
     pub visible: Vec<DemoTick>,
+    /// Visible columns in display order, as a list of [`ColumnId`]s —
+    /// the host's column-layout state (show/hide + reorder). The grid is
+    /// handed `tick_columns` *arranged* by this (see [`Self::columns`]);
+    /// because sort/filter/width state is id-keyed, it follows each column
+    /// across any reorder or hide for free. `None` until first read, then
+    /// defaults to every column in natural order (see [`Self::layout`]).
+    column_order: Option<Vec<ColumnId>>,
     rng_state: u64,
     last_time_ns: i64,
     last_price_units: i64,
@@ -102,6 +109,7 @@ impl Demo {
             filter: FilterState::new(),
             column_widths: ColumnWidths::new(),
             visible: Vec::new(),
+            column_order: None,
             rng_state: 0x0005_DEEC_E66D_u64.wrapping_mul(0xB16B_00B5),
             last_time_ns: 0,
             last_price_units: START_PRICE_UNITS,
@@ -161,6 +169,59 @@ impl Demo {
     /// width; no data refresh is needed.
     pub fn resize_column(&mut self, column: ColumnId, new_width: f64) {
         self.column_widths.set(column, new_width);
+    }
+
+    /// The full set of column ids in natural (definition) order.
+    fn all_column_ids() -> Vec<ColumnId> {
+        tick_columns::<()>(0).iter().map(ColumnDef::effective_id).collect()
+    }
+
+    /// The current visible column layout (ids in display order),
+    /// defaulting to every column in natural order before any edit.
+    fn layout(&self) -> Vec<ColumnId> {
+        self.column_order
+            .clone()
+            .unwrap_or_else(Self::all_column_ids)
+    }
+
+    /// The current visible column layout, as ids in display order — the
+    /// snapshot the gallery threads to its panel to arrange columns. (See
+    /// [`arrange_columns`], which the panel calls with this.)
+    #[must_use]
+    pub fn column_layout(&self) -> Vec<ColumnId> {
+        self.layout()
+    }
+
+    /// Toggles a column's visibility. Hiding removes it from the layout;
+    /// showing appends it at the end. A no-op that would hide the last
+    /// visible column is rejected (keep at least one).
+    pub fn toggle_column(&mut self, id: &ColumnId) {
+        let mut order = self.layout();
+        if let Some(pos) = order.iter().position(|c| c == id) {
+            if order.len() > 1 {
+                order.remove(pos);
+            }
+        } else {
+            order.push(id.clone());
+        }
+        self.column_order = Some(order);
+    }
+
+    /// Moves a visible column one slot toward the front (left). No-op if
+    /// it's already first or not visible.
+    pub fn move_column_left(&mut self, id: &ColumnId) {
+        let mut order = self.layout();
+        if let Some(pos) = order.iter().position(|c| c == id)
+            && pos > 0
+        {
+            order.swap(pos - 1, pos);
+            self.column_order = Some(order);
+        }
+    }
+
+    /// Resets the column layout to every column in natural order.
+    pub fn reset_columns(&mut self) {
+        self.column_order = None;
     }
 
     /// Recomputes [`Self::visible`] as the host-ordered view: filter
@@ -352,6 +413,32 @@ pub fn tick_columns<State: 'static>(base_time_ns: i64) -> Vec<ColumnDef<DemoTick
     ]
 }
 
+/// Arranges [`tick_columns`] by a `layout` of [`ColumnId`]s: returns only
+/// the listed columns, in the listed order. Ids not matching a column are
+/// skipped; columns absent from `layout` are hidden by omission.
+///
+/// This is how the demo host expresses **show/hide + reorder** — purely
+/// by which `ColumnDef`s it hands the grid and in what order. The grid
+/// needs no column-layout feature of its own, and because sort/filter/
+/// width state is keyed by [`ColumnId`], it follows each column across
+/// the rearrangement automatically. (`void_ui` stays product-agnostic:
+/// the layout lives with the host, like every other piece of grid state.)
+#[must_use]
+pub fn arrange_columns<S: 'static>(
+    layout: &[ColumnId],
+    base_time_ns: i64,
+) -> Vec<ColumnDef<DemoTick, S>> {
+    let mut defs = tick_columns::<S>(base_time_ns);
+    layout
+        .iter()
+        .filter_map(|id| {
+            defs.iter()
+                .position(|d| &d.effective_id() == id)
+                .map(|pos| defs.remove(pos))
+        })
+        .collect()
+}
+
 /// Synthetic exchange code for the demo blotter, rotated by event time
 /// so the `Exchange` column has a few distinct filterable values.
 fn demo_exchange(event_ns: i64) -> &'static str {
@@ -364,7 +451,7 @@ fn demo_exchange(event_ns: i64) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{side_color, Demo, DemoSide};
+    use super::{arrange_columns, side_color, ColumnId, Demo, DemoSide};
     use crate::Theme;
 
     /// The `Side` column's stable filter id is its title.
@@ -540,5 +627,59 @@ mod tests {
         demo.clear_filter();
         assert!(demo.selection.contains(buy_id));
         assert!(demo.ticks.iter().any(|t| t.id == buy_id));
+    }
+
+    #[test]
+    fn hiding_a_column_removes_it_from_the_arranged_set() {
+        let mut demo = Demo::with_initial(8);
+        let full = demo.column_layout().len();
+        demo.toggle_column(&price_id()); // hide Price
+        let layout = demo.column_layout();
+        assert_eq!(layout.len(), full - 1);
+        assert!(!layout.contains(&price_id()), "Price is hidden");
+        // The arranged columns the grid would receive omit Price.
+        let cols = arrange_columns::<()>(&layout, 0);
+        assert!(!cols.iter().any(|c| c.effective_id() == price_id()));
+        // Showing it again appends it back.
+        demo.toggle_column(&price_id());
+        assert!(demo.column_layout().contains(&price_id()));
+    }
+
+    #[test]
+    fn sort_survives_hiding_then_showing_a_different_column() {
+        // The payoff: id-keyed sort state is untouched by a layout change
+        // to *another* column. (A positional key would have shifted.)
+        let mut demo = Demo::with_initial(50);
+        demo.cycle_sort(price_id()); // ascending by Price
+        assert_eq!(demo.sort.column(), Some(&price_id()));
+
+        // Hide, then show, an unrelated column (Notional).
+        let notional = ColumnId::from("Notional");
+        demo.toggle_column(&notional);
+        demo.toggle_column(&notional);
+
+        // Sort is still on Price, ascending — and the view is still
+        // correctly ordered by price.
+        assert_eq!(demo.sort.column(), Some(&price_id()));
+        assert!(
+            demo.visible.windows(2).all(|w| w[0].price_units <= w[1].price_units),
+            "Price sort still holds after the column-layout change"
+        );
+    }
+
+    #[test]
+    fn reordering_columns_preserves_an_active_sort() {
+        let mut demo = Demo::with_initial(50);
+        demo.cycle_sort(price_id()); // ascending by Price
+
+        // Move Price one slot left — its display position changes.
+        demo.move_column_left(&price_id());
+
+        // Sort still keyed to Price; order still by price.
+        assert_eq!(demo.sort.column(), Some(&price_id()));
+        assert!(
+            demo.visible.windows(2).all(|w| w[0].price_units <= w[1].price_units),
+            "Price sort follows the column across a reorder"
+        );
     }
 }

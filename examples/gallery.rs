@@ -17,7 +17,7 @@ use xilem::view::{
 use xilem::winit::error::EventLoopError;
 use xilem::{AnyWidgetView, EventLoop, WidgetView, WindowOptions, Xilem};
 
-use void_ui::components::data_grid::demo::{Demo, DemoTick, tick_columns};
+use void_ui::components::data_grid::demo::{Demo, DemoTick, arrange_columns};
 use void_ui::components::{
     ColumnId, ColumnWidths, ComponentKind, FilterState, SortState, button, data_grid,
     sidebar_item,
@@ -65,6 +65,7 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
     let dg_sort = state.data_grid.sort.clone();
     let dg_filter = state.data_grid.filter.clone();
     let dg_widths = state.data_grid.column_widths.clone();
+    let dg_column_layout = state.data_grid.column_layout();
 
     let workspace = workspace_row(
         focused,
@@ -76,6 +77,7 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
             sort: dg_sort,
             filter: dg_filter,
             widths: dg_widths,
+            column_layout: dg_column_layout,
         },
     );
 
@@ -95,6 +97,7 @@ struct DataGridSnapshot {
     sort: SortState,
     filter: FilterState,
     widths: ColumnWidths,
+    column_layout: Vec<ColumnId>,
 }
 
 fn workspace_row(
@@ -233,8 +236,16 @@ fn data_grid_panel(theme: &Theme, dg: DataGridSnapshot) -> impl WidgetView<State
         sort,
         filter,
         widths,
+        column_layout,
     } = dg;
-    let columns = tick_columns::<State>(base_time_ns);
+    // Host-arranged columns: show/hide + reorder is expressed purely by
+    // which ColumnDefs we hand the grid and in what order. Sort/filter/
+    // width state (id-keyed) follows each column across the rearrangement.
+    let columns = arrange_columns::<State>(&column_layout, base_time_ns);
+    // Whether the wide "Notional" metric column is currently shown — drives
+    // the toggle button's label. (Its id is its title.)
+    let notional_id = ColumnId::from("Notional");
+    let notional_shown = column_layout.contains(&notional_id);
     let theme_copy = *theme;
 
     let toolbar = flex_row((
@@ -257,6 +268,31 @@ fn data_grid_panel(theme: &Theme, dg: DataGridSnapshot) -> impl WidgetView<State
             s.data_grid.clear_selection();
         })
         .label("Clear selection")
+        .render(theme),
+        FlexSpacer::Flex(1.0),
+        // Column show/hide + reorder (host-owned layout): toggling
+        // "Notional" hides/shows it; "Time ←" moves the Time column one
+        // slot left; "Reset cols" restores natural order. Any active
+        // sort/filter/width on a moved/hidden column is preserved (it's
+        // keyed by ColumnId, not position).
+        button(move |s: &mut State| {
+            s.data_grid.toggle_column(&ColumnId::from("Notional"));
+        })
+        .label(if notional_shown {
+            "Hide Notional"
+        } else {
+            "Show Notional"
+        })
+        .render(theme),
+        button(|s: &mut State| {
+            s.data_grid.move_column_left(&ColumnId::from("Price"));
+        })
+        .label("Price \u{2190}")
+        .render(theme),
+        button(|s: &mut State| {
+            s.data_grid.reset_columns();
+        })
+        .label("Reset cols")
         .render(theme),
         FlexSpacer::Flex(1.0),
         label(format!("{row_count} rows"))
