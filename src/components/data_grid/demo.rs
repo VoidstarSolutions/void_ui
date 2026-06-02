@@ -20,7 +20,9 @@
 
 use xilem::peniko::Color;
 
-use super::column::{colored_text_column, optional_text_column, text_column, CellAlign, ColumnDef};
+use super::column::{
+    colored_text_column, optional_text_column, text_column, CellAlign, ColumnDef, ColumnId,
+};
 use super::filter::{filtered_indices, FilterState};
 use super::selection::SelectionState;
 use super::sort::{sort_indices, SortState};
@@ -154,9 +156,10 @@ impl Demo {
         self.refresh_visible();
     }
 
-    /// Sets a column's width override (drag-to-resize). `ColumnWidths`
-    /// clamps to the minimum width; no data refresh is needed.
-    pub fn resize_column(&mut self, column: usize, new_width: f64) {
+    /// Sets a column's width override (drag-to-resize), keyed by the
+    /// column's stable [`ColumnId`]. `ColumnWidths` clamps to the minimum
+    /// width; no data refresh is needed.
+    pub fn resize_column(&mut self, column: ColumnId, new_width: f64) {
         self.column_widths.set(column, new_width);
     }
 

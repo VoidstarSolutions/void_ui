@@ -19,7 +19,8 @@ use xilem::{AnyWidgetView, EventLoop, WidgetView, WindowOptions, Xilem};
 
 use void_ui::components::data_grid::demo::{Demo, DemoTick, tick_columns};
 use void_ui::components::{
-    ColumnWidths, ComponentKind, FilterState, SortState, button, data_grid, sidebar_item,
+    ColumnId, ColumnWidths, ComponentKind, FilterState, SortState, button, data_grid,
+    sidebar_item,
 };
 use void_ui::layout::flex_wrap;
 use void_ui::theme::{Density, Theme};
@@ -291,7 +292,7 @@ fn data_grid_panel(theme: &Theme, dg: DataGridSnapshot) -> impl WidgetView<State
             s.data_grid.set_filter(col, query);
         })
         .column_widths(widths)
-        .on_column_resize(|s: &mut State, col: usize, new_width: f64| {
+        .on_column_resize(|s: &mut State, col: ColumnId, new_width: f64| {
             s.data_grid.resize_column(col, new_width);
         })
         .row_height(22.0)

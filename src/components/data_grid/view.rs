@@ -32,9 +32,7 @@ use xilem::view::{
 };
 use xilem::{AnyWidgetView, Pod, ViewCtx};
 
-#[cfg(debug_assertions)]
-use super::column::ColumnId;
-use super::column::{CellAlign, CellRenderer, ColumnDef, TextProjector};
+use super::column::{CellAlign, CellRenderer, ColumnDef, ColumnId, TextProjector};
 use super::column_strip::{SeparatorStyle, column_strip};
 use super::copy_shortcut::CopyOnShortcut;
 use super::filter::FilterState;
@@ -116,16 +114,23 @@ fn warn_missing_row_id() {
 /// [`FilterState`] *and* recompute its filtered view — the grid never
 /// applies the filter to data itself.
 type FilterChange<State> = Arc<dyn Fn(&mut State, usize, String) + Send + Sync>;
-/// Boxed column-resize callback (`Fn(&mut State, column, new_width)`).
-/// A header resize handle emits the column's proposed absolute width
-/// through this so the host can update its
-/// [`ColumnWidths`](super::width::ColumnWidths) (which clamps).
-type WidthChange<State> = Arc<dyn Fn(&mut State, usize, f64) + Send + Sync>;
+/// Boxed column-resize callback (`Fn(&mut State, ColumnId, new_width)`).
+/// A header resize handle emits the resized column's stable id + proposed
+/// absolute width through this so the host can update its
+/// [`ColumnWidths`](super::width::ColumnWidths) (which clamps). The view
+/// translates the strip's positional resize index to the column's id, so
+/// the override stays attached across reorder/hide.
+type WidthChange<State> = Arc<dyn Fn(&mut State, ColumnId, f64) + Send + Sync>;
 
 /// One column's rendering + layout slot — the half of [`ColumnDef`]
 /// that's needed at row-build time. Shared (via `Arc`) between the
 /// header builder and the row builder closures.
 struct ColumnRender<R, State> {
+    /// Stable column identity (explicit or title-derived). Column state
+    /// — sort, filter, width — is keyed by this, never by slice position,
+    /// so the view translates a strip's positional index to this id at
+    /// the host-callback boundary.
+    id: ColumnId,
     title: String,
     width: f64,
     align: CellAlign,
@@ -341,14 +346,16 @@ where
 
     /// Enables drag-to-resize columns. Each header cell gains a
     /// trailing-edge handle; dragging it calls
-    /// `on_resize(state, column, new_width)` with the proposed absolute
-    /// width. The host applies it to its [`ColumnWidths`] (which clamps
-    /// to [`MIN_COLUMN_WIDTH`](super::width::MIN_COLUMN_WIDTH)) and
-    /// passes the updated snapshot back via [`Self::column_widths`].
-    /// Omit to leave columns non-resizable.
+    /// `on_resize(state, column_id, new_width)` with the resized column's
+    /// stable [`ColumnId`] and proposed absolute width. The host applies
+    /// it to its [`ColumnWidths`] (which clamps to
+    /// [`MIN_COLUMN_WIDTH`](super::width::MIN_COLUMN_WIDTH)) and passes the
+    /// updated snapshot back via [`Self::column_widths`]. Keying by id
+    /// means a width override stays attached across reorder/hide. Omit to
+    /// leave columns non-resizable.
     pub fn on_column_resize<F>(mut self, on_resize: F) -> Self
     where
-        F: Fn(&mut State, usize, f64) + Send + Sync + 'static,
+        F: Fn(&mut State, ColumnId, f64) + Send + Sync + 'static,
     {
         self.width_change = Some(Arc::new(on_resize));
         self
@@ -420,27 +427,26 @@ fn decompose_columns<R, State>(
     // would make two columns share state. Cheap to check while we build.
     #[cfg(debug_assertions)]
     let mut seen_ids = std::collections::BTreeSet::<ColumnId>::new();
-    for (idx, col) in columns.into_iter().enumerate() {
+    for col in columns {
+        let id = col.effective_id();
         #[cfg(debug_assertions)]
-        {
-            let id = col.effective_id();
-            debug_assert!(
-                seen_ids.insert(id.clone()),
-                "data_grid: column id {id} is not unique — two columns \
-                 share an id, so their sort/filter/width state would \
-                 collide (set a distinct ColumnDef::id; see ColumnId)"
-            );
-        }
+        debug_assert!(
+            seen_ids.insert(id.clone()),
+            "data_grid: column id {id} is not unique — two columns share \
+             an id, so their sort/filter/width state would collide (set a \
+             distinct ColumnDef::id; see ColumnId)"
+        );
         text_projectors.push(col.text);
         // Comparator presence ⇒ sortable; the comparator itself is the
         // host's (via `sort_indices`), so we drop it here.
         sortable.push(col.comparator.is_some());
         filterable.push(col.filter.is_some());
         render_slots.push(ColumnRender {
+            width: widths.effective(&id, col.width),
             title: col.title,
-            width: widths.effective(idx, col.width),
             align: col.align,
             render: col.render,
+            id,
         });
     }
     DecomposedColumns {
@@ -544,8 +550,15 @@ where
             line: theme.palette.border,
             active: theme.palette.teal,
         };
+        // The strip reports a *positional* resize index (it's a layout
+        // widget — it knows columns by slot, not identity). Translate it
+        // to the column's stable id here so the host's width override
+        // stays attached across reorder/hide.
+        let resize_ids: Vec<ColumnId> = render_slots.iter().map(|s| s.id.clone()).collect();
         header_strip = header_strip.resizable(style, move |state: &mut State, col, new_width| {
-            width_change(state, col, new_width);
+            if let Some(id) = resize_ids.get(col) {
+                width_change(state, id.clone(), new_width);
+            }
         });
     }
     let header = sized_box(header_strip)
