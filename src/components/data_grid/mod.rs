@@ -122,8 +122,8 @@ pub mod view;
 pub mod width;
 
 pub use column::{
-    CellAlign, ColumnDef, RowComparator, RowFilter, colored_text_column, optional_text_column,
-    text_column,
+    CellAlign, ColumnDef, ColumnId, RowComparator, RowFilter, colored_text_column,
+    optional_text_column, text_column,
 };
 pub use column_strip::{ColumnResize, ColumnStrip, SeparatorStyle};
 pub use copy_shortcut::CopyOnShortcut;

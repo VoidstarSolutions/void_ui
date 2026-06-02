@@ -32,6 +32,8 @@ use xilem::view::{
 };
 use xilem::{AnyWidgetView, Pod, ViewCtx};
 
+#[cfg(debug_assertions)]
+use super::column::ColumnId;
 use super::column::{CellAlign, CellRenderer, ColumnDef, TextProjector};
 use super::column_strip::{SeparatorStyle, column_strip};
 use super::copy_shortcut::CopyOnShortcut;
@@ -413,7 +415,22 @@ fn decompose_columns<R, State>(
     let mut text_projectors: Vec<Option<TextProjector<R>>> = Vec::with_capacity(columns.len());
     let mut sortable: Vec<bool> = Vec::with_capacity(columns.len());
     let mut filterable: Vec<bool> = Vec::with_capacity(columns.len());
+    // Debug-only: the `ColumnId` contract requires uniqueness, since
+    // column state (sort/filter/width) is keyed by it. A duplicate id
+    // would make two columns share state. Cheap to check while we build.
+    #[cfg(debug_assertions)]
+    let mut seen_ids = std::collections::BTreeSet::<ColumnId>::new();
     for (idx, col) in columns.into_iter().enumerate() {
+        #[cfg(debug_assertions)]
+        {
+            let id = col.effective_id();
+            debug_assert!(
+                seen_ids.insert(id.clone()),
+                "data_grid: column id {id} is not unique — two columns \
+                 share an id, so their sort/filter/width state would \
+                 collide (set a distinct ColumnDef::id; see ColumnId)"
+            );
+        }
         text_projectors.push(col.text);
         // Comparator presence ⇒ sortable; the comparator itself is the
         // host's (via `sort_indices`), so we drop it here.

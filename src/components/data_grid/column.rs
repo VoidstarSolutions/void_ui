@@ -13,6 +13,7 @@
 //! projection) without making callers think about boxing.
 
 use std::cmp::Ordering;
+use std::sync::Arc;
 
 use xilem::AnyWidgetView;
 use xilem::peniko::Color;
@@ -20,6 +21,45 @@ use xilem::style::Style as _;
 use xilem::view::label;
 
 use crate::Theme;
+
+/// A **stable, unique identifier** for a column.
+///
+/// This is the column-level analogue of the row `getRowId` contract (see
+/// [`DataGrid::row_id`](super::view::DataGrid::row_id)): column state —
+/// sort, filter, width — is keyed by `ColumnId`, *not* by the column's
+/// position in the `Vec<ColumnDef>`. So when the host reorders or hides
+/// columns, that state stays attached to the right column instead of
+/// teleporting to whatever now occupies the old slot. It mirrors the
+/// `id`/`colId` model every reputable grid uses (`TanStack` Table,
+/// AG Grid, Kendo), where keying column state by array index is the
+/// documented anti-pattern.
+///
+/// Backed by an `Arc<str>` so it's cheap to clone into every cell and
+/// state-map lookup. Construct from any string-ish value (`"price"`,
+/// `column.title.clone()`); a column with no explicit id defaults to its
+/// title (see [`ColumnDef::id`]).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ColumnId(Arc<str>);
+
+impl ColumnId {
+    /// Borrows the id as a string slice.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<S: Into<Arc<str>>> From<S> for ColumnId {
+    fn from(s: S) -> Self {
+        Self(s.into())
+    }
+}
+
+impl std::fmt::Display for ColumnId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
 
 /// In-cell horizontal alignment.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -86,6 +126,12 @@ pub type RowFilter<R> = Box<dyn Fn(&R, &str) -> bool + Send + Sync + 'static>;
 /// for selection), so the action type is fixed at `()`.
 #[must_use]
 pub struct ColumnDef<R, State> {
+    /// Optional explicit [`ColumnId`]. `None` (the default) means the id
+    /// is derived from [`title`](Self::title) when the grid materializes —
+    /// fine as long as titles are unique. Set an explicit id via
+    /// [`Self::id`] when two columns share a title, or when a stable id
+    /// must survive a title change.
+    pub id: Option<ColumnId>,
     /// Display title shown in the sticky header row.
     pub title: String,
     /// Fixed pixel width. When the column total exceeds the viewport the
@@ -130,6 +176,7 @@ impl<R, State> ColumnDef<R, State> {
         F: Fn(&R, &Theme) -> Box<AnyWidgetView<State>> + Send + Sync + 'static,
     {
         Self {
+            id: None,
             title: title.into(),
             width,
             align,
@@ -138,6 +185,24 @@ impl<R, State> ColumnDef<R, State> {
             comparator: None,
             filter: None,
         }
+    }
+
+    /// Sets an explicit [`ColumnId`], overriding the title-derived
+    /// default. Use it when titles aren't unique, or when the id must
+    /// stay stable across a title change. The id keys this column's sort,
+    /// filter, and width state, so it must be unique within the grid.
+    pub fn id(mut self, id: impl Into<ColumnId>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+
+    /// The column's effective [`ColumnId`]: its explicit [`Self::id`] if
+    /// set, else one derived from its [`title`](Self::title).
+    #[must_use]
+    pub fn effective_id(&self) -> ColumnId {
+        self.id
+            .clone()
+            .unwrap_or_else(|| ColumnId::from(self.title.clone()))
     }
 
     /// Makes this column filterable with an explicit predicate:
@@ -315,12 +380,44 @@ where
 mod tests {
     use std::cmp::Ordering;
 
-    use super::{CellAlign, ColumnDef, text_column};
+    use super::{CellAlign, ColumnDef, ColumnId, text_column};
 
     #[derive(Clone)]
     struct Row {
         n: i64,
         name: &'static str,
+    }
+
+    #[test]
+    fn effective_id_defaults_to_title() {
+        let col: ColumnDef<Row, ()> =
+            text_column("Price", 10.0, CellAlign::End, |r: &Row| r.n.to_string());
+        assert_eq!(col.effective_id(), ColumnId::from("Price"));
+    }
+
+    #[test]
+    fn explicit_id_overrides_the_title_default() {
+        let col: ColumnDef<Row, ()> =
+            text_column("Price", 10.0, CellAlign::End, |r: &Row| r.n.to_string())
+                .id("price_units");
+        assert_eq!(col.effective_id(), ColumnId::from("price_units"));
+        // The display title is unaffected by the id override.
+        assert_eq!(col.title, "Price");
+    }
+
+    #[test]
+    fn column_id_round_trips_as_str() {
+        let id = ColumnId::from("symbol");
+        assert_eq!(id.as_str(), "symbol");
+        assert_eq!(id.to_string(), "symbol");
+    }
+
+    #[test]
+    fn column_ids_compare_by_value() {
+        // Two ids from independent allocations are equal by content,
+        // which is what the state-map keying relies on.
+        assert_eq!(ColumnId::from("vwap"), ColumnId::from(String::from("vwap")));
+        assert_ne!(ColumnId::from("bid"), ColumnId::from("ask"));
     }
 
     #[test]
