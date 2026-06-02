@@ -614,6 +614,37 @@ impl StockDemo {
         })
     }
 
+    /// Toggles a column's visibility (hide ⇒ drop; show ⇒ append). Keeps
+    /// at least one column visible. Mirrors [`Demo::toggle_column`].
+    pub fn toggle_column(&mut self, id: &ColumnId) {
+        let mut order = self.column_layout();
+        if let Some(pos) = order.iter().position(|c| c == id) {
+            if order.len() > 1 {
+                order.remove(pos);
+            }
+        } else {
+            order.push(id.clone());
+        }
+        self.column_order = Some(order);
+    }
+
+    /// Moves a visible column one slot toward the front. No-op if first
+    /// or not visible.
+    pub fn move_column_left(&mut self, id: &ColumnId) {
+        let mut order = self.column_layout();
+        if let Some(pos) = order.iter().position(|c| c == id)
+            && pos > 0
+        {
+            order.swap(pos - 1, pos);
+            self.column_order = Some(order);
+        }
+    }
+
+    /// Resets the column layout to every column in natural order.
+    pub fn reset_columns(&mut self) {
+        self.column_order = None;
+    }
+
     /// Recomputes [`Self::visible`] as filter-then-sort over `quotes`
     /// (the host-owns-order contract; same shape as [`Demo::refresh_visible`]).
     fn refresh(&mut self) {
@@ -769,7 +800,10 @@ pub fn stock_columns<S: 'static>() -> Vec<ColumnDef<StockQuote, S>> {
             format!("${:.2}", q.week52_low)
         })
         .sortable_by_key(|q: &StockQuote| cents(q.week52_low)),
-        text_column("Beta", 70.0, CellAlign::End, |q: &StockQuote| format!("{:.2}", q.beta))
+        // Trailing space + a little extra width so the right-aligned Beta
+        // value keeps a visible gap from the left-aligned Sector column
+        // that follows it (cells have no internal horizontal padding).
+        text_column("Beta", 84.0, CellAlign::End, |q: &StockQuote| format!("{:.2}  ", q.beta))
             .sortable_by_key(|q: &StockQuote| bps(q.beta)),
         text_column("Sector", 170.0, CellAlign::Start, |q: &StockQuote| q.sector.to_string())
             // Low-cardinality → a great multi-sort primary ("Sector then

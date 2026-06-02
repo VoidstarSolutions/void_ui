@@ -17,7 +17,9 @@ use xilem::view::{
 use xilem::winit::error::EventLoopError;
 use xilem::{AnyWidgetView, EventLoop, WidgetView, WindowOptions, Xilem};
 
-use void_ui::components::data_grid::demo::{Demo, DemoTick, arrange_columns};
+use void_ui::components::data_grid::demo::{
+    Demo, DemoTick, StockDemo, StockQuote, arrange_columns, arrange_stock_columns,
+};
 use void_ui::components::{
     ColumnId, ColumnWidths, ComponentKind, FilterState, SortState, button, data_grid,
     sidebar_item,
@@ -30,6 +32,7 @@ struct State {
     focused: ComponentKind,
     theme_panel_open: bool,
     data_grid: Demo,
+    stock_quotes: StockDemo,
 }
 
 impl State {
@@ -42,6 +45,8 @@ impl State {
             // first open; cheaper than a million but big enough that
             // scrolling has to be real.
             data_grid: Demo::with_initial(100_000),
+            // The "value lens" board: a static NASDAQ-style snapshot.
+            stock_quotes: StockDemo::new(),
         }
     }
 }
@@ -67,6 +72,22 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
     let dg_widths = state.data_grid.column_widths.clone();
     let dg_column_layout = state.data_grid.column_layout();
 
+    // Same frame-time snapshot for the stock-quote board (its row count is
+    // the visible/full quote count; no base_time_ns — quotes aren't timed).
+    let sq = &state.stock_quotes;
+    let sq_len = if sq.view_is_materialized() {
+        sq.visible.len()
+    } else {
+        sq.quotes.len()
+    };
+    let stock = StockSnapshot {
+        row_count: u64::try_from(sq_len).unwrap_or(u64::MAX),
+        sort: sq.sort.clone(),
+        filter: sq.filter.clone(),
+        widths: sq.column_widths.clone(),
+        column_layout: sq.column_layout(),
+    };
+
     let workspace = workspace_row(
         focused,
         theme_panel_open,
@@ -79,6 +100,7 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
             widths: dg_widths,
             column_layout: dg_column_layout,
         },
+        stock,
     );
 
     let outer = flex_col((topbar(theme_panel_open, &theme), workspace.flex(1.0)))
@@ -100,17 +122,29 @@ struct DataGridSnapshot {
     column_layout: Vec<ColumnId>,
 }
 
+/// Frame-time snapshot of the stock-quote board's interaction state — the
+/// stock-demo analogue of [`DataGridSnapshot`] (no `base_time_ns`; quotes
+/// are a static snapshot, not a timed stream).
+struct StockSnapshot {
+    row_count: u64,
+    sort: SortState,
+    filter: FilterState,
+    widths: ColumnWidths,
+    column_layout: Vec<ColumnId>,
+}
+
 fn workspace_row(
     focused: ComponentKind,
     theme_panel_open: bool,
     theme: &Theme,
     dg: DataGridSnapshot,
+    stock: StockSnapshot,
 ) -> Box<AnyWidgetView<State>> {
     let sidebar_view = sized_box(sidebar(focused, theme))
         .fixed_width(Length::px(180.0))
         .padding(Length::px(12.0))
         .background_color(theme.palette.surface);
-    let main = sized_box(main_pane(focused, theme, dg))
+    let main = sized_box(main_pane(focused, theme, dg, stock))
     .padding(Length::px(20.0))
     .background_color(theme.palette.bg);
 
@@ -179,6 +213,11 @@ fn sidebar(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State> + us
         })
         .active(focused == ComponentKind::DataGrid)
         .render(theme),
+        sidebar_item("Stock Quotes", |s: &mut State| {
+            s.focused = ComponentKind::StockQuotes;
+        })
+        .active(focused == ComponentKind::StockQuotes)
+        .render(theme),
         sidebar_item("Radio", |s: &mut State| {
             s.focused = ComponentKind::Radio;
         })
@@ -208,11 +247,13 @@ fn main_pane(
     focused: ComponentKind,
     theme: &Theme,
     dg: DataGridSnapshot,
+    stock: StockSnapshot,
 ) -> Box<AnyWidgetView<State>> {
     match focused {
         ComponentKind::Button => Box::new(void_ui::components::button::demo::panel(theme)),
         ComponentKind::Checkbox => Box::new(void_ui::components::checkbox::demo::panel(theme)),
         ComponentKind::DataGrid => Box::new(data_grid_panel(theme, dg)),
+        ComponentKind::StockQuotes => Box::new(stock_quotes_panel(theme, stock)),
         ComponentKind::Radio => Box::new(void_ui::components::radio::demo::panel(theme)),
         ComponentKind::ScrollContainer => {
             Box::new(void_ui::components::scroll_container::demo::panel(theme))
@@ -333,6 +374,94 @@ fn data_grid_panel(theme: &Theme, dg: DataGridSnapshot) -> impl WidgetView<State
             s.data_grid.resize_column(col, new_width);
         })
         .row_height(22.0)
+        .render(&theme_copy);
+
+    flex_col((toolbar, sized_box(grid).flex(1.0)))
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .gap(Length::px(12.0))
+}
+
+/// Gallery panel for the **stock-quote board** — the "value lens" demo:
+/// the same generic grid as a NASDAQ-style symbol viewer. Click a header
+/// to sort (try **Sector**, then **Shift+click Mkt Cap** for a grouped,
+/// size-ranked board); filter by Symbol or Sector; the wide fundamentals
+/// set scrolls horizontally. Same wiring as `data_grid_panel`, only the
+/// row type + data source differ — which is the whole point.
+fn stock_quotes_panel(theme: &Theme, stock: StockSnapshot) -> impl WidgetView<State> + use<> {
+    let StockSnapshot {
+        row_count,
+        sort,
+        filter,
+        widths,
+        column_layout,
+    } = stock;
+    let columns = arrange_stock_columns::<State>(&column_layout);
+    // "Beta" is a low-value column to toggle for the show/hide demo.
+    let beta_id = ColumnId::from("Beta");
+    let beta_shown = column_layout.contains(&beta_id);
+    let theme_copy = *theme;
+
+    let toolbar = flex_row((
+        label("NASDAQ symbols — static snapshot")
+            .text_size(theme.typography.size_caption)
+            .color(theme.palette.text_muted),
+        FlexSpacer::Flex(1.0),
+        // Show/hide + reorder over the host-owned column layout (id-keyed
+        // sort/filter/width follow each column across the change).
+        button(move |s: &mut State| {
+            s.stock_quotes.toggle_column(&ColumnId::from("Beta"));
+        })
+        .label(if beta_shown { "Hide Beta" } else { "Show Beta" })
+        .render(theme),
+        button(|s: &mut State| {
+            s.stock_quotes.move_column_left(&ColumnId::from("Sector"));
+        })
+        .label("Sector \u{2190}")
+        .render(theme),
+        button(|s: &mut State| {
+            s.stock_quotes.reset_columns();
+        })
+        .label("Reset cols")
+        .render(theme),
+        FlexSpacer::Flex(1.0),
+        label(format!("{row_count} symbols"))
+            .text_size(theme.typography.size_caption)
+            .color(theme.palette.text_muted),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Center)
+    .gap(Length::px(8.0));
+
+    let grid = data_grid(columns)
+        .rows(|s: &State| {
+            if s.stock_quotes.view_is_materialized() {
+                &s.stock_quotes.visible[..]
+            } else {
+                &s.stock_quotes.quotes[..]
+            }
+        })
+        .row_count(row_count)
+        // Symbol is the stable, unique row id.
+        .row_id(|q: &StockQuote| {
+            // FNV-1a of the ticker — a stable u64 id from the &'static str.
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+            for b in q.symbol.as_bytes() {
+                h ^= u64::from(*b);
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+            h
+        })
+        .selection(|s: &mut State| &mut s.stock_quotes.selection)
+        .sort(sort, |s: &mut State, col: ColumnId, multi: bool| {
+            s.stock_quotes.cycle_sort(col, multi);
+        })
+        .filter(filter, |s: &mut State, col: ColumnId, query: String| {
+            s.stock_quotes.set_filter(col, query);
+        })
+        .column_widths(widths)
+        .on_column_resize(|s: &mut State, col: ColumnId, new_width: f64| {
+            s.stock_quotes.resize_column(col, new_width);
+        })
+        .row_height(24.0)
         .render(&theme_copy);
 
     flex_col((toolbar, sized_box(grid).flex(1.0)))
