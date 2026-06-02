@@ -2,9 +2,10 @@
 //! append-only data streams.
 //!
 //! The grid is read-only (no cell editing) with row-only selection,
-//! TSV clipboard copy, single-column sorting via clickable headers,
-//! per-column filtering, horizontal scrolling for wide tables, and
-//! drag-to-resize columns. The widget is generic over the row type so
+//! TSV clipboard copy, single- and multi-column (tiebreak) sorting via
+//! clickable headers, per-column filtering, horizontal scrolling for wide
+//! tables, drag-to-resize, and column show/hide + reorder. The widget is
+//! generic over the row type so
 //! the same grid can browse synthetic tick streams (see
 //! [`demo::DemoTick`]), event logs, or any other in-memory `&[R]`
 //! exposed by the host's app state.
@@ -51,20 +52,32 @@
 //! materializes the surviving rows. The grid virtualizes over that
 //! ordered slice.
 //!
-//! ## Sorting
+//! ## Sorting (single + multi-column)
 //!
-//! Single-column sorting is driven by [`sort::SortState`], held by the
-//! host. Clicking a sortable column header invokes the
-//! [`DataGrid::sort`](view::DataGrid::sort) callback with the column; the
-//! host cycles its `SortState` (ascending → descending → unsorted, via
-//! [`SortState::cycle`](sort::SortState::cycle)) and re-derives its view
-//! with [`sort_indices`](sort::sort_indices). The active column shows a
-//! ▲/▼ arrow, and sortable headers highlight on hover. A column is
-//! sortable only if its [`ColumnDef`] carries a comparator (see
-//! [`column::ColumnDef::sortable_by_key`]) — the comparator orders the
-//! row's *underlying* value, independent of the cell's display
-//! formatting, so a `"$100.00"` price column sorts numerically rather
-//! than lexicographically.
+//! Sorting is driven by [`sort::SortState`] — an ordered list of
+//! `(column, direction)` levels (position = priority), held by the host.
+//! Clicking a sortable header invokes the
+//! [`DataGrid::sort`](view::DataGrid::sort) callback with the column and a
+//! `multi` flag (whether Shift was held); the host cycles its `SortState`
+//! and re-derives its view with [`sort_indices`](sort::sort_indices),
+//! which applies the levels as tiebreakers in priority order.
+//!
+//! - **Plain click** replaces the sort with that one column, cycling
+//!   ascending → descending → unsorted
+//!   ([`SortState::cycle`](sort::SortState::cycle)).
+//! - **Shift+click** adds/updates the column as a tiebreaker without
+//!   disturbing the others — append ascending, then cycle its own
+//!   direction asc → desc → removed in place
+//!   ([`cycle_additive`](sort::SortState::cycle_additive)).
+//!
+//! Each sorted column shows a ▲/▼ arrow; when more than one is sorted,
+//! a 1-based priority badge (1, 2, 3 …) follows the arrow (the AG Grid
+//! `sortIndex` / Kendo `showIndexes` convention). Sortable headers
+//! highlight on hover. A column is sortable only if its [`ColumnDef`]
+//! carries a comparator (see [`column::ColumnDef::sortable_by_key`]) — the
+//! comparator orders the row's *underlying* value, independent of the
+//! cell's display formatting, so a `"$100.00"` price column sorts
+//! numerically rather than lexicographically.
 //!
 //! ## Selection is keyed by stable row id
 //!
@@ -127,7 +140,8 @@
 //!   on-screen start and shift degrades to a single select. (This
 //!   supersedes the earlier "shift-extend ignores sort order" limitation,
 //!   which the host-owns-order + stable-id model fixed.)
-//! - Sorting is single-column — there is no multi-column / tiebreak sort.
+//! - **Column pin / freeze** (a frozen identifier column while metric
+//!   columns scroll) is not implemented — deliberately deferred.
 //! - Columns start at their `ColumnDef` width and can be drag-resized
 //!   (see [`width::ColumnWidths`]); the grid scrolls horizontally when
 //!   the total exceeds the viewport. Width auto-fit (double-click to fit

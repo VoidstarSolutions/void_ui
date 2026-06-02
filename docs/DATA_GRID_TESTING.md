@@ -50,8 +50,8 @@ cargo clippy --all-targets    # workspace denies clippy::pedantic
 
 ### Sorting — single
 9. Click a sortable header (**Time**, **Price**, **Size**, **Side**, **Bid**,
-   **Ask**). **Expect:** ▲ ascending → click again ▼ descending → click
-   again clears. Sortable headers tint on hover; non-sortable ones
+   **Ask**). **Expect:** first click ▲ ascending; second ▼ descending;
+   third clears. Sortable headers tint on hover; non-sortable ones
    (Spread, Notional, Exchange, VWAP) don't react — by design (no
    comparator).
 10. Sorting is numeric-correct: Price/Size sort by value, not by the
