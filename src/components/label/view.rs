@@ -138,6 +138,7 @@ impl Label {
             line_height: self.line_height,
             multiline: self.multiline,
             masked: self.masked,
+            secondary_gap: theme.density.col,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -159,6 +160,7 @@ pub struct LabelView<State, Action> {
     line_height: Option<f32>,
     multiline: bool,
     masked: bool,
+    secondary_gap: f32,
     _phantom: std::marker::PhantomData<fn() -> (State, Action)>,
 }
 
@@ -240,7 +242,7 @@ fn build_inner<S: 'static, A: 'static>(view: &LabelView<S, A>) -> Box<AnyWidgetV
             Box::new(
                 flex_row((main_label, sec_label))
                     .cross_axis_alignment(CrossAxisAlignment::Center)
-                    .gap(Length::px(4.0)),
+                    .gap(Length::px(f64::from(view.secondary_gap))),
             )
         }
     }
