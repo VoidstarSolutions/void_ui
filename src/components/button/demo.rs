@@ -149,7 +149,10 @@ fn variants_example(
     })
 }
 
-fn controls_row(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<ButtonDemoState> + use<> {
+fn controls_row(
+    theme: &Theme,
+    state: &ButtonDemoState,
+) -> impl WidgetView<ButtonDemoState> + use<> {
     let disabled_toggle = flex_row(
         checkbox(state.disabled, |s: &mut ButtonDemoState| {
             s.disabled = !s.disabled;
