@@ -722,8 +722,7 @@ impl<W: Widget + ?Sized> ScrollView<W> {
             };
             sb_ctx.request_render();
         }
-        let sb_size = ctx.compute_size(pod, SizeDef::fit(size), size.into());
-        ctx.run_layout(pod, sb_size);
+        let sb_size = ctx.compute_size(pod, SizeDef::fit(eff_size), eff_size.into());
         let origin = match axis {
             Axis::Vertical => Point::new(size.width - sb_size.width, 0.0),
             Axis::Horizontal => Point::new(0.0, size.height - sb_size.height),
