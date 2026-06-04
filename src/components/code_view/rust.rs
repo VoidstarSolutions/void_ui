@@ -20,7 +20,7 @@ const KEYWORDS: &[&str] = &[
     "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return",
     "self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where",
     "while", "dyn", "async", "await", "yield", "abstract", "box", "do", "final", "macro",
-    "override", "priv", "typeof", "unsized", "virtual",
+    "override", "priv", "typeof", "union", "unsized", "virtual",
 ];
 
 impl Highlighter for RustHighlighter {
@@ -435,7 +435,7 @@ mod tests {
             "fn", "let", "mut", "pub", "use", "mod", "struct", "enum", "impl", "trait", "for",
             "while", "loop", "if", "else", "match", "return", "const", "self", "Self", "as",
             "where", "in", "move", "ref", "static", "type", "unsafe", "extern", "crate", "super",
-            "break", "continue", "true", "false",
+            "break", "continue", "true", "false", "union",
         ] {
             let got = spans(kw);
             assert_eq!(got.len(), 1, "{kw} expected one span, got {got:?}");

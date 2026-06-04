@@ -147,9 +147,13 @@ impl CodeViewWidget {
 impl CodeViewWidget {
     /// Replaces the source text. Marks the layout dirty and requests layout if
     /// the value changed.
+    ///
+    /// Collapses the selection: its byte offsets are meaningless against the
+    /// new buffer, and a stale range could paint or copy the wrong bytes.
     pub fn set_text(this: &mut WidgetMut<'_, Self>, text: String) {
         if this.widget.text != text {
             this.widget.text = text;
+            this.widget.selection = Selection::default();
             this.widget.layout_dirty = true;
             this.ctx.request_layout();
         }
@@ -301,6 +305,12 @@ impl Widget for CodeViewWidget {
     type Action = NoAction;
 
     fn accepts_pointer_interaction(&self) -> bool {
+        true
+    }
+
+    fn accepts_focus(&self) -> bool {
+        // Keyboard copy (Ctrl/Cmd+C) needs focus; clicking the text requests
+        // it in `on_pointer_event`.
         true
     }
 
@@ -520,9 +530,13 @@ impl Widget for CodeViewWidget {
             && matches!(&key_event.key, Key::Character(c) if c.as_str().eq_ignore_ascii_case("c"))
         {
             let range = self.selection.text_range();
-            if !range.is_empty() {
-                let text = self.text[range].to_string();
-                ctx.set_clipboard(text);
+            // `get` instead of indexing: parley ranges should always be
+            // char-boundary aligned, but a panic inside an event handler is
+            // a bad failure mode for a defensive check this cheap.
+            if !range.is_empty()
+                && let Some(text) = self.text.get(range)
+            {
+                ctx.set_clipboard(text.to_string());
             }
             ctx.set_handled();
         }

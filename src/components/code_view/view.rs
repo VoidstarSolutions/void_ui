@@ -62,10 +62,17 @@ pub fn read_only_text(text: impl Into<String>) -> ReadOnlyText {
 }
 
 impl ReadOnlyText {
-    /// Replace the highlighter. Owned via `Arc` so the same instance can be
-    /// shared across many views.
+    /// Replace the highlighter. Wraps the value in a fresh `Arc`; to share
+    /// one (possibly expensive) highlighter instance across many views, use
+    /// [`Self::shared_highlighter`].
     pub fn highlighter(mut self, highlighter: impl Highlighter) -> Self {
         self.highlighter = Some(Arc::new(highlighter));
+        self
+    }
+
+    /// Replace the highlighter with an already-shared instance.
+    pub fn shared_highlighter(mut self, highlighter: Arc<dyn Highlighter>) -> Self {
+        self.highlighter = Some(highlighter);
         self
     }
 

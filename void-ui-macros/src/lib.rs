@@ -18,6 +18,11 @@ use proc_macro::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenSt
 /// source text for the input span (rare; happens with macro-generated
 /// input).
 ///
+/// The expansion emits absolute `::void_ui::…` paths — proc-macros have no
+/// `$crate` equivalent. Consequence: downstream crates must depend on the
+/// crate under its real name (`void-ui`); renaming via
+/// `my_ui = { package = "void-ui" }` will not resolve.
+///
 /// # Panics
 ///
 /// Panics at compile time if the input does not match the expected shape
@@ -28,21 +33,23 @@ use proc_macro::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenSt
 pub fn with_source(input: TokenStream) -> TokenStream {
     let tokens: Vec<TokenTree> = input.into_iter().collect();
 
-    // Find the body: the final TokenTree must be a brace group.
+    // The body must be the *final* token tree, and a brace group. (A comma
+    // inside the theme expression is invisible here — it would live inside a
+    // parenthesized `Group` — so straight indexing is unambiguous.)
     let body_idx = tokens
-        .iter()
-        .rposition(|t| matches!(t, TokenTree::Group(g) if g.delimiter() == Delimiter::Brace))
-        .expect("with_source!: expected a `{ ... }` block as the last argument");
+        .len()
+        .checked_sub(1)
+        .expect("with_source!: empty input");
     let body_group = match &tokens[body_idx] {
-        TokenTree::Group(g) => g.clone(),
-        _ => unreachable!(),
+        TokenTree::Group(g) if g.delimiter() == Delimiter::Brace => g.clone(),
+        _ => panic!("with_source!: expected a `{{ ... }}` block as the final argument"),
     };
 
-    // Find the comma immediately preceding the body group.
-    let comma_idx = tokens[..body_idx]
-        .iter()
-        .rposition(|t| matches!(t, TokenTree::Punct(p) if p.as_char() == ','))
-        .expect("with_source!: expected `theme_expr , { ... }`");
+    // The comma must immediately precede the body group.
+    let comma_idx = body_idx
+        .checked_sub(1)
+        .filter(|&i| matches!(&tokens[i], TokenTree::Punct(p) if p.as_char() == ','))
+        .expect("with_source!: expected `theme_expr , {{ ... }}`");
 
     // Theme expression is everything before that comma.
     let theme_tokens: TokenStream = tokens[..comma_idx].iter().cloned().collect();

@@ -6,7 +6,8 @@
 //! [`CodePalette`](crate::theme::CodePalette).
 //!
 //! Spans need not cover every byte. Uncovered bytes paint with
-//! `CodePalette::plain`. Spans must not overlap.
+//! `CodePalette::plain`. Spans should not overlap; if they do, the
+//! later span in the list wins for the overlapping bytes.
 
 use std::ops::Range;
 

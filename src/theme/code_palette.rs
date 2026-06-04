@@ -1,7 +1,9 @@
 //! Color slots for syntax-highlighted source code.
 //!
-//! One entry per [`TokenKind`] variant, plus `plain` for unspanned bytes
-//! (whitespace, fallback).
+//! One slot per [`TokenKind`](crate::components::code_view::TokenKind)
+//! variant — except `Punctuation`, which aliases `plain` via
+//! [`CodePalette::punctuation_or_plain`] — plus `plain` itself for
+//! unspanned bytes (whitespace, fallback).
 
 use masonry::peniko::Color;
 
@@ -27,7 +29,8 @@ pub struct CodePalette {
     pub number: Color,
     /// Color for comments.
     pub comment: Color,
-    /// Color for operators and punctuation.
+    /// Color for operators. Punctuation does **not** use this slot — it
+    /// aliases `plain` via [`CodePalette::punctuation_or_plain`].
     pub operator: Color,
 }
 
