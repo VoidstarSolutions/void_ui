@@ -21,7 +21,7 @@
 pub mod demo;
 mod view;
 
-pub use view::{Label, LabelView, LabelViewState, label};
+pub use view::{Label, label};
 
 /// Horizontal alignment for label text.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

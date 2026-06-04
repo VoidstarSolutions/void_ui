@@ -21,7 +21,7 @@ pub mod pointer_inert;
 pub mod theme;
 
 pub use components::{
-    Button, ButtonVariant, ButtonView, CellAlign, ColumnDef, Label, LabelAlignment, LabelView,
+    Button, ButtonVariant, ButtonView, CellAlign, ColumnDef, Label, LabelAlignment,
     ScrollContainer, ScrollContainerView, SelectionState, SidebarItem, SidebarItemView, Tooltip,
     TooltipView, button, data_grid, label, optional_text_column, scroll_container, sidebar_item,
     text_column, tooltip,

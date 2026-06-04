@@ -4,7 +4,7 @@ use masonry::layout::Length;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::widgets::Passthrough;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, flex_col, label as xl_label};
+use xilem::view::{CrossAxisAlignment, flex_col};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::{LabelAlignment, label};
@@ -39,10 +39,11 @@ pub fn panel(theme: &Theme) -> LabelDemoPanel {
 }
 
 fn section_header(text: &'static str, theme: &Theme) -> impl WidgetView<LabelDemoState> + use<> {
-    xl_label(text)
+    label(text)
         .text_size(theme.typography.size_caption)
         .letter_spacing(1.2)
         .color(theme.palette.text_faint)
+        .render(theme)
 }
 
 fn sizes_section(theme: &Theme) -> impl WidgetView<LabelDemoState> + use<> {

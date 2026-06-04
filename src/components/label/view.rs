@@ -1,21 +1,20 @@
 //! Xilem view for the themed label component.
 //!
-//! Wraps one or two `masonry::widgets::Label` widgets — a second one for
-//! optional secondary text — configured from a [`Theme`] snapshot. All
-//! interaction is absent; the element type is always [`Pod<Passthrough>`]
-//! so the secondary-text (two-label) case can share the same type as the
-//! single-label case.
+//! Composes one or two `masonry::widgets::Label` widgets — a second one for
+//! optional secondary text — configured from a [`Theme`] snapshot. There is
+//! no custom masonry widget and no interaction; [`Label::render`] returns a
+//! type-erased [`WidgetView`] so the single-label and two-label cases share
+//! one return type, and `Box<AnyWidgetView>` handles the concrete type
+//! changing across rebuilds (e.g. when `.secondary()` toggles).
 
 use masonry::core::ArcStr;
-use masonry::parley::{Alignment, FontFamily, LineHeight};
+use masonry::parley::{FontFamily, LineHeight};
 use masonry::properties::LineBreaking;
-use masonry::widgets::Passthrough;
-use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewId, ViewMarker, ViewPathTracker};
 use xilem::masonry::layout::Length;
 use xilem::peniko::Color;
 use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, flex_row, label as xl_label};
-use xilem::{AnyWidgetView, Pod, ViewCtx};
+use xilem::{AnyWidgetView, WidgetView};
 
 use super::LabelAlignment;
 use crate::Theme;
@@ -60,7 +59,8 @@ impl Label {
     /// Append muted secondary text after the main text.
     ///
     /// Rendered as a separate label in `text_muted` color, inlined to the
-    /// right with a 4 px gap.
+    /// right with a theme-derived gap. Shares every other style knob with
+    /// the main text.
     pub fn secondary(mut self, text: impl Into<ArcStr>) -> Self {
         self.secondary = Some(text.into());
         self
@@ -118,172 +118,69 @@ impl Label {
     }
 
     /// Materialize the xilem view at the supplied theme.
-    pub fn render<State, Action>(self, theme: &Theme) -> LabelView<State, Action>
+    #[must_use = "View values do nothing unless provided to Xilem."]
+    pub fn render<State, Action>(
+        self,
+        theme: &Theme,
+    ) -> impl WidgetView<State, Action> + use<State, Action>
     where
         State: 'static,
         Action: 'static,
     {
-        let color = self.color.unwrap_or(theme.palette.text);
-        let text_size = self.text_size.unwrap_or(theme.typography.size_body);
-        let secondary_color = theme.palette.text_muted;
-        LabelView {
-            text: self.text,
-            secondary: self.secondary,
-            color,
-            secondary_color,
-            text_size,
-            letter_spacing: self.letter_spacing,
-            font: self.font,
-            alignment: self.alignment.into_text_align(),
-            line_height: self.line_height,
-            multiline: self.multiline,
-            masked: self.masked,
-            secondary_gap: theme.density.col,
-            _phantom: std::marker::PhantomData,
+        let main_color = self.color.unwrap_or(theme.palette.text);
+        let main_text = if self.masked {
+            mask(&self.text)
+        } else {
+            self.text.clone()
+        };
+
+        let view: Box<AnyWidgetView<State, Action>> = match &self.secondary {
+            None => self.single(main_text, main_color, theme),
+            Some(sec) => {
+                let sec_text = if self.masked { mask(sec) } else { sec.clone() };
+                let main = self.single(main_text, main_color, theme);
+                let secondary = self.single(sec_text, theme.palette.text_muted, theme);
+                Box::new(
+                    flex_row((main, secondary))
+                        .cross_axis_alignment(CrossAxisAlignment::Center)
+                        .gap(Length::px(f64::from(theme.density.col))),
+                )
+            }
+        };
+        view
+    }
+
+    /// One styled `masonry::widgets::Label`. The main and secondary labels
+    /// share every style knob except color.
+    fn single<S: 'static, A: 'static>(
+        &self,
+        text: ArcStr,
+        color: Color,
+        theme: &Theme,
+    ) -> Box<AnyWidgetView<S, A>> {
+        let base = xl_label(text)
+            .text_size(self.text_size.unwrap_or(theme.typography.size_body))
+            .text_alignment(self.alignment.into_text_align())
+            .letter_spacing(self.letter_spacing);
+        let base = match self.font.clone() {
+            Some(f) => base.font(f),
+            None => base,
+        };
+        let base = match self.line_height {
+            Some(lh) => base.line_height(LineHeight::FontSizeRelative(lh)),
+            None => base,
+        };
+        if self.multiline {
+            Box::new(
+                base.color(color)
+                    .line_break_mode(LineBreaking::WordWrap),
+            )
+        } else {
+            Box::new(base.color(color))
         }
     }
-}
-
-/// The materialized [`View`] backing a [`Label`].
-///
-/// Built only through [`Label::render`]; not constructed directly by callers.
-#[must_use = "View values do nothing unless provided to Xilem."]
-pub struct LabelView<State, Action> {
-    text: ArcStr,
-    secondary: Option<ArcStr>,
-    color: Color,
-    secondary_color: Color,
-    text_size: f32,
-    letter_spacing: f32,
-    font: Option<FontFamily<'static>>,
-    alignment: Alignment,
-    line_height: Option<f32>,
-    multiline: bool,
-    masked: bool,
-    secondary_gap: f32,
-    _phantom: std::marker::PhantomData<fn() -> (State, Action)>,
-}
-
-/// Opaque view state for [`LabelView`].
-#[doc(hidden)]
-pub struct LabelViewState<S: 'static, A: 'static> {
-    inner: Box<AnyWidgetView<S, A>>,
-    inner_state: <Box<AnyWidgetView<S, A>> as View<S, A, ViewCtx>>::ViewState,
 }
 
 fn mask(text: &str) -> ArcStr {
     ArcStr::from("•".repeat(text.chars().count()))
-}
-
-fn make_single<S: 'static, A: 'static>(
-    view: &LabelView<S, A>,
-    text: ArcStr,
-) -> Box<AnyWidgetView<S, A>> {
-    let base = xl_label(text)
-        .text_size(view.text_size)
-        .text_alignment(view.alignment)
-        .letter_spacing(view.letter_spacing);
-    let base = match view.font.clone() {
-        Some(f) => base.font(f),
-        None => base,
-    };
-    let base = match view.line_height {
-        Some(lh) => base.line_height(LineHeight::FontSizeRelative(lh)),
-        None => base,
-    };
-    if view.multiline {
-        Box::new(
-            base.color(view.color)
-                .line_break_mode(LineBreaking::WordWrap),
-        )
-    } else {
-        Box::new(base.color(view.color))
-    }
-}
-
-fn build_inner<S: 'static, A: 'static>(view: &LabelView<S, A>) -> Box<AnyWidgetView<S, A>> {
-    let main_text = if view.masked {
-        mask(&view.text)
-    } else {
-        view.text.clone()
-    };
-
-    match &view.secondary {
-        None => make_single(view, main_text),
-        Some(sec) => {
-            let sec_text = if view.masked { mask(sec) } else { sec.clone() };
-            let main_label = make_single(view, main_text);
-            let sec_label: Box<AnyWidgetView<S, A>> = Box::new(
-                xl_label(sec_text)
-                    .text_size(view.text_size)
-                    .color(view.secondary_color),
-            );
-            Box::new(
-                flex_row((main_label, sec_label))
-                    .cross_axis_alignment(CrossAxisAlignment::Center)
-                    .gap(Length::px(f64::from(view.secondary_gap))),
-            )
-        }
-    }
-}
-
-impl<State, Action> ViewMarker for LabelView<State, Action> {}
-
-impl<State, Action> View<State, Action, ViewCtx> for LabelView<State, Action>
-where
-    State: 'static,
-    Action: 'static,
-{
-    type Element = Pod<Passthrough>;
-    type ViewState = LabelViewState<State, Action>;
-
-    fn build(
-        &self,
-        ctx: &mut ViewCtx,
-        state: &mut State,
-    ) -> (Self::Element, Self::ViewState) {
-        let inner = build_inner(self);
-        let (element, inner_state) =
-            ctx.with_id(ViewId::new(0), |ctx| inner.build(ctx, state));
-        (element, LabelViewState { inner, inner_state })
-    }
-
-    fn rebuild(
-        &self,
-        _prev: &Self,
-        vs: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        element: Mut<'_, Self::Element>,
-        state: &mut State,
-    ) {
-        let new_inner = build_inner(self);
-        ctx.with_id(ViewId::new(0), |ctx| {
-            new_inner.rebuild(&vs.inner, &mut vs.inner_state, ctx, element, state);
-        });
-        vs.inner = new_inner;
-    }
-
-    fn teardown(
-        &self,
-        vs: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        element: Mut<'_, Self::Element>,
-    ) {
-        ctx.with_id(ViewId::new(0), |ctx| {
-            vs.inner.teardown(&mut vs.inner_state, ctx, element);
-        });
-    }
-
-    fn message(
-        &self,
-        vs: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        element: Mut<'_, Self::Element>,
-        state: &mut State,
-    ) -> MessageResult<Action> {
-        match message.take_first().map(ViewId::routing_id) {
-            Some(0) => vs.inner.message(&mut vs.inner_state, message, element, state),
-            _ => MessageResult::Stale,
-        }
-    }
 }

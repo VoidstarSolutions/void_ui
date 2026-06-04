@@ -30,7 +30,7 @@ pub use data_grid::{
 };
 pub use scroll_container::{ScrollBarVisibility, ScrollContainer, ScrollContainerView, scroll_container};
 pub use sidebar::{SidebarItem, SidebarItemView, sidebar_item};
-pub use label::{Label, LabelAlignment, LabelView, LabelViewState, label};
+pub use label::{Label, LabelAlignment, label};
 pub use tooltip::{Tooltip, TooltipView, tooltip};
 
 /// One entry per component the gallery exposes.
