@@ -275,7 +275,10 @@ impl ThemedButton {
     pub fn trailing_icon_mut<'t>(
         this: &'t mut WidgetMut<'_, Self>,
     ) -> Option<WidgetMut<'t, Label>> {
-        this.widget.trailing_icon.as_mut().map(|p| this.ctx.get_mut(p))
+        this.widget
+            .trailing_icon
+            .as_mut()
+            .map(|p| this.ctx.get_mut(p))
     }
 
     /// Sets the loading state. Requests a repaint on change; kicks off the
