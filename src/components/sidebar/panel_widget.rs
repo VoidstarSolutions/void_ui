@@ -331,14 +331,12 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
             PointerEvent::Up(PointerButtonEvent {
                 button: Some(PointerButton::Primary),
                 ..
-            }) => {
-                if self.strip_pressed {
-                    if ctx.is_hovered() && self.strip_hovered {
-                        ctx.submit_action::<Self::Action>(SidebarTogglePressed);
-                    }
-                    self.strip_pressed = false;
-                    ctx.request_paint_only();
+            }) if self.strip_pressed => {
+                if ctx.is_hovered() && self.strip_hovered {
+                    ctx.submit_action::<Self::Action>(SidebarTogglePressed);
                 }
+                self.strip_pressed = false;
+                ctx.request_paint_only();
             }
             PointerEvent::Leave(_) if self.strip_hovered => {
                 self.strip_hovered = false;
