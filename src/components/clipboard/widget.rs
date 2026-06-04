@@ -86,9 +86,11 @@ impl ClipboardWidget {
     /// Transitions into (or out of) the copied-feedback state.
     ///
     /// Setting `true` resets the elapsed timer to zero and arms the animation
-    /// loop. Setting `false` cancels an in-progress countdown immediately.
+    /// loop — including when already copied, so repeated activations restart
+    /// the countdown. Setting `false` cancels an in-progress countdown
+    /// immediately.
     pub fn set_copied(this: &mut WidgetMut<'_, Self>, copied: bool) {
-        if this.widget.copied != copied {
+        if this.widget.copied != copied || copied {
             this.widget.copied = copied;
             this.widget.copied_t = 0.0;
             if copied {
@@ -110,7 +112,8 @@ impl Widget for ClipboardWidget {
         interval: u64,
     ) {
         if self.copied {
-            self.copied_t += interval as f64 * 1e-9;
+            let interval_ns = u32::try_from(interval).unwrap_or(u32::MAX);
+            self.copied_t += f64::from(interval_ns) * 1e-9;
             if self.copied_t >= COPIED_DURATION {
                 self.copied = false;
                 self.copied_t = 0.0;
@@ -167,7 +170,7 @@ impl Widget for ClipboardWidget {
         };
 
         let icon_size = f64::from(self.theme.density.ui_font_size);
-        let stroke_width = icon_size / 10.0; // or another scaling factor
+        let stroke_width = icon_size / 10.0;
         let icon_x = (size.width - icon_size) * 0.5;
         let icon_y = (size.height - icon_size) * 0.5;
         let transform = Affine::translate((icon_x, icon_y)) * Affine::scale(icon_size);
