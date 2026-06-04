@@ -19,6 +19,7 @@ pub(crate) mod click;
 pub mod clipboard;
 pub mod code_view;
 pub mod data_grid;
+pub mod icon;
 pub mod label;
 pub mod radio;
 pub mod scroll_container;
@@ -35,6 +36,7 @@ pub use data_grid::{
     SelectionState, SortDirection, SortState, colored_text_column, data_grid, filtered_indices,
     optional_text_column, text_column,
 };
+pub use icon::{Icon, IconName, icon};
 pub use label::{Label, LabelAlignment, label};
 pub use scroll_container::{
     ScrollBarVisibility, ScrollContainer, ScrollContainerView, scroll_container,
@@ -59,6 +61,7 @@ pub enum ComponentKind {
     Clipboard,
     CodeView,
     DataGrid,
+    Icon,
     Label,
     StockQuotes,
     Radio,
@@ -78,6 +81,7 @@ impl ComponentKind {
             Self::Clipboard => "Clipboard",
             Self::CodeView => "Code View",
             Self::DataGrid => "Data Grid",
+            Self::Icon => "Icon",
             Self::Label => "Label",
             Self::StockQuotes => "Stock Quotes",
             Self::Radio => "Radio",
@@ -99,6 +103,7 @@ impl ComponentKind {
             Self::Label,
             Self::Radio,
             Self::DataGrid,
+            Self::Icon,
             Self::StockQuotes,
             Self::ScrollContainer,
             Self::Sidebar,

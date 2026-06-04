@@ -1711,6 +1711,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "616ec5685824bcc94416c6d4a7a446eea774a31efd7062c8480ba6fd06d7a6e5"
 
 [[package]]
+name = "lucide-icons"
+version = "1.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ada83468e5be8c9b17564fc0c0732435311cde019d83aa4d8815c865186ef7d"
+
+[[package]]
 name = "malloc_buf"
 version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3655,6 +3661,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "void-ui"
 version = "0.1.0"
 dependencies = [
+ "lucide-icons",
  "masonry",
  "tracing",
  "void-ui-macros",
