@@ -176,31 +176,28 @@ fn mask(text: &str) -> ArcStr {
 }
 
 fn make_single<S: 'static, A: 'static>(
+    view: &LabelView<S, A>,
     text: ArcStr,
-    color: Color,
-    text_size: f32,
-    letter_spacing: f32,
-    font: Option<FontFamily<'static>>,
-    alignment: Alignment,
-    line_height: Option<f32>,
-    multiline: bool,
 ) -> Box<AnyWidgetView<S, A>> {
     let base = xl_label(text)
-        .text_size(text_size)
-        .text_alignment(alignment)
-        .letter_spacing(letter_spacing);
-    let base = match font {
+        .text_size(view.text_size)
+        .text_alignment(view.alignment)
+        .letter_spacing(view.letter_spacing);
+    let base = match view.font.clone() {
         Some(f) => base.font(f),
         None => base,
     };
-    let base = match line_height {
+    let base = match view.line_height {
         Some(lh) => base.line_height(LineHeight::FontSizeRelative(lh)),
         None => base,
     };
-    if multiline {
-        Box::new(base.color(color).line_break_mode(LineBreaking::WordWrap))
+    if view.multiline {
+        Box::new(
+            base.color(view.color)
+                .line_break_mode(LineBreaking::WordWrap),
+        )
     } else {
-        Box::new(base.color(color))
+        Box::new(base.color(view.color))
     }
 }
 
@@ -212,28 +209,10 @@ fn build_inner<S: 'static, A: 'static>(view: &LabelView<S, A>) -> Box<AnyWidgetV
     };
 
     match &view.secondary {
-        None => make_single(
-            main_text,
-            view.color,
-            view.text_size,
-            view.letter_spacing,
-            view.font.clone(),
-            view.alignment,
-            view.line_height,
-            view.multiline,
-        ),
+        None => make_single(view, main_text),
         Some(sec) => {
             let sec_text = if view.masked { mask(sec) } else { sec.clone() };
-            let main_label = make_single(
-                main_text,
-                view.color,
-                view.text_size,
-                view.letter_spacing,
-                view.font.clone(),
-                view.alignment,
-                view.line_height,
-                view.multiline,
-            );
+            let main_label = make_single(view, main_text);
             let sec_label: Box<AnyWidgetView<S, A>> = Box::new(
                 xl_label(sec_text)
                     .text_size(view.text_size)
@@ -302,7 +281,7 @@ where
         element: Mut<'_, Self::Element>,
         state: &mut State,
     ) -> MessageResult<Action> {
-        match message.take_first().map(|id| id.routing_id()) {
+        match message.take_first().map(ViewId::routing_id) {
             Some(0) => vs.inner.message(&mut vs.inner_state, message, element, state),
             _ => MessageResult::Stale,
         }

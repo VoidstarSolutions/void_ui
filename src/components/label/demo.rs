@@ -45,8 +45,8 @@ fn section_header(text: &'static str, theme: &Theme) -> impl WidgetView<LabelDem
         .color(theme.palette.text_faint)
 }
 
-fn build_inner(theme: &Theme, state: &LabelDemoState) -> impl WidgetView<LabelDemoState> + use<> {
-    let sizes = with_source!(theme, {
+fn sizes_section(theme: &Theme) -> impl WidgetView<LabelDemoState> + use<> {
+    with_source!(theme, {
         flex_col((
             label("Caption text — 10 px")
                 .text_size(theme.typography.size_caption)
@@ -58,9 +58,11 @@ fn build_inner(theme: &Theme, state: &LabelDemoState) -> impl WidgetView<LabelDe
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(6.0))
-    });
+    })
+}
 
-    let colors = with_source!(theme, {
+fn colors_section(theme: &Theme) -> impl WidgetView<LabelDemoState> + use<> {
+    with_source!(theme, {
         flex_col((
             label("text — default").render(theme),
             label("text_muted")
@@ -76,9 +78,11 @@ fn build_inner(theme: &Theme, state: &LabelDemoState) -> impl WidgetView<LabelDe
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(6.0))
-    });
+    })
+}
 
-    let secondary = with_source!(theme, {
+fn secondary_section(theme: &Theme) -> impl WidgetView<LabelDemoState> + use<> {
+    with_source!(theme, {
         flex_col((
             label("Primary text")
                 .secondary("Secondary text")
@@ -87,8 +91,26 @@ fn build_inner(theme: &Theme, state: &LabelDemoState) -> impl WidgetView<LabelDe
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(6.0))
-    });
+    })
+}
 
+fn alignment_section(theme: &Theme) -> impl WidgetView<LabelDemoState> + use<> {
+    with_source!(theme, {
+        flex_col((
+            label("Start-aligned (default)").render(theme),
+            label("Center-aligned")
+                .alignment(LabelAlignment::Center)
+                .render(theme),
+            label("End-aligned")
+                .alignment(LabelAlignment::End)
+                .render(theme),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .gap(Length::px(6.0))
+    })
+}
+
+fn build_inner(theme: &Theme, state: &LabelDemoState) -> impl WidgetView<LabelDemoState> + use<> {
     let mask_toggle = checkbox(state.masked, |s: &mut LabelDemoState| {
         s.masked = !s.masked;
     })
@@ -119,35 +141,21 @@ fn build_inner(theme: &Theme, state: &LabelDemoState) -> impl WidgetView<LabelDe
         .render(theme)
     });
 
-    let alignment = with_source!(theme, {
-        flex_col((
-            label("Start-aligned (default)").render(theme),
-            label("Center-aligned")
-                .alignment(LabelAlignment::Center)
-                .render(theme),
-            label("End-aligned")
-                .alignment(LabelAlignment::End)
-                .render(theme),
-        ))
-        .cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .gap(Length::px(6.0))
-    });
-
     scroll_container(
         flex_col((
             section_header("Sizes", theme),
-            sizes,
+            sizes_section(theme),
             section_header("Colors", theme),
-            colors,
+            colors_section(theme),
             section_header("Secondary text", theme),
-            secondary,
+            secondary_section(theme),
             section_header("Masked", theme),
             mask_toggle,
             masked,
             section_header("Multiline", theme),
             multiline,
             section_header("Alignment", theme),
-            alignment,
+            alignment_section(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(16.0)),
