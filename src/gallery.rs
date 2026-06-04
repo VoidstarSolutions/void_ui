@@ -9,13 +9,13 @@ use crate::Theme;
 use crate::components::text_field::read_only_text;
 
 /// Renders `source` in a styled monospace code panel with Rust syntax
-/// highlighting.
+/// highlighting and a copy-to-clipboard button in the top-right corner.
 ///
 /// Typically called via the [`with_source`](crate::with_source) macro rather
 /// than directly.
 #[must_use]
 pub fn code_block<S: 'static>(source: &str, theme: &Theme) -> impl WidgetView<S> + use<S> {
-    read_only_text(source).render(theme)
+    read_only_text(source).copyable().render(theme)
 }
 
 /// Renders a view alongside its original source code.

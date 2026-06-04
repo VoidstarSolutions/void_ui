@@ -17,14 +17,19 @@
 use std::marker::PhantomData;
 use std::sync::{Arc, LazyLock};
 
+use masonry::layout::UnitPoint;
 use masonry::peniko::Brush;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
-use xilem::{Pod, ViewCtx};
+use xilem::masonry::layout::Length;
+use xilem::style::Style as _;
+use xilem::view::{ZStackExt as _, sized_box, zstack};
+use xilem::{Pod, ViewCtx, WidgetView};
 
 use super::highlighter::{Highlighter, TokenSpan};
 use super::rust::RustHighlighter;
 use super::widget::{BRUSH_PALETTE_LEN, CodeViewWidget};
 use crate::Theme;
+use crate::components::clipboard::clipboard;
 
 /// Hairline border around the field. Component-local like every other
 /// bordered widget (tooltip, button, checkbox); a 1px stroke doesn't scale
@@ -43,6 +48,7 @@ static DEFAULT_RUST_HIGHLIGHTER: LazyLock<Arc<dyn Highlighter>> =
 pub struct ReadOnlyText {
     text: String,
     highlighter: Option<Arc<dyn Highlighter>>,
+    copyable: bool,
 }
 
 /// Create a read-only highlighted text view with the default
@@ -51,6 +57,7 @@ pub fn read_only_text(text: impl Into<String>) -> ReadOnlyText {
     ReadOnlyText {
         text: text.into(),
         highlighter: Some(DEFAULT_RUST_HIGHLIGHTER.clone()),
+        copyable: false,
     }
 }
 
@@ -69,17 +76,37 @@ impl ReadOnlyText {
         self
     }
 
+    /// Overlay a copy-to-clipboard button in the top-right corner.
+    ///
+    /// The button writes the full source text to the system clipboard (the
+    /// [`clipboard`] component handles the write and the copied feedback).
+    /// Hosts that need to react to the copy should compose [`clipboard`]
+    /// alongside the view themselves instead.
+    pub fn copyable(mut self) -> Self {
+        self.copyable = true;
+        self
+    }
+
     /// Materialize the xilem view at the supplied theme.
-    pub fn render<State>(self, theme: &Theme) -> ReadOnlyTextView<State>
+    #[must_use = "View values do nothing unless provided to Xilem."]
+    pub fn render<State>(self, theme: &Theme) -> impl WidgetView<State> + use<State>
     where
         State: 'static,
     {
-        ReadOnlyTextView {
+        let copy_button = self.copyable.then(|| {
+            // Inset by half the code chrome's inner padding so the button
+            // hugs the corner without touching the border.
+            sized_box(clipboard(self.text.clone(), |_: &mut State, _: &str| {}).render(theme))
+                .padding(Length::px(f64::from(theme.density.pad) * 0.5))
+                .alignment(UnitPoint::TOP_RIGHT)
+        });
+        let code = ReadOnlyTextView {
             text: self.text,
             highlighter: self.highlighter,
             theme: *theme,
             phantom: PhantomData,
-        }
+        };
+        zstack((code, copy_button))
     }
 }
 
