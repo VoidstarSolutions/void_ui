@@ -598,9 +598,7 @@ impl Widget for ThemedButton {
             0.0
         };
         // Center the label within the space left after padding and icon slots.
-        let child_x = pad_h
-            + icon_extra
-            + ((inner.width - child_size.width) * 0.5).max(0.0);
+        let child_x = pad_h + icon_extra + ((inner.width - child_size.width) * 0.5).max(0.0);
         let child_y = pad_v + ((inner.height - child_size.height) * 0.5).max(0.0);
         ctx.place_child(&mut self.child, Point::new(child_x, child_y));
         ctx.derive_baselines(&self.child);

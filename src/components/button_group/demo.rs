@@ -72,11 +72,9 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     });
 
     let disabled_example = with_source!(theme, {
-        flex_row((
-            button_group(["Cut", "Copy", "Paste"], |_: &mut S, _i| {})
-                .disabled(true)
-                .render(theme),
-        ))
+        flex_row((button_group(["Cut", "Copy", "Paste"], |_: &mut S, _i| {})
+            .disabled(true)
+            .render(theme),))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(8.0))
     });
@@ -112,8 +110,7 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
 // ---------------------------------------------------------------------------
 
 type ToggleDemoChildView<S> = Box<AnyWidgetView<S, usize>>;
-type ToggleDemoChildState<S> =
-    <ToggleDemoChildView<S> as View<S, usize, ViewCtx>>::ViewState;
+type ToggleDemoChildState<S> = <ToggleDemoChildView<S> as View<S, usize, ViewCtx>>::ViewState;
 
 /// Self-contained toggle group whose selected index lives in [`ViewState`].
 pub struct ToggleGroupDemo<S: 'static> {
@@ -123,8 +120,13 @@ pub struct ToggleGroupDemo<S: 'static> {
 }
 
 impl<S: 'static> ToggleGroupDemo<S> {
+    #[must_use]
     pub fn new(theme: Theme, count: usize) -> Self {
-        Self { theme, count, phantom: PhantomData }
+        Self {
+            theme,
+            count,
+            phantom: PhantomData,
+        }
     }
 }
 
@@ -158,9 +160,15 @@ impl<S: 'static> View<S, (), ViewCtx> for ToggleGroupDemo<S> {
     fn build(&self, ctx: &mut ViewCtx, state: &mut S) -> (Self::Element, Self::ViewState) {
         let selected = 0;
         let child = build_toggle_child(selected, self.count, &self.theme);
-        let (element, child_state) =
-            ctx.with_id(ViewId::new(0), |ctx| child.build(ctx, state));
-        (element, ToggleGroupDemoState { selected, prev_child: child, child_state })
+        let (element, child_state) = ctx.with_id(ViewId::new(0), |ctx| child.build(ctx, state));
+        (
+            element,
+            ToggleGroupDemoState {
+                selected,
+                prev_child: child,
+                child_state,
+            },
+        )
     }
 
     fn rebuild(
@@ -196,11 +204,11 @@ impl<S: 'static> View<S, (), ViewCtx> for ToggleGroupDemo<S> {
         element: Mut<'_, Self::Element>,
         state: &mut S,
     ) -> MessageResult<()> {
-        match message.take_first().map(|id| id.routing_id()) {
+        match message.take_first().map(ViewId::routing_id) {
             Some(0) => {
-                let result =
-                    vs.prev_child
-                        .message(&mut vs.child_state, message, element, state);
+                let result = vs
+                    .prev_child
+                    .message(&mut vs.child_state, message, element, state);
                 match result {
                     MessageResult::Action(idx) => {
                         vs.selected = idx;
@@ -228,8 +236,13 @@ pub struct ToggleGroupDemoVertical<S: 'static> {
 }
 
 impl<S: 'static> ToggleGroupDemoVertical<S> {
+    #[must_use]
     pub fn new(theme: Theme, count: usize) -> Self {
-        Self { theme, count, phantom: PhantomData }
+        Self {
+            theme,
+            count,
+            phantom: PhantomData,
+        }
     }
 }
 
@@ -264,9 +277,15 @@ impl<S: 'static> View<S, (), ViewCtx> for ToggleGroupDemoVertical<S> {
     fn build(&self, ctx: &mut ViewCtx, state: &mut S) -> (Self::Element, Self::ViewState) {
         let selected = 0;
         let child = build_toggle_child_vertical(selected, self.count, &self.theme);
-        let (element, child_state) =
-            ctx.with_id(ViewId::new(0), |ctx| child.build(ctx, state));
-        (element, ToggleGroupDemoVerticalState { selected, prev_child: child, child_state })
+        let (element, child_state) = ctx.with_id(ViewId::new(0), |ctx| child.build(ctx, state));
+        (
+            element,
+            ToggleGroupDemoVerticalState {
+                selected,
+                prev_child: child,
+                child_state,
+            },
+        )
     }
 
     fn rebuild(
@@ -302,11 +321,11 @@ impl<S: 'static> View<S, (), ViewCtx> for ToggleGroupDemoVertical<S> {
         element: Mut<'_, Self::Element>,
         state: &mut S,
     ) -> MessageResult<()> {
-        match message.take_first().map(|id| id.routing_id()) {
+        match message.take_first().map(ViewId::routing_id) {
             Some(0) => {
-                let result =
-                    vs.prev_child
-                        .message(&mut vs.child_state, message, element, state);
+                let result = vs
+                    .prev_child
+                    .message(&mut vs.child_state, message, element, state);
                 match result {
                     MessageResult::Action(idx) => {
                         vs.selected = idx;

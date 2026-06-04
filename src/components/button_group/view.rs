@@ -32,8 +32,8 @@ use xilem::style::Style as _;
 use xilem::view::{AnyFlexChild, CrossAxisAlignment, FlexExt as _, flex_col, flex_row};
 use xilem::{AnyWidgetView, Pod, ViewCtx};
 
-use crate::components::button::{ButtonVariant, button};
 use crate::Theme;
+use crate::components::button::{ButtonVariant, button};
 
 /// Corner radius shared with `ThemedButton::CORNER_RADIUS`.
 const GROUP_CORNER_RADIUS: f64 = 5.0;
@@ -88,7 +88,7 @@ where
                 .label(items[i].clone())
                 .variant(variant)
                 .disabled(disabled)
-                .active(selected.map_or(false, |sel| sel == i))
+                .active(selected == Some(i))
                 .corners(corners)
                 .render(theme)
                 .into_any_flex()
@@ -215,11 +215,7 @@ where
     type Element = Pod<Passthrough>;
     type ViewState = ButtonGroupViewState<State, Action>;
 
-    fn build(
-        &self,
-        ctx: &mut ViewCtx,
-        state: &mut State,
-    ) -> (Self::Element, Self::ViewState) {
+    fn build(&self, ctx: &mut ViewCtx, state: &mut State) -> (Self::Element, Self::ViewState) {
         let inner = build_group_inner(
             &self.items,
             None,
@@ -229,8 +225,7 @@ where
             self.callback.clone(),
             &self.theme,
         );
-        let (element, inner_state) =
-            ctx.with_id(ViewId::new(0), |ctx| inner.build(ctx, state));
+        let (element, inner_state) = ctx.with_id(ViewId::new(0), |ctx| inner.build(ctx, state));
         (element, ButtonGroupViewState { inner, inner_state })
     }
 
@@ -275,8 +270,10 @@ where
         element: Mut<'_, Self::Element>,
         state: &mut State,
     ) -> MessageResult<Action> {
-        match message.take_first().map(|id| id.routing_id()) {
-            Some(0) => vs.inner.message(&mut vs.inner_state, message, element, state),
+        match message.take_first().map(ViewId::routing_id) {
+            Some(0) => vs
+                .inner
+                .message(&mut vs.inner_state, message, element, state),
             _ => MessageResult::Stale,
         }
     }
@@ -392,11 +389,7 @@ where
     type Element = Pod<Passthrough>;
     type ViewState = ToggleButtonGroupViewState<State, Action>;
 
-    fn build(
-        &self,
-        ctx: &mut ViewCtx,
-        state: &mut State,
-    ) -> (Self::Element, Self::ViewState) {
+    fn build(&self, ctx: &mut ViewCtx, state: &mut State) -> (Self::Element, Self::ViewState) {
         let inner = build_group_inner(
             &self.items,
             Some(self.selected),
@@ -406,8 +399,7 @@ where
             self.callback.clone(),
             &self.theme,
         );
-        let (element, inner_state) =
-            ctx.with_id(ViewId::new(0), |ctx| inner.build(ctx, state));
+        let (element, inner_state) = ctx.with_id(ViewId::new(0), |ctx| inner.build(ctx, state));
         (element, ToggleButtonGroupViewState { inner, inner_state })
     }
 
@@ -452,8 +444,10 @@ where
         element: Mut<'_, Self::Element>,
         state: &mut State,
     ) -> MessageResult<Action> {
-        match message.take_first().map(|id| id.routing_id()) {
-            Some(0) => vs.inner.message(&mut vs.inner_state, message, element, state),
+        match message.take_first().map(ViewId::routing_id) {
+            Some(0) => vs
+                .inner
+                .message(&mut vs.inner_state, message, element, state),
             _ => MessageResult::Stale,
         }
     }
