@@ -1,16 +1,12 @@
 //! Button group component — multiple buttons rendered as a connected segmented control.
 //!
-//! Three builders are provided:
+//! Two builders are provided, both yielding the same [`ButtonGroup`] type:
 //!
-//! - [`button_group`] — horizontal group (default).
-//! - [`button_group`] with `.vertical()` — vertically stacked group.
+//! - [`button_group`] — plain group (horizontal by default, `.vertical()` to stack).
 //! - [`toggle_button_group`] — exclusive selection group; host manages the
-//!   selected index and passes it in; widget fires the callback with the new index.
+//!   selected index and passes it in; the callback fires with the new index.
 
 pub mod demo;
 mod view;
 
-pub use view::{
-    ButtonGroup, ButtonGroupView, ToggleButtonGroup, ToggleButtonGroupView, button_group,
-    toggle_button_group,
-};
+pub use view::{ButtonGroup, button_group, toggle_button_group};

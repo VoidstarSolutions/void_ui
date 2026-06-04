@@ -34,7 +34,10 @@ use super::ButtonVariant;
 use crate::Theme;
 
 /// Corner radius (`border-radius: 5px`).
-const CORNER_RADIUS: f64 = 5.0;
+///
+/// Single source of truth for the button corner radius — the view-layer
+/// fallback and the button-group outer corners both reference this.
+pub(crate) const CORNER_RADIUS: f64 = 5.0;
 /// Border thickness for the active and focus states.
 const BORDER_WIDTH: f64 = 1.0;
 /// Focus-ring stroke width (inset 2px from button edge).

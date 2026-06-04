@@ -24,10 +24,7 @@ pub mod sidebar;
 pub mod tooltip;
 
 pub use button::{Button, ButtonVariant, ButtonView, button};
-pub use button_group::{
-    ButtonGroup, ButtonGroupView, ToggleButtonGroup, ToggleButtonGroupView, button_group,
-    toggle_button_group,
-};
+pub use button_group::{ButtonGroup, button_group, toggle_button_group};
 pub use checkbox::{Checkbox, CheckboxView, checkbox};
 pub use clipboard::{Clipboard, ClipboardView, clipboard};
 pub use data_grid::{

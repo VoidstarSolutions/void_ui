@@ -300,7 +300,9 @@ where
         }
         if self.corners != prev.corners {
             use masonry::kurbo::RoundedRectRadii as R;
-            let radii = self.corners.unwrap_or_else(|| R::from_single_radius(5.0));
+            let radii = self
+                .corners
+                .unwrap_or_else(|| R::from_single_radius(super::widget::CORNER_RADIUS));
             ThemedButton::set_corners(&mut element, radii);
         }
         // Label text is not re-applied here; masonry's Label doesn't expose
