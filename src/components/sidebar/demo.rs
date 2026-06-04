@@ -8,8 +8,8 @@ use xilem::view::{CrossAxisAlignment, MainAxisAlignment, flex_col, flex_row};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::{sidebar_item, sidebar_panel};
-use crate::label;
 use crate::Theme;
+use crate::label;
 use crate::with_source;
 
 // --- MARK: LOCAL STATE

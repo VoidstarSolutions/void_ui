@@ -23,8 +23,8 @@
 //! name it without leaking a private type.
 
 pub mod demo;
-pub(crate) mod panel_widget;
 mod panel_view;
+pub(crate) mod panel_widget;
 mod view;
 pub mod widget;
 

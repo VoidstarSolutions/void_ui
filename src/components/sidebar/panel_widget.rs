@@ -60,10 +60,12 @@ static CHEVRON_RIGHT: LazyLock<BezPath> = LazyLock::new(|| {
 
 // --- MARK: SidebarContent
 
-/// Internal widget that clips its child to an animated width.
+/// Widget that clips its child to an animated width.
 ///
-/// This is intentionally private; only [`ThemedSidebarPanel`] constructs it.
-pub(crate) struct SidebarContent<W: Widget + ?Sized> {
+/// Only [`ThemedSidebarPanel`] constructs it; it is public so the documented
+/// path from a panel to its content ([`ThemedSidebarPanel::content_mut`] then
+/// [`SidebarContent::child_mut`]) works outside the crate.
+pub struct SidebarContent<W: Widget + ?Sized> {
     child: WidgetPod<W>,
     collapsed: bool,
     /// 0.0 = fully visible, 1.0 = fully hidden.
@@ -84,7 +86,8 @@ impl<W: Widget + ?Sized> SidebarContent<W> {
 }
 
 impl<W: Widget + FromDynWidget> SidebarContent<W> {
-    pub(crate) fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, W> {
+    /// Returns a `WidgetMut` for the wrapped content widget.
+    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, W> {
         this.ctx.get_mut(&mut this.widget.child)
     }
 }
@@ -154,8 +157,13 @@ impl<W: Widget + ?Sized> Widget for SidebarContent<W> {
         cross_length: Option<Length>,
     ) -> Length {
         let context_size = LayoutSize::maybe(axis.cross(), cross_length);
-        let child_length =
-            ctx.compute_length(&mut self.child, len_req.into(), context_size, axis, cross_length);
+        let child_length = ctx.compute_length(
+            &mut self.child,
+            len_req.into(),
+            context_size,
+            axis,
+            cross_length,
+        );
         if axis == Axis::Horizontal {
             let natural = child_length.get();
             if natural > 0.0 {
@@ -252,9 +260,7 @@ impl<W: Widget + ?Sized> ThemedSidebarPanel<W> {
 
 // --- MARK: WIDGETMUT
 impl<W: Widget + ?Sized> ThemedSidebarPanel<W> {
-    pub fn content_mut<'t>(
-        this: &'t mut WidgetMut<'_, Self>,
-    ) -> WidgetMut<'t, SidebarContent<W>> {
+    pub fn content_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, SidebarContent<W>> {
         this.ctx.get_mut(&mut this.widget.content)
     }
 }
@@ -335,11 +341,9 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
                     ctx.request_paint_only();
                 }
             }
-            PointerEvent::Leave(_) => {
-                if self.strip_hovered {
-                    self.strip_hovered = false;
-                    ctx.request_paint_only();
-                }
+            PointerEvent::Leave(_) if self.strip_hovered => {
+                self.strip_hovered = false;
+                ctx.request_paint_only();
             }
             _ => {}
         }
@@ -361,17 +365,12 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
     ) {
     }
 
-    fn update(
-        &mut self,
-        ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &Update,
-    ) {
-        if let Update::HoveredChanged(false) = event {
-            if self.strip_hovered {
-                self.strip_hovered = false;
-                ctx.request_paint_only();
-            }
+    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        if let Update::HoveredChanged(false) = event
+            && self.strip_hovered
+        {
+            self.strip_hovered = false;
+            ctx.request_paint_only();
         }
     }
 
@@ -390,8 +389,13 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
         cross_length: Option<Length>,
     ) -> Length {
         let context_size = LayoutSize::maybe(axis.cross(), cross_length);
-        let content_length =
-            ctx.compute_length(&mut self.content, len_req.into(), context_size, axis, cross_length);
+        let content_length = ctx.compute_length(
+            &mut self.content,
+            len_req.into(),
+            context_size,
+            axis,
+            cross_length,
+        );
         if axis == Axis::Horizontal {
             Length::px(content_length.get() + STRIP_WIDTH)
         } else {
@@ -419,10 +423,8 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
         let p = &self.theme.palette;
 
         // Separator line on the left edge of the strip.
-        let sep_rect = Rect::from_origin_size(
-            Point::new(strip_x, 0.0),
-            Size::new(SEPARATOR_WIDTH, h),
-        );
+        let sep_rect =
+            Rect::from_origin_size(Point::new(strip_x, 0.0), Size::new(SEPARATOR_WIDTH, h));
         painter.fill(sep_rect, p.border).draw();
 
         // Strip background (hover/press feedback).
