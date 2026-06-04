@@ -50,7 +50,6 @@ pub fn panel(theme: &Theme) -> ButtonDemoPanel {
     ButtonDemoPanel { theme: *theme }
 }
 
-
 fn variants_example(
     theme: &Theme,
     disabled_bool: bool,

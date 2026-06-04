@@ -13,11 +13,11 @@
 
 use std::marker::PhantomData;
 
+use lucide_icons::Icon as LucideIcon;
 use masonry::core::{ArcStr, StyleProperty, Widget as _};
 use masonry::kurbo::RoundedRectRadii;
 use masonry::properties::ContentColor;
 use masonry::widgets::{ButtonPress, Label};
-use lucide_icons::Icon as LucideIcon;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx};
 
@@ -194,7 +194,11 @@ where
             .with_style(StyleProperty::FontSize(self.theme.density.ui_font_size))
             .prepare();
         label.properties.insert(ContentColor::new(text_color));
-        let icon_color = if self.disabled { self.theme.palette.text_faint } else { self.theme.palette.text };
+        let icon_color = if self.disabled {
+            self.theme.palette.text_faint
+        } else {
+            self.theme.palette.text
+        };
         let mut widget = ThemedButton::new(label, &self.theme)
             .with_active(self.active)
             .with_disabled(self.disabled)
@@ -203,12 +207,16 @@ where
             .with_accessibility_label(self.accessible_name.clone());
         if let Some(name) = self.icon {
             widget = widget.with_icon(
-                super::super::icon::icon(name).color(icon_color).build_widget(&self.theme),
+                super::super::icon::icon(name)
+                    .color(icon_color)
+                    .build_widget(&self.theme),
             );
         }
         if let Some(name) = self.trailing_icon {
             widget = widget.with_trailing_icon(
-                super::super::icon::icon(name).color(icon_color).build_widget(&self.theme),
+                super::super::icon::icon(name)
+                    .color(icon_color)
+                    .build_widget(&self.theme),
             );
         }
         if let Some(corners) = self.corners {
@@ -282,12 +290,18 @@ where
                 child.insert_prop(ContentColor::new(text_color));
             }
         }
-        let icon_color = if self.disabled { self.theme.palette.text_faint } else { self.theme.palette.text };
+        let icon_color = if self.disabled {
+            self.theme.palette.text_faint
+        } else {
+            self.theme.palette.text
+        };
         if self.icon.map(char::from) != prev.icon.map(char::from) {
             match self.icon {
                 Some(name) => ThemedButton::attach_icon(
                     &mut element,
-                    super::super::icon::icon(name).color(icon_color).build_widget(&self.theme),
+                    super::super::icon::icon(name)
+                        .color(icon_color)
+                        .build_widget(&self.theme),
                 ),
                 None => ThemedButton::detach_icon(&mut element),
             }
@@ -295,13 +309,18 @@ where
             && let Some(mut m) = ThemedButton::icon_mut(&mut element)
         {
             m.insert_prop(ContentColor::new(icon_color));
-            Label::insert_style(&mut m, StyleProperty::FontSize(self.theme.density.ui_font_size));
+            Label::insert_style(
+                &mut m,
+                StyleProperty::FontSize(self.theme.density.ui_font_size),
+            );
         }
         if self.trailing_icon.map(char::from) != prev.trailing_icon.map(char::from) {
             match self.trailing_icon {
                 Some(name) => ThemedButton::attach_trailing_icon(
                     &mut element,
-                    super::super::icon::icon(name).color(icon_color).build_widget(&self.theme),
+                    super::super::icon::icon(name)
+                        .color(icon_color)
+                        .build_widget(&self.theme),
                 ),
                 None => ThemedButton::detach_trailing_icon(&mut element),
             }
@@ -309,7 +328,10 @@ where
             && let Some(mut m) = ThemedButton::trailing_icon_mut(&mut element)
         {
             m.insert_prop(ContentColor::new(icon_color));
-            Label::insert_style(&mut m, StyleProperty::FontSize(self.theme.density.ui_font_size));
+            Label::insert_style(
+                &mut m,
+                StyleProperty::FontSize(self.theme.density.ui_font_size),
+            );
         }
         if self.accessible_name != prev.accessible_name {
             ThemedButton::set_accessibility_label(&mut element, self.accessible_name.clone());

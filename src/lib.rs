@@ -45,10 +45,10 @@ pub use components::{
     data_grid, icon, label, optional_text_column, scroll_container, sidebar_item, sidebar_panel,
     text_column, toggle_button_group, tooltip,
 };
-pub use lucide_icons::LUCIDE_FONT_BYTES;
 pub use floating::{FloatingOverlay, FloatingOverlayView, floating, interactive_floating};
 #[cfg(feature = "gallery")]
 pub use gallery::code_block;
+pub use lucide_icons::LUCIDE_FONT_BYTES;
 pub use pointer_inert::{PointerInert, PointerInertView, pointer_inert};
 pub use theme::{CodePalette, Density, FontStack, Palette, Radii, Theme, ThemeVariant, Typography};
 #[cfg(feature = "gallery")]

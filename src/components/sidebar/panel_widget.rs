@@ -45,7 +45,11 @@ pub struct SidebarTogglePressed;
 // --- MARK: CHEVRON HELPER
 
 fn make_chevron(collapsed: bool, theme: &Theme) -> NewWidget<Label> {
-    let icon = if collapsed { LucideIcon::ChevronRight } else { LucideIcon::ChevronLeft };
+    let icon = if collapsed {
+        LucideIcon::ChevronRight
+    } else {
+        LucideIcon::ChevronLeft
+    };
     let ch = char::from(icon);
     let mut lbl = Label::new(ArcStr::from(String::from(ch)))
         .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
@@ -53,7 +57,8 @@ fn make_chevron(collapsed: bool, theme: &Theme) -> NewWidget<Label> {
             FontFamilyName::Named(Cow::Borrowed("lucide")),
         )))
         .prepare();
-    lbl.properties.insert(ContentColor::new(theme.palette.text_muted));
+    lbl.properties
+        .insert(ContentColor::new(theme.palette.text_muted));
     lbl
 }
 
@@ -286,7 +291,11 @@ impl<W: Widget + ?Sized> ThemedSidebarPanel<W> {
         if this.widget.collapsed != collapsed {
             this.widget.collapsed = collapsed;
             this.ctx.request_paint_only();
-            let new_icon = if collapsed { LucideIcon::ChevronRight } else { LucideIcon::ChevronLeft };
+            let new_icon = if collapsed {
+                LucideIcon::ChevronRight
+            } else {
+                LucideIcon::ChevronLeft
+            };
             let new_char = ArcStr::from(String::from(char::from(new_icon)));
             {
                 let mut chevron = this.ctx.get_mut(&mut this.widget.chevron);
@@ -412,7 +421,13 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
         // Measure chevron at a fixed icon-font-size square.
         let chevron_sz = Length::px(f64::from(self.theme.density.ui_font_size));
         let chevron_ctx = LayoutSize::maybe(axis.cross(), Some(chevron_sz));
-        let _ = ctx.compute_length(&mut self.chevron, len_req.into(), chevron_ctx, axis, Some(chevron_sz));
+        let _ = ctx.compute_length(
+            &mut self.chevron,
+            len_req.into(),
+            chevron_ctx,
+            axis,
+            Some(chevron_sz),
+        );
         if axis == Axis::Horizontal {
             Length::px(content_length.get() + STRIP_WIDTH)
         } else {

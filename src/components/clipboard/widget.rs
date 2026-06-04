@@ -78,11 +78,18 @@ impl ClipboardWidget {
     pub fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
         if this.widget.theme != *theme {
             this.widget.theme = *theme;
-            let color = if this.widget.copied { theme.palette.teal } else { theme.palette.text_muted };
+            let color = if this.widget.copied {
+                theme.palette.teal
+            } else {
+                theme.palette.text_muted
+            };
             {
                 let mut icon = this.ctx.get_mut(&mut this.widget.icon);
                 icon.insert_prop(ContentColor::new(color));
-                Label::insert_style(&mut icon, StyleProperty::FontSize(theme.density.ui_font_size));
+                Label::insert_style(
+                    &mut icon,
+                    StyleProperty::FontSize(theme.density.ui_font_size),
+                );
             }
             this.ctx.request_paint_only();
         }
