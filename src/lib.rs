@@ -22,9 +22,10 @@ pub mod theme;
 
 pub use components::{
     Button, ButtonGroup, ButtonVariant, ButtonView, CellAlign, ColumnDef, Label, LabelAlignment,
-    ScrollContainer, ScrollContainerView, SelectionState, SidebarItem, SidebarItemView, Tooltip,
-    TooltipView, button, button_group, data_grid, label, optional_text_column, scroll_container,
-    sidebar_item, text_column, toggle_button_group, tooltip,
+    ScrollContainer, ScrollContainerView, SelectionState, SidebarItem, SidebarItemView,
+    SidebarPanel, SidebarPanelView, Tooltip, TooltipView, button, button_group, data_grid, label,
+    optional_text_column, scroll_container, sidebar_item, sidebar_panel, text_column,
+    toggle_button_group, tooltip,
 };
 pub use floating::{FloatingOverlay, FloatingOverlayView, floating, interactive_floating};
 pub use gallery::code_block;

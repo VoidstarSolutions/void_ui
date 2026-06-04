@@ -34,7 +34,9 @@ pub use label::{Label, LabelAlignment, label};
 pub use scroll_container::{
     ScrollBarVisibility, ScrollContainer, ScrollContainerView, scroll_container,
 };
-pub use sidebar::{SidebarItem, SidebarItemView, SidebarPanel, sidebar_item, sidebar_panel};
+pub use sidebar::{
+    SidebarItem, SidebarItemView, SidebarPanel, SidebarPanelView, sidebar_item, sidebar_panel,
+};
 pub use tooltip::{Tooltip, TooltipView, tooltip};
 
 /// One entry per component the gallery exposes.

@@ -24,7 +24,7 @@
 
 pub mod demo;
 mod panel_view;
-pub(crate) mod panel_widget;
+pub mod panel_widget;
 mod view;
 pub mod widget;
 

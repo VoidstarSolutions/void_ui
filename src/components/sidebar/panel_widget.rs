@@ -324,7 +324,6 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
                 let pos = ctx.local_position(state.position);
                 if pos.x >= self.current_strip_x {
                     self.strip_pressed = true;
-                    ctx.request_focus();
                     ctx.capture_pointer();
                     ctx.request_paint_only();
                 }
