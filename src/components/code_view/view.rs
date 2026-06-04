@@ -83,7 +83,8 @@ impl ReadOnlyText {
         self
     }
 
-    /// Overlay a copy-to-clipboard button in the top-right corner.
+    /// Overlay a copy-to-clipboard button at the right edge, vertically
+    /// centered on the block.
     ///
     /// The button writes the full source text to the system clipboard (the
     /// [`clipboard`] component handles the write and the copied feedback).
@@ -101,11 +102,11 @@ impl ReadOnlyText {
         State: 'static,
     {
         let copy_button = self.copyable.then(|| {
-            // Inset by half the code chrome's inner padding so the button
-            // hugs the corner without touching the border.
+            // Vertically centered on the block, fixed inset from the right
+            // edge matching the code chrome's inner padding.
             sized_box(clipboard(self.text.clone(), |_: &mut State, _: &str| {}).render(theme))
-                .padding(Length::px(f64::from(theme.density.pad) * 0.5))
-                .alignment(UnitPoint::TOP_RIGHT)
+                .padding(Length::px(f64::from(theme.density.pad)))
+                .alignment(UnitPoint::RIGHT)
         });
         let code = ReadOnlyTextView {
             text: self.text,

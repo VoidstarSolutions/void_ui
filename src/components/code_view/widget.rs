@@ -339,6 +339,16 @@ impl Widget for CodeViewWidget {
         let pad_each = f64::from(self.padding);
         let pad_main = 2.0 * pad_each;
 
+        // Fill the offered width: a code block is a block-level panel that
+        // owns its chrome, so the painted background must match the widget
+        // bounds exactly (overlaid affordances like the copy button align to
+        // those bounds). Content-based sizing still answers Min/MaxContent.
+        if axis == inline
+            && let LenReq::FitContent(space) = len_req
+        {
+            return space;
+        }
+
         // Determine the max-advance for the text layout, mirroring the
         // word-wrap-style branching in masonry's `Label::measure`.
         let max_advance = if axis == inline {

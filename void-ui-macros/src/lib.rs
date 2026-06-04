@@ -64,7 +64,7 @@ pub fn with_source(input: TokenStream) -> TokenStream {
                 .unwrap_or(trimmed)
                 .strip_suffix('}')
                 .unwrap_or(trimmed);
-            inner.trim_end().trim_matches('\n').to_string()
+            dedent(inner.trim_end().trim_matches('\n'))
         },
     );
 
@@ -156,6 +156,23 @@ pub fn with_source(input: TokenStream) -> TokenStream {
         block,
     ))));
     out
+}
+
+/// Strips the common leading whitespace from every line, so the call site's
+/// nesting depth doesn't show up as indentation in the rendered snippet.
+/// Whitespace-only lines are ignored when computing the common prefix and
+/// emptied in the output.
+fn dedent(s: &str) -> String {
+    let min_indent = s
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.len() - line.trim_start().len())
+        .min()
+        .unwrap_or(0);
+    s.lines()
+        .map(|line| line.get(min_indent..).unwrap_or_else(|| line.trim_start()))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn push_ident(stream: &mut TokenStream, ident: &str) {

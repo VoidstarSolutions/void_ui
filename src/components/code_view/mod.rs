@@ -5,7 +5,7 @@
 //! [`widget::CodeViewWidget`], the masonry widget that owns paint, layout,
 //! selection, and clipboard copy. Highlighting is pluggable via the
 //! [`Highlighter`] trait; [`RustHighlighter`] is the built-in default.
-//! `.copyable()` overlays a copy-to-clipboard button in the top-right.
+//! `.copyable()` overlays a copy-to-clipboard button at the right edge.
 
 pub mod demo;
 pub mod highlighter;

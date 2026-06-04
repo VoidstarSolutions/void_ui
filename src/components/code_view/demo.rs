@@ -29,7 +29,7 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     });
 
     let copyable = with_source!(theme, {
-        read_only_text("let copied = \"one click, top-right\";")
+        read_only_text("let copied = \"one click, right edge\";")
             .copyable()
             .render(theme)
     });

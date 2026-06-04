@@ -9,7 +9,7 @@ use crate::Theme;
 use crate::components::code_view::read_only_text;
 
 /// Renders `source` in a styled monospace code panel with Rust syntax
-/// highlighting and a copy-to-clipboard button in the top-right corner.
+/// highlighting and a copy-to-clipboard button at the right edge.
 ///
 /// Typically called via the [`with_source`](crate::with_source) macro rather
 /// than directly.
