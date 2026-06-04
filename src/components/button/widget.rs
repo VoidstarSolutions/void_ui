@@ -11,7 +11,7 @@
 //! on primary-pointer release inside the widget and on Space/Enter while
 //! focused.
 
-use std::sync::{Arc, LazyLock};
+use std::sync::LazyLock;
 
 use masonry::accesskit;
 use masonry::accesskit::{Node, Role};
@@ -28,7 +28,7 @@ use masonry::kurbo::{
 };
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use masonry::peniko::Color;
-use masonry::widgets::ButtonPress;
+use masonry::widgets::{ButtonPress, Label};
 
 use super::ButtonVariant;
 use crate::Theme;
@@ -80,11 +80,10 @@ pub struct ThemedButton {
     disabled: bool,
     /// Visual style variant.
     variant: ButtonVariant,
-    /// Optional leading icon: a unit-square `BezPath` (0..1 coordinate
-    /// space) scaled to the theme's UI font size at paint time.
-    icon: Option<Arc<BezPath>>,
-    /// Optional trailing icon (e.g. a dropdown caret), painted at the right edge.
-    trailing_icon: Option<Arc<BezPath>>,
+    /// Optional leading icon rendered as a `Label` child using the Lucide font.
+    icon: Option<WidgetPod<Label>>,
+    /// Optional trailing icon (e.g. a dropdown caret).
+    trailing_icon: Option<WidgetPod<Label>>,
     /// When true, shows a spinner and blocks all interaction.
     loading: bool,
     /// Animation time in seconds [0, 1), advanced each anim frame while loading.
@@ -144,17 +143,17 @@ impl ThemedButton {
         self
     }
 
-    /// Attaches a leading icon.
+    /// Attaches a leading icon widget (a Lucide-font `Label`).
     #[must_use]
-    pub fn with_icon(mut self, icon: Option<Arc<BezPath>>) -> Self {
-        self.icon = icon;
+    pub fn with_icon(mut self, icon: NewWidget<Label>) -> Self {
+        self.icon = Some(icon.to_pod());
         self
     }
 
-    /// Attaches a trailing icon (e.g. a dropdown caret).
+    /// Attaches a trailing icon widget (e.g. a dropdown caret).
     #[must_use]
-    pub fn with_trailing_icon(mut self, icon: Option<Arc<BezPath>>) -> Self {
-        self.trailing_icon = icon;
+    pub fn with_trailing_icon(mut self, icon: NewWidget<Label>) -> Self {
+        self.trailing_icon = Some(icon.to_pod());
         self
     }
 
@@ -192,6 +191,7 @@ impl ThemedButton {
 // --- MARK: WIDGETMUT
 impl ThemedButton {
     /// Replaces the theme. Requests layout + repaint if the value changed.
+    /// Icon style updates are handled by the view layer via [`Self::icon_mut`].
     pub fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
         if this.widget.theme != *theme {
             this.widget.theme = *theme;
@@ -210,6 +210,8 @@ impl ThemedButton {
 
     /// Sets the disabled state. Propagates to masonry's system-level
     /// disabled flag (for event routing + accessibility) and requests a repaint.
+    /// Icon color updates on disabled change are handled by the view layer via
+    /// [`Self::icon_mut`] / [`Self::trailing_icon_mut`].
     pub fn set_disabled(this: &mut WidgetMut<'_, Self>, disabled: bool) {
         if this.widget.disabled != disabled {
             this.widget.disabled = disabled;
@@ -226,34 +228,54 @@ impl ThemedButton {
         }
     }
 
-    /// Replaces the leading icon. Compares by `Arc` pointer; requests
-    /// layout + repaint only when the icon actually changes.
-    pub fn set_icon(this: &mut WidgetMut<'_, Self>, icon: Option<Arc<BezPath>>) {
-        let changed = match (&this.widget.icon, &icon) {
-            (None, None) => false,
-            (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
-            _ => true,
-        };
-        if changed {
-            this.widget.icon = icon;
+    /// Replaces the leading icon child. Removes any existing icon first.
+    pub fn attach_icon(this: &mut WidgetMut<'_, Self>, icon: NewWidget<Label>) {
+        if let Some(old) = this.widget.icon.take() {
+            this.ctx.remove_child(old);
+        }
+        this.widget.icon = Some(icon.to_pod());
+        this.ctx.children_changed();
+        this.ctx.request_layout();
+    }
+
+    /// Removes the leading icon child.
+    pub fn detach_icon(this: &mut WidgetMut<'_, Self>) {
+        if let Some(old) = this.widget.icon.take() {
+            this.ctx.remove_child(old);
+            this.ctx.children_changed();
             this.ctx.request_layout();
-            this.ctx.request_paint_only();
         }
     }
 
-    /// Replaces the trailing icon. Compares by `Arc` pointer; requests
-    /// layout + repaint only when the icon actually changes.
-    pub fn set_trailing_icon(this: &mut WidgetMut<'_, Self>, icon: Option<Arc<BezPath>>) {
-        let changed = match (&this.widget.trailing_icon, &icon) {
-            (None, None) => false,
-            (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
-            _ => true,
-        };
-        if changed {
-            this.widget.trailing_icon = icon;
-            this.ctx.request_layout();
-            this.ctx.request_paint_only();
+    /// Replaces the trailing icon child. Removes any existing trailing icon first.
+    pub fn attach_trailing_icon(this: &mut WidgetMut<'_, Self>, icon: NewWidget<Label>) {
+        if let Some(old) = this.widget.trailing_icon.take() {
+            this.ctx.remove_child(old);
         }
+        this.widget.trailing_icon = Some(icon.to_pod());
+        this.ctx.children_changed();
+        this.ctx.request_layout();
+    }
+
+    /// Removes the trailing icon child.
+    pub fn detach_trailing_icon(this: &mut WidgetMut<'_, Self>) {
+        if let Some(old) = this.widget.trailing_icon.take() {
+            this.ctx.remove_child(old);
+            this.ctx.children_changed();
+            this.ctx.request_layout();
+        }
+    }
+
+    /// Returns a mutable reference to the leading icon label, if present.
+    pub fn icon_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, Label>> {
+        this.widget.icon.as_mut().map(|p| this.ctx.get_mut(p))
+    }
+
+    /// Returns a mutable reference to the trailing icon label, if present.
+    pub fn trailing_icon_mut<'t>(
+        this: &'t mut WidgetMut<'_, Self>,
+    ) -> Option<WidgetMut<'t, Label>> {
+        this.widget.trailing_icon.as_mut().map(|p| this.ctx.get_mut(p))
     }
 
     /// Sets the loading state. Requests a repaint on change; kicks off the
@@ -524,6 +546,12 @@ impl Widget for ThemedButton {
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
         ctx.register_child(&mut self.child);
+        if let Some(icon) = &mut self.icon {
+            ctx.register_child(icon);
+        }
+        if let Some(ti) = &mut self.trailing_icon {
+            ctx.register_child(ti);
+        }
     }
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
@@ -553,6 +581,15 @@ impl Widget for ThemedButton {
             inner_cross,
         );
         let has_label = child_length.get() > 0.0;
+        // Measure icon children so masonry tracks them even if we override their size in layout.
+        let icon_sz = Length::px(self.icon_size());
+        let icon_ctx = LayoutSize::maybe(axis.cross(), Some(icon_sz));
+        if let Some(icon) = &mut self.icon {
+            let _ = ctx.compute_length(icon, len_req.into(), icon_ctx, axis, Some(icon_sz));
+        }
+        if let Some(ti) = &mut self.trailing_icon {
+            let _ = ctx.compute_length(ti, len_req.into(), icon_ctx, axis, Some(icon_sz));
+        }
         let icon_extra = if (self.icon.is_some() || self.loading) && axis == Axis::Horizontal {
             self.icon_size() + if has_label { ICON_GAP } else { 0.0 }
         } else {
@@ -601,6 +638,22 @@ impl Widget for ThemedButton {
         let child_y = pad_v + ((inner.height - child_size.height) * 0.5).max(0.0);
         ctx.place_child(&mut self.child, Point::new(child_x, child_y));
         ctx.derive_baselines(&self.child);
+
+        let icon_sz = self.icon_size();
+        // Place icon children at their natural positions. When loading=true and an icon
+        // exists, both the spinner (paint) and the icon label overlap — prefer not
+        // combining these states in practice.
+        if let Some(icon) = &mut self.icon {
+            ctx.run_layout(icon, Size::new(icon_sz, icon_sz));
+            let icon_y = (size.height - icon_sz) * 0.5;
+            ctx.place_child(icon, Point::new(pad_h, icon_y));
+        }
+        if let Some(ti) = &mut self.trailing_icon {
+            ctx.run_layout(ti, Size::new(icon_sz, icon_sz));
+            let icon_y = (size.height - icon_sz) * 0.5;
+            let icon_x = size.width - pad_h - icon_sz;
+            ctx.place_child(ti, Point::new(icon_x, icon_y));
+        }
     }
 
     fn paint(
@@ -646,17 +699,14 @@ impl Widget for ThemedButton {
                 .draw();
         }
 
-        let icon_color = if self.disabled { p.text_faint } else { p.text };
         let icon_size = self.icon_size();
         let pad_h = f64::from(self.theme.density.button_pad_h);
 
-        // When loading, replace the leading icon slot (or paint spinner at the
-        // leading position when there is no icon) with a partial-circle spinner.
+        // Paint the loading spinner in the leading icon slot. Icon and trailing
+        // icon children are self-painting Label widgets placed during layout.
         if self.loading {
             let spinner = &*SPINNER_PATH;
             let icon_y = (size.height - icon_size) * 0.5;
-            // Rotate around the center of the unit square (0.5, 0.5), then
-            // scale to icon_size and position at the leading icon slot.
             let angle = self.spinner_t * std::f64::consts::TAU;
             let spin = Affine::translate((0.5, 0.5))
                 * Affine::rotate(angle)
@@ -665,17 +715,6 @@ impl Widget for ThemedButton {
             painter
                 .stroke(transform * spinner, &Stroke::new(1.5), p.text_muted)
                 .draw();
-        } else if let Some(icon) = &self.icon {
-            let icon_y = (size.height - icon_size) * 0.5;
-            let transform = Affine::translate((pad_h, icon_y)) * Affine::scale(icon_size);
-            painter.fill(transform * icon.as_ref(), icon_color).draw();
-        }
-
-        if let Some(icon) = &self.trailing_icon {
-            let icon_y = (size.height - icon_size) * 0.5;
-            let icon_x = size.width - pad_h - icon_size;
-            let transform = Affine::translate((icon_x, icon_y)) * Affine::scale(icon_size);
-            painter.fill(transform * icon.as_ref(), icon_color).draw();
         }
     }
 
@@ -702,7 +741,21 @@ impl Widget for ThemedButton {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.child.id()])
+        match (&self.icon, &self.trailing_icon) {
+            (None, None) => ChildrenIds::from_slice(&[self.child.id()]),
+            (Some(i), None) => {
+                let ids = [self.child.id(), i.id()];
+                ChildrenIds::from_slice(&ids)
+            }
+            (None, Some(ti)) => {
+                let ids = [self.child.id(), ti.id()];
+                ChildrenIds::from_slice(&ids)
+            }
+            (Some(i), Some(ti)) => {
+                let ids = [self.child.id(), i.id(), ti.id()];
+                ChildrenIds::from_slice(&ids)
+            }
+        }
     }
 
     fn propagates_pointer_interaction(&self) -> bool {
