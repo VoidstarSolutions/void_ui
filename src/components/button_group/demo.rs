@@ -16,6 +16,7 @@ use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 use super::{button_group, toggle_button_group};
 use crate::components::ButtonVariant;
 use crate::components::scroll_container::ScrollBarVisibility;
+use crate::label as ui_label;
 use crate::with_source;
 use crate::{Theme, scroll_container};
 
@@ -83,8 +84,22 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
 
     let toggle_vertical_example = ToggleGroupDemo::vertical(*theme, 3);
 
+    let title_block = flex_col((
+        ui_label("Button Group")
+            .text_size(theme.typography.size_title)
+            .color(theme.palette.text)
+            .render(theme),
+        ui_label("A row or column of related buttons that share a visual grouping. Supports toggle selection.")
+            .color(theme.palette.text_muted)
+            .multiline(true)
+            .render(theme),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Start)
+    .gap(Length::px(4.0));
+
     scroll_container(
         flex_col((
+            title_block,
             header("Horizontal group"),
             horizontal_example,
             header("Vertical group"),

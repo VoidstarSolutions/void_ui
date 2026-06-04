@@ -13,6 +13,7 @@ use xilem::{Pod, ViewCtx, WidgetView};
 use super::{ScrollBarVisibility, scroll_container};
 use crate::Theme;
 use crate::components::radio::radio;
+use crate::label as ui_label;
 use crate::with_source;
 
 // --- Static scroll demos ------------------------------------------------
@@ -47,9 +48,23 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
         .fixed_height(Length::px(200.0))
     });
 
+    let title_block = flex_col((
+        ui_label("Scroll Container")
+            .text_size(theme.typography.size_title)
+            .color(theme.palette.text)
+            .render(theme),
+        ui_label("A scrollable region that clips its child and shows a scroll bar on overflow.")
+            .color(theme.palette.text_muted)
+            .multiline(true)
+            .render(theme),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Start)
+    .gap(Length::px(4.0));
+
     sized_box(
         scroll_container(
             flex_col((
+                title_block,
                 header("Both axes — 12 × 8 grid in a 320 × 200 viewport"),
                 both_axes,
                 header("Vertical only — constrain_horizontal(true)"),

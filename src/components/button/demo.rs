@@ -248,10 +248,28 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
     .cross_axis_alignment(CrossAxisAlignment::Start)
     .gap(Length::px(16.0));
 
+    let title_block = flex_col((
+        label("Button")
+            .text_size(theme.typography.size_title)
+            .color(theme.palette.text)
+            .render(theme),
+        label("Themed, interactive button with style variants, disabled/active states, and an optional loading spinner.")
+            .color(theme.palette.text_muted)
+            .multiline(true)
+            .render(theme),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Start)
+    .gap(Length::px(4.0));
+
     scroll_container(
-        flex_col((flex_row((disabled_toggle, active_toggle)), top, bottom))
-            .cross_axis_alignment(CrossAxisAlignment::Start)
-            .gap(Length::px(16.0)),
+        flex_col((
+            title_block,
+            flex_row((disabled_toggle, active_toggle)),
+            top,
+            bottom,
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .gap(Length::px(16.0)),
     )
     .scroll_bar_visibility(ScrollBarVisibility::OnActivity)
     .render(theme)

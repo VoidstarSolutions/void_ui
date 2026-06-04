@@ -11,6 +11,8 @@ use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::checkbox;
 use crate::Theme;
+use crate::components::ScrollBarVisibility;
+use crate::scroll_container;
 use crate::with_source;
 
 #[derive(Debug, Clone, Default)]
@@ -105,9 +107,34 @@ fn build_inner(theme: &Theme, state: &CheckboxDemo) -> impl WidgetView<CheckboxD
         .gap(Length::px(8.0))
     });
 
-    flex_col((header("Box only"), bare, header("With label"), labeled))
+    let title_block = flex_col((
+        label("Checkbox")
+            .text_size(theme.typography.size_title)
+            .color(theme.palette.text)
+            .render(theme),
+        label(
+            "Two-state toggle with optional label. Group mutual-exclusion is managed by the host.",
+        )
+        .color(theme.palette.text_muted)
+        .multiline(true)
+        .render(theme),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Start)
+    .gap(Length::px(4.0));
+
+    scroll_container(
+        flex_col((
+            title_block,
+            header("Box only"),
+            bare,
+            header("With label"),
+            labeled,
+        ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
-        .gap(Length::px(16.0))
+        .gap(Length::px(16.0)),
+    )
+    .scroll_bar_visibility(ScrollBarVisibility::OnActivity)
+    .render(theme)
 }
 
 impl ViewMarker for CheckboxDemoPanel {}

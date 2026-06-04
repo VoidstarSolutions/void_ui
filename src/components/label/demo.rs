@@ -142,8 +142,24 @@ fn build_inner(theme: &Theme, state: &LabelDemoState) -> impl WidgetView<LabelDe
         .render(theme)
     });
 
+    let title_block = flex_col((
+        label("Label")
+            .text_size(theme.typography.size_title)
+            .color(theme.palette.text)
+            .render(theme),
+        label(
+            "Themed text with optional secondary (muted) text, masking, word-wrap, and alignment.",
+        )
+        .color(theme.palette.text_muted)
+        .multiline(true)
+        .render(theme),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Start)
+    .gap(Length::px(4.0));
+
     scroll_container(
         flex_col((
+            title_block,
             section_header("Sizes", theme),
             sizes_section(theme),
             section_header("Colors", theme),

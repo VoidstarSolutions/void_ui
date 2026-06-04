@@ -36,6 +36,7 @@ pub struct Typography {
     /// Caption / label / chip size, in px. Used for axis labels,
     /// pin-rail labels, legend, meta-tags.
     pub size_caption: f32,
+    pub size_title: f32,
 }
 
 const SANS: FontStack = FontStack::new(&[
@@ -64,6 +65,7 @@ impl Typography {
             mono: MONO,
             size_body: 13.0,
             size_caption: 10.0,
+            size_title: 20.0,
         }
     }
 }

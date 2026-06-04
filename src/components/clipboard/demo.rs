@@ -9,6 +9,7 @@ use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::clipboard;
 use crate::components::ScrollBarVisibility;
+use crate::label as ui_label;
 use crate::with_source;
 use crate::{Theme, scroll_container};
 
@@ -83,8 +84,21 @@ fn build_inner(
             .color(theme.palette.text_muted)
     };
 
+    let title_block = flex_col((
+        ui_label("Clipboard")
+            .text_size(theme.typography.size_title)
+            .color(theme.palette.text)
+            .render(theme),
+        ui_label("Icon button that copies a value to the system clipboard and shows a brief checkmark on success.")
+            .color(theme.palette.text_muted)
+            .multiline(true)
+            .render(theme),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Start)
+    .gap(Length::px(4.0));
+
     scroll_container(
-        flex_col((header("Clipboard button"), examples, feedback))
+        flex_col((title_block, header("Clipboard button"), examples, feedback))
             .cross_axis_alignment(CrossAxisAlignment::Start)
             .gap(Length::px(16.0)),
     )
