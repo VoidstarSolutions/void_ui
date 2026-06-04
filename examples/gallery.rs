@@ -11,8 +11,8 @@ use xilem::masonry::layout::Length;
 use xilem::peniko::Color;
 use xilem::style::Style as _;
 use xilem::view::{
-    CrossAxisAlignment, FlexExt as _, FlexSpacer, MainAxisAlignment, flex_col, flex_row, label,
-    portal, sized_box,
+    CrossAxisAlignment, FlexExt as _, FlexSpacer, MainAxisAlignment, flex_col, flex_row, portal,
+    sized_box,
 };
 use xilem::winit::error::EventLoopError;
 use xilem::{AnyWidgetView, EventLoop, WidgetView, WindowOptions, Xilem};
@@ -21,9 +21,10 @@ use void_ui::components::data_grid::demo::{
     Demo, DemoTick, StockDemo, StockQuote, arrange_columns, arrange_stock_columns,
 };
 use void_ui::components::{
-    ColumnId, ColumnWidths, ComponentKind, FilterState, SortState, button, data_grid,
-    sidebar_item,
+    ColumnId, ColumnWidths, ComponentKind, FilterState, SortState, button, data_grid, sidebar_item,
+    sidebar_panel,
 };
+use void_ui::label;
 use void_ui::layout::flex_wrap;
 use void_ui::theme::{Density, Theme};
 
@@ -31,6 +32,7 @@ struct State {
     theme: Theme,
     focused: ComponentKind,
     theme_panel_open: bool,
+    sidebar_collapsed: bool,
     data_grid: Demo,
     stock_quotes: StockDemo,
 }
@@ -41,6 +43,7 @@ impl State {
             theme: Theme::dark(),
             focused: ComponentKind::Button,
             theme_panel_open: false,
+            sidebar_collapsed: false,
             // Seed with 100k rows so virtualization is exercised on
             // first open; cheaper than a million but big enough that
             // scrolling has to be real.
@@ -55,6 +58,7 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
     let theme = state.theme;
     let focused = state.focused;
     let theme_panel_open = state.theme_panel_open;
+    let sidebar_collapsed = state.sidebar_collapsed;
     // Snapshot the data-grid demo's row count and base timestamp at
     // frame time so the panel can be built without further state
     // access. The grid reads rows via the lens closures it captures.
@@ -91,6 +95,7 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
     let workspace = workspace_row(
         focused,
         theme_panel_open,
+        sidebar_collapsed,
         &theme,
         DataGridSnapshot {
             row_count: dg_row_count,
@@ -136,17 +141,22 @@ struct StockSnapshot {
 fn workspace_row(
     focused: ComponentKind,
     theme_panel_open: bool,
+    sidebar_collapsed: bool,
     theme: &Theme,
     dg: DataGridSnapshot,
     stock: StockSnapshot,
 ) -> Box<AnyWidgetView<State>> {
-    let sidebar_view = sized_box(sidebar(focused, theme))
-        .fixed_width(Length::px(180.0))
-        .padding(Length::px(12.0))
-        .background_color(theme.palette.surface);
+    let sidebar_view = sidebar_panel(
+        sized_box(sidebar_items(focused, theme))
+            .padding(Length::px(12.0))
+            .background_color(theme.palette.surface),
+        |s: &mut State| s.sidebar_collapsed = !s.sidebar_collapsed,
+    )
+    .collapsed(sidebar_collapsed)
+    .render(theme);
     let main = sized_box(main_pane(focused, theme, dg, stock))
-    .padding(Length::px(20.0))
-    .background_color(theme.palette.bg);
+        .padding(Length::px(20.0))
+        .background_color(theme.palette.bg);
 
     if theme_panel_open {
         let panel = sized_box(
@@ -171,10 +181,12 @@ fn workspace_row(
 fn topbar(theme_panel_open: bool, theme: &Theme) -> impl WidgetView<State> + use<> {
     let title = label("void-ui · components")
         .text_size(16.0)
-        .color(theme.palette.text);
+        .color(theme.palette.text)
+        .render(theme);
     let subtitle = label("Tessera-styled widget library")
         .text_size(theme.typography.size_caption)
-        .color(theme.palette.text_faint);
+        .color(theme.palette.text_faint)
+        .render(theme);
     let header = flex_col((title, subtitle))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(2.0));
@@ -196,22 +208,42 @@ fn topbar(theme_panel_open: bool, theme: &Theme) -> impl WidgetView<State> + use
         .border(theme.palette.border, Length::px(1.0))
 }
 
-fn sidebar(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State> + use<> {
+fn sidebar_items(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State> + use<> {
     flex_col((
         sidebar_item("Button", |s: &mut State| {
             s.focused = ComponentKind::Button;
         })
         .active(focused == ComponentKind::Button)
         .render(theme),
+        sidebar_item("Button Group", |s: &mut State| {
+            s.focused = ComponentKind::ButtonGroup;
+        })
+        .active(focused == ComponentKind::ButtonGroup)
+        .render(theme),
         sidebar_item("Checkbox", |s: &mut State| {
             s.focused = ComponentKind::Checkbox;
         })
         .active(focused == ComponentKind::Checkbox)
         .render(theme),
+        sidebar_item("Clipboard", |s: &mut State| {
+            s.focused = ComponentKind::Clipboard;
+        })
+        .active(focused == ComponentKind::Clipboard)
+        .render(theme),
+        sidebar_item("Code View", |s: &mut State| {
+            s.focused = ComponentKind::CodeView;
+        })
+        .active(focused == ComponentKind::CodeView)
+        .render(theme),
         sidebar_item("Data Grid", |s: &mut State| {
             s.focused = ComponentKind::DataGrid;
         })
         .active(focused == ComponentKind::DataGrid)
+        .render(theme),
+        sidebar_item("Label", |s: &mut State| {
+            s.focused = ComponentKind::Label;
+        })
+        .active(focused == ComponentKind::Label)
         .render(theme),
         sidebar_item("Stock Quotes", |s: &mut State| {
             s.focused = ComponentKind::StockQuotes;
@@ -251,14 +283,20 @@ fn main_pane(
 ) -> Box<AnyWidgetView<State>> {
     match focused {
         ComponentKind::Button => Box::new(void_ui::components::button::demo::panel(theme)),
+        ComponentKind::ButtonGroup => {
+            Box::new(void_ui::components::button_group::demo::panel(theme))
+        }
         ComponentKind::Checkbox => Box::new(void_ui::components::checkbox::demo::panel(theme)),
+        ComponentKind::Clipboard => Box::new(void_ui::components::clipboard::demo::panel(theme)),
         ComponentKind::DataGrid => Box::new(data_grid_panel(theme, dg)),
+        ComponentKind::Label => Box::new(void_ui::components::label::demo::panel(theme)),
         ComponentKind::StockQuotes => Box::new(stock_quotes_panel(theme, stock)),
         ComponentKind::Radio => Box::new(void_ui::components::radio::demo::panel(theme)),
         ComponentKind::ScrollContainer => {
             Box::new(void_ui::components::scroll_container::demo::panel(theme))
         }
         ComponentKind::Sidebar => Box::new(void_ui::components::sidebar::demo::panel(theme)),
+        ComponentKind::CodeView => Box::new(void_ui::components::code_view::demo::panel(theme)),
         ComponentKind::Tooltip => Box::new(void_ui::components::tooltip::demo::panel(theme)),
     }
 }
@@ -338,7 +376,8 @@ fn data_grid_panel(theme: &Theme, dg: DataGridSnapshot) -> impl WidgetView<State
         FlexSpacer::Flex(1.0),
         label(format!("{row_count} rows"))
             .text_size(theme.typography.size_caption)
-            .color(theme.palette.text_muted),
+            .color(theme.palette.text_muted)
+            .render(theme),
     ))
     .cross_axis_alignment(CrossAxisAlignment::Center)
     .gap(Length::px(8.0));
@@ -404,7 +443,8 @@ fn stock_quotes_panel(theme: &Theme, stock: StockSnapshot) -> impl WidgetView<St
     let toolbar = flex_row((
         label("NASDAQ symbols — static snapshot")
             .text_size(theme.typography.size_caption)
-            .color(theme.palette.text_muted),
+            .color(theme.palette.text_muted)
+            .render(theme),
         FlexSpacer::Flex(1.0),
         // Show/hide + reorder over the host-owned column layout (id-keyed
         // sort/filter/width follow each column across the change).
@@ -426,7 +466,8 @@ fn stock_quotes_panel(theme: &Theme, stock: StockSnapshot) -> impl WidgetView<St
         FlexSpacer::Flex(1.0),
         label(format!("{row_count} symbols"))
             .text_size(theme.typography.size_caption)
-            .color(theme.palette.text_muted),
+            .color(theme.palette.text_muted)
+            .render(theme),
     ))
     .cross_axis_alignment(CrossAxisAlignment::Center)
     .gap(Length::px(8.0));
@@ -497,6 +538,7 @@ fn section_header(title: &'static str, theme: &Theme) -> impl WidgetView<State> 
         .text_size(theme.typography.size_caption)
         .letter_spacing(1.2)
         .color(theme.palette.text_faint)
+        .render(theme)
 }
 
 fn theme_variant_row(theme: &Theme) -> impl WidgetView<State> + use<> {
@@ -608,10 +650,12 @@ fn text_block(theme: &Theme) -> impl WidgetView<State> + use<> {
         flex_col((
             label("Aa 0123 — $184.62")
                 .text_size(theme.typography.size_body)
-                .color(color),
+                .color(color)
+                .render(theme),
             label(name)
                 .text_size(theme.typography.size_caption)
-                .color(theme.palette.text_faint),
+                .color(theme.palette.text_faint)
+                .render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(2.0))
@@ -632,10 +676,12 @@ fn density_radii_block(theme: &Theme) -> impl WidgetView<State> + use<> {
         flex_row((
             label(k)
                 .text_size(theme.typography.size_caption)
-                .color(theme.palette.text_faint),
+                .color(theme.palette.text_faint)
+                .render(theme),
             label(v)
                 .text_size(theme.typography.size_body)
-                .color(theme.palette.text),
+                .color(theme.palette.text)
+                .render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(8.0))
@@ -653,7 +699,7 @@ fn density_radii_block(theme: &Theme) -> impl WidgetView<State> + use<> {
 }
 
 fn swatch_tile(name: &'static str, color: Color, theme: &Theme) -> impl WidgetView<State> + use<> {
-    let block = sized_box(label(""))
+    let block = sized_box(label("").render(theme))
         .fixed_width(Length::px(96.0))
         .fixed_height(Length::px(32.0))
         .background_color(color)
@@ -661,7 +707,8 @@ fn swatch_tile(name: &'static str, color: Color, theme: &Theme) -> impl WidgetVi
         .corner_radius(Length::px(f64::from(theme.radius.small)));
     let caption = label(name)
         .text_size(theme.typography.size_caption)
-        .color(theme.palette.text_muted);
+        .color(theme.palette.text_muted)
+        .render(theme);
     flex_col((block, caption))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(2.0))

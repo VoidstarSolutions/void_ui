@@ -256,8 +256,8 @@ pub fn sort_indices<R, State>(
 
 #[cfg(test)]
 mod tests {
-    use super::{sort_indices, ColumnId, SortDirection, SortState};
-    use crate::components::data_grid::column::{text_column, CellAlign, ColumnDef};
+    use super::{ColumnId, SortDirection, SortState, sort_indices};
+    use crate::components::data_grid::column::{CellAlign, ColumnDef, text_column};
 
     fn id(s: &str) -> ColumnId {
         ColumnId::from(s)
@@ -291,13 +291,23 @@ mod tests {
 
         s.cycle(id("price"));
         assert_eq!(s.primary(), Some(&id("price")));
-        assert_eq!(s.direction_for(&id("price")), Some(SortDirection::Ascending));
+        assert_eq!(
+            s.direction_for(&id("price")),
+            Some(SortDirection::Ascending)
+        );
 
         s.cycle(id("price"));
-        assert_eq!(s.direction_for(&id("price")), Some(SortDirection::Descending));
+        assert_eq!(
+            s.direction_for(&id("price")),
+            Some(SortDirection::Descending)
+        );
 
         s.cycle(id("price"));
-        assert_eq!(s.primary(), None, "third click on same column clears the sort");
+        assert_eq!(
+            s.primary(),
+            None,
+            "third click on same column clears the sort"
+        );
         assert!(s.is_empty());
     }
 
@@ -306,7 +316,10 @@ mod tests {
         let mut s = SortState::new();
         s.cycle(id("size"));
         s.cycle(id("size")); // now descending on size
-        assert_eq!(s.direction_for(&id("size")), Some(SortDirection::Descending));
+        assert_eq!(
+            s.direction_for(&id("size")),
+            Some(SortDirection::Descending)
+        );
 
         s.cycle(id("price"));
         assert_eq!(s.primary(), Some(&id("price")));
@@ -322,7 +335,10 @@ mod tests {
     fn direction_for_only_matches_active_column() {
         let mut s = SortState::new();
         s.cycle(id("price"));
-        assert_eq!(s.direction_for(&id("price")), Some(SortDirection::Ascending));
+        assert_eq!(
+            s.direction_for(&id("price")),
+            Some(SortDirection::Ascending)
+        );
         assert_eq!(s.direction_for(&id("size")), None);
     }
 
@@ -338,10 +354,16 @@ mod tests {
 
         // Shift-click size again: its own direction flips, priority kept.
         s.cycle_additive(id("size"));
-        assert_eq!(s.direction_for(&id("size")), Some(SortDirection::Descending));
+        assert_eq!(
+            s.direction_for(&id("size")),
+            Some(SortDirection::Descending)
+        );
         assert_eq!(s.priority_of(&id("size")), Some(1), "priority unchanged");
         // Price (primary) is untouched throughout.
-        assert_eq!(s.direction_for(&id("price")), Some(SortDirection::Ascending));
+        assert_eq!(
+            s.direction_for(&id("price")),
+            Some(SortDirection::Ascending)
+        );
 
         // Third shift-click removes size; price stays primary.
         s.cycle_additive(id("size"));
@@ -380,8 +402,14 @@ mod tests {
 
     #[test]
     fn reversed_flips() {
-        assert_eq!(SortDirection::Ascending.reversed(), SortDirection::Descending);
-        assert_eq!(SortDirection::Descending.reversed(), SortDirection::Ascending);
+        assert_eq!(
+            SortDirection::Ascending.reversed(),
+            SortDirection::Descending
+        );
+        assert_eq!(
+            SortDirection::Descending.reversed(),
+            SortDirection::Ascending
+        );
     }
 
     #[test]
@@ -390,7 +418,11 @@ mod tests {
         let mut idx = vec![0, 1, 2];
         // `SortState::new()` has no active column.
         sort_indices(&mut idx, &rows, &SortState::new(), &int_columns());
-        assert_eq!(idx, vec![0, 1, 2], "unsorted leaves incoming order untouched");
+        assert_eq!(
+            idx,
+            vec![0, 1, 2],
+            "unsorted leaves incoming order untouched"
+        );
     }
 
     #[test]
@@ -526,7 +558,11 @@ mod tests {
         let mut s = SortState::new();
         s.cycle(id("Plain")); // "Plain" has no comparator
         sort_indices(&mut idx, &rows, &s, &columns_with_unsortable());
-        assert_eq!(idx, vec![0, 1, 2], "unsortable column leaves order untouched");
+        assert_eq!(
+            idx,
+            vec![0, 1, 2],
+            "unsortable column leaves order untouched"
+        );
     }
 
     #[test]
@@ -545,7 +581,11 @@ mod tests {
             |r: &i32| r.to_string(),
         )];
         sort_indices(&mut idx, &rows, &s, &only_plain);
-        assert_eq!(idx, vec![0, 1, 2], "absent sorted column leaves order untouched");
+        assert_eq!(
+            idx,
+            vec![0, 1, 2],
+            "absent sorted column leaves order untouched"
+        );
     }
 
     #[test]

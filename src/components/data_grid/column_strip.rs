@@ -28,9 +28,9 @@
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
     AccessCtx, AccessEvent, ChildrenIds, CollectionWidget, CursorIcon, EventCtx, LayoutCtx,
-    MeasureCtx, NewWidget, PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PointerUpdate,
-    PropertiesMut, PropertiesRef, QueryCtx, RegisterCtx, TextEvent, Update, UpdateCtx, Widget,
-    WidgetMut, WidgetPod,
+    MeasureCtx, NewWidget, PaintCtx, PointerButton, PointerButtonEvent, PointerEvent,
+    PointerUpdate, PropertiesMut, PropertiesRef, QueryCtx, RegisterCtx, TextEvent, Update,
+    UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, Size};
@@ -356,7 +356,8 @@ impl Widget for ColumnStrip {
         // `pos` is in window coordinates — convert to this widget's local
         // space before boundary-testing (matches masonry's `Split`).
         let local_x = ctx.to_local(pos).x;
-        if self.separators.is_some() && (self.drag.is_some() || self.boundary_near(local_x).is_some())
+        if self.separators.is_some()
+            && (self.drag.is_some() || self.boundary_near(local_x).is_some())
         {
             CursorIcon::EwResize
         } else {
@@ -419,7 +420,12 @@ impl Widget for ColumnStrip {
         ctx.clear_baselines();
     }
 
-    fn paint(&mut self, ctx: &mut PaintCtx<'_>, _props: &PropertiesRef<'_>, painter: &mut Painter<'_>) {
+    fn paint(
+        &mut self,
+        ctx: &mut PaintCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        painter: &mut Painter<'_>,
+    ) {
         // Resizable strips draw a 1px separator at each column boundary,
         // brightened for the hovered/dragged boundary.
         let Some(style) = self.separators else {

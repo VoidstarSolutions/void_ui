@@ -81,7 +81,9 @@ impl FilterState {
 
     /// Iterates `(column_id, query)` pairs in ascending id order.
     pub fn iter(&self) -> impl Iterator<Item = (&ColumnId, &str)> + '_ {
-        self.queries.iter().map(|(col, query)| (col, query.as_str()))
+        self.queries
+            .iter()
+            .map(|(col, query)| (col, query.as_str()))
     }
 }
 
@@ -126,7 +128,9 @@ pub fn filtered_indices<R, State>(
     (0..rows.len())
         .filter(|&i| {
             let row = &rows[i];
-            active.iter().all(|(predicate, query)| predicate(row, query))
+            active
+                .iter()
+                .all(|(predicate, query)| predicate(row, query))
         })
         .collect()
 }
@@ -167,9 +171,18 @@ mod tests {
 
     fn rows() -> Vec<Row> {
         vec![
-            Row { symbol: "AAPL", sector: "Tech" },
-            Row { symbol: "MSFT", sector: "Tech" },
-            Row { symbol: "AMZN", sector: "Retail" },
+            Row {
+                symbol: "AAPL",
+                sector: "Tech",
+            },
+            Row {
+                symbol: "MSFT",
+                sector: "Tech",
+            },
+            Row {
+                symbol: "AMZN",
+                sector: "Retail",
+            },
         ]
     }
 

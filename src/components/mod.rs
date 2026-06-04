@@ -13,24 +13,34 @@
 //! the host, not a tree walk.
 
 pub mod button;
+pub mod button_group;
 pub mod checkbox;
+pub mod clipboard;
+pub mod code_view;
 pub mod data_grid;
+pub mod label;
 pub mod radio;
 pub mod scroll_container;
 pub mod sidebar;
 pub mod tooltip;
 
 pub use button::{Button, ButtonVariant, ButtonView, button};
+pub use button_group::{ButtonGroup, button_group, toggle_button_group};
 pub use checkbox::{Checkbox, CheckboxView, checkbox};
+pub use clipboard::{Clipboard, ClipboardView, clipboard};
+pub use code_view::{ReadOnlyText, ReadOnlyTextView, RustHighlighter, read_only_text};
 pub use data_grid::{
     CellAlign, ColumnDef, ColumnId, ColumnWidths, DataGrid, FilterState, MIN_COLUMN_WIDTH,
     SelectionState, SortDirection, SortState, colored_text_column, data_grid, filtered_indices,
     optional_text_column, text_column,
 };
+pub use label::{Label, LabelAlignment, label};
 pub use scroll_container::{
     ScrollBarVisibility, ScrollContainer, ScrollContainerView, scroll_container,
 };
-pub use sidebar::{SidebarItem, SidebarItemView, sidebar_item};
+pub use sidebar::{
+    SidebarItem, SidebarItemView, SidebarPanel, SidebarPanelView, sidebar_item, sidebar_panel,
+};
 pub use tooltip::{Tooltip, TooltipView, tooltip};
 
 /// One entry per component the gallery exposes.
@@ -43,8 +53,12 @@ pub use tooltip::{Tooltip, TooltipView, tooltip};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ComponentKind {
     Button,
+    ButtonGroup,
     Checkbox,
+    Clipboard,
+    CodeView,
     DataGrid,
+    Label,
     StockQuotes,
     Radio,
     ScrollContainer,
@@ -58,8 +72,12 @@ impl ComponentKind {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Button => "Button",
+            Self::ButtonGroup => "Button Group",
             Self::Checkbox => "Checkbox",
+            Self::Clipboard => "Clipboard",
+            Self::CodeView => "Code View",
             Self::DataGrid => "Data Grid",
+            Self::Label => "Label",
             Self::StockQuotes => "Stock Quotes",
             Self::Radio => "Radio",
             Self::ScrollContainer => "Scroll Container",
@@ -73,6 +91,11 @@ impl ComponentKind {
     pub const fn all() -> &'static [Self] {
         &[
             Self::Button,
+            Self::ButtonGroup,
+            Self::Checkbox,
+            Self::Clipboard,
+            Self::CodeView,
+            Self::Label,
             Self::Radio,
             Self::DataGrid,
             Self::StockQuotes,

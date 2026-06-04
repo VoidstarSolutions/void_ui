@@ -21,11 +21,11 @@
 use xilem::peniko::Color;
 
 use super::column::{
-    colored_text_column, optional_text_column, text_column, CellAlign, ColumnDef, ColumnId,
+    CellAlign, ColumnDef, ColumnId, colored_text_column, optional_text_column, text_column,
 };
-use super::filter::{filtered_indices, FilterState};
+use super::filter::{FilterState, filtered_indices};
 use super::selection::SelectionState;
-use super::sort::{sort_indices, SortState};
+use super::sort::{SortState, sort_indices};
 use super::width::ColumnWidths;
 use crate::Theme;
 
@@ -182,7 +182,10 @@ impl Demo {
 
     /// The full set of column ids in natural (definition) order.
     fn all_column_ids() -> Vec<ColumnId> {
-        tick_columns::<()>(0).iter().map(ColumnDef::effective_id).collect()
+        tick_columns::<()>(0)
+            .iter()
+            .map(ColumnDef::effective_id)
+            .collect()
     }
 
     /// The current visible column layout (ids in display order),
@@ -426,7 +429,8 @@ pub fn tick_columns<State: 'static>(base_time_ns: i64) -> Vec<ColumnDef<DemoTick
         // Sortable by its own value (price × size), distinct from Price —
         // so "Price then Notional" is a meaningful two-key sort.
         .sortable_by_key(|t: &DemoTick| {
-            t.price_units.saturating_mul(i64::try_from(t.size.unwrap_or(0)).unwrap_or(0))
+            t.price_units
+                .saturating_mul(i64::try_from(t.size.unwrap_or(0)).unwrap_or(0))
         }),
         text_column("Exchange", 120.0, CellAlign::Start, |t: &DemoTick| {
             demo_exchange(t.event_ns).to_string()
@@ -610,7 +614,10 @@ impl StockDemo {
     #[must_use]
     pub fn column_layout(&self) -> Vec<ColumnId> {
         self.column_order.clone().unwrap_or_else(|| {
-            stock_columns::<()>().iter().map(ColumnDef::effective_id).collect()
+            stock_columns::<()>()
+                .iter()
+                .map(ColumnDef::effective_id)
+                .collect()
         })
     }
 
@@ -745,14 +752,20 @@ fn bps(v: f64) -> i64 {
 #[must_use]
 pub fn stock_columns<S: 'static>() -> Vec<ColumnDef<StockQuote, S>> {
     vec![
-        text_column("Symbol", 80.0, CellAlign::Start, |q: &StockQuote| q.symbol.to_string())
-            .sortable_by_key(|q: &StockQuote| q.symbol)
-            .filterable_by_text(|q: &StockQuote| q.symbol.to_string()),
-        text_column("Name", 190.0, CellAlign::Start, |q: &StockQuote| q.name.to_string())
-            .sortable_by_key(|q: &StockQuote| q.name)
-            .filterable_by_text(|q: &StockQuote| q.name.to_string()),
-        text_column("Last", 90.0, CellAlign::End, |q: &StockQuote| format!("${:.2}", q.last))
-            .sortable_by_key(|q: &StockQuote| cents(q.last)),
+        text_column("Symbol", 80.0, CellAlign::Start, |q: &StockQuote| {
+            q.symbol.to_string()
+        })
+        .sortable_by_key(|q: &StockQuote| q.symbol)
+        .filterable_by_text(|q: &StockQuote| q.symbol.to_string()),
+        text_column("Name", 190.0, CellAlign::Start, |q: &StockQuote| {
+            q.name.to_string()
+        })
+        .sortable_by_key(|q: &StockQuote| q.name)
+        .filterable_by_text(|q: &StockQuote| q.name.to_string()),
+        text_column("Last", 90.0, CellAlign::End, |q: &StockQuote| {
+            format!("${:.2}", q.last)
+        })
+        .sortable_by_key(|q: &StockQuote| cents(q.last)),
         colored_text_column(
             "Chg",
             80.0,
@@ -769,25 +782,39 @@ pub fn stock_columns<S: 'static>() -> Vec<ColumnDef<StockQuote, S>> {
             |q: &StockQuote, theme: &Theme| change_color(q.change_pct, theme),
         )
         .sortable_by_key(|q: &StockQuote| bps(q.change_pct)),
-        text_column("Open", 90.0, CellAlign::End, |q: &StockQuote| format!("${:.2}", q.open))
-            .sortable_by_key(|q: &StockQuote| cents(q.open)),
-        text_column("High", 90.0, CellAlign::End, |q: &StockQuote| format!("${:.2}", q.high))
-            .sortable_by_key(|q: &StockQuote| cents(q.high)),
-        text_column("Low", 90.0, CellAlign::End, |q: &StockQuote| format!("${:.2}", q.low))
-            .sortable_by_key(|q: &StockQuote| cents(q.low)),
-        text_column("Volume", 110.0, CellAlign::End, |q: &StockQuote| fmt_compact(q.volume))
-            .sortable_by_key(|q: &StockQuote| q.volume),
-        text_column("Avg Vol", 110.0, CellAlign::End, |q: &StockQuote| fmt_compact(q.avg_volume))
-            .sortable_by_key(|q: &StockQuote| q.avg_volume),
-        text_column("Mkt Cap", 110.0, CellAlign::End, |q: &StockQuote| fmt_compact(q.market_cap))
-            .sortable_by_key(|q: &StockQuote| q.market_cap),
+        text_column("Open", 90.0, CellAlign::End, |q: &StockQuote| {
+            format!("${:.2}", q.open)
+        })
+        .sortable_by_key(|q: &StockQuote| cents(q.open)),
+        text_column("High", 90.0, CellAlign::End, |q: &StockQuote| {
+            format!("${:.2}", q.high)
+        })
+        .sortable_by_key(|q: &StockQuote| cents(q.high)),
+        text_column("Low", 90.0, CellAlign::End, |q: &StockQuote| {
+            format!("${:.2}", q.low)
+        })
+        .sortable_by_key(|q: &StockQuote| cents(q.low)),
+        text_column("Volume", 110.0, CellAlign::End, |q: &StockQuote| {
+            fmt_compact(q.volume)
+        })
+        .sortable_by_key(|q: &StockQuote| q.volume),
+        text_column("Avg Vol", 110.0, CellAlign::End, |q: &StockQuote| {
+            fmt_compact(q.avg_volume)
+        })
+        .sortable_by_key(|q: &StockQuote| q.avg_volume),
+        text_column("Mkt Cap", 110.0, CellAlign::End, |q: &StockQuote| {
+            fmt_compact(q.market_cap)
+        })
+        .sortable_by_key(|q: &StockQuote| q.market_cap),
         optional_text_column("P/E", 80.0, CellAlign::End, |q: &StockQuote| {
             q.pe.map(|p| format!("{p:.1}"))
         })
         // `Option<i64>` is `Ord` (None sorts first), clustering N/A P/Es.
         .sortable_by_key(|q: &StockQuote| q.pe.map(bps)),
-        text_column("EPS", 80.0, CellAlign::End, |q: &StockQuote| format!("${:.2}", q.eps))
-            .sortable_by_key(|q: &StockQuote| cents(q.eps)),
+        text_column("EPS", 80.0, CellAlign::End, |q: &StockQuote| {
+            format!("${:.2}", q.eps)
+        })
+        .sortable_by_key(|q: &StockQuote| cents(q.eps)),
         optional_text_column("Div %", 80.0, CellAlign::End, |q: &StockQuote| {
             q.div_yield.map(|d| format!("{d:.2}%"))
         })
@@ -803,13 +830,17 @@ pub fn stock_columns<S: 'static>() -> Vec<ColumnDef<StockQuote, S>> {
         // Trailing space + a little extra width so the right-aligned Beta
         // value keeps a visible gap from the left-aligned Sector column
         // that follows it (cells have no internal horizontal padding).
-        text_column("Beta", 84.0, CellAlign::End, |q: &StockQuote| format!("{:.2}  ", q.beta))
-            .sortable_by_key(|q: &StockQuote| bps(q.beta)),
-        text_column("Sector", 170.0, CellAlign::Start, |q: &StockQuote| q.sector.to_string())
-            // Low-cardinality → a great multi-sort primary ("Sector then
-            // Mkt Cap" groups by sector and ranks by size within each).
-            .sortable_by_key(|q: &StockQuote| q.sector)
-            .filterable_by_text(|q: &StockQuote| q.sector.to_string()),
+        text_column("Beta", 84.0, CellAlign::End, |q: &StockQuote| {
+            format!("{:.2}  ", q.beta)
+        })
+        .sortable_by_key(|q: &StockQuote| bps(q.beta)),
+        text_column("Sector", 170.0, CellAlign::Start, |q: &StockQuote| {
+            q.sector.to_string()
+        })
+        // Low-cardinality → a great multi-sort primary ("Sector then
+        // Mkt Cap" groups by sector and ranks by size within each).
+        .sortable_by_key(|q: &StockQuote| q.sector)
+        .filterable_by_text(|q: &StockQuote| q.sector.to_string()),
     ]
 }
 
@@ -849,8 +880,8 @@ pub fn arrange_stock_columns<S: 'static>(layout: &[ColumnId]) -> Vec<ColumnDef<S
 #[cfg(test)]
 mod tests {
     use super::{
-        arrange_columns, arrange_stock_columns, side_color, stock_columns, ColumnId, Demo,
-        DemoSide, DemoTick, StockDemo,
+        ColumnId, Demo, DemoSide, DemoTick, StockDemo, arrange_columns, arrange_stock_columns,
+        side_color, stock_columns,
     };
     use crate::Theme;
 
@@ -863,7 +894,10 @@ mod tests {
     fn side_color_uses_trading_palette() {
         let theme = Theme::default();
         assert_eq!(side_color(Some(DemoSide::Buy), &theme), theme.palette.green);
-        assert_eq!(side_color(Some(DemoSide::Sell), &theme), theme.palette.coral);
+        assert_eq!(
+            side_color(Some(DemoSide::Sell), &theme),
+            theme.palette.coral
+        );
         assert_eq!(side_color(None, &theme), theme.palette.text_faint);
     }
 
@@ -913,13 +947,17 @@ mod tests {
         demo.cycle_sort(price_id(), false); // ascending
         assert_eq!(demo.visible.len(), demo.ticks.len());
         assert!(
-            demo.visible.windows(2).all(|w| price_cents(&w[0]) <= price_cents(&w[1])),
+            demo.visible
+                .windows(2)
+                .all(|w| price_cents(&w[0]) <= price_cents(&w[1])),
             "visible rows must be in ascending price order"
         );
         // A second cycle flips to descending.
         demo.cycle_sort(price_id(), false);
         assert!(
-            demo.visible.windows(2).all(|w| price_cents(&w[0]) >= price_cents(&w[1])),
+            demo.visible
+                .windows(2)
+                .all(|w| price_cents(&w[0]) >= price_cents(&w[1])),
             "visible rows must be in descending price order"
         );
         // A third cycle clears the sort; with no filter either, the view
@@ -966,13 +1004,18 @@ mod tests {
             .map(|(i, _)| i)
             .expect("non-empty");
         let picked_id = demo.ticks[picked_pos].id;
-        assert!(picked_pos < demo.ticks.len() - 1, "max-price row isn't already last");
+        assert!(
+            picked_pos < demo.ticks.len() - 1,
+            "max-price row isn't already last"
+        );
         demo.selection.replace_with(picked_id);
 
         // Sort ascending by price; the host materializes `visible`.
         demo.cycle_sort(price_id(), false);
         assert!(
-            demo.visible.windows(2).all(|w| price_cents(&w[0]) <= price_cents(&w[1])),
+            demo.visible
+                .windows(2)
+                .all(|w| price_cents(&w[0]) <= price_cents(&w[1])),
             "precondition: a real reorder happened"
         );
 
@@ -991,7 +1034,11 @@ mod tests {
             .iter()
             .position(|t| t.id == picked_id)
             .expect("selected row must still be present in the view");
-        assert_eq!(new_pos, demo.visible.len() - 1, "max-price row sorts to the end");
+        assert_eq!(
+            new_pos,
+            demo.visible.len() - 1,
+            "max-price row sorts to the end"
+        );
         assert_ne!(
             new_pos, picked_pos,
             "the selected row moved; an index key would now mis-select"
@@ -1070,7 +1117,9 @@ mod tests {
         // correctly ordered by price.
         assert_eq!(demo.sort.primary(), Some(&price_id()));
         assert!(
-            demo.visible.windows(2).all(|w| price_cents(&w[0]) <= price_cents(&w[1])),
+            demo.visible
+                .windows(2)
+                .all(|w| price_cents(&w[0]) <= price_cents(&w[1])),
             "Price sort still holds after the column-layout change"
         );
     }
@@ -1086,7 +1135,9 @@ mod tests {
         // Sort still keyed to Price; order still by price.
         assert_eq!(demo.sort.primary(), Some(&price_id()));
         assert!(
-            demo.visible.windows(2).all(|w| price_cents(&w[0]) <= price_cents(&w[1])),
+            demo.visible
+                .windows(2)
+                .all(|w| price_cents(&w[0]) <= price_cents(&w[1])),
             "Price sort follows the column across a reorder"
         );
     }
@@ -1206,9 +1257,9 @@ mod tests {
         );
         // The 2nd level must actually order within a sector group.
         assert!(
-            demo.visible.windows(2).any(|w| {
-                w[0].sector == w[1].sector && w[0].market_cap > w[1].market_cap
-            }),
+            demo.visible
+                .windows(2)
+                .any(|w| { w[0].sector == w[1].sector && w[0].market_cap > w[1].market_cap }),
             "Mkt Cap tiebreaker orders within a Sector group"
         );
     }
@@ -1226,12 +1277,20 @@ mod tests {
 
     #[test]
     fn arrange_stock_columns_hides_by_omission() {
-        let all: Vec<ColumnId> =
-            stock_columns::<()>().iter().map(super::ColumnDef::effective_id).collect();
+        let all: Vec<ColumnId> = stock_columns::<()>()
+            .iter()
+            .map(super::ColumnDef::effective_id)
+            .collect();
         // Drop "Beta" from the layout → it's absent from the arranged set.
-        let layout: Vec<ColumnId> =
-            all.into_iter().filter(|id| id != &ColumnId::from("Beta")).collect();
+        let layout: Vec<ColumnId> = all
+            .into_iter()
+            .filter(|id| id != &ColumnId::from("Beta"))
+            .collect();
         let cols = arrange_stock_columns::<()>(&layout);
-        assert!(!cols.iter().any(|c| c.effective_id() == ColumnId::from("Beta")));
+        assert!(
+            !cols
+                .iter()
+                .any(|c| c.effective_id() == ColumnId::from("Beta"))
+        );
     }
 }

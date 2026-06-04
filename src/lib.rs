@@ -13,6 +13,12 @@
 
 #![forbid(unsafe_code)]
 
+// Make `::void_ui::...` paths resolvable from within this crate itself, so
+// that proc-macros (specifically `void_ui_macros::with_source!`) can emit
+// absolute paths into this crate that compile both from external callers
+// and from our own modules.
+extern crate self as void_ui;
+
 pub mod components;
 pub mod floating;
 pub mod gallery;
@@ -21,13 +27,16 @@ pub mod pointer_inert;
 pub mod theme;
 
 pub use components::{
-    Button, ButtonVariant, ButtonView, CellAlign, ColumnDef, ColumnWidths, DataGrid, FilterState,
-    MIN_COLUMN_WIDTH, ScrollContainer, ScrollContainerView, SelectionState, SidebarItem,
-    SidebarItemView, SortDirection, SortState, Tooltip, TooltipView, button, colored_text_column,
-    data_grid, filtered_indices, optional_text_column, scroll_container, sidebar_item, text_column,
-    tooltip,
+    Button, ButtonGroup, ButtonVariant, ButtonView, CellAlign, ColumnDef, ColumnWidths, DataGrid,
+    FilterState, Label, LabelAlignment, MIN_COLUMN_WIDTH, ReadOnlyText, ReadOnlyTextView,
+    RustHighlighter, ScrollContainer, ScrollContainerView, SelectionState, SidebarItem,
+    SidebarItemView, SidebarPanel, SidebarPanelView, SortDirection, SortState, Tooltip,
+    TooltipView, button, button_group, colored_text_column, data_grid, filtered_indices, label,
+    optional_text_column, read_only_text, scroll_container, sidebar_item, sidebar_panel,
+    text_column, toggle_button_group, tooltip,
 };
 pub use floating::{FloatingOverlay, FloatingOverlayView, floating, interactive_floating};
 pub use gallery::code_block;
 pub use pointer_inert::{PointerInert, PointerInertView, pointer_inert};
-pub use theme::{Density, FontStack, Palette, Radii, Theme, ThemeVariant, Typography};
+pub use theme::{CodePalette, Density, FontStack, Palette, Radii, Theme, ThemeVariant, Typography};
+pub use void_ui_macros::with_source;

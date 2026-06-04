@@ -624,7 +624,7 @@ where
     //     subtree, they share the horizontal offset automatically — no
     //     manual sync. Vertical virtualization stays inside the body
     //     (`constrain_vertical` leaves the vertical axis to it).
-    let inner = scroll_container(stack)
+    let inner = scroll_container(stack.boxed())
         .constrain_vertical(true)
         .render(&theme);
 
@@ -1040,8 +1040,8 @@ where
         // ColumnStrip gives every body row the same authoritative column
         // x-positions as the header/filter strips. Clone the shared
         // width vec (flat memcpy) since column_strip takes it by value.
-        let row_view = sized_box(column_strip((*widths).clone(), row_height, cells))
-            .background_color(row_bg);
+        let row_view =
+            sized_box(column_strip((*widths).clone(), row_height, cells)).background_color(row_bg);
 
         // Click handler: route modifiers to the matching SelectionState
         // op, all keyed by the row's *stable id*. Borrows of `state` are
@@ -1212,8 +1212,8 @@ const FILTER_ROW_HEIGHT: f64 = 30.0;
 
 #[cfg(test)]
 mod tests {
-    use super::{decompose_columns, project_tsv, visual_range_ids, RowIdSource};
-    use crate::components::data_grid::column::{text_column, CellAlign, TextProjector};
+    use super::{RowIdSource, decompose_columns, project_tsv, visual_range_ids};
+    use crate::components::data_grid::column::{CellAlign, TextProjector, text_column};
     use crate::components::data_grid::selection::SelectionState;
     use crate::components::data_grid::width::ColumnWidths;
     use std::sync::Arc;
@@ -1248,7 +1248,10 @@ mod tests {
     #[test]
     fn visual_range_single_row_when_anchor_equals_target() {
         let data = [10_u64, 20, 30];
-        assert_eq!(visual_range_ids(&data, &id_is_value(), 20, 20), Some(vec![20]));
+        assert_eq!(
+            visual_range_ids(&data, &id_is_value(), 20, 20),
+            Some(vec![20])
+        );
     }
 
     #[test]
@@ -1291,7 +1294,10 @@ mod tests {
     fn project_tsv_is_none_when_nothing_selected() {
         let data = [1_u64, 2, 3];
         let sel = SelectionState::new();
-        assert_eq!(project_tsv(&value_projectors(), &data, &sel, &id_is_value()), None);
+        assert_eq!(
+            project_tsv(&value_projectors(), &data, &sel, &id_is_value()),
+            None
+        );
     }
 
     #[test]

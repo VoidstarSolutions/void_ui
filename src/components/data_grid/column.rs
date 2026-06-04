@@ -398,8 +398,7 @@ mod tests {
     #[test]
     fn explicit_id_overrides_the_title_default() {
         let col: ColumnDef<Row, ()> =
-            text_column("Price", 10.0, CellAlign::End, |r: &Row| r.n.to_string())
-                .id("price_units");
+            text_column("Price", 10.0, CellAlign::End, |r: &Row| r.n.to_string()).id("price_units");
         assert_eq!(col.effective_id(), ColumnId::from("price_units"));
         // The display title is unaffected by the id override.
         assert_eq!(col.title, "Price");
@@ -437,7 +436,9 @@ mod tests {
         let col: ColumnDef<Row, ()> =
             text_column("N", 10.0, CellAlign::End, |r: &Row| r.n.to_string())
                 .sortable_by_key(|r: &Row| r.n);
-        let cmp = col.comparator.expect("sortable_by_key attaches a comparator");
+        let cmp = col
+            .comparator
+            .expect("sortable_by_key attaches a comparator");
         let small = Row { n: 9, name: "a" };
         let large = Row { n: 100, name: "b" };
         // 9 < 100 numerically, even though "100" < "9" as strings.
@@ -452,7 +453,10 @@ mod tests {
             text_column("Name", 10.0, CellAlign::Start, |r: &Row| r.name.to_string())
                 .sortable_by(|a: &Row, b: &Row| a.name.cmp(b.name));
         let cmp = col.comparator.expect("sortable_by attaches a comparator");
-        let a = Row { n: 0, name: "alpha" };
+        let a = Row {
+            n: 0,
+            name: "alpha",
+        };
         let b = Row { n: 0, name: "beta" };
         assert_eq!(cmp(&a, &b), Ordering::Less);
     }
