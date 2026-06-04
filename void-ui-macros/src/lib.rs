@@ -131,9 +131,9 @@ pub fn with_source(input: TokenStream) -> TokenStream {
         &["", "xilem", "masonry", "layout", "Length", "px"],
     );
     let mut px_args = TokenStream::new();
-    px_args.extend(std::iter::once(TokenTree::Literal(Literal::f64_unsuffixed(
-        8.0,
-    ))));
+    px_args.extend(std::iter::once(TokenTree::Literal(
+        Literal::f64_unsuffixed(8.0),
+    )));
     gap_args.extend(std::iter::once(TokenTree::Group(Group::new(
         Delimiter::Parenthesis,
         px_args,
@@ -177,7 +177,10 @@ fn push_path(stream: &mut TokenStream, segments: &[&str]) {
     let mut first_ident = true;
     for (i, seg) in segments.iter().enumerate() {
         if seg.is_empty() {
-            debug_assert!(i == 0, "empty segment only allowed at index 0 for leading ::");
+            debug_assert!(
+                i == 0,
+                "empty segment only allowed at index 0 for leading ::"
+            );
             push_punct(stream, ':', Spacing::Joint);
             push_punct(stream, ':', Spacing::Alone);
             continue;

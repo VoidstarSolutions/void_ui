@@ -36,15 +36,15 @@ impl CodePalette {
     #[must_use]
     pub fn dark() -> Self {
         Self {
-            plain:      oklch(0.88, 0.005, 240.0),
-            keyword:    oklch(0.72, 0.090, 295.0),
-            type_name:  oklch(0.78, 0.090, 195.0),
-            function:   oklch(0.80, 0.090, 80.0),
+            plain: oklch(0.88, 0.005, 240.0),
+            keyword: oklch(0.72, 0.090, 295.0),
+            type_name: oklch(0.78, 0.090, 195.0),
+            function: oklch(0.80, 0.090, 80.0),
             identifier: oklch(0.88, 0.005, 240.0),
-            string:     oklch(0.74, 0.110, 145.0),
-            number:     oklch(0.78, 0.100, 30.0),
-            comment:    oklch(0.55, 0.006, 240.0),
-            operator:   oklch(0.70, 0.006, 240.0),
+            string: oklch(0.74, 0.110, 145.0),
+            number: oklch(0.78, 0.100, 30.0),
+            comment: oklch(0.55, 0.006, 240.0),
+            operator: oklch(0.70, 0.006, 240.0),
         }
     }
 
@@ -52,15 +52,15 @@ impl CodePalette {
     #[must_use]
     pub fn light() -> Self {
         Self {
-            plain:      oklch(0.25, 0.010, 240.0),
-            keyword:    oklch(0.45, 0.130, 295.0),
-            type_name:  oklch(0.45, 0.110, 195.0),
-            function:   oklch(0.55, 0.130, 65.0),
+            plain: oklch(0.25, 0.010, 240.0),
+            keyword: oklch(0.45, 0.130, 295.0),
+            type_name: oklch(0.45, 0.110, 195.0),
+            function: oklch(0.55, 0.130, 65.0),
             identifier: oklch(0.25, 0.010, 240.0),
-            string:     oklch(0.48, 0.130, 145.0),
-            number:     oklch(0.52, 0.130, 30.0),
-            comment:    oklch(0.55, 0.008, 240.0),
-            operator:   oklch(0.45, 0.008, 240.0),
+            string: oklch(0.48, 0.130, 145.0),
+            number: oklch(0.52, 0.130, 30.0),
+            comment: oklch(0.55, 0.008, 240.0),
+            operator: oklch(0.45, 0.008, 240.0),
         }
     }
 

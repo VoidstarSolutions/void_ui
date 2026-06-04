@@ -334,9 +334,7 @@ impl Widget for CodeViewWidget {
             match len_req {
                 LenReq::MinContent => Some(Length::ZERO),
                 LenReq::MaxContent => None,
-                LenReq::FitContent(space) => {
-                    Some(Length::px((space.get() - pad_main).max(0.0)))
-                }
+                LenReq::FitContent(space) => Some(Length::px((space.get() - pad_main).max(0.0))),
             }
         } else {
             // Block axis depends on the cross (inline) length.
@@ -398,16 +396,26 @@ impl Widget for CodeViewWidget {
         }
     }
 
-    fn paint(&mut self, ctx: &mut PaintCtx<'_>, _props: &PropertiesRef<'_>, painter: &mut Painter<'_>) {
+    fn paint(
+        &mut self,
+        ctx: &mut PaintCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        painter: &mut Painter<'_>,
+    ) {
         let size = ctx.border_box_size();
-        let rect = RoundedRect::from_origin_size(Point::ORIGIN, size, f64::from(self.corner_radius));
+        let rect =
+            RoundedRect::from_origin_size(Point::ORIGIN, size, f64::from(self.corner_radius));
 
         if self.background.components[3] > 0.0 {
             painter.fill(rect, self.background).draw();
         }
         if self.border_width > 0.0 && self.border_color.components[3] > 0.0 {
             painter
-                .stroke(rect, &Stroke::new(f64::from(self.border_width)), self.border_color)
+                .stroke(
+                    rect,
+                    &Stroke::new(f64::from(self.border_width)),
+                    self.border_color,
+                )
                 .draw();
         }
 
@@ -415,12 +423,8 @@ impl Widget for CodeViewWidget {
         if self.selection_color.components[3] > 0.0 {
             let pad = f64::from(self.padding);
             for (bbox, _line_index) in self.selection.geometry(&self.paint_layout) {
-                let sel_rect = Rect::new(
-                    bbox.x0 + pad,
-                    bbox.y0 + pad,
-                    bbox.x1 + pad,
-                    bbox.y1 + pad,
-                );
+                let sel_rect =
+                    Rect::new(bbox.x0 + pad, bbox.y0 + pad, bbox.x1 + pad, bbox.y1 + pad);
                 painter.fill(sel_rect, self.selection_color).draw();
             }
         }
@@ -471,7 +475,8 @@ impl Widget for CodeViewWidget {
                     _ => {
                         if state.modifiers.shift() {
                             self.selection =
-                                self.selection.shift_click_extension(&self.paint_layout, x, y);
+                                self.selection
+                                    .shift_click_extension(&self.paint_layout, x, y);
                         } else {
                             // Two-step (Cursor::from_point + Selection::from) instead of
                             // Selection::from_point so cursor affinity stays explicit.

@@ -290,18 +290,7 @@ fn classify_ident(word: &str, next: Option<&u8>) -> TokenKind {
 fn classify_symbol(byte: u8) -> TokenKind {
     if matches!(
         byte,
-        b'(' | b')'
-            | b'['
-            | b']'
-            | b'{'
-            | b'}'
-            | b','
-            | b';'
-            | b':'
-            | b'.'
-            | b'#'
-            | b'?'
-            | b'@'
+        b'(' | b')' | b'[' | b']' | b'{' | b'}' | b',' | b';' | b':' | b'.' | b'#' | b'?' | b'@'
     ) {
         TokenKind::Punctuation
     } else {
