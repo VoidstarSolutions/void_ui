@@ -133,7 +133,11 @@ impl CheckboxWidget {
             return (Color::TRANSPARENT, p.border);
         }
         if self.checked {
-            let bg = if pressed || hovered { p.teal } else { p.teal_soft };
+            let bg = if pressed || hovered {
+                p.teal
+            } else {
+                p.teal_soft
+            };
             (bg, p.teal)
         } else {
             let bg = if pressed {
@@ -216,12 +220,7 @@ impl Widget for CheckboxWidget {
         }
     }
 
-    fn update(
-        &mut self,
-        ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &Update,
-    ) {
+    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
             // Sync masonry's disabled flag on first attach (matches button pattern).
             Update::WidgetAdded => {
@@ -267,9 +266,8 @@ impl Widget for CheckboxWidget {
             }
             Axis::Vertical => {
                 let label_h = if let Some(label) = &mut self.label {
-                    let avail_w = cross_length.map(|c| {
-                        Length::px((c.get() - 2.0 * PAD - box_sz - LABEL_GAP).max(0.0))
-                    });
+                    let avail_w = cross_length
+                        .map(|c| Length::px((c.get() - 2.0 * PAD - box_sz - LABEL_GAP).max(0.0)));
                     let context = LayoutSize::maybe(Axis::Horizontal, avail_w);
                     let h = ctx.compute_length(label, len_req.into(), context, axis, avail_w);
                     h.get()

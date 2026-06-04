@@ -93,13 +93,20 @@ pub struct SingleToggleDemo<S: 'static> {
 impl<S: 'static> SingleToggleDemo<S> {
     #[must_use]
     pub fn new(theme: Theme) -> Self {
-        Self { theme, phantom: PhantomData }
+        Self {
+            theme,
+            phantom: PhantomData,
+        }
     }
 }
 
 fn build_toggle_child<S: 'static>(selected: bool, theme: &Theme) -> ToggleChildView<S> {
     let t = *theme;
-    Box::new(radio("Radio Button", |_: &mut S| {}).active(selected).render(&t))
+    Box::new(
+        radio("Radio Button", |_: &mut S| {})
+            .active(selected)
+            .render(&t),
+    )
 }
 
 impl<S: 'static> ViewMarker for SingleToggleDemo<S> {}
@@ -111,9 +118,15 @@ impl<S: 'static> View<S, (), ViewCtx> for SingleToggleDemo<S> {
     fn build(&self, ctx: &mut ViewCtx, state: &mut S) -> (Self::Element, Self::ViewState) {
         let selected = false;
         let child = build_toggle_child(selected, &self.theme);
-        let (element, child_state) =
-            ctx.with_id(ViewId::new(0), |ctx| child.build(ctx, state));
-        (element, SingleToggleDemoState { selected, prev_child: child, child_state })
+        let (element, child_state) = ctx.with_id(ViewId::new(0), |ctx| child.build(ctx, state));
+        (
+            element,
+            SingleToggleDemoState {
+                selected,
+                prev_child: child,
+                child_state,
+            },
+        )
     }
 
     fn rebuild(

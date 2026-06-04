@@ -18,7 +18,7 @@
 //! generic component library and must not depend on any
 //! market-data crate.
 
-use super::column::{optional_text_column, text_column, CellAlign, ColumnDef};
+use super::column::{CellAlign, ColumnDef, optional_text_column, text_column};
 use super::selection::SelectionState;
 
 const START_PRICE_UNITS: i64 = 100_000_000_000; // $100.00 in 1e-9 units.

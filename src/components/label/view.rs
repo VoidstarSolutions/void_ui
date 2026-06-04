@@ -171,10 +171,7 @@ impl Label {
             None => base,
         };
         if self.multiline {
-            Box::new(
-                base.color(color)
-                    .line_break_mode(LineBreaking::WordWrap),
-            )
+            Box::new(base.color(color).line_break_mode(LineBreaking::WordWrap))
         } else {
             Box::new(base.color(color))
         }

@@ -28,9 +28,11 @@ pub use clipboard::{Clipboard, ClipboardView, clipboard};
 pub use data_grid::{
     CellAlign, ColumnDef, SelectionState, data_grid, optional_text_column, text_column,
 };
-pub use scroll_container::{ScrollBarVisibility, ScrollContainer, ScrollContainerView, scroll_container};
-pub use sidebar::{SidebarItem, SidebarItemView, sidebar_item};
 pub use label::{Label, LabelAlignment, label};
+pub use scroll_container::{
+    ScrollBarVisibility, ScrollContainer, ScrollContainerView, scroll_container,
+};
+pub use sidebar::{SidebarItem, SidebarItemView, sidebar_item};
 pub use tooltip::{Tooltip, TooltipView, tooltip};
 
 /// One entry per component the gallery exposes.

@@ -6,8 +6,8 @@ use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, flex_col, flex_row};
 
 use crate::label;
-use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
+use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::checkbox;
 use crate::Theme;
@@ -82,12 +82,16 @@ fn build_inner(theme: &Theme, state: &CheckboxDemo) -> impl WidgetView<CheckboxD
     // Rows with labels
     let labeled = with_source!(theme, {
         flex_row((
-            checkbox(labeled_a, |s: &mut CheckboxDemo| s.labeled[0] = !s.labeled[0])
-                .label("Unchecked")
-                .render(theme),
-            checkbox(labeled_b, |s: &mut CheckboxDemo| s.labeled[1] = !s.labeled[1])
-                .label("Checked")
-                .render(theme),
+            checkbox(labeled_a, |s: &mut CheckboxDemo| {
+                s.labeled[0] = !s.labeled[0];
+            })
+            .label("Unchecked")
+            .render(theme),
+            checkbox(labeled_b, |s: &mut CheckboxDemo| {
+                s.labeled[1] = !s.labeled[1];
+            })
+            .label("Checked")
+            .render(theme),
             checkbox(false, |_: &mut CheckboxDemo| {})
                 .label("Disabled off")
                 .disabled(true)
@@ -116,7 +120,14 @@ impl<S: 'static> View<S, (), ViewCtx> for CheckboxDemoPanel {
         let mut checkbox = CheckboxDemo::new();
         let inner_view: InnerView = Box::new(build_inner(&self.theme, &checkbox));
         let (element, inner_state) = inner_view.build(ctx, &mut checkbox);
-        (element, CheckboxDemoPanelState { checkbox, inner_view, inner_state })
+        (
+            element,
+            CheckboxDemoPanelState {
+                checkbox,
+                inner_view,
+                inner_state,
+            },
+        )
     }
 
     fn rebuild(
@@ -128,7 +139,13 @@ impl<S: 'static> View<S, (), ViewCtx> for CheckboxDemoPanel {
         _: &mut S,
     ) {
         let new_inner: InnerView = Box::new(build_inner(&self.theme, &vs.checkbox));
-        new_inner.rebuild(&vs.inner_view, &mut vs.inner_state, ctx, element, &mut vs.checkbox);
+        new_inner.rebuild(
+            &vs.inner_view,
+            &mut vs.inner_state,
+            ctx,
+            element,
+            &mut vs.checkbox,
+        );
         vs.inner_view = new_inner;
     }
 

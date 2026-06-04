@@ -37,7 +37,10 @@ pub fn panel(theme: &Theme) -> ClipboardDemoPanel {
     ClipboardDemoPanel { theme: *theme }
 }
 
-fn build_inner(theme: &Theme, state: &ClipboardDemoState) -> impl WidgetView<ClipboardDemoState> + use<> {
+fn build_inner(
+    theme: &Theme,
+    state: &ClipboardDemoState,
+) -> impl WidgetView<ClipboardDemoState> + use<> {
     let header = |text: &'static str| {
         label(text)
             .text_size(theme.typography.size_caption)

@@ -250,22 +250,28 @@ impl Widget for ThemedRadio {
         let auto_length = len_req.reduce(extra_main).into();
         let context_size = LayoutSize::maybe(axis.cross(), cross_space);
 
-        let label_len =
-            ctx.compute_length(&mut self.child, auto_length, context_size, axis, cross_space);
+        let label_len = ctx.compute_length(
+            &mut self.child,
+            auto_length,
+            context_size,
+            axis,
+            cross_space,
+        );
 
         match axis {
             Axis::Horizontal => Length::px(label_len.get() + circle_h.get()),
-            Axis::Vertical => {
-                Length::px(label_len.get().max(RADIO_DIAMETER) + circle_v.get())
-            }
+            Axis::Vertical => Length::px(label_len.get().max(RADIO_DIAMETER) + circle_v.get()),
         }
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         let label_x = RADIO_DIAMETER + RADIO_GAP;
         let label_space = Size::new((size.width - label_x).max(0.0), size.height);
-        let label_size =
-            ctx.compute_size(&mut self.child, SizeDef::fit(label_space), label_space.into());
+        let label_size = ctx.compute_size(
+            &mut self.child,
+            SizeDef::fit(label_space),
+            label_space.into(),
+        );
         ctx.run_layout(&mut self.child, label_size);
 
         let label_y = ((size.height - label_size.height) * 0.5).max(0.0);
