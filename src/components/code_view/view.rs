@@ -6,7 +6,7 @@
 //! the previous view and pushes only the deltas down to the widget.
 //!
 //! ```ignore
-//! use void_ui::components::text_field::read_only_text;
+//! use void_ui::components::code_view::read_only_text;
 //! read_only_text("fn main() {}\n").render::<MyState>(&theme)
 //! ```
 //!

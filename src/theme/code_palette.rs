@@ -7,7 +7,7 @@ use masonry::peniko::Color;
 
 use super::color::oklch;
 
-/// Per-token-kind colors used by the `text_field` component.
+/// Per-token-kind colors used by the `code_view` component.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CodePalette {
     /// Fallback color for whitespace and any byte not covered by a token span.

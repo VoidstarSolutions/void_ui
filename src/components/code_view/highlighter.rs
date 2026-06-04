@@ -1,4 +1,4 @@
-//! Pluggable syntax-highlighter abstraction for the `text_field` component.
+//! Pluggable syntax-highlighter abstraction for the `code_view` component.
 //!
 //! A [`Highlighter`] is given a borrowed source string and returns a list of
 //! [`TokenSpan`]s. Each span is a byte range into the source and a

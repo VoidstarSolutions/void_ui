@@ -6,7 +6,7 @@
 use xilem::WidgetView;
 
 use crate::Theme;
-use crate::components::text_field::read_only_text;
+use crate::components::code_view::read_only_text;
 
 /// Renders `source` in a styled monospace code panel with Rust syntax
 /// highlighting and a copy-to-clipboard button in the top-right corner.

@@ -12,9 +12,9 @@ use masonry::accesskit::{Node, Role};
 use masonry::core::keyboard::{Key, KeyState};
 use masonry::core::{
     AccessCtx, AccessEvent, BrushIndex, ChildrenIds, CursorIcon, EventCtx, LayoutCtx, MeasureCtx,
-    PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PointerUpdate, PropertiesMut,
-    PropertiesRef, QueryCtx, RegisterCtx, StyleProperty, TextEvent, Update, UpdateCtx, Widget,
-    WidgetId, WidgetMut, render_text,
+    NoAction, PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PointerUpdate,
+    PropertiesMut, PropertiesRef, QueryCtx, RegisterCtx, StyleProperty, TextEvent, Update,
+    UpdateCtx, Widget, WidgetId, WidgetMut, render_text,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Affine, Axis, Point, Rect, RoundedRect, Size, Stroke};
@@ -52,11 +52,12 @@ fn brush_index_for_kind(kind: TokenKind) -> u32 {
     }
 }
 
-/// Render-only highlighted code view.
+/// Read-only highlighted code view.
 ///
 /// Drives parley's [`Layout<BrushIndex>`] directly so it can apply per-range
-/// brush colors. Selection, focus, keyboard handling, and IME are
-/// intentionally omitted at this stage — they are added in later tasks.
+/// brush colors. Supports focus-on-click, click/drag selection (single /
+/// double=word / triple=line / shift-extend), and Ctrl/Cmd+C copy. IME is
+/// intentionally omitted — this widget never edits text.
 pub struct CodeViewWidget {
     text: String,
     spans: Vec<TokenSpan>,
@@ -297,7 +298,7 @@ impl CodeViewWidget {
 
 // --- MARK: IMPL WIDGET
 impl Widget for CodeViewWidget {
-    type Action = ();
+    type Action = NoAction;
 
     fn accepts_pointer_interaction(&self) -> bool {
         true

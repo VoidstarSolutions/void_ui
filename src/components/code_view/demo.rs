@@ -1,4 +1,4 @@
-//! Gallery panel exercising the read-only text field.
+//! Gallery panel exercising the read-only code view.
 
 use masonry::layout::Length;
 use xilem::WidgetView;
@@ -6,7 +6,7 @@ use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, flex_col};
 
 use crate::Theme;
-use crate::components::text_field::read_only_text;
+use crate::components::code_view::read_only_text;
 use crate::with_source;
 
 #[must_use]
@@ -28,7 +28,13 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
             .render(theme)
     });
 
-    flex_col((short_rust, multi_line, no_highlight))
+    let copyable = with_source!(theme, {
+        read_only_text("let copied = \"one click, top-right\";")
+            .copyable()
+            .render(theme)
+    });
+
+    flex_col((short_rust, multi_line, no_highlight, copyable))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .gap(Length::px(16.0))
 }

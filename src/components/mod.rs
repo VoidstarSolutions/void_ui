@@ -16,18 +16,19 @@ pub mod button;
 pub mod button_group;
 pub mod checkbox;
 pub mod clipboard;
+pub mod code_view;
 pub mod data_grid;
 pub mod label;
 pub mod radio;
 pub mod scroll_container;
 pub mod sidebar;
-pub mod text_field;
 pub mod tooltip;
 
 pub use button::{Button, ButtonVariant, ButtonView, button};
 pub use button_group::{ButtonGroup, button_group, toggle_button_group};
 pub use checkbox::{Checkbox, CheckboxView, checkbox};
 pub use clipboard::{Clipboard, ClipboardView, clipboard};
+pub use code_view::{ReadOnlyText, ReadOnlyTextView, RustHighlighter, read_only_text};
 pub use data_grid::{
     CellAlign, ColumnDef, SelectionState, data_grid, optional_text_column, text_column,
 };
@@ -38,7 +39,6 @@ pub use scroll_container::{
 pub use sidebar::{
     SidebarItem, SidebarItemView, SidebarPanel, SidebarPanelView, sidebar_item, sidebar_panel,
 };
-pub use text_field::{ReadOnlyText, ReadOnlyTextView, RustHighlighter, read_only_text};
 pub use tooltip::{Tooltip, TooltipView, tooltip};
 
 /// One entry per component the gallery exposes.
@@ -54,12 +54,12 @@ pub enum ComponentKind {
     ButtonGroup,
     Checkbox,
     Clipboard,
+    CodeView,
     DataGrid,
     Label,
     Radio,
     ScrollContainer,
     Sidebar,
-    TextField,
     Tooltip,
 }
 
@@ -72,12 +72,12 @@ impl ComponentKind {
             Self::ButtonGroup => "Button Group",
             Self::Checkbox => "Checkbox",
             Self::Clipboard => "Clipboard",
+            Self::CodeView => "Code View",
             Self::DataGrid => "Data Grid",
             Self::Label => "Label",
             Self::Radio => "Radio",
             Self::ScrollContainer => "Scroll Container",
             Self::Sidebar => "Sidebar",
-            Self::TextField => "Text Field",
             Self::Tooltip => "Tooltip",
         }
     }
@@ -90,12 +90,12 @@ impl ComponentKind {
             Self::ButtonGroup,
             Self::Checkbox,
             Self::Clipboard,
+            Self::CodeView,
             Self::Label,
             Self::Radio,
             Self::DataGrid,
             Self::ScrollContainer,
             Self::Sidebar,
-            Self::TextField,
             Self::Tooltip,
         ]
     }
