@@ -9,8 +9,8 @@ use xilem::WidgetView;
 use xilem::style::Style as _;
 use xilem::view::sized_box;
 
-use crate::label;
 use crate::Theme;
+use crate::label;
 
 /// Renders `source` in a styled monospace code panel.
 ///

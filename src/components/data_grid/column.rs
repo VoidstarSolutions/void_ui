@@ -14,8 +14,8 @@
 
 use xilem::AnyWidgetView;
 
-use crate::label;
 use crate::Theme;
+use crate::label;
 
 /// In-cell horizontal alignment.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

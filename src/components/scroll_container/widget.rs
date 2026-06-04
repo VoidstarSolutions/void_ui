@@ -5,6 +5,7 @@ use std::any::TypeId;
 use std::ops::Range;
 
 use masonry::accesskit::{self, Node, Role};
+use masonry::core::keyboard::{Key, NamedKey};
 use masonry::core::{
     AccessCtx, AccessEvent, AllowRawMut, ChildrenIds, ComposeCtx, EventCtx, FromDynWidget,
     LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx, PointerEvent, PointerScrollEvent,
@@ -177,7 +178,10 @@ impl Widget for VoidScrollBar {
         interval: u64,
     ) {
         const FADE_MILLIS: f32 = 300.0;
-        let delta = (interval as f32 / 1_000_000.0) / FADE_MILLIS;
+        // Quantize the frame interval to whole microseconds: a u16 µs count
+        // converts to f32 losslessly, and a >65 ms frame just clamps the step.
+        let interval_us = u16::try_from(interval / 1_000).unwrap_or(u16::MAX);
+        let delta = (f32::from(interval_us) / 1_000.0) / FADE_MILLIS;
         let diff = self.target_opacity - self.opacity;
         if diff.abs() > 1e-4 {
             self.opacity = if diff > 0.0 {
@@ -325,7 +329,7 @@ impl Widget for VoidScrollBar {
 /// tracks), and applies the scroll translation. Kept separate from
 /// [`ScrollView`] so the scrollbars can be siblings rather than children of
 /// the clip — masonry's `set_clip_path` applies to the whole subtree.
-pub(crate) struct ContentClip<W: Widget + ?Sized> {
+pub struct ContentClip<W: Widget + ?Sized> {
     child: WidgetPod<W>,
     /// Content size set by [`ScrollView`] before each `run_layout` call.
     pub(crate) child_size: Size,
@@ -346,7 +350,11 @@ impl<W: Widget + ?Sized> ContentClip<W> {
 }
 
 impl<W: Widget + FromDynWidget> ContentClip<W> {
-    pub(crate) fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, W> {
+    /// Returns a `WidgetMut` for the wrapped content widget.
+    ///
+    /// This is the second hop of the documented path from a scroll view to
+    /// its content: [`ScrollView::child_mut`] then `ContentClip::child_mut`.
+    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, W> {
         this.ctx.get_mut(&mut this.widget.child)
     }
 }
@@ -426,20 +434,25 @@ impl<W: Widget + ?Sized> Widget for ContentClip<W> {
 
 // --- MARK: ScrollView
 
+/// Per-axis constraint flags: a constrained axis sizes content to the
+/// viewport instead of scrolling.
+#[derive(Clone, Copy, Default)]
+struct ConstrainAxes {
+    horizontal: bool,
+    vertical: bool,
+}
+
 /// A scrolling viewport with clipping that excludes the scrollbar tracks,
 /// so scrollbars are always adjacent to content rather than overlapping it.
 pub struct ScrollView<W: Widget + ?Sized> {
     child: WidgetPod<ContentClip<W>>,
     content_size: Size,
     viewport_pos: Point,
-    constrain_horizontal: bool,
-    constrain_vertical: bool,
+    constrain: ConstrainAxes,
     must_fill: bool,
     always_hide_scrollbars: bool,
     scrollbar_h: WidgetPod<VoidScrollBar>,
-    scrollbar_h_visible: bool,
     scrollbar_v: WidgetPod<VoidScrollBar>,
-    scrollbar_v_visible: bool,
     /// Vertical scrollbar width from last layout (0 when hidden).
     vbar_width: f64,
     /// Horizontal scrollbar height from last layout (0 when hidden).
@@ -448,40 +461,42 @@ pub struct ScrollView<W: Widget + ?Sized> {
 }
 
 impl<W: Widget + ?Sized> ScrollView<W> {
+    #[must_use]
     pub fn new(child: NewWidget<W>) -> Self {
         Self {
             child: WidgetPod::new(ContentClip::new(child)),
             content_size: Size::ZERO,
             viewport_pos: Point::ORIGIN,
-            constrain_horizontal: false,
-            constrain_vertical: false,
+            constrain: ConstrainAxes::default(),
             must_fill: false,
             always_hide_scrollbars: false,
             scrollbar_h: WidgetPod::new(VoidScrollBar::new(Axis::Horizontal)),
-            scrollbar_h_visible: false,
             scrollbar_v: WidgetPod::new(VoidScrollBar::new(Axis::Vertical)),
-            scrollbar_v_visible: false,
             vbar_width: 0.0,
             hbar_height: 0.0,
             nanos_since_last_pointer_move: None,
         }
     }
 
+    #[must_use]
     pub fn constrain_horizontal(mut self, v: bool) -> Self {
-        self.constrain_horizontal = v;
+        self.constrain.horizontal = v;
         self
     }
 
+    #[must_use]
     pub fn constrain_vertical(mut self, v: bool) -> Self {
-        self.constrain_vertical = v;
+        self.constrain.vertical = v;
         self
     }
 
+    #[must_use]
     pub fn content_must_fill(mut self, v: bool) -> Self {
         self.must_fill = v;
         self
     }
 
+    #[must_use]
     pub fn always_hide_scrollbars(mut self, v: bool) -> Self {
         self.always_hide_scrollbars = v;
         self
@@ -496,12 +511,12 @@ impl<W: Widget + ?Sized> ScrollView<W> {
     }
 
     pub fn set_constrain_horizontal(this: &mut WidgetMut<'_, Self>, v: bool) {
-        this.widget.constrain_horizontal = v;
+        this.widget.constrain.horizontal = v;
         this.ctx.request_layout();
     }
 
     pub fn set_constrain_vertical(this: &mut WidgetMut<'_, Self>, v: bool) {
-        this.widget.constrain_vertical = v;
+        this.widget.constrain.vertical = v;
         this.ctx.request_layout();
     }
 
@@ -579,10 +594,10 @@ impl<W: Widget + ?Sized> ScrollView<W> {
     }
 
     fn pan_by(&mut self, ctx: &mut EventCtx<'_>, eff_size: Size, mut delta: Vec2) -> bool {
-        if self.constrain_horizontal {
+        if self.constrain.horizontal {
             delta.x = 0.0;
         }
-        if self.constrain_vertical {
+        if self.constrain.vertical {
             delta.y = 0.0;
         }
         if delta == Vec2::ZERO {
@@ -625,6 +640,99 @@ impl<W: Widget + ?Sized> ScrollView<W> {
             self.update_scrollbar_progress(ctx, eff_size);
         }
         changed
+    }
+}
+
+// --- MARK: Layout helpers
+impl<W: Widget + ?Sized> ScrollView<W> {
+    /// `SizeDef` for measuring content: a constrained axis fits the given
+    /// viewport length, an unconstrained axis takes its max-content size.
+    fn content_size_def(&self, viewport: Size) -> SizeDef {
+        let horizontal = if self.constrain.horizontal {
+            LenDef::FitContent(viewport.width.px())
+        } else {
+            LenDef::MaxContent
+        };
+        let vertical = if self.constrain.vertical {
+            LenDef::FitContent(viewport.height.px())
+        } else {
+            LenDef::MaxContent
+        };
+        SizeDef::new(horizontal, vertical)
+    }
+
+    /// Layout with scrollbars disabled (always-hidden mode): content gets the
+    /// full viewport and both bars are stashed.
+    fn layout_hidden_bars(&mut self, ctx: &mut LayoutCtx<'_>, size: Size) {
+        let auto_size = self.content_size_def(size);
+        let content_size = {
+            let cs = ctx.compute_size(&mut self.child, auto_size, size.into());
+            if self.must_fill { cs.max(size) } else { cs }
+        };
+        {
+            let (clip, _) = ctx.get_raw_mut(&mut self.child);
+            clip.child_size = content_size;
+        }
+        ctx.run_layout(&mut self.child, size);
+        self.content_size = content_size;
+        self.vbar_width = 0.0;
+        self.hbar_height = 0.0;
+        self.set_viewport_pos_raw(size, content_size, self.viewport_pos);
+        ctx.set_clip_path(size.to_rect());
+        ctx.place_child(&mut self.child, Point::ZERO);
+        ctx.set_stashed(&mut self.scrollbar_v, true);
+        ctx.set_stashed(&mut self.scrollbar_h, true);
+    }
+
+    /// Stashes or lays out one scrollbar along `axis` at the viewport edge.
+    ///
+    /// Reads `self.content_size` and `self.viewport_pos`, so the caller must
+    /// finish content layout first.
+    fn layout_scrollbar(
+        &mut self,
+        ctx: &mut LayoutCtx<'_>,
+        axis: Axis,
+        size: Size,
+        eff_size: Size,
+        visible: bool,
+    ) {
+        let (pod, portal_len, content_len, viewport_offset) = match axis {
+            Axis::Vertical => (
+                &mut self.scrollbar_v,
+                eff_size.height,
+                self.content_size.height,
+                self.viewport_pos.y,
+            ),
+            Axis::Horizontal => (
+                &mut self.scrollbar_h,
+                eff_size.width,
+                self.content_size.width,
+                self.viewport_pos.x,
+            ),
+        };
+        ctx.set_stashed(pod, !visible);
+        if !visible {
+            return;
+        }
+        let range = (content_len - portal_len).max(0.0);
+        {
+            let (sb, mut sb_ctx) = ctx.get_raw_mut(pod);
+            sb.portal_size = portal_len;
+            sb.content_size = content_len;
+            sb.cursor_progress = if range > 1e-12 {
+                (viewport_offset / range).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            sb_ctx.request_render();
+        }
+        let sb_size = ctx.compute_size(pod, SizeDef::fit(eff_size), eff_size.into());
+        ctx.run_layout(pod, sb_size);
+        let origin = match axis {
+            Axis::Vertical => Point::new(size.width - sb_size.width, 0.0),
+            Axis::Horizontal => Point::new(0.0, size.height - sb_size.height),
+        };
+        ctx.place_child(pod, origin);
     }
 }
 
@@ -702,7 +810,6 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
             let line = 120.0;
             let page_y = eff_size.height;
 
-            use masonry::core::keyboard::{Key, NamedKey};
             let mut did_scroll = false;
             match &event.key {
                 Key::Named(NamedKey::PageDown) => {
@@ -888,8 +995,8 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
                 let auto_length = len_req.into();
                 let cross = axis.cross();
                 let cross_space = cross_length.filter(|_| match cross {
-                    Axis::Horizontal => self.constrain_horizontal,
-                    Axis::Vertical => self.constrain_vertical,
+                    Axis::Horizontal => self.constrain.horizontal,
+                    Axis::Vertical => self.constrain.vertical,
                 });
                 ctx.compute_length(
                     &mut self.child,
@@ -906,76 +1013,38 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         let track = theme::SCROLLBAR_WIDTH + theme::SCROLLBAR_PAD * 2.0;
 
-        // First layout pass — content at full/constrained viewport
-        let auto_size = SizeDef::new(
-            match self.constrain_horizontal {
-                true => LenDef::FitContent(size.width.px()),
-                false => LenDef::MaxContent,
-            },
-            match self.constrain_vertical {
-                true => LenDef::FitContent(size.height.px()),
-                false => LenDef::MaxContent,
-            },
-        );
         if self.always_hide_scrollbars {
-            let content_size = {
-                let cs = ctx.compute_size(&mut self.child, auto_size, size.into());
-                if self.must_fill { cs.max(size) } else { cs }
-            };
-            {
-                let (clip, _) = ctx.get_raw_mut(&mut self.child);
-                clip.child_size = content_size;
-            }
-            ctx.run_layout(&mut self.child, size);
-            self.content_size = content_size;
-            self.vbar_width = 0.0;
-            self.hbar_height = 0.0;
-            self.scrollbar_v_visible = false;
-            self.scrollbar_h_visible = false;
-            self.set_viewport_pos_raw(size, content_size, self.viewport_pos);
-            ctx.set_clip_path(size.to_rect());
-            ctx.place_child(&mut self.child, Point::ZERO);
-            ctx.set_stashed(&mut self.scrollbar_v, true);
-            ctx.set_stashed(&mut self.scrollbar_h, true);
+            self.layout_hidden_bars(ctx, size);
             return;
         }
 
+        // First layout pass — content at full/constrained viewport
+        let auto_size = self.content_size_def(size);
         let content_size = {
             let cs = ctx.compute_size(&mut self.child, auto_size, size.into());
             if self.must_fill { cs.max(size) } else { cs }
         };
 
         // Determine scrollbar visibility (cascade: vbar may force hbar and vice versa)
-        let vbar = !self.constrain_vertical && content_size.height > size.height;
+        let vbar = !self.constrain.vertical && content_size.height > size.height;
         let eff_w_if_vbar = if vbar { size.width - track } else { size.width };
-        let hbar = !self.constrain_horizontal && content_size.width > eff_w_if_vbar;
+        let hbar = !self.constrain.horizontal && content_size.width > eff_w_if_vbar;
         let eff_h_if_hbar = if hbar {
             size.height - track
         } else {
             size.height
         };
         // Re-check vbar if hbar just appeared and reduced height
-        let vbar = vbar || (!self.constrain_vertical && content_size.height > eff_h_if_hbar);
+        let vbar = vbar || (!self.constrain.vertical && content_size.height > eff_h_if_hbar);
 
         let vbar_w = if vbar { track } else { 0.0 };
         let hbar_h = if hbar { track } else { 0.0 };
-        let eff_w = size.width - vbar_w;
-        let eff_h = size.height - hbar_h;
-        let eff_size = Size::new(eff_w, eff_h);
+        let eff_size = Size::new(size.width - vbar_w, size.height - hbar_h);
 
         // Second layout pass — re-layout content if a constrained axis got narrower
         let content_size =
-            if (self.constrain_horizontal && vbar) || (self.constrain_vertical && hbar) {
-                let auto2 = SizeDef::new(
-                    match self.constrain_horizontal {
-                        true => LenDef::FitContent(eff_w.px()),
-                        false => LenDef::MaxContent,
-                    },
-                    match self.constrain_vertical {
-                        true => LenDef::FitContent(eff_h.px()),
-                        false => LenDef::MaxContent,
-                    },
-                );
+            if (self.constrain.horizontal && vbar) || (self.constrain.vertical && hbar) {
+                let auto2 = self.content_size_def(eff_size);
                 let cs = ctx.compute_size(&mut self.child, auto2, size.into());
                 if self.must_fill { cs.max(eff_size) } else { cs }
             } else {
@@ -997,56 +1066,11 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
         ctx.set_clip_path(size.to_rect());
         ctx.place_child(&mut self.child, Point::ZERO);
 
-        self.scrollbar_v_visible = vbar;
-        self.scrollbar_h_visible = hbar;
         self.vbar_width = vbar_w;
         self.hbar_height = hbar_h;
 
-        // Layout vertical scrollbar
-        ctx.set_stashed(&mut self.scrollbar_v, !vbar);
-        if vbar {
-            let range_y = (content_size.height - eff_h).max(0.0);
-            {
-                let (sb, mut sb_ctx) = ctx.get_raw_mut(&mut self.scrollbar_v);
-                sb.portal_size = eff_h;
-                sb.content_size = content_size.height;
-                sb.cursor_progress = if range_y > 1e-12 {
-                    (self.viewport_pos.y / range_y).clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
-                sb_ctx.request_render();
-            }
-            let sb_size = ctx.compute_size(&mut self.scrollbar_v, SizeDef::fit(size), size.into());
-            ctx.run_layout(&mut self.scrollbar_v, sb_size);
-            ctx.place_child(
-                &mut self.scrollbar_v,
-                Point::new(size.width - sb_size.width, 0.0),
-            );
-        }
-
-        // Layout horizontal scrollbar
-        ctx.set_stashed(&mut self.scrollbar_h, !hbar);
-        if hbar {
-            let range_x = (content_size.width - eff_w).max(0.0);
-            {
-                let (sb, mut sb_ctx) = ctx.get_raw_mut(&mut self.scrollbar_h);
-                sb.portal_size = eff_w;
-                sb.content_size = content_size.width;
-                sb.cursor_progress = if range_x > 1e-12 {
-                    (self.viewport_pos.x / range_x).clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
-                sb_ctx.request_render();
-            }
-            let sb_size = ctx.compute_size(&mut self.scrollbar_h, SizeDef::fit(size), size.into());
-            ctx.run_layout(&mut self.scrollbar_h, sb_size);
-            ctx.place_child(
-                &mut self.scrollbar_h,
-                Point::new(0.0, size.height - sb_size.height),
-            );
-        }
+        self.layout_scrollbar(ctx, Axis::Vertical, size, eff_size, vbar);
+        self.layout_scrollbar(ctx, Axis::Horizontal, size, eff_size, hbar);
     }
 
     fn compose(&mut self, ctx: &mut ComposeCtx<'_>) {
@@ -1081,7 +1105,7 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
         let eff_size = self.effective_size(size);
         let range = Self::scroll_range(eff_size, self.content_size);
 
-        if !self.constrain_horizontal && range.width > 1e-12 {
+        if !self.constrain.horizontal && range.width > 1e-12 {
             node.set_scroll_x_min(0.0);
             node.set_scroll_x_max(range.width);
             node.set_scroll_x(self.viewport_pos.x);
@@ -1092,7 +1116,7 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
                 node.add_action(accesskit::Action::ScrollRight);
             }
         }
-        if !self.constrain_vertical && range.height > 1e-12 {
+        if !self.constrain.vertical && range.height > 1e-12 {
             node.set_scroll_y_min(0.0);
             node.set_scroll_y_max(range.height);
             node.set_scroll_y(self.viewport_pos.y);
@@ -1119,6 +1143,6 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
     }
 
     fn accepts_focus(&self) -> bool {
-        !(self.constrain_horizontal && self.constrain_vertical)
+        !(self.constrain.horizontal && self.constrain.vertical)
     }
 }
