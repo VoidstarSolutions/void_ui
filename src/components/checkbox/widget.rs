@@ -12,15 +12,18 @@ use masonry::core::keyboard::{Key, NamedKey};
 use masonry::core::{
     AccessCtx, AccessEvent, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, PaintCtx,
     PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx,
-    TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
+    StyleProperty, TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, BezPath, Point, RoundedRect, Size, Stroke};
+use masonry::kurbo::{Axis, Point, RoundedRect, Size, Stroke};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use masonry::peniko::Color;
+use masonry::properties::ContentColor;
+use masonry::widgets::Label;
 
 use super::CheckboxPress;
 use crate::Theme;
+use crate::components::icon::{IconName, icon};
 
 /// Corner radius of the checkbox box.
 const BOX_RADIUS: f64 = 3.0;
@@ -43,6 +46,8 @@ pub struct CheckboxWidget {
     checked: bool,
     disabled: bool,
     theme: Theme,
+    /// Lucide Check icon — always present, transparent when unchecked.
+    check_icon: WidgetPod<Label>,
     /// Optional text label rendered to the right of the box.
     label: Option<WidgetPod<dyn Widget>>,
 }
@@ -52,10 +57,23 @@ impl CheckboxWidget {
     /// Creates a new checkbox in the given state.
     #[must_use]
     pub fn new(theme: &Theme, checked: bool, disabled: bool) -> Self {
+        let check_color = if checked {
+            if disabled {
+                theme.palette.text_faint
+            } else {
+                theme.palette.teal
+            }
+        } else {
+            Color::TRANSPARENT
+        };
         Self {
             checked,
             disabled,
             theme: *theme,
+            check_icon: icon(IconName::Check)
+                .color(check_color)
+                .build_widget(theme)
+                .to_pod(),
             label: None,
         }
     }
@@ -70,10 +88,27 @@ impl CheckboxWidget {
 
 // --- MARK: WIDGETMUT
 impl CheckboxWidget {
+    fn check_color(checked: bool, disabled: bool, theme: &Theme) -> Color {
+        if checked {
+            if disabled {
+                theme.palette.text_faint
+            } else {
+                theme.palette.teal
+            }
+        } else {
+            Color::TRANSPARENT
+        }
+    }
+
     /// Sets the checked state. Requests a repaint and accessibility update on change.
     pub fn set_checked(this: &mut WidgetMut<'_, Self>, checked: bool) {
         if this.widget.checked != checked {
             this.widget.checked = checked;
+            let color = Self::check_color(checked, this.widget.disabled, &this.widget.theme);
+            {
+                let mut check = this.ctx.get_mut(&mut this.widget.check_icon);
+                check.insert_prop(ContentColor::new(color));
+            }
             this.ctx.request_paint_only();
             this.ctx.request_accessibility_update();
         }
@@ -84,6 +119,13 @@ impl CheckboxWidget {
         if this.widget.disabled != disabled {
             this.widget.disabled = disabled;
             this.ctx.set_disabled(disabled);
+            if this.widget.checked {
+                let color = Self::check_color(true, disabled, &this.widget.theme);
+                {
+                    let mut check = this.ctx.get_mut(&mut this.widget.check_icon);
+                    check.insert_prop(ContentColor::new(color));
+                }
+            }
             this.ctx.request_paint_only();
         }
     }
@@ -92,6 +134,15 @@ impl CheckboxWidget {
     pub fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
         if this.widget.theme != *theme {
             this.widget.theme = *theme;
+            let color = Self::check_color(this.widget.checked, this.widget.disabled, theme);
+            {
+                let mut check = this.ctx.get_mut(&mut this.widget.check_icon);
+                check.insert_prop(ContentColor::new(color));
+                Label::insert_style(
+                    &mut check,
+                    StyleProperty::FontSize(theme.density.ui_font_size),
+                );
+            }
             this.ctx.request_layout();
             this.ctx.request_paint_only();
         }
@@ -234,6 +285,7 @@ impl Widget for CheckboxWidget {
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
+        ctx.register_child(&mut self.check_icon);
         if let Some(label) = &mut self.label {
             ctx.register_child(label);
         }
@@ -250,6 +302,17 @@ impl Widget for CheckboxWidget {
         cross_length: Option<Length>,
     ) -> Length {
         let box_sz = self.box_size();
+
+        // Measure check icon at box size (inside the box, doesn't affect widget measurement).
+        let check_sz = Length::px(box_sz);
+        let check_ctx = LayoutSize::maybe(axis.cross(), Some(check_sz));
+        let _ = ctx.compute_length(
+            &mut self.check_icon,
+            len_req.into(),
+            check_ctx,
+            axis,
+            Some(check_sz),
+        );
 
         match axis {
             Axis::Horizontal => {
@@ -281,8 +344,14 @@ impl Widget for CheckboxWidget {
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         let box_sz = self.box_size();
+        let content_h = (size.height - 2.0 * PAD).max(0.0);
+        let box_y = PAD + ((content_h - box_sz) * 0.5).max(0.0);
+
+        // Place check icon at the box position.
+        ctx.run_layout(&mut self.check_icon, Size::new(box_sz, box_sz));
+        ctx.place_child(&mut self.check_icon, Point::new(PAD, box_y));
+
         if let Some(label) = &mut self.label {
-            let content_h = (size.height - 2.0 * PAD).max(0.0);
             let avail = Size::new(
                 (size.width - 2.0 * PAD - box_sz - LABEL_GAP).max(0.0),
                 content_h,
@@ -338,17 +407,7 @@ impl Widget for CheckboxWidget {
                 .draw();
         }
 
-        if self.checked {
-            let check_color = if self.disabled { p.text_faint } else { p.teal };
-            let m = box_sz * 0.18;
-            let mut check = BezPath::new();
-            check.move_to((box_x + m, box_y + box_sz * 0.52));
-            check.line_to((box_x + box_sz * 0.40, box_y + box_sz * 0.78));
-            check.line_to((box_x + box_sz - m, box_y + box_sz * 0.26));
-            painter
-                .stroke(&check, &Stroke::new(1.5), check_color)
-                .draw();
-        }
+        // Check icon is a self-painting Label child placed at the box position during layout.
     }
 
     fn accessibility_role(&self) -> Role {
@@ -373,9 +432,10 @@ impl Widget for CheckboxWidget {
 
     fn children_ids(&self) -> ChildrenIds {
         if let Some(label) = &self.label {
-            ChildrenIds::from_slice(&[label.id()])
+            let ids = [self.check_icon.id(), label.id()];
+            ChildrenIds::from_slice(&ids)
         } else {
-            ChildrenIds::from_slice(&[])
+            ChildrenIds::from_slice(&[self.check_icon.id()])
         }
     }
 
