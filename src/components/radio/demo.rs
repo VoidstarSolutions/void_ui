@@ -11,7 +11,9 @@ use masonry::widgets::Passthrough;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewId, ViewMarker, ViewPathTracker};
 use xilem::masonry::layout::Length;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, flex_col, flex_row, label};
+use xilem::view::{CrossAxisAlignment, flex_col, flex_row};
+
+use crate::label;
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use crate::Theme;
@@ -33,6 +35,7 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
             .text_size(theme.typography.size_caption)
             .letter_spacing(1.2)
             .color(theme.palette.text_faint)
+            .render(theme)
     };
 
     let standalone_example = SingleToggleDemo::new(*theme);

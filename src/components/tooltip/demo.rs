@@ -3,7 +3,9 @@
 use xilem::WidgetView;
 use xilem::masonry::layout::Length;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, flex_col, flex_row, label};
+use xilem::view::{CrossAxisAlignment, flex_col, flex_row};
+
+use crate::label;
 
 use super::tooltip;
 use crate::Theme;
@@ -22,6 +24,7 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
             .text_size(theme.typography.size_caption)
             .letter_spacing(1.2)
             .color(theme.palette.text_faint)
+            .render(theme)
     };
 
     let default_example = with_source!(theme, {
