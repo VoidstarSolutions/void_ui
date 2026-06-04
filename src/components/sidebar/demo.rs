@@ -1,22 +1,49 @@
-//! Sidebar navigation item demo panel used by the void-ui gallery.
+//! Sidebar navigation item and panel demo panels used by the void-ui gallery.
 
-use xilem::WidgetView;
+use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::layout::Length;
+use xilem::masonry::widgets::Passthrough;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, flex_col};
+use xilem::view::{CrossAxisAlignment, MainAxisAlignment, flex_col, flex_row};
+use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
-use crate::label;
-
-use super::sidebar_item;
+use super::{sidebar_item, sidebar_panel};
 use crate::Theme;
+use crate::label;
 use crate::with_source;
 
-/// Renders the `SidebarItem` demo panel.
-///
-/// Shows the active and default states. Callbacks are no-ops — the panel
-/// exercises visual states, not application logic.
-#[must_use]
-pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
+// --- MARK: LOCAL STATE
+
+struct SidebarDemo {
+    collapsed: bool,
+}
+
+impl SidebarDemo {
+    fn new() -> Self {
+        Self { collapsed: false }
+    }
+}
+
+type InnerView = Box<AnyWidgetView<SidebarDemo>>;
+type InnerViewState = <InnerView as View<SidebarDemo, (), ViewCtx>>::ViewState;
+
+// --- MARK: PANEL VIEW STATE
+
+/// Opaque state for the combined sidebar demo panel.
+pub struct SidebarDemoPanelState {
+    demo: SidebarDemo,
+    inner_view: InnerView,
+    inner_state: InnerViewState,
+}
+
+/// Outer view returned by [`panel`]. Manages the collapsible demo state.
+pub struct SidebarDemoPanel {
+    theme: Theme,
+}
+
+// --- MARK: INNER VIEW BUILDER
+
+fn build_inner(theme: &Theme, state: &SidebarDemo) -> impl WidgetView<SidebarDemo> + use<> {
     let header = |text: &'static str| {
         label(text)
             .text_size(theme.typography.size_caption)
@@ -25,13 +52,15 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
             .render(theme)
     };
 
+    // --- static item examples ---
+
     let active_example = with_source!(theme, {
         flex_col((
-            sidebar_item("Button", |_: &mut S| {})
+            sidebar_item("Button", |_: &mut SidebarDemo| {})
                 .active(true)
                 .render(theme),
-            sidebar_item("Data Grid", |_: &mut S| {}).render(theme),
-            sidebar_item("Sidebar", |_: &mut S| {}).render(theme),
+            sidebar_item("Data Grid", |_: &mut SidebarDemo| {}).render(theme),
+            sidebar_item("Sidebar", |_: &mut SidebarDemo| {}).render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .gap(Length::px(2.0))
@@ -39,12 +68,41 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
 
     let default_example = with_source!(theme, {
         flex_col((
-            sidebar_item("Button", |_: &mut S| {}).render(theme),
-            sidebar_item("Data Grid", |_: &mut S| {}).render(theme),
-            sidebar_item("Sidebar", |_: &mut S| {}).render(theme),
+            sidebar_item("Button", |_: &mut SidebarDemo| {}).render(theme),
+            sidebar_item("Data Grid", |_: &mut SidebarDemo| {}).render(theme),
+            sidebar_item("Sidebar", |_: &mut SidebarDemo| {}).render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .gap(Length::px(2.0))
+    });
+
+    // --- interactive collapse demo ---
+
+    let items = flex_col((
+        sidebar_item("Dashboard", |_: &mut SidebarDemo| {})
+            .active(true)
+            .render(theme),
+        sidebar_item("Charts", |_: &mut SidebarDemo| {}).render(theme),
+        sidebar_item("Settings", |_: &mut SidebarDemo| {}).render(theme),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Stretch)
+    .gap(Length::px(2.0));
+
+    let content = flex_col((label("Content area")
+        .text_size(theme.typography.size_caption)
+        .color(theme.palette.text_muted)
+        .render(theme),))
+    .cross_axis_alignment(CrossAxisAlignment::Start);
+
+    let panel_row = with_source!(theme, {
+        flex_row((
+            sidebar_panel(items, |s: &mut SidebarDemo| s.collapsed = !s.collapsed)
+                .collapsed(state.collapsed)
+                .render(theme),
+            content,
+        ))
+        .main_axis_alignment(MainAxisAlignment::Start)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
     });
 
     flex_col((
@@ -52,7 +110,79 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
         active_example,
         header("Default — hover shows fill, label muted when inactive"),
         default_example,
+        header("Collapsible panel — click the ‹ strip on the right to collapse, › to expand"),
+        panel_row,
     ))
     .cross_axis_alignment(CrossAxisAlignment::Start)
     .gap(Length::px(16.0))
+}
+
+// --- MARK: VIEW IMPL
+
+impl ViewMarker for SidebarDemoPanel {}
+
+impl<S: 'static> View<S, (), ViewCtx> for SidebarDemoPanel {
+    type Element = Pod<Passthrough>;
+    type ViewState = SidebarDemoPanelState;
+
+    fn build(&self, ctx: &mut ViewCtx, _: &mut S) -> (Self::Element, Self::ViewState) {
+        let mut demo = SidebarDemo::new();
+        let inner_view: InnerView = Box::new(build_inner(&self.theme, &demo));
+        let (element, inner_state) = inner_view.build(ctx, &mut demo);
+        (
+            element,
+            SidebarDemoPanelState {
+                demo,
+                inner_view,
+                inner_state,
+            },
+        )
+    }
+
+    fn rebuild(
+        &self,
+        _prev: &Self,
+        vs: &mut SidebarDemoPanelState,
+        ctx: &mut ViewCtx,
+        element: Mut<'_, Pod<Passthrough>>,
+        _: &mut S,
+    ) {
+        let new_inner: InnerView = Box::new(build_inner(&self.theme, &vs.demo));
+        new_inner.rebuild(
+            &vs.inner_view,
+            &mut vs.inner_state,
+            ctx,
+            element,
+            &mut vs.demo,
+        );
+        vs.inner_view = new_inner;
+    }
+
+    fn teardown(
+        &self,
+        vs: &mut SidebarDemoPanelState,
+        ctx: &mut ViewCtx,
+        element: Mut<'_, Pod<Passthrough>>,
+    ) {
+        vs.inner_view.teardown(&mut vs.inner_state, ctx, element);
+    }
+
+    fn message(
+        &self,
+        vs: &mut SidebarDemoPanelState,
+        message: &mut MessageCtx,
+        element: Mut<'_, Pod<Passthrough>>,
+        _: &mut S,
+    ) -> MessageResult<()> {
+        vs.inner_view
+            .message(&mut vs.inner_state, message, element, &mut vs.demo)
+    }
+}
+
+// --- MARK: PUBLIC ENTRY POINT
+
+/// Renders the full Sidebar demo panel (items + collapsible panel).
+#[must_use]
+pub fn panel(theme: &Theme) -> SidebarDemoPanel {
+    SidebarDemoPanel { theme: *theme }
 }

@@ -18,7 +18,7 @@ use xilem::winit::error::EventLoopError;
 use xilem::{AnyWidgetView, EventLoop, WidgetView, WindowOptions, Xilem};
 
 use void_ui::components::data_grid::demo::{Demo, tick_columns};
-use void_ui::components::{ComponentKind, button, data_grid, sidebar_item};
+use void_ui::components::{ComponentKind, button, data_grid, sidebar_item, sidebar_panel};
 use void_ui::label;
 use void_ui::layout::flex_wrap;
 use void_ui::theme::{Density, Theme};
@@ -27,6 +27,7 @@ struct State {
     theme: Theme,
     focused: ComponentKind,
     theme_panel_open: bool,
+    sidebar_collapsed: bool,
     data_grid: Demo,
 }
 
@@ -36,6 +37,7 @@ impl State {
             theme: Theme::dark(),
             focused: ComponentKind::Button,
             theme_panel_open: false,
+            sidebar_collapsed: false,
             // Seed with 100k rows so virtualization is exercised on
             // first open; cheaper than a million but big enough that
             // scrolling has to be real.
@@ -48,6 +50,7 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
     let theme = state.theme;
     let focused = state.focused;
     let theme_panel_open = state.theme_panel_open;
+    let sidebar_collapsed = state.sidebar_collapsed;
     // Snapshot the data-grid demo's row count and base timestamp at
     // frame time so the panel can be built without further state
     // access. `data_grid` itself reads state via the lens closures
@@ -58,6 +61,7 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
     let workspace = workspace_row(
         focused,
         theme_panel_open,
+        sidebar_collapsed,
         &theme,
         dg_row_count,
         dg_base_time_ns,
@@ -73,14 +77,19 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
 fn workspace_row(
     focused: ComponentKind,
     theme_panel_open: bool,
+    sidebar_collapsed: bool,
     theme: &Theme,
     dg_row_count: u64,
     dg_base_time_ns: i64,
 ) -> Box<AnyWidgetView<State>> {
-    let sidebar_view = sized_box(sidebar(focused, theme))
-        .fixed_width(Length::px(180.0))
-        .padding(Length::px(12.0))
-        .background_color(theme.palette.surface);
+    let sidebar_view = sidebar_panel(
+        sized_box(sidebar_items(focused, theme))
+            .padding(Length::px(12.0))
+            .background_color(theme.palette.surface),
+        |s: &mut State| s.sidebar_collapsed = !s.sidebar_collapsed,
+    )
+    .collapsed(sidebar_collapsed)
+    .render(theme);
     let main = sized_box(main_pane(focused, theme, dg_row_count, dg_base_time_ns))
         .padding(Length::px(20.0))
         .background_color(theme.palette.bg);
@@ -135,7 +144,7 @@ fn topbar(theme_panel_open: bool, theme: &Theme) -> impl WidgetView<State> + use
         .border(theme.palette.border, Length::px(1.0))
 }
 
-fn sidebar(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State> + use<> {
+fn sidebar_items(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State> + use<> {
     flex_col((
         sidebar_item("Button", |s: &mut State| {
             s.focused = ComponentKind::Button;
