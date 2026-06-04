@@ -149,7 +149,25 @@ fn variants_example(
     })
 }
 
-fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<ButtonDemoState> + use<> {
+fn controls_row(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<ButtonDemoState> + use<> {
+    let disabled_toggle = flex_row(
+        checkbox(state.disabled, |s: &mut ButtonDemoState| {
+            s.disabled = !s.disabled;
+        })
+        .label("disabled_bool")
+        .render(theme),
+    );
+    let active_toggle = flex_row(
+        checkbox(state.active, |s: &mut ButtonDemoState| s.active = !s.active)
+            .label("active_bool")
+            .render(theme),
+    );
+    flex_row((disabled_toggle, active_toggle))
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .gap(Length::px(12.0))
+}
+
+fn icons_section(theme: &Theme, disabled: bool) -> impl WidgetView<ButtonDemoState> + use<> {
     let header = |text: &'static str| {
         label(text)
             .text_size(theme.typography.size_caption)
@@ -157,85 +175,53 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
             .color(theme.palette.text_faint)
             .render(theme)
     };
-
-    let disabled_bool = state.disabled;
-
-    let active_bool = state.active;
-
-    let disabled_toggle = flex_row(
-        checkbox(disabled_bool, |s: &mut ButtonDemoState| {
-            s.disabled = !s.disabled;
-        })
-        .label("disabled_bool")
-        .render(theme),
-    );
-
-    let active_toggle = flex_row(
-        checkbox(active_bool, |s: &mut ButtonDemoState| s.active = !s.active)
-            .label("active_bool")
-            .render(theme),
-    );
-
-    // --- variants ---
-
-    let default_example = variants_example(theme, disabled_bool, active_bool);
-
-    // --- loading & trailing icon ---
+    let plus = plus_icon();
+    let caret = caret_icon();
 
     let loading_example = with_source!(theme, {
         flex_row((button(|_: &mut ButtonDemoState| {})
             .label("Saving…")
             .variant(ButtonVariant::Primary)
             .loading(true)
-            .disabled(disabled_bool)
+            .disabled(disabled)
             .render(theme),))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(8.0))
     });
-
-    let plus = plus_icon();
-    let caret = caret_icon();
-
     let leading_icon_example = with_source!(theme, {
         flex_row((button(|_: &mut ButtonDemoState| {})
             .label("Create")
             .icon(plus.clone())
-            .disabled(disabled_bool)
+            .disabled(disabled)
             .render(theme),))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(8.0))
     });
-
     let trailing_icon_example = with_source!(theme, {
         flex_row((button(|_: &mut ButtonDemoState| {})
             .label("More options")
             .trailing_icon(caret.clone())
-            .disabled(disabled_bool)
+            .disabled(disabled)
             .render(theme),))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(8.0))
     });
-
     let icon_only_example = with_source!(theme, {
         flex_row((
             button(|_: &mut ButtonDemoState| {})
                 .icon(plus.clone())
-                .disabled(disabled_bool)
+                .disabled(disabled)
                 .render(theme),
             button(|_: &mut ButtonDemoState| {})
                 .trailing_icon(caret.clone())
-                .disabled(disabled_bool)
+                .disabled(disabled)
                 .render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(8.0))
     });
 
-    let top = flex_col((header("Variants"), default_example))
-        .cross_axis_alignment(CrossAxisAlignment::Start)
-        .gap(Length::px(16.0));
-
-    let bottom = flex_col((
+    flex_col((
         header("Loading — spinner, interaction blocked"),
         loading_example,
         header("Leading icon"),
@@ -246,7 +232,17 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
         icon_only_example,
     ))
     .cross_axis_alignment(CrossAxisAlignment::Start)
-    .gap(Length::px(16.0));
+    .gap(Length::px(16.0))
+}
+
+fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<ButtonDemoState> + use<> {
+    let header = |text: &'static str| {
+        label(text)
+            .text_size(theme.typography.size_caption)
+            .letter_spacing(1.2)
+            .color(theme.palette.text_faint)
+            .render(theme)
+    };
 
     let title_block = flex_col((
         label("Button")
@@ -261,12 +257,19 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
     .cross_axis_alignment(CrossAxisAlignment::Start)
     .gap(Length::px(4.0));
 
+    let variants_section = flex_col((
+        header("Variants"),
+        variants_example(theme, state.disabled, state.active),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Start)
+    .gap(Length::px(16.0));
+
     scroll_container(
         flex_col((
             title_block,
-            flex_row((disabled_toggle, active_toggle)),
-            top,
-            bottom,
+            controls_row(theme, state),
+            variants_section,
+            icons_section(theme, state.disabled),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(16.0)),
