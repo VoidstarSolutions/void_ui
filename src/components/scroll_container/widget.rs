@@ -350,7 +350,11 @@ impl<W: Widget + ?Sized> ContentClip<W> {
 }
 
 impl<W: Widget + FromDynWidget> ContentClip<W> {
-    pub(crate) fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, W> {
+    /// Returns a `WidgetMut` for the wrapped content widget.
+    ///
+    /// This is the second hop of the documented path from a scroll view to
+    /// its content: [`ScrollView::child_mut`] then `ContentClip::child_mut`.
+    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, W> {
         this.ctx.get_mut(&mut this.widget.child)
     }
 }
@@ -723,6 +727,7 @@ impl<W: Widget + ?Sized> ScrollView<W> {
             sb_ctx.request_render();
         }
         let sb_size = ctx.compute_size(pod, SizeDef::fit(eff_size), eff_size.into());
+        ctx.run_layout(pod, sb_size);
         let origin = match axis {
             Axis::Vertical => Point::new(size.width - sb_size.width, 0.0),
             Axis::Horizontal => Point::new(0.0, size.height - sb_size.height),
