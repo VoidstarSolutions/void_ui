@@ -40,9 +40,10 @@ pub use components::{
     TooltipView, button, button_group, data_grid, label, optional_text_column, read_only_text,
     scroll_container, sidebar_item, sidebar_panel, text_column, toggle_button_group, tooltip,
     Button, ButtonGroup, ButtonVariant, ButtonView, CellAlign, ColumnDef, Icon, IconName, Label,
-    LabelAlignment, ScrollContainer, ScrollContainerView, SelectionState, SidebarItem,
-    SidebarItemView, SidebarPanel, SidebarPanelView, Tooltip, TooltipView, button, button_group,
-    data_grid, icon, label, optional_text_column, scroll_container, sidebar_item, sidebar_panel,
+    LabelAlignment, ReadOnlyText, ReadOnlyTextView, RustHighlighter, ScrollContainer,
+    ScrollContainerView, SelectionState, SidebarItem, SidebarItemView, SidebarPanel,
+    SidebarPanelView, Tooltip, TooltipView, button, button_group, data_grid, icon, label,
+    optional_text_column, read_only_text, scroll_container, sidebar_item, sidebar_panel,
     text_column, toggle_button_group, tooltip,
 };
 pub use floating::{FloatingOverlay, FloatingOverlayView, floating, interactive_floating};
