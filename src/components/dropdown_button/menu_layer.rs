@@ -199,12 +199,14 @@ impl Widget for DropdownMenuLayer {
         let n = self.labels.len();
         match axis {
             Axis::Vertical => {
+                // Report the same intrinsic height for all query types: the menu
+                // is always exactly as tall as its content. LayerStack sizes layers
+                // with SizeDef::MAX (MaxContent on both axes) — returning f64::MAX
+                // here gives the widget a near-infinite height which breaks Vello's
+                // GPU path renderer for the container background fill.
                 let n_f64 = f64::from(u32::try_from(n).unwrap_or(u32::MAX));
                 let total = MENU_PAD_V * 2.0 + item_h * n_f64;
-                match len_req {
-                    LenReq::MinContent | LenReq::FitContent(_) => Length::px(total),
-                    LenReq::MaxContent => Length::px(f64::MAX),
-                }
+                Length::px(total)
             }
             Axis::Horizontal => {
                 let inner_cross = cross_length.map(|c| Length::px((c.get() - 2.0 * pad_h).max(0.0)));
