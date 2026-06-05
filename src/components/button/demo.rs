@@ -151,8 +151,6 @@ fn icons_section(theme: &Theme, disabled: bool) -> impl WidgetView<ButtonDemoSta
             .color(theme.palette.text_faint)
             .render(theme)
     };
-    let plus = plus_icon();
-    let caret = caret_icon();
 
     let loading_example = with_source!(theme, {
         flex_row((button(|_: &mut ButtonDemoState| {})
