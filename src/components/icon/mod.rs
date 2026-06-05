@@ -18,6 +18,7 @@
 //! icon(IconName::Plus).color(theme.palette.teal).size(20.0).render(&theme)
 //! ```
 
+#[cfg(feature = "gallery")]
 pub mod demo;
 mod names;
 mod view;
