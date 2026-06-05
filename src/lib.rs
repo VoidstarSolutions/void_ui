@@ -29,22 +29,12 @@ pub mod theme;
 
 pub use components::{
     Button, ButtonGroup, ButtonVariant, ButtonView, CellAlign, ColumnDef, ColumnWidths, DataGrid,
-    FilterState, Label, LabelAlignment, MIN_COLUMN_WIDTH, ReadOnlyText, ReadOnlyTextView,
-    RustHighlighter, ScrollContainer, ScrollContainerView, SelectionState, SidebarItem,
-    SidebarItemView, SidebarPanel, SidebarPanelView, SortDirection, SortState, Tooltip,
-    TooltipView, button, button_group, colored_text_column, data_grid, filtered_indices, label,
-    optional_text_column, read_only_text, scroll_container, sidebar_item, sidebar_panel,
-    Button, ButtonGroup, ButtonVariant, ButtonView, CellAlign, ColumnDef, Label, LabelAlignment,
-    ReadOnlyText, ReadOnlyTextView, RustHighlighter, ScrollContainer, ScrollContainerView,
-    SelectionState, SidebarItem, SidebarItemView, SidebarPanel, SidebarPanelView, Tooltip,
-    TooltipView, button, button_group, data_grid, label, optional_text_column, read_only_text,
-    scroll_container, sidebar_item, sidebar_panel, text_column, toggle_button_group, tooltip,
-    Button, ButtonGroup, ButtonVariant, ButtonView, CellAlign, ColumnDef, Icon, IconName, Label,
-    LabelAlignment, ReadOnlyText, ReadOnlyTextView, RustHighlighter, ScrollContainer,
-    ScrollContainerView, SelectionState, SidebarItem, SidebarItemView, SidebarPanel,
-    SidebarPanelView, Tooltip, TooltipView, button, button_group, data_grid, icon, label,
-    optional_text_column, read_only_text, scroll_container, sidebar_item, sidebar_panel,
-    text_column, toggle_button_group, tooltip,
+    FilterState, Icon, IconName, Label, LabelAlignment, MIN_COLUMN_WIDTH, ReadOnlyText,
+    ReadOnlyTextView, RustHighlighter, ScrollContainer, ScrollContainerView, SelectionState,
+    SidebarItem, SidebarItemView, SidebarPanel, SidebarPanelView, SortDirection, SortState,
+    Tooltip, TooltipView, button, button_group, colored_text_column, data_grid, filtered_indices,
+    icon, label, optional_text_column, read_only_text, scroll_container, sidebar_item,
+    sidebar_panel, text_column, toggle_button_group, tooltip,
 };
 pub use floating::{FloatingOverlay, FloatingOverlayView, floating, interactive_floating};
 #[cfg(feature = "gallery")]
