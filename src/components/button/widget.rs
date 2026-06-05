@@ -594,7 +594,11 @@ impl Widget for ThemedButton {
             let _ = ctx.compute_length(ti, len_req.into(), icon_ctx, axis, Some(icon_sz));
         }
         let icon_extra = if (self.icon.is_some() || self.loading) && axis == Axis::Horizontal {
-            let (slots, inner_gap) = if self.loading && self.icon.is_some() { (2.0, ICON_GAP) } else { (1.0, 0.0) };
+            let (slots, inner_gap) = if self.loading && self.icon.is_some() {
+                (2.0, ICON_GAP)
+            } else {
+                (1.0, 0.0)
+            };
             slots * self.icon_size() + inner_gap + if has_label { ICON_GAP } else { 0.0 }
         } else {
             0.0
@@ -649,7 +653,11 @@ impl Widget for ThemedButton {
         if let Some(icon) = &mut self.icon {
             ctx.run_layout(icon, Size::new(icon_sz, icon_sz));
             let icon_y = (size.height - icon_sz) * 0.5;
-            let icon_x = if self.loading { pad_h + icon_sz + ICON_GAP } else { pad_h };
+            let icon_x = if self.loading {
+                pad_h + icon_sz + ICON_GAP
+            } else {
+                pad_h
+            };
             ctx.place_child(icon, Point::new(icon_x, icon_y));
         }
         if let Some(ti) = &mut self.trailing_icon {
