@@ -37,7 +37,7 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
         label("Code View")
             .text_size(theme.typography.size_title)
             .color(theme.palette.text)
-			.render(theme),
+            .render(theme),
         label("A read-only text view with optional syntax highlighting, line numbers, and copy button.")
             .color(theme.palette.text_muted)
             .multiline(true)
