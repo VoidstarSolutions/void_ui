@@ -12,13 +12,14 @@
 //! ```
 
 use std::marker::PhantomData;
-use std::sync::Arc;
 
+use lucide_icons::Icon as LucideIcon;
 use masonry::core::{ArcStr, StyleProperty, Widget as _};
-use masonry::kurbo::{BezPath, RoundedRectRadii};
+use masonry::kurbo::RoundedRectRadii;
 use masonry::properties::ContentColor;
 use masonry::widgets::{ButtonPress, Label};
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
+use xilem::peniko::color::{AlphaColor, Srgb};
 use xilem::{Pod, ViewCtx};
 
 use super::ButtonVariant;
@@ -39,8 +40,8 @@ pub struct Button<F> {
     disabled: bool,
     loading: bool,
     variant: ButtonVariant,
-    icon: Option<Arc<BezPath>>,
-    trailing_icon: Option<Arc<BezPath>>,
+    icon: Option<LucideIcon>,
+    trailing_icon: Option<LucideIcon>,
     corners: Option<RoundedRectRadii>,
     callback: F,
 }
@@ -98,20 +99,15 @@ impl<F> Button<F> {
         self
     }
 
-    /// Attach a leading icon.
-    ///
-    /// `path` must be in a 0..1 coordinate space (unit square); it is scaled
-    /// uniformly to the theme's UI font size at paint time.
-    pub fn icon(mut self, path: BezPath) -> Self {
-        self.icon = Some(Arc::new(path));
+    /// Attach a leading icon from the Lucide icon set.
+    pub fn icon(mut self, name: LucideIcon) -> Self {
+        self.icon = Some(name);
         self
     }
 
-    /// Attach a trailing icon (e.g. a dropdown caret).
-    ///
-    /// Same coordinate space and scaling rules as [`Self::icon`].
-    pub fn trailing_icon(mut self, path: BezPath) -> Self {
-        self.trailing_icon = Some(Arc::new(path));
+    /// Attach a trailing icon from the Lucide icon set (e.g. a dropdown caret).
+    pub fn trailing_icon(mut self, name: LucideIcon) -> Self {
+        self.trailing_icon = Some(name);
         self
     }
 
@@ -168,12 +164,23 @@ pub struct ButtonView<F, State, Action> {
     disabled: bool,
     loading: bool,
     variant: ButtonVariant,
-    icon: Option<Arc<BezPath>>,
-    trailing_icon: Option<Arc<BezPath>>,
+    icon: Option<LucideIcon>,
+    trailing_icon: Option<LucideIcon>,
     corners: Option<RoundedRectRadii>,
     theme: Theme,
     callback: F,
     phantom: PhantomData<fn(State) -> Action>,
+}
+impl<F, State, Action> ButtonView<F, State, Action> {
+    fn text_color(&self) -> AlphaColor<Srgb> {
+        if self.disabled {
+            self.theme.palette.text_faint
+        } else if self.variant == ButtonVariant::Link {
+            self.theme.palette.teal
+        } else {
+            self.theme.palette.text
+        }
+    }
 }
 
 impl<F, State, Action> ViewMarker for ButtonView<F, State, Action> {}
@@ -188,25 +195,36 @@ where
     type ViewState = ();
 
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
-        let text_color = if self.disabled {
-            self.theme.palette.text_faint
-        } else if self.variant == ButtonVariant::Link {
-            self.theme.palette.teal
-        } else {
-            self.theme.palette.text
-        };
+        let text_color = self.text_color();
         let mut label = Label::new(self.label.clone().unwrap_or_default())
             .with_style(StyleProperty::FontSize(self.theme.density.ui_font_size))
             .prepare();
         label.properties.insert(ContentColor::new(text_color));
+        let icon_color = if self.disabled {
+            self.theme.palette.text_faint
+        } else {
+            self.theme.palette.text
+        };
         let mut widget = ThemedButton::new(label, &self.theme)
             .with_active(self.active)
             .with_disabled(self.disabled)
             .with_loading(self.loading)
             .with_variant(self.variant)
-            .with_icon(self.icon.clone())
-            .with_trailing_icon(self.trailing_icon.clone())
             .with_accessibility_label(self.accessible_name.clone());
+        if let Some(name) = self.icon {
+            widget = widget.with_icon(
+                super::super::icon::icon(name)
+                    .color(icon_color)
+                    .build_widget(&self.theme),
+            );
+        }
+        if let Some(name) = self.trailing_icon {
+            widget = widget.with_trailing_icon(
+                super::super::icon::icon(name)
+                    .color(icon_color)
+                    .build_widget(&self.theme),
+            );
+        }
         if let Some(corners) = self.corners {
             widget = widget.with_corners(corners);
         }
@@ -230,13 +248,7 @@ where
         // only when needed, so diffing here avoids spurious repaints.
         if self.theme != prev.theme {
             ThemedButton::set_theme(&mut element, &self.theme);
-            let text_color = if self.disabled {
-                self.theme.palette.text_faint
-            } else if self.variant == ButtonVariant::Link {
-                self.theme.palette.teal
-            } else {
-                self.theme.palette.text
-            };
+            let text_color = self.text_color();
             let mut child = ThemedButton::child_mut(&mut element);
             child.insert_prop(ContentColor::new(text_color));
             let mut lbl = child.downcast::<Label>();
@@ -253,13 +265,7 @@ where
         }
         if self.disabled != prev.disabled {
             ThemedButton::set_disabled(&mut element, self.disabled);
-            let text_color = if self.disabled {
-                self.theme.palette.text_faint
-            } else if self.variant == ButtonVariant::Link {
-                self.theme.palette.teal
-            } else {
-                self.theme.palette.text
-            };
+            let text_color = self.text_color();
             let mut child = ThemedButton::child_mut(&mut element);
             child.insert_prop(ContentColor::new(text_color));
         }
@@ -278,22 +284,48 @@ where
                 child.insert_prop(ContentColor::new(text_color));
             }
         }
-        // BezPath has no PartialEq — compare Arc pointers instead.
-        let icon_changed = match (&self.icon, &prev.icon) {
-            (None, None) => false,
-            (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
-            _ => true,
+        let icon_color = if self.disabled {
+            self.theme.palette.text_faint
+        } else {
+            self.theme.palette.text
         };
-        if icon_changed {
-            ThemedButton::set_icon(&mut element, self.icon.clone());
+        if self.icon.map(char::from) != prev.icon.map(char::from) {
+            match self.icon {
+                Some(name) => ThemedButton::attach_icon(
+                    &mut element,
+                    super::super::icon::icon(name)
+                        .color(icon_color)
+                        .build_widget(&self.theme),
+                ),
+                None => ThemedButton::detach_icon(&mut element),
+            }
+        } else if (self.theme != prev.theme || self.disabled != prev.disabled)
+            && let Some(mut m) = ThemedButton::icon_mut(&mut element)
+        {
+            m.insert_prop(ContentColor::new(icon_color));
+            Label::insert_style(
+                &mut m,
+                StyleProperty::FontSize(self.theme.density.ui_font_size),
+            );
         }
-        let trailing_icon_changed = match (&self.trailing_icon, &prev.trailing_icon) {
-            (None, None) => false,
-            (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
-            _ => true,
-        };
-        if trailing_icon_changed {
-            ThemedButton::set_trailing_icon(&mut element, self.trailing_icon.clone());
+        if self.trailing_icon.map(char::from) != prev.trailing_icon.map(char::from) {
+            match self.trailing_icon {
+                Some(name) => ThemedButton::attach_trailing_icon(
+                    &mut element,
+                    super::super::icon::icon(name)
+                        .color(icon_color)
+                        .build_widget(&self.theme),
+                ),
+                None => ThemedButton::detach_trailing_icon(&mut element),
+            }
+        } else if (self.theme != prev.theme || self.disabled != prev.disabled)
+            && let Some(mut m) = ThemedButton::trailing_icon_mut(&mut element)
+        {
+            m.insert_prop(ContentColor::new(icon_color));
+            Label::insert_style(
+                &mut m,
+                StyleProperty::FontSize(self.theme.density.ui_font_size),
+            );
         }
         if self.accessible_name != prev.accessible_name {
             ThemedButton::set_accessibility_label(&mut element, self.accessible_name.clone());

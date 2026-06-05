@@ -7,21 +7,24 @@
 //! is always visible so users can always reopen the sidebar.
 
 use std::any::TypeId;
-use std::sync::LazyLock;
 
+use crate::components::icon::IconName;
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
-    AccessCtx, AccessEvent, ChildrenIds, EventCtx, FromDynWidget, LayoutCtx, MeasureCtx, NewWidget,
-    NoAction, PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut,
-    PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
-    WidgetPod,
+    AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, FromDynWidget, LayoutCtx, MeasureCtx,
+    NewWidget, NoAction, PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut,
+    PropertiesRef, RegisterCtx, StyleProperty, TextEvent, Update, UpdateCtx, Widget, WidgetId,
+    WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Affine, Axis, BezPath, Point, Rect, Size, Stroke};
+use masonry::kurbo::{Axis, Point, Rect, Size};
 use masonry::layout::{LayoutSize, LenReq, Length};
 use masonry::peniko::Color;
+use masonry::properties::ContentColor;
+use masonry::widgets::Label;
 
 use crate::Theme;
+use crate::components::icon::icon;
 
 // --- MARK: CONSTANTS
 
@@ -38,25 +41,18 @@ const SEPARATOR_WIDTH: f64 = 1.0;
 #[derive(Debug, Clone)]
 pub struct SidebarTogglePressed;
 
-// --- MARK: CHEVRONS
+// --- MARK: CHEVRON HELPER
 
-/// `‹` chevron in unit-square (0..1) coords.
-static CHEVRON_LEFT: LazyLock<BezPath> = LazyLock::new(|| {
-    let mut p = BezPath::new();
-    p.move_to((0.65, 0.2));
-    p.line_to((0.35, 0.5));
-    p.line_to((0.65, 0.8));
-    p
-});
-
-/// `›` chevron in unit-square (0..1) coords.
-static CHEVRON_RIGHT: LazyLock<BezPath> = LazyLock::new(|| {
-    let mut p = BezPath::new();
-    p.move_to((0.35, 0.2));
-    p.line_to((0.65, 0.5));
-    p.line_to((0.35, 0.8));
-    p
-});
+fn make_chevron(collapsed: bool, theme: &Theme) -> NewWidget<Label> {
+    let name = if collapsed {
+        IconName::ChevronRight
+    } else {
+        IconName::ChevronLeft
+    };
+    icon(name)
+        .color(theme.palette.text_muted)
+        .build_widget(theme)
+}
 
 // --- MARK: SidebarContent
 
@@ -230,6 +226,7 @@ impl<W: Widget + ?Sized> Widget for SidebarContent<W> {
 /// Emits [`SidebarTogglePressed`] when the strip is clicked.
 pub struct ThemedSidebarPanel<W: Widget + ?Sized> {
     content: WidgetPod<SidebarContent<W>>,
+    chevron: WidgetPod<Label>,
     theme: Theme,
     collapsed: bool,
     /// True while the pointer is inside the strip area.
@@ -248,6 +245,7 @@ impl<W: Widget + ?Sized> ThemedSidebarPanel<W> {
     pub fn new(child: NewWidget<W>, theme: &Theme, collapsed: bool) -> Self {
         Self {
             content: WidgetPod::new(SidebarContent::new(child, collapsed)),
+            chevron: make_chevron(collapsed, theme).to_pod(),
             theme: *theme,
             collapsed,
             strip_hovered: false,
@@ -269,7 +267,15 @@ impl<W: Widget + ?Sized> ThemedSidebarPanel<W> {
     pub fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
         if this.widget.theme != *theme {
             this.widget.theme = *theme;
-            this.ctx.request_paint_only();
+            {
+                let mut chevron = this.ctx.get_mut(&mut this.widget.chevron);
+                chevron.insert_prop(ContentColor::new(theme.palette.text_muted));
+                Label::insert_style(
+                    &mut chevron,
+                    StyleProperty::FontSize(theme.density.ui_font_size),
+                );
+            }
+            this.ctx.request_layout();
         }
     }
 
@@ -277,6 +283,16 @@ impl<W: Widget + ?Sized> ThemedSidebarPanel<W> {
         if this.widget.collapsed != collapsed {
             this.widget.collapsed = collapsed;
             this.ctx.request_paint_only();
+            let new_icon = if collapsed {
+                IconName::ChevronRight
+            } else {
+                IconName::ChevronLeft
+            };
+            let new_char = ArcStr::from(String::from(char::from(new_icon)));
+            {
+                let mut chevron = this.ctx.get_mut(&mut this.widget.chevron);
+                Label::set_text(&mut chevron, new_char);
+            }
             let mut content = this.ctx.get_mut(&mut this.widget.content);
             SidebarContent::set_collapsed(&mut content, collapsed);
         }
@@ -373,6 +389,7 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
         ctx.register_child(&mut self.content);
+        ctx.register_child(&mut self.chevron);
     }
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: TypeId) {}
@@ -393,6 +410,16 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
             axis,
             cross_length,
         );
+        // Measure chevron at a fixed icon-font-size square.
+        let chevron_sz = Length::px(f64::from(self.theme.density.ui_font_size));
+        let chevron_ctx = LayoutSize::maybe(axis.cross(), Some(chevron_sz));
+        let _ = ctx.compute_length(
+            &mut self.chevron,
+            len_req.into(),
+            chevron_ctx,
+            axis,
+            Some(chevron_sz),
+        );
         if axis == Axis::Horizontal {
             Length::px(content_length.get() + STRIP_WIDTH)
         } else {
@@ -407,6 +434,13 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
         ctx.place_child(&mut self.content, Point::ORIGIN);
         self.current_strip_x = content_width;
         self.current_height = size.height;
+
+        // Place chevron centered in the strip.
+        let icon_sz = f64::from(self.theme.density.ui_font_size);
+        ctx.run_layout(&mut self.chevron, Size::new(icon_sz, icon_sz));
+        let chevron_x = content_width + STRIP_WIDTH * 0.5 - icon_sz * 0.5;
+        let chevron_y = (size.height - icon_sz) * 0.5;
+        ctx.place_child(&mut self.chevron, Point::new(chevron_x, chevron_y));
     }
 
     fn paint(
@@ -434,20 +468,7 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
             painter.fill(bg_rect, bg).draw();
         }
 
-        // Chevron icon centered in the strip.
-        let icon_size = f64::from(self.theme.density.ui_font_size) * 0.9;
-        let strip_center_x = strip_x + STRIP_WIDTH * 0.5;
-        let icon_x = strip_center_x - icon_size * 0.5;
-        let icon_y = (h - icon_size) * 0.5;
-        let transform = Affine::translate((icon_x, icon_y)) * Affine::scale(icon_size);
-        let chevron = if self.collapsed {
-            &*CHEVRON_RIGHT
-        } else {
-            &*CHEVRON_LEFT
-        };
-        painter
-            .stroke(transform * chevron, &Stroke::new(1.5), p.text_muted)
-            .draw();
+        // Chevron is a self-painting Label child placed during layout.
     }
 
     fn accessibility_role(&self) -> Role {
@@ -463,7 +484,8 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.content.id()])
+        let ids = [self.content.id(), self.chevron.id()];
+        ChildrenIds::from_slice(&ids)
     }
 
     fn propagates_pointer_interaction(&self) -> bool {

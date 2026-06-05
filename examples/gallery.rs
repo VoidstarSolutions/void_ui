@@ -240,6 +240,11 @@ fn sidebar_items(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State
         })
         .active(focused == ComponentKind::DataGrid)
         .render(theme),
+        sidebar_item("Icon", |s: &mut State| {
+            s.focused = ComponentKind::Icon;
+        })
+        .active(focused == ComponentKind::Icon)
+        .render(theme),
         sidebar_item("Label", |s: &mut State| {
             s.focused = ComponentKind::Label;
         })
@@ -289,6 +294,7 @@ fn main_pane(
         ComponentKind::Checkbox => Box::new(void_ui::components::checkbox::demo::panel(theme)),
         ComponentKind::Clipboard => Box::new(void_ui::components::clipboard::demo::panel(theme)),
         ComponentKind::DataGrid => Box::new(data_grid_panel(theme, dg)),
+        ComponentKind::Icon => Box::new(void_ui::components::icon::demo::panel(theme)),
         ComponentKind::Label => Box::new(void_ui::components::label::demo::panel(theme)),
         ComponentKind::StockQuotes => Box::new(stock_quotes_panel(theme, stock)),
         ComponentKind::Radio => Box::new(void_ui::components::radio::demo::panel(theme)),
@@ -720,7 +726,8 @@ fn main() -> Result<(), EventLoopError> {
         State::new(),
         app_logic,
         WindowOptions::new("void-ui · component gallery"),
-    );
+    )
+    .with_font(void_ui::LUCIDE_FONT_BYTES.to_vec());
     app.run_in(EventLoop::with_user_event())?;
     Ok(())
 }

@@ -1,8 +1,8 @@
 //! Icon-only child widget for the clipboard button.
 //!
-//! Paints a copy icon at rest and a checkmark after being activated. The
-//! checkmark reverts automatically after [`COPIED_DURATION`] seconds, driven
-//! by `request_anim_frame` — no timer thread required.
+//! Shows a Copy icon at rest and a Check icon after being activated. The check
+//! reverts automatically after [`COPIED_DURATION`] seconds, driven by
+//! `request_anim_frame` — no timer thread required.
 //!
 //! This widget is passive: it emits no actions and handles no events.
 //! Interaction (pointer, keyboard, focus, background, focus ring) is owned by
@@ -10,55 +10,53 @@
 //!
 //! [`ThemedButton`]: crate::components::button::widget::ThemedButton
 
-use std::sync::LazyLock;
+use std::borrow::Cow;
 
+use lucide_icons::Icon as LucideIcon;
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
-    AccessCtx, ChildrenIds, LayoutCtx, MeasureCtx, NoAction, PaintCtx, PropertiesMut,
-    PropertiesRef, UpdateCtx, Widget, WidgetMut,
+    AccessCtx, ArcStr, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
+    PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty, UpdateCtx, Widget, WidgetMut,
+    WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Affine, Axis, BezPath, Stroke};
-use masonry::layout::{LenReq, Length};
+use masonry::kurbo::{Axis, Point, Size};
+use masonry::layout::{LayoutSize, LenReq, Length};
+use masonry::parley::{FontFamily, FontFamilyName};
+use masonry::properties::ContentColor;
+use masonry::widgets::Label;
 
 use crate::Theme;
 
-/// Seconds the checkmark is shown before reverting to the copy icon.
+/// Seconds the check icon is shown before reverting to the copy icon.
 const COPIED_DURATION: f64 = 1.5;
 
-/// Two overlapping squares (back-left, front-right) in unit-square space.
-static COPY_PATH: LazyLock<BezPath> = LazyLock::new(|| {
-    let mut p = BezPath::new();
-    p.move_to((0.05, 0.30));
-    p.line_to((0.05, 0.95));
-    p.line_to((0.70, 0.95));
-    p.line_to((0.70, 0.30));
-    p.close_path();
-    p.move_to((0.30, 0.05));
-    p.line_to((0.95, 0.05));
-    p.line_to((0.95, 0.70));
-    p.line_to((0.30, 0.70));
-    p.close_path();
-    p
-});
-
-/// Checkmark in unit-square space.
-static CHECK_PATH: LazyLock<BezPath> = LazyLock::new(|| {
-    let mut p = BezPath::new();
-    p.move_to((0.10, 0.50));
-    p.line_to((0.40, 0.80));
-    p.line_to((0.90, 0.20));
-    p
-});
+fn make_icon(copied: bool, theme: &Theme) -> NewWidget<Label> {
+    let (lucide, color) = if copied {
+        (LucideIcon::Check, theme.palette.teal)
+    } else {
+        (LucideIcon::Copy, theme.palette.text_muted)
+    };
+    let ch = char::from(lucide);
+    let mut lbl = Label::new(ArcStr::from(String::from(ch)))
+        .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
+        .with_style(StyleProperty::FontFamily(FontFamily::Single(
+            FontFamilyName::Named(Cow::Borrowed("lucide")),
+        )))
+        .prepare();
+    lbl.properties.insert(ContentColor::new(color));
+    lbl
+}
 
 /// Passive icon widget for the clipboard button.
 ///
-/// Paints the copy or check icon; the parent `ThemedButton` owns all
+/// Shows the copy or check icon; the parent `ThemedButton` owns all
 /// interaction, background painting, and focus handling.
 pub struct ClipboardWidget {
     theme: Theme,
     copied: bool,
     copied_t: f64,
+    icon: WidgetPod<Label>,
 }
 
 // --- MARK: BUILDERS
@@ -69,6 +67,7 @@ impl ClipboardWidget {
             theme: *theme,
             copied: false,
             copied_t: 0.0,
+            icon: make_icon(false, theme).to_pod(),
         }
     }
 }
@@ -79,6 +78,19 @@ impl ClipboardWidget {
     pub fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
         if this.widget.theme != *theme {
             this.widget.theme = *theme;
+            let color = if this.widget.copied {
+                theme.palette.teal
+            } else {
+                theme.palette.text_muted
+            };
+            {
+                let mut icon = this.ctx.get_mut(&mut this.widget.icon);
+                icon.insert_prop(ContentColor::new(color));
+                Label::insert_style(
+                    &mut icon,
+                    StyleProperty::FontSize(theme.density.ui_font_size),
+                );
+            }
             this.ctx.request_paint_only();
         }
     }
@@ -93,6 +105,17 @@ impl ClipboardWidget {
         if this.widget.copied != copied || copied {
             this.widget.copied = copied;
             this.widget.copied_t = 0.0;
+            let (lucide, color) = if copied {
+                (LucideIcon::Check, this.widget.theme.palette.teal)
+            } else {
+                (LucideIcon::Copy, this.widget.theme.palette.text_muted)
+            };
+            let new_char = ArcStr::from(String::from(char::from(lucide)));
+            {
+                let mut icon = this.ctx.get_mut(&mut this.widget.icon);
+                Label::set_text(&mut icon, new_char);
+                icon.insert_prop(ContentColor::new(color));
+            }
             if copied {
                 this.ctx.request_anim_frame();
             }
@@ -117,6 +140,12 @@ impl Widget for ClipboardWidget {
             if self.copied_t >= COPIED_DURATION {
                 self.copied = false;
                 self.copied_t = 0.0;
+                let new_char = ArcStr::from(String::from(char::from(LucideIcon::Copy)));
+                let color = self.theme.palette.text_muted;
+                ctx.mutate_child_later(&mut self.icon, move |mut icon| {
+                    Label::set_text(&mut icon, new_char);
+                    icon.insert_prop(ContentColor::new(color));
+                });
             } else {
                 ctx.request_anim_frame();
             }
@@ -124,60 +153,39 @@ impl Widget for ClipboardWidget {
         }
     }
 
-    fn update(
-        &mut self,
-        _ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &masonry::core::Update,
-    ) {
+    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
+        ctx.register_child(&mut self.icon);
     }
-
-    fn register_children(&mut self, _ctx: &mut masonry::core::RegisterCtx<'_>) {}
-
-    fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
 
     fn measure(
         &mut self,
-        _ctx: &mut MeasureCtx<'_>,
+        ctx: &mut MeasureCtx<'_>,
         _props: &PropertiesRef<'_>,
-        _axis: Axis,
-        _len_req: LenReq,
+        axis: Axis,
+        len_req: LenReq,
         _cross_length: Option<Length>,
     ) -> Length {
-        Length::px(f64::from(self.theme.density.ui_font_size))
+        let sz = Length::px(f64::from(self.theme.density.ui_font_size));
+        let ctx_size = LayoutSize::maybe(axis.cross(), Some(sz));
+        let _ = ctx.compute_length(&mut self.icon, len_req.into(), ctx_size, axis, Some(sz));
+        sz
     }
 
-    fn layout(
-        &mut self,
-        _ctx: &mut LayoutCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _size: masonry::kurbo::Size,
-    ) {
+    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
+        let icon_sz = f64::from(self.theme.density.ui_font_size);
+        ctx.run_layout(&mut self.icon, Size::new(icon_sz, icon_sz));
+        let icon_x = (size.width - icon_sz) * 0.5;
+        let icon_y = (size.height - icon_sz) * 0.5;
+        ctx.place_child(&mut self.icon, Point::new(icon_x, icon_y));
     }
 
     fn paint(
         &mut self,
-        ctx: &mut PaintCtx<'_>,
+        _ctx: &mut PaintCtx<'_>,
         _props: &PropertiesRef<'_>,
-        painter: &mut Painter<'_>,
+        _painter: &mut Painter<'_>,
     ) {
-        let size = ctx.border_box_size();
-        let p = &self.theme.palette;
-        let (icon, color) = if self.copied {
-            (&*CHECK_PATH, p.teal)
-        } else {
-            (&*COPY_PATH, p.text_muted)
-        };
-
-        let icon_size = f64::from(self.theme.density.ui_font_size);
-        let stroke_width = icon_size / 10.0;
-        let icon_x = (size.width - icon_size) * 0.5;
-        let icon_y = (size.height - icon_size) * 0.5;
-        let transform = Affine::translate((icon_x, icon_y)) * Affine::scale(icon_size);
-
-        painter
-            .stroke(transform * icon, &Stroke::new(stroke_width), color)
-            .draw();
+        // Icon is a self-painting Label child placed during layout.
     }
 
     fn accessibility_role(&self) -> Role {
@@ -193,7 +201,7 @@ impl Widget for ClipboardWidget {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[])
+        ChildrenIds::from_slice(&[self.icon.id()])
     }
 
     fn propagates_pointer_interaction(&self) -> bool {

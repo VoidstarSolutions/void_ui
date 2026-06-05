@@ -5,7 +5,6 @@
 //! a new variant is: add a `header`, add an example block, wrap in
 //! `with_source!`.
 
-use masonry::kurbo::BezPath;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::layout::Length;
 use xilem::masonry::widgets::Passthrough;
@@ -17,7 +16,7 @@ use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::button;
 use crate::components::checkbox::checkbox;
-use crate::components::{ButtonVariant, ScrollBarVisibility};
+use crate::components::{ButtonVariant, IconName, ScrollBarVisibility};
 use crate::with_source;
 use crate::{Theme, scroll_container};
 
@@ -49,32 +48,6 @@ pub struct ButtonDemoPanelState {
 #[must_use]
 pub fn panel(theme: &Theme) -> ButtonDemoPanel {
     ButtonDemoPanel { theme: *theme }
-}
-
-fn plus_icon() -> BezPath {
-    let mut p = BezPath::new();
-    p.move_to((0.1, 0.4));
-    p.line_to((0.4, 0.4));
-    p.line_to((0.4, 0.1));
-    p.line_to((0.6, 0.1));
-    p.line_to((0.6, 0.4));
-    p.line_to((0.9, 0.4));
-    p.line_to((0.9, 0.6));
-    p.line_to((0.6, 0.6));
-    p.line_to((0.6, 0.9));
-    p.line_to((0.4, 0.9));
-    p.line_to((0.4, 0.6));
-    p.line_to((0.1, 0.6));
-    p.close_path();
-    p
-}
-
-fn caret_icon() -> BezPath {
-    let mut p = BezPath::new();
-    p.move_to((0.2, 0.35));
-    p.line_to((0.5, 0.65));
-    p.line_to((0.8, 0.35));
-    p
 }
 
 fn variants_example(
@@ -178,23 +151,30 @@ fn icons_section(theme: &Theme, disabled: bool) -> impl WidgetView<ButtonDemoSta
             .color(theme.palette.text_faint)
             .render(theme)
     };
-    let plus = plus_icon();
-    let caret = caret_icon();
 
     let loading_example = with_source!(theme, {
-        flex_row((button(|_: &mut ButtonDemoState| {})
-            .label("Saving…")
-            .variant(ButtonVariant::Primary)
-            .loading(true)
-            .disabled(disabled)
-            .render(theme),))
+        flex_row((
+            button(|_: &mut ButtonDemoState| {})
+                .label("Saving…")
+                .variant(ButtonVariant::Primary)
+                .loading(true)
+                .disabled(disabled)
+                .render(theme),
+            button(|_: &mut ButtonDemoState| {})
+                .label("Adding")
+                .icon(IconName::Plus)
+                .variant(ButtonVariant::Primary)
+                .loading(true)
+                .disabled(disabled)
+                .render(theme),
+        ))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(8.0))
     });
     let leading_icon_example = with_source!(theme, {
         flex_row((button(|_: &mut ButtonDemoState| {})
             .label("Create")
-            .icon(plus.clone())
+            .icon(IconName::Plus)
             .disabled(disabled)
             .render(theme),))
         .cross_axis_alignment(CrossAxisAlignment::Center)
@@ -203,7 +183,7 @@ fn icons_section(theme: &Theme, disabled: bool) -> impl WidgetView<ButtonDemoSta
     let trailing_icon_example = with_source!(theme, {
         flex_row((button(|_: &mut ButtonDemoState| {})
             .label("More options")
-            .trailing_icon(caret.clone())
+            .trailing_icon(IconName::ChevronDown)
             .disabled(disabled)
             .render(theme),))
         .cross_axis_alignment(CrossAxisAlignment::Center)
@@ -212,11 +192,13 @@ fn icons_section(theme: &Theme, disabled: bool) -> impl WidgetView<ButtonDemoSta
     let icon_only_example = with_source!(theme, {
         flex_row((
             button(|_: &mut ButtonDemoState| {})
-                .icon(plus.clone())
+                .icon(IconName::Plus)
+                .accessible_name("Add")
                 .disabled(disabled)
                 .render(theme),
             button(|_: &mut ButtonDemoState| {})
-                .trailing_icon(caret.clone())
+                .trailing_icon(IconName::ChevronDown)
+                .accessible_name("Open menu")
                 .disabled(disabled)
                 .render(theme),
         ))
