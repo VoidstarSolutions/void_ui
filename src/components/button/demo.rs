@@ -153,12 +153,21 @@ fn icons_section(theme: &Theme, disabled: bool) -> impl WidgetView<ButtonDemoSta
     };
 
     let loading_example = with_source!(theme, {
-        flex_row((button(|_: &mut ButtonDemoState| {})
-            .label("Saving…")
-            .variant(ButtonVariant::Primary)
-            .loading(true)
-            .disabled(disabled)
-            .render(theme),))
+        flex_row((
+            button(|_: &mut ButtonDemoState| {})
+                .label("Saving…")
+                .variant(ButtonVariant::Primary)
+                .loading(true)
+                .disabled(disabled)
+                .render(theme),
+            button(|_: &mut ButtonDemoState| {})
+                .label("Adding")
+                .icon(IconName::Plus)
+                .variant(ButtonVariant::Primary)
+                .loading(true)
+                .disabled(disabled)
+                .render(theme),
+        ))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(8.0))
     });

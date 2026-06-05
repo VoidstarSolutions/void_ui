@@ -594,7 +594,8 @@ impl Widget for ThemedButton {
             let _ = ctx.compute_length(ti, len_req.into(), icon_ctx, axis, Some(icon_sz));
         }
         let icon_extra = if (self.icon.is_some() || self.loading) && axis == Axis::Horizontal {
-            self.icon_size() + if has_label { ICON_GAP } else { 0.0 }
+            let (slots, inner_gap) = if self.loading && self.icon.is_some() { (2.0, ICON_GAP) } else { (1.0, 0.0) };
+            slots * self.icon_size() + inner_gap + if has_label { ICON_GAP } else { 0.0 }
         } else {
             0.0
         };
@@ -609,7 +610,9 @@ impl Widget for ThemedButton {
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         let pad_v = f64::from(self.theme.density.button_pad_v);
         let pad_h = f64::from(self.theme.density.button_pad_h);
-        let icon_base = if self.icon.is_some() || self.loading {
+        let icon_base = if self.loading && self.icon.is_some() {
+            self.icon_size() * 2.0 + ICON_GAP
+        } else if self.icon.is_some() || self.loading {
             self.icon_size()
         } else {
             0.0
@@ -643,13 +646,11 @@ impl Widget for ThemedButton {
         ctx.derive_baselines(&self.child);
 
         let icon_sz = self.icon_size();
-        // Place icon children at their natural positions. When loading=true and an icon
-        // exists, both the spinner (paint) and the icon label overlap — prefer not
-        // combining these states in practice.
         if let Some(icon) = &mut self.icon {
             ctx.run_layout(icon, Size::new(icon_sz, icon_sz));
             let icon_y = (size.height - icon_sz) * 0.5;
-            ctx.place_child(icon, Point::new(pad_h, icon_y));
+            let icon_x = if self.loading { pad_h + icon_sz + ICON_GAP } else { pad_h };
+            ctx.place_child(icon, Point::new(icon_x, icon_y));
         }
         if let Some(ti) = &mut self.trailing_icon {
             ctx.run_layout(ti, Size::new(icon_sz, icon_sz));
