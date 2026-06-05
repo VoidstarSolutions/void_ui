@@ -1048,8 +1048,8 @@ where
         // x-positions as the header/filter strips. The shared width list
         // is handed over as an `Arc` clone — a refcount bump, not a per-
         // row `Vec` allocation.
-        let row_view =
-            sized_box(column_strip(Arc::clone(&widths), row_height, cells)).background_color(row_bg);
+        let row_view = sized_box(column_strip(Arc::clone(&widths), row_height, cells))
+            .background_color(row_bg);
 
         // Click handler: route modifiers to the matching SelectionState
         // op, all keyed by the row's *stable id*. Borrows of `state` are
