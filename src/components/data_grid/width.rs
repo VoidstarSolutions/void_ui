@@ -78,10 +78,15 @@ impl ColumnWidths {
     }
 
     /// The effective width for `column`: its override if set, else
-    /// `default_width`.
+    /// `default_width` — clamped to at least [`MIN_COLUMN_WIDTH`], so a
+    /// `ColumnDef` default below the floor (overrides are clamped at
+    /// [`Self::set`] already) can't produce an unusably-thin column.
+    /// A NaN default also resolves to the floor.
     #[must_use]
     pub fn effective(&self, column: &ColumnId, default_width: f64) -> f64 {
-        self.get(column).unwrap_or(default_width)
+        self.get(column)
+            .unwrap_or(default_width)
+            .max(MIN_COLUMN_WIDTH)
     }
 
     /// `true` when no column has an override (the default layout).
@@ -122,6 +127,15 @@ mod tests {
             approx(w.effective(&id("price"), 90.0), 90.0),
             "other columns untouched"
         );
+    }
+
+    #[test]
+    fn effective_clamps_default_below_min() {
+        // A ColumnDef default below the floor resolves to
+        // MIN_COLUMN_WIDTH — same clamp `set` applies to overrides, so
+        // no path can produce an unusably-thin (or invisible) column.
+        let w = ColumnWidths::new();
+        assert!(approx(w.effective(&id("tiny"), 4.0), MIN_COLUMN_WIDTH));
     }
 
     #[test]

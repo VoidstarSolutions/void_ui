@@ -38,10 +38,21 @@ use masonry::layout::{LenReq, Length};
 use masonry::peniko::Color;
 
 /// Width (px) of the parent-owned grab zone at each column's trailing
-/// edge when the strip is resizable. Reserved from the cell so no child
-/// covers it — the strip itself receives pointer events there, the way
-/// masonry's `Split` reserves its bar region. Also the hover tolerance.
+/// edge. On a *resizable* strip the zone must stay uncovered so the
+/// strip itself receives pointer events there (the way masonry's `Split`
+/// reserves its bar region); it's reserved on **every** strip — resizable
+/// or not — so End-aligned content in header/body/filter rows lands at
+/// the same x by construction. Also the hover tolerance.
 const GRAB_ZONE: f64 = 6.0;
+
+/// The width a cell is laid out at inside its column slot: the column
+/// width minus the trailing [`GRAB_ZONE`], floored at zero. Identical
+/// for every strip so cell content (notably End-aligned text) aligns
+/// across the header/body/filter rows regardless of which strip is
+/// resizable. Column *pitch* is unaffected — only the child's size.
+fn cell_layout_width(width: f64) -> f64 {
+    (width - GRAB_ZONE).max(0.0)
+}
 
 /// Action emitted by a resizable [`ColumnStrip`] while a column boundary
 /// is dragged: the affected column and its proposed new absolute width
@@ -117,22 +128,15 @@ impl ColumnStrip {
         self
     }
 
-    /// Cumulative x of column `i`'s trailing boundary (sum of widths
-    /// `0..=i`).
-    fn boundary_x(&self, i: usize) -> f64 {
-        self.widths[..=i].iter().sum()
-    }
-
     /// Returns the column index whose trailing boundary is within
-    /// [`GRAB_ZONE`] of `x` (excluding the very last boundary, which is
-    /// the strip's outer edge — not a resize target).
+    /// [`GRAB_ZONE`] of `x`. Every column's trailing boundary is a drag
+    /// target — including the last one (the strip's outer right edge),
+    /// so the final column resizes like any other.
     fn boundary_near(&self, x: f64) -> Option<usize> {
         let n = self.widths.len();
         if n == 0 {
             return None;
         }
-        // Only interior + non-final trailing boundaries resize a column;
-        // every column 0..n has a trailing boundary, all draggable.
         let mut acc = 0.0;
         for (i, &w) in self.widths.iter().enumerate() {
             acc += w;
@@ -396,24 +400,19 @@ impl Widget for ColumnStrip {
         // never widen a column — this is what guarantees alignment across
         // header/body/filter strips.
         //
-        // When resizable, each cell is laid out `GRAB_ZONE` narrower than
-        // its column so the trailing grab strip is NOT covered by a
-        // child. Masonry's hit-test only consults a widget's `get_cursor`
-        // when it (not a child) is the hovered widget; leaving the grab
-        // strip bare lets the strip own both the resize cursor *and* the
-        // drag hit-test there — exactly how masonry's `Split` keeps its
-        // bar clear of its children. Column *pitch* is unchanged, so
-        // alignment with the (full-width) body/filter strips holds.
-        let resizable = self.separators.is_some();
+        // Every cell is laid out `GRAB_ZONE` narrower than its column
+        // (see `cell_layout_width`). On a resizable strip that keeps the
+        // trailing grab strip clear of children: masonry's hit-test only
+        // consults a widget's `get_cursor` when it (not a child) is the
+        // hovered widget, so leaving the zone bare lets the strip own
+        // both the resize cursor *and* the drag hit-test — exactly how
+        // masonry's `Split` keeps its bar clear. Applying the same inset
+        // to non-resizable strips keeps End-aligned header/body/filter
+        // content at identical x-positions. Column *pitch* is unchanged.
         let mut x = 0.0;
         let height = self.row_height;
         for (child, &width) in self.children.iter_mut().zip(self.widths.iter()) {
-            let cell_w = if resizable {
-                (width - GRAB_ZONE).max(0.0)
-            } else {
-                width
-            };
-            ctx.run_layout(child, Size::new(cell_w, height));
+            ctx.run_layout(child, Size::new(cell_layout_width(width), height));
             ctx.place_child(child, Point::new(x, 0.0));
             x += width;
         }
@@ -433,8 +432,11 @@ impl Widget for ColumnStrip {
         };
         let height = ctx.border_box_size().height;
         let active = self.drag.map(|d| d.col).or(self.hovered_boundary);
-        for i in 0..self.widths.len() {
-            let x = self.boundary_x(i);
+        // Running accumulator (like `layout`) so painting n separators is
+        // O(n), not O(n²) via a fresh prefix-sum per boundary.
+        let mut x = 0.0;
+        for (i, &w) in self.widths.iter().enumerate() {
+            x += w;
             let color = if active == Some(i) {
                 style.active
             } else {
@@ -829,4 +831,60 @@ where
     Seq: ViewSequence<State, Action, ViewCtx, ColumnStripElement>,
     State: 'static,
 {
+}
+
+// === MARK: TESTS =======================================================
+
+#[cfg(test)]
+mod tests {
+    use super::{ColumnStrip, GRAB_ZONE, cell_layout_width};
+
+    fn approx(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-9
+    }
+
+    /// A bare strip with the given widths — `boundary_near` reads only
+    /// `widths`, so no children/context are needed.
+    fn strip_with_widths(widths: Vec<f64>) -> ColumnStrip {
+        ColumnStrip {
+            children: Vec::new(),
+            widths,
+            row_height: 20.0,
+            separators: None,
+            drag: None,
+            hovered_boundary: None,
+        }
+    }
+
+    #[test]
+    fn cell_layout_width_reserves_the_grab_zone() {
+        // Every strip (resizable or not) insets cells by GRAB_ZONE so
+        // End-aligned header/body/filter content lines up by construction.
+        assert!(approx(cell_layout_width(100.0), 100.0 - GRAB_ZONE));
+    }
+
+    #[test]
+    fn cell_layout_width_floors_at_zero() {
+        // A column narrower than the grab zone yields a zero-width (not
+        // negative) cell; ColumnWidths::effective clamps grid columns to
+        // MIN_COLUMN_WIDTH well above this, so only direct strip users
+        // can get here.
+        assert!(approx(cell_layout_width(GRAB_ZONE / 2.0), 0.0));
+    }
+
+    #[test]
+    fn boundary_near_hits_every_trailing_boundary_including_the_last() {
+        let strip = strip_with_widths(vec![80.0, 100.0]);
+        // Interior boundary.
+        assert_eq!(strip.boundary_near(80.0), Some(0));
+        // The strip's outer right edge is the last column's trailing
+        // boundary — deliberately draggable, so the last column resizes
+        // like any other.
+        assert_eq!(strip.boundary_near(180.0), Some(1));
+        // Within tolerance on either side.
+        assert_eq!(strip.boundary_near(80.0 - GRAB_ZONE), Some(0));
+        assert_eq!(strip.boundary_near(180.0 + GRAB_ZONE), Some(1));
+        // Mid-column is no boundary.
+        assert_eq!(strip.boundary_near(130.0), None);
+    }
 }
