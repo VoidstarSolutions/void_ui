@@ -28,16 +28,18 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
 
     let named_example = with_source!(theme, {
         flex_row((
+            icon(IconName::Check).render(theme),
+            icon(IconName::ChefHat).render(theme),
+            icon(IconName::ChevronDown).render(theme),
             icon(IconName::ChevronLeft).render(theme),
             icon(IconName::ChevronRight).render(theme),
             icon(IconName::ChevronUp).render(theme),
-            icon(IconName::ChevronDown).render(theme),
-            icon(IconName::Plus).render(theme),
-            icon(IconName::Minus).render(theme),
-            icon(IconName::X).render(theme),
-            icon(IconName::Check).render(theme),
             icon(IconName::Copy).render(theme),
             icon(IconName::Ellipsis).render(theme),
+            icon(IconName::ListMusic).render(theme),
+            icon(IconName::Minus).render(theme),
+            icon(IconName::Plus).render(theme),
+            icon(IconName::X).render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(16.0))
