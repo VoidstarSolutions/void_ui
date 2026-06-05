@@ -140,11 +140,12 @@ impl Widget for ClipboardWidget {
             if self.copied_t >= COPIED_DURATION {
                 self.copied = false;
                 self.copied_t = 0.0;
-                // Revert icon to Copy.
                 let new_char = ArcStr::from(String::from(char::from(LucideIcon::Copy)));
                 let color = self.theme.palette.text_muted;
-                // We can't call set_text here (no WidgetMut), request rebuild instead.
-                let _ = (new_char, color); // updated in set_copied via view layer
+                ctx.mutate_child_later(&mut self.icon, move |mut icon| {
+                    Label::set_text(&mut icon, new_char);
+                    icon.insert_prop(ContentColor::new(color));
+                });
             } else {
                 ctx.request_anim_frame();
             }
