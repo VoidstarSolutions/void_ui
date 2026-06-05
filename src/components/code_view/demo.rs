@@ -5,9 +5,9 @@ use xilem::WidgetView;
 use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, flex_col};
 
-use crate::Theme;
 use crate::components::code_view::read_only_text;
 use crate::with_source;
+use crate::{Theme, label};
 
 #[must_use]
 pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
@@ -33,8 +33,20 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
             .copyable()
             .render(theme)
     });
+    let title_block = flex_col((
+        label("Code View")
+            .text_size(theme.typography.size_title)
+            .color(theme.palette.text)
+			.render(theme),
+        label("A read-only text view with optional syntax highlighting, line numbers, and copy button.")
+            .color(theme.palette.text_muted)
+            .multiline(true)
+            .render(theme),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Start)
+    .gap(Length::px(4.0));
 
-    flex_col((short_rust, multi_line, no_highlight, copyable))
+    flex_col((title_block, short_rust, multi_line, no_highlight, copyable))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .gap(Length::px(16.0))
 }
