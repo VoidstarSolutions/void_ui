@@ -7,9 +7,8 @@
 //! is always visible so users can always reopen the sidebar.
 
 use std::any::TypeId;
-use std::borrow::Cow;
 
-use lucide_icons::Icon as LucideIcon;
+use crate::components::icon::IconName;
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
     AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, FromDynWidget, LayoutCtx, MeasureCtx,
@@ -20,12 +19,12 @@ use masonry::core::{
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, Size};
 use masonry::layout::{LayoutSize, LenReq, Length};
-use masonry::parley::{FontFamily, FontFamilyName};
 use masonry::peniko::Color;
 use masonry::properties::ContentColor;
 use masonry::widgets::Label;
 
 use crate::Theme;
+use crate::components::icon::icon;
 
 // --- MARK: CONSTANTS
 
@@ -45,21 +44,14 @@ pub struct SidebarTogglePressed;
 // --- MARK: CHEVRON HELPER
 
 fn make_chevron(collapsed: bool, theme: &Theme) -> NewWidget<Label> {
-    let icon = if collapsed {
-        LucideIcon::ChevronRight
+    let name = if collapsed {
+        IconName::ChevronRight
     } else {
-        LucideIcon::ChevronLeft
+        IconName::ChevronLeft
     };
-    let ch = char::from(icon);
-    let mut lbl = Label::new(ArcStr::from(String::from(ch)))
-        .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
-        .with_style(StyleProperty::FontFamily(FontFamily::Single(
-            FontFamilyName::Named(Cow::Borrowed("lucide")),
-        )))
-        .prepare();
-    lbl.properties
-        .insert(ContentColor::new(theme.palette.text_muted));
-    lbl
+    icon(name)
+        .color(theme.palette.text_muted)
+        .build_widget(theme)
 }
 
 // --- MARK: SidebarContent
@@ -283,7 +275,7 @@ impl<W: Widget + ?Sized> ThemedSidebarPanel<W> {
                     StyleProperty::FontSize(theme.density.ui_font_size),
                 );
             }
-            this.ctx.request_paint_only();
+            this.ctx.request_layout();
         }
     }
 
@@ -292,9 +284,9 @@ impl<W: Widget + ?Sized> ThemedSidebarPanel<W> {
             this.widget.collapsed = collapsed;
             this.ctx.request_paint_only();
             let new_icon = if collapsed {
-                LucideIcon::ChevronRight
+                IconName::ChevronRight
             } else {
-                LucideIcon::ChevronLeft
+                IconName::ChevronLeft
             };
             let new_char = ArcStr::from(String::from(char::from(new_icon)));
             {
