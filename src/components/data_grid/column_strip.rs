@@ -479,6 +479,7 @@ impl Widget for ColumnStrip {
 // === MARK: VIEW ========================================================
 
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use masonry::core::FromDynWidget;
 use xilem::core::{
@@ -496,7 +497,10 @@ type ResizeCb<State> = Box<dyn Fn(&mut State, usize, f64) + Send + Sync>;
 
 #[must_use = "View values do nothing unless provided to Xilem."]
 pub struct ColumnStripView<Seq, State, Action = ()> {
-    widths: Vec<f64>,
+    /// Shared per-column widths. `Arc` so the grid body can hand the
+    /// same width list to every visible row as a refcount bump instead
+    /// of a fresh `Vec` allocation per row per rebuild.
+    widths: Arc<Vec<f64>>,
     row_height: f64,
     cells: Seq,
     /// Resize config: separator style + on-resize callback. `None` ⇒ a
@@ -506,9 +510,11 @@ pub struct ColumnStripView<Seq, State, Action = ()> {
 }
 
 /// Creates a [`ColumnStripView`] from a width list, a fixed row height,
-/// and a sequence of cell views (one per width, in order).
+/// and a sequence of cell views (one per width, in order). `widths`
+/// takes a plain `Vec` or a shared `Arc<Vec<_>>` — pass the `Arc` when
+/// many strips (e.g. every body row) share one width list.
 pub fn column_strip<Seq, State, Action>(
-    widths: Vec<f64>,
+    widths: impl Into<Arc<Vec<f64>>>,
     row_height: f64,
     cells: Seq,
 ) -> ColumnStripView<Seq, State, Action>
@@ -518,7 +524,7 @@ where
     Seq: ColumnStripSequence<State, Action>,
 {
     ColumnStripView {
-        widths,
+        widths: widths.into(),
         row_height,
         cells,
         resize: None,

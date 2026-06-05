@@ -826,11 +826,18 @@ where
         // "Clipboard TSV recomputed every rebuild"): this runs on every
         // rebuild, but the payload is only consumed on Ctrl/Cmd+C. The
         // empty-selection early return below keeps the common case cheap;
-        // the populated case scans all rows (in `project_tsv`). Make it
-        // lazy only if a release-build profile shows it matters.
+        // the populated case clones the selection and scans all rows (in
+        // `project_tsv`). Make it lazy only if a release-build profile
+        // shows it matters.
         //
         // No selection lens → nothing to copy.
         let selection_lens = self.selection_lens.as_ref()?;
+        // Cheap borrow first: with nothing selected (the common case
+        // during scroll / data-tick rebuilds) skip the snapshot clone
+        // and the row scan entirely.
+        if (**selection_lens)(app_state).is_empty() {
+            return None;
+        }
         // We need both `&[R]` and `&SelectionState` simultaneously,
         // but the lenses return references whose lifetimes overlap
         // app_state. Snapshot the selection first, then look up rows.
@@ -996,8 +1003,8 @@ where
     // Column widths are identical for every row and don't change between
     // rebuilds of this body, so compute them once and share the `Arc` into
     // the per-row closure rather than re-deriving from `render_slots` on
-    // every visible row. `column_strip` needs an owned `Vec`, so each row
-    // clones the inner vec — but that's a flat memcpy, not a re-projection.
+    // every visible row; `column_strip` takes the `Arc` directly, so each
+    // row costs a refcount bump, not a `Vec` allocation.
     let widths: Arc<Vec<f64>> = Arc::new(render_slots.iter().map(|s| s.width).collect());
     virtual_scroll(0..valid_range_end, move |state: &mut State, idx: i64| {
         // Host owns order: virtual position is the slice position.
@@ -1038,10 +1045,11 @@ where
             Color::TRANSPARENT
         };
         // ColumnStrip gives every body row the same authoritative column
-        // x-positions as the header/filter strips. Clone the shared
-        // width vec (flat memcpy) since column_strip takes it by value.
+        // x-positions as the header/filter strips. The shared width list
+        // is handed over as an `Arc` clone — a refcount bump, not a per-
+        // row `Vec` allocation.
         let row_view =
-            sized_box(column_strip((*widths).clone(), row_height, cells)).background_color(row_bg);
+            sized_box(column_strip(Arc::clone(&widths), row_height, cells)).background_color(row_bg);
 
         // Click handler: route modifiers to the matching SelectionState
         // op, all keyed by the row's *stable id*. Borrows of `state` are
