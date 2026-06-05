@@ -20,8 +20,8 @@
 
 #[cfg(feature = "gallery")]
 pub mod demo;
-mod names;
 mod view;
+pub mod widget;
 
-pub use names::IconName;
+pub use lucide_icons::Icon as IconName;
 pub use view::{Icon, icon};
