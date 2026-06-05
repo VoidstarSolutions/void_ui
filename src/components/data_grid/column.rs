@@ -124,6 +124,12 @@ pub type RowFilter<R> = Box<dyn Fn(&R, &str) -> bool + Send + Sync + 'static>;
 /// same row. `State` is the host application's app state. Cells are
 /// non-interactive in v1 (the row container intercepts pointer events
 /// for selection), so the action type is fixed at `()`.
+///
+/// Construct via the builder path — [`text_column`] /
+/// [`optional_text_column`] / [`colored_text_column`], or
+/// [`ColumnDef::new`] plus the chained setters. Fields are deliberately
+/// crate-private so the internal representation (boxed closures today)
+/// can evolve without breaking hosts.
 #[must_use]
 pub struct ColumnDef<R, State> {
     /// Optional explicit [`ColumnId`]. `None` (the default) means the id
@@ -131,23 +137,23 @@ pub struct ColumnDef<R, State> {
     /// fine as long as titles are unique. Set an explicit id via
     /// [`Self::id`] when two columns share a title, or when a stable id
     /// must survive a title change.
-    pub id: Option<ColumnId>,
+    pub(crate) id: Option<ColumnId>,
     /// Display title shown in the sticky header row.
-    pub title: String,
+    pub(crate) title: String,
     /// Fixed pixel width. When the column total exceeds the viewport the
     /// grid scrolls horizontally (header/filter/body share the offset),
     /// so wide tables stay reachable rather than clipping.
-    pub width: f64,
+    pub(crate) width: f64,
     /// In-cell text alignment.
-    pub align: CellAlign,
+    pub(crate) align: CellAlign,
     /// Builds a cell view for the supplied row at the supplied theme.
-    pub render: CellRenderer<R, State>,
+    pub(crate) render: CellRenderer<R, State>,
     /// Optional text-only projector used for clipboard copy. The
     /// helpers [`text_column`] and [`optional_text_column`] populate
     /// this automatically; custom callers using [`ColumnDef::new`]
     /// can attach one via [`ColumnDef::with_text`]. Columns without a
     /// text projector contribute an empty TSV cell.
-    pub text: Option<TextProjector<R>>,
+    pub(crate) text: Option<TextProjector<R>>,
     /// Optional ascending-order comparator that makes this column
     /// sortable. `None` (the default) leaves the column unsortable —
     /// its header doesn't react to clicks. Attach one via
@@ -158,14 +164,14 @@ pub struct ColumnDef<R, State> {
     /// sort lexicographically — wrong — if it inherited a string
     /// comparator from its display text. Sortable columns opt in with
     /// a key that reflects the underlying value.
-    pub comparator: Option<RowComparator<R>>,
+    pub(crate) comparator: Option<RowComparator<R>>,
     /// Optional predicate that makes this column filterable. `None`
     /// (the default) leaves the column unfilterable. Attach one via
     /// [`ColumnDef::filterable_by`] or [`ColumnDef::filterable_by_text`].
     /// The host applies it through
     /// [`filtered_indices`](super::filter::filtered_indices); the grid
     /// uses its presence to decide whether to show a filter affordance.
-    pub filter: Option<RowFilter<R>>,
+    pub(crate) filter: Option<RowFilter<R>>,
 }
 
 impl<R, State> ColumnDef<R, State> {
