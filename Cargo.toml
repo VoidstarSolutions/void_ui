@@ -1,5 +1,5 @@
 [workspace]
-members = ["."]
+members = [".", "void-ui-macros"]
 resolver = "3"
 
 [workspace.dependencies]
@@ -34,6 +34,7 @@ publish = false
 [dependencies]
 masonry = { workspace = true }
 tracing = { workspace = true }
+void-ui-macros = { path = "void-ui-macros" }
 xilem = { workspace = true }
 xilem_masonry = { workspace = true }
 

@@ -16,6 +16,7 @@ pub mod button;
 pub mod button_group;
 pub mod checkbox;
 pub mod clipboard;
+pub mod code_view;
 pub mod data_grid;
 pub mod label;
 pub mod radio;
@@ -27,6 +28,7 @@ pub use button::{Button, ButtonVariant, ButtonView, button};
 pub use button_group::{ButtonGroup, button_group, toggle_button_group};
 pub use checkbox::{Checkbox, CheckboxView, checkbox};
 pub use clipboard::{Clipboard, ClipboardView, clipboard};
+pub use code_view::{ReadOnlyText, ReadOnlyTextView, RustHighlighter, read_only_text};
 pub use data_grid::{
     CellAlign, ColumnDef, SelectionState, data_grid, optional_text_column, text_column,
 };
@@ -52,6 +54,7 @@ pub enum ComponentKind {
     ButtonGroup,
     Checkbox,
     Clipboard,
+    CodeView,
     DataGrid,
     Label,
     Radio,
@@ -69,6 +72,7 @@ impl ComponentKind {
             Self::ButtonGroup => "Button Group",
             Self::Checkbox => "Checkbox",
             Self::Clipboard => "Clipboard",
+            Self::CodeView => "Code View",
             Self::DataGrid => "Data Grid",
             Self::Label => "Label",
             Self::Radio => "Radio",
@@ -86,6 +90,7 @@ impl ComponentKind {
             Self::ButtonGroup,
             Self::Checkbox,
             Self::Clipboard,
+            Self::CodeView,
             Self::Label,
             Self::Radio,
             Self::DataGrid,

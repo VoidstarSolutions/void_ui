@@ -1,0 +1,14 @@
+[package]
+name = "void-ui-macros"
+version = "0.1.0"
+edition = "2024"
+license = "LicenseRef-Proprietary"
+publish = false
+
+[lib]
+proc-macro = true
+
+[dependencies]
+
+[lints]
+workspace = true

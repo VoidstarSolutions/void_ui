@@ -9,11 +9,13 @@
 //! one-to-one. When the design source moves a token, the rename is
 //! mechanical here.
 
+mod code_palette;
 pub mod color;
 mod density;
 mod palette;
 mod typography;
 
+pub use code_palette::CodePalette;
 pub use color::{oklch, oklcha};
 pub use density::Density;
 pub use palette::Palette;
@@ -66,6 +68,7 @@ pub struct Theme {
     pub density: Density,
     pub typography: Typography,
     pub radius: Radii,
+    pub code: CodePalette,
 }
 
 impl Theme {
@@ -78,6 +81,7 @@ impl Theme {
             density: Density::balanced(),
             typography: Typography::default_stack(),
             radius: Radii::default_stack(),
+            code: CodePalette::dark(),
         }
     }
 
@@ -90,6 +94,7 @@ impl Theme {
             density: Density::balanced(),
             typography: Typography::default_stack(),
             radius: Radii::default_stack(),
+            code: CodePalette::light(),
         }
     }
 

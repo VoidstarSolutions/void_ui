@@ -166,6 +166,11 @@ fn sidebar_items(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State
         })
         .active(focused == ComponentKind::Clipboard)
         .render(theme),
+        sidebar_item("Code View", |s: &mut State| {
+            s.focused = ComponentKind::CodeView;
+        })
+        .active(focused == ComponentKind::CodeView)
+        .render(theme),
         sidebar_item("Data Grid", |s: &mut State| {
             s.focused = ComponentKind::DataGrid;
         })
@@ -221,6 +226,7 @@ fn main_pane(
             Box::new(void_ui::components::scroll_container::demo::panel(theme))
         }
         ComponentKind::Sidebar => Box::new(void_ui::components::sidebar::demo::panel(theme)),
+        ComponentKind::CodeView => Box::new(void_ui::components::code_view::demo::panel(theme)),
         ComponentKind::Tooltip => Box::new(void_ui::components::tooltip::demo::panel(theme)),
     }
 }
