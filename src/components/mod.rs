@@ -46,14 +46,13 @@ pub use data_grid::{
     optional_text_column, text_column,
 };
 pub use dropdown_button::{DropdownButton, DropdownButtonView, dropdown_button};
-pub use popover::{Popover, PopoverAnchor, PopoverHost, PopoverView, popover};
 pub use icon::{Icon, IconName, icon};
 pub use label::{Label, LabelAlignment, label};
+pub use popover::{Popover, PopoverAnchor, PopoverHost, PopoverView, popover};
 pub use resizable::{
     MIN_PANEL_SIZE, Resizable, ResizablePanel, ResizablePanels, ResizablePanelsView, ResizableView,
     h_resizable, h_resizable_panels, v_resizable, v_resizable_panels,
 };
-
 pub use scroll_container::{
     ScrollBarVisibility, ScrollContainer, ScrollContainerView, scroll_container,
 };
