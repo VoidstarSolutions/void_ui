@@ -184,10 +184,12 @@ fn icons_section(theme: &Theme, disabled: bool) -> impl WidgetView<ButtonDemoSta
         flex_row((
             button(|_: &mut ButtonDemoState| {})
                 .icon(IconName::Plus)
+                .accessible_name("Add")
                 .disabled(disabled)
                 .render(theme),
             button(|_: &mut ButtonDemoState| {})
                 .trailing_icon(IconName::ChevronDown)
+                .accessible_name("Open menu")
                 .disabled(disabled)
                 .render(theme),
         ))
