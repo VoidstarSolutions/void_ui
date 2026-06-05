@@ -109,6 +109,16 @@ impl Highlighter for RustHighlighter {
                 cursor += 1;
                 continue;
             }
+            // Non-ASCII: never split a multi-byte char into per-byte spans —
+            // a range off a char boundary breaks ranged styling downstream.
+            // Emit no span (renderer falls back to `plain`; this also covers
+            // Unicode identifiers, which `is_ident_start` doesn't recognize)
+            // and advance past the whole char.
+            if !byte.is_ascii() {
+                let ch_len = source[cursor..].chars().next().map_or(1, char::len_utf8);
+                cursor += ch_len;
+                continue;
+            }
             // operator vs punctuation — single-byte classification
             out.push(TokenSpan {
                 range: cursor..cursor + 1,
@@ -317,6 +327,20 @@ mod tests {
             .into_iter()
             .map(|s| (s.range, s.kind))
             .collect()
+    }
+
+    #[test]
+    fn non_ascii_never_splits_char_boundaries() {
+        // Unicode identifier chars, math symbols, and curly quotes all fall
+        // through the ASCII token branches; none may yield a span that ends
+        // or starts mid-char.
+        let src = "let \u{3c0} = caf\u{e9} \u{2014} \u{201c}x\u{201d};";
+        for (range, kind) in spans(src) {
+            assert!(
+                src.is_char_boundary(range.start) && src.is_char_boundary(range.end),
+                "span {range:?} ({kind:?}) is off a char boundary in {src:?}"
+            );
+        }
     }
 
     #[test]

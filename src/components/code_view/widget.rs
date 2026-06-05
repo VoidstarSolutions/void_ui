@@ -392,12 +392,14 @@ impl Widget for CodeViewWidget {
             w
         };
 
-        // Force a fresh rebuild here rather than relying on the cache: prior
-        // measure() passes may have left `self.layout` broken to a different
-        // max_advance, and we need paint() to see the layout in the exact
-        // state that matches the assigned `size`.
+        // `ensure_layout` re-breaks the cached layout when a prior measure()
+        // pass left it at a different max_advance (tracked via
+        // `last_max_advance`) and fully rebuilds only when glyph-affecting
+        // inputs changed (`layout_dirty`) — so paint() always sees the state
+        // matching the assigned `size` without paying for a rebuild on every
+        // relayout.
         let (font_ctx, layout_ctx) = ctx.text_contexts();
-        self.rebuild_layout(font_ctx, layout_ctx, Some(inner_max_w));
+        self.ensure_layout(font_ctx, layout_ctx, Some(inner_max_w));
 
         // Snapshot the committed layout for paint() and pointer events to use.
         // Later measure() passes may re-break `self.layout` (e.g. a MinContent
