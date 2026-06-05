@@ -27,6 +27,7 @@ pub mod focus_ring;
 pub mod gallery;
 pub mod layout;
 pub mod pointer_inert;
+pub mod popover_layer;
 pub mod theme;
 
 pub use animated_clip::AnimatedClip;
@@ -79,6 +80,7 @@ pub use floating::{FloatingOverlay, FloatingOverlayView, floating, interactive_f
 pub use gallery::code_block;
 pub use lucide_icons::LUCIDE_FONT_BYTES;
 pub use pointer_inert::{PointerInert, PointerInertView, pointer_inert};
+pub use popover_layer::{OnOutsideClick, PopoverLayer};
 pub use theme::{CodePalette, Density, FontStack, Palette, Radii, Theme, ThemeVariant, Typography};
 #[cfg(feature = "gallery")]
 pub use void_ui_macros::with_source;

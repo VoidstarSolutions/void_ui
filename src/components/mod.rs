@@ -35,7 +35,6 @@ pub mod tooltip;
 
 pub use button::{Button, ButtonVariant, ButtonView, button};
 pub use button_group::{ButtonGroup, button_group, toggle_button_group};
-pub use dropdown_button::{DropdownButton, DropdownButtonView, dropdown_button};
 pub use checkbox::{Checkbox, CheckboxView, checkbox};
 pub use clipboard::{Clipboard, ClipboardView, clipboard};
 pub use code_view::{ReadOnlyText, ReadOnlyTextView, RustHighlighter, read_only_text};
@@ -45,6 +44,7 @@ pub use data_grid::{
     SelectionState, SortDirection, SortState, colored_text_column, data_grid, filtered_indices,
     optional_text_column, text_column,
 };
+pub use dropdown_button::{DropdownButton, DropdownButtonView, dropdown_button};
 pub use icon::{Icon, IconName, icon};
 pub use label::{Label, LabelAlignment, label};
 pub use resizable::{

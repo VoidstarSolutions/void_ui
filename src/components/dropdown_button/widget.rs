@@ -2,7 +2,7 @@
 //!
 //! Visually and behaviourally identical to `ThemedButton` with a `trailing_icon`,
 //! except that clicking anywhere on the button (label area or chevron) toggles the
-//! [`DropdownMenuLayer`] instead of firing a primary action. There is no split-zone
+//! floating [`crate::popover_layer::PopoverLayer`] instead of firing a primary action. There is no split-zone
 //! concept: the whole surface is one click target.
 
 use std::sync::{Arc, LazyLock};
@@ -20,11 +20,12 @@ use masonry::peniko::Color;
 use masonry::properties::ContentColor;
 use masonry::widgets::Label;
 
-use super::menu_layer::DropdownMenuLayer;
+use super::menu_layer::MenuContent;
 use crate::Theme;
 use crate::components::button::ButtonVariant;
 use crate::components::button::widget::CORNER_RADIUS;
 use crate::components::click::{self, ClickPhase};
+use crate::popover_layer::{OnOutsideClick, PopoverLayer};
 
 const FOCUS_RING_WIDTH: f64 = 1.5;
 const FOCUS_RING_INSET: f64 = 2.0;
@@ -61,7 +62,7 @@ pub struct ThemedDropdownButton {
     pub(super) open: bool,
     pub(super) menu_layer_id: Option<WidgetId>,
     /// Snapshot of `open` taken at pointer-Down time. Needed because
-    /// `DropdownMenuLayer::capture_pointer_event` queues a `mutate_later`
+    /// `PopoverLayer::capture_pointer_event` queues a `mutate_later`
     /// that resets `open = false` between the Down and Up events. Without
     /// this latch, `toggle_dropdown` on Up would see `open == false` (already
     /// closed by the mutation) and incorrectly re-open the menu.
@@ -183,27 +184,63 @@ impl ThemedDropdownButton {
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Danger => {
-                let bg = if pressed { p.coral_deep } else if hovered { p.coral } else { p.coral_soft };
+                let bg = if pressed {
+                    p.coral_deep
+                } else if hovered {
+                    p.coral
+                } else {
+                    p.coral_soft
+                };
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Primary => {
-                let bg = if pressed { p.teal_deep } else if hovered { p.teal } else { p.teal_soft };
+                let bg = if pressed {
+                    p.teal_deep
+                } else if hovered {
+                    p.teal
+                } else {
+                    p.teal_soft
+                };
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Warning => {
-                let bg = if pressed { p.amber_deep } else if hovered { p.amber } else { p.amber_soft };
+                let bg = if pressed {
+                    p.amber_deep
+                } else if hovered {
+                    p.amber
+                } else {
+                    p.amber_soft
+                };
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Secondary => {
-                let bg = if pressed { p.violet_deep } else if hovered { p.violet } else { p.violet_soft };
+                let bg = if pressed {
+                    p.violet_deep
+                } else if hovered {
+                    p.violet
+                } else {
+                    p.violet_soft
+                };
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Success => {
-                let bg = if pressed { p.green_deep } else if hovered { p.green } else { p.green_soft };
+                let bg = if pressed {
+                    p.green_deep
+                } else if hovered {
+                    p.green
+                } else {
+                    p.green_soft
+                };
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Info => {
-                let bg = if pressed { p.blue_deep } else if hovered { p.blue } else { p.blue_soft };
+                let bg = if pressed {
+                    p.blue_deep
+                } else if hovered {
+                    p.blue
+                } else {
+                    p.blue_soft
+                };
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Ghost => {
@@ -219,19 +256,41 @@ impl ThemedDropdownButton {
             }
             ButtonVariant::Link => (Color::TRANSPARENT, Color::TRANSPARENT),
             ButtonVariant::Text => {
-                let bg = if pressed { p.surface_hi } else { Color::TRANSPARENT };
+                let bg = if pressed {
+                    p.surface_hi
+                } else {
+                    Color::TRANSPARENT
+                };
                 (bg, Color::TRANSPARENT)
             }
         }
     }
 
     fn open_dropdown(&mut self, ctx: &mut EventCtx<'_>) {
-        let menu_widget =
-            NewWidget::new(DropdownMenuLayer::new(self.items.clone(), ctx.widget_id(), &self.theme));
-        let layer_id = menu_widget.id();
+        let creator_id = ctx.widget_id();
+        let content = NewWidget::new(MenuContent::new(
+            self.items.clone(),
+            creator_id,
+            &self.theme,
+        ));
+        let p = &self.theme.palette;
+        let close_cb: OnOutsideClick = Arc::new(|mut w, layer_id| {
+            let mut w = w.downcast::<ThemedDropdownButton>();
+            w.widget.open = false;
+            w.widget.menu_layer_id = None;
+            w.ctx.remove_layer(layer_id);
+        });
+        let layer_widget = NewWidget::new(PopoverLayer::new(
+            content,
+            creator_id,
+            p.surface_hi,
+            p.border_strong,
+            close_cb,
+        ));
+        let layer_id = layer_widget.id();
         let border_box = ctx.border_box();
         let pos = ctx.to_window(border_box.origin()) + Vec2::new(0.0, border_box.size().height);
-        ctx.create_layer(LayerType::Other, menu_widget, pos);
+        ctx.create_layer(LayerType::Other, layer_widget, pos);
         self.menu_layer_id = Some(layer_id);
         self.open = true;
     }
@@ -309,12 +368,7 @@ impl Widget for ThemedDropdownButton {
         }
     }
 
-    fn update(
-        &mut self,
-        ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &Update,
-    ) {
+    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
             Update::WidgetAdded => {
                 ctx.set_disabled(self.disabled);
@@ -376,7 +430,11 @@ impl Widget for ThemedDropdownButton {
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         let pad_v = self.pad_v();
         let pad_h = self.pad_h();
-        let icon_base = if self.icon.is_some() { self.icon_size() } else { 0.0 };
+        let icon_base = if self.icon.is_some() {
+            self.icon_size()
+        } else {
+            0.0
+        };
         let icon_gap = if self.icon.is_some() { ICON_GAP } else { 0.0 };
         let trailing_w = self.trailing_icon_width();
 
@@ -384,8 +442,11 @@ impl Widget for ThemedDropdownButton {
             (size.width - 2.0 * pad_h - icon_base - icon_gap - trailing_w).max(0.0),
             (size.height - 2.0 * pad_v).max(0.0),
         );
-        let label_size =
-            ctx.compute_size(&mut self.label, SizeDef::fit(label_inner), label_inner.into());
+        let label_size = ctx.compute_size(
+            &mut self.label,
+            SizeDef::fit(label_inner),
+            label_inner.into(),
+        );
         ctx.run_layout(&mut self.label, label_size);
 
         let label_x = pad_h + icon_base + icon_gap;
@@ -417,7 +478,9 @@ impl Widget for ThemedDropdownButton {
             painter.fill(rect, bg).draw();
         }
         if border.components[3] > 0.0 {
-            painter.stroke(rect, &Stroke::new(BORDER_WIDTH), border).draw();
+            painter
+                .stroke(rect, &Stroke::new(BORDER_WIDTH), border)
+                .draw();
         }
 
         if focused && !self.disabled {
@@ -430,7 +493,9 @@ impl Widget for ThemedDropdownButton {
                 ),
                 CORNER_RADIUS - inset,
             );
-            painter.stroke(focus_rect, &Stroke::new(FOCUS_RING_WIDTH), p.teal).draw();
+            painter
+                .stroke(focus_rect, &Stroke::new(FOCUS_RING_WIDTH), p.teal)
+                .draw();
         }
 
         let icon_color = if self.disabled { p.text_faint } else { p.text };
@@ -445,7 +510,9 @@ impl Widget for ThemedDropdownButton {
         let caret_x = size.width - pad_h - icon_size;
         let caret_y = (size.height - icon_size) * 0.5;
         let transform = Affine::translate((caret_x, caret_y)) * Affine::scale(icon_size);
-        painter.stroke(transform * &**CARET_PATH, &Stroke::new(1.5), icon_color).draw();
+        painter
+            .stroke(transform * &**CARET_PATH, &Stroke::new(1.5), icon_color)
+            .draw();
     }
 
     fn accessibility_role(&self) -> Role {
