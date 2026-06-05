@@ -46,7 +46,11 @@ jobs:
           shared-key: ci
       # The workspace denies clippy::pedantic via [workspace.lints]; --locked
       # keeps the linebender main-tracking deps pinned to the lockfile rev.
-      - run: cargo clippy --all-targets --locked
+      # --all-features pulls in the `gallery` feature (demo panels + the
+      # with_source! proc-macro); the bare check keeps the lean
+      # no-features consumer build honest.
+      - run: cargo clippy --all-targets --all-features --locked
+      - run: cargo check --locked
 
   test:
     name: cargo test
@@ -62,4 +66,5 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: ci
-      - run: cargo test --locked
+      # --all-features so the gallery-gated demo tests run too.
+      - run: cargo test --all-features --locked

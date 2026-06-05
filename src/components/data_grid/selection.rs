@@ -12,15 +12,31 @@
 //!   shift-clicks pivot off the same anchor, matching native UI
 //!   conventions.
 //!
-//! Indices are `u64` so 1M+ row grids fit; the underlying
-//! [`BTreeSet`] keeps them sorted and de-duplicated, which is also the
-//! order the clipboard projection wants. We deliberately avoid
+//! ## Keyed by stable row id, not position
+//!
+//! Each selected row is identified by a **stable row id** (`u64`)
+//! supplied by the host via
+//! [`DataGrid::row_id`](super::view::DataGrid::row_id) — *not* by its
+//! position in the row slice. This is the same `getRowId` contract every
+//! production grid uses (`TanStack` Table, AG Grid, Kendo): because the
+//! host now owns row order (sorting and filtering both reorder or trim the
+//! slice — see [`super::sort`]/[`super::filter`]), a positional key would
+//! point at a *different* row after any sort or filter change. Keying on
+//! a stable id makes the selection **follow its rows** across reordering
+//! for free — the documented failure mode of index keying is exactly the
+//! bug this avoids.
+//!
+//! Ids are `u64` so 1M+ row grids fit; the underlying [`BTreeSet`] keeps
+//! them sorted and de-duplicated. (The de-dup order is *id* order, which
+//! is the host's responsibility to make meaningful for clipboard copy —
+//! e.g. assign ids in natural row order.) We deliberately avoid
 //! `HashSet`: deterministic iteration order matters for copy.
 
 use std::collections::BTreeSet;
 
-/// Indices of the selected rows plus the anchor used to seed
-/// shift-extend operations.
+/// Stable ids of the selected rows plus the anchor id used to seed
+/// shift-extend operations. The anchor is an *id*, so it stays pinned to
+/// its row across sort/filter reordering.
 #[derive(Clone, Debug, Default)]
 pub struct SelectionState {
     rows: BTreeSet<u64>,
@@ -40,52 +56,48 @@ impl SelectionState {
         self.anchor = None;
     }
 
-    /// Plain click: replace selection with `[idx]`; anchor at `idx`.
-    pub fn replace_with(&mut self, idx: u64) {
+    /// Plain click: replace selection with `[id]`; anchor at `id`.
+    pub fn replace_with(&mut self, id: u64) {
         self.rows.clear();
-        self.rows.insert(idx);
-        self.anchor = Some(idx);
+        self.rows.insert(id);
+        self.anchor = Some(id);
     }
 
-    /// Ctrl/Cmd-click: toggle membership of `idx`; move anchor to
-    /// `idx` so a subsequent shift-extend pivots from there.
-    pub fn toggle(&mut self, idx: u64) {
-        if !self.rows.insert(idx) {
-            self.rows.remove(&idx);
+    /// Ctrl/Cmd-click: toggle membership of `id`; move anchor to
+    /// `id` so a subsequent shift-extend pivots from there.
+    pub fn toggle(&mut self, id: u64) {
+        if !self.rows.insert(id) {
+            self.rows.remove(&id);
         }
-        self.anchor = Some(idx);
+        self.anchor = Some(id);
     }
 
-    /// Shift-click: replace the selection with the inclusive range
-    /// `[anchor, idx]` (or `[idx, anchor]`, whichever is ordered
-    /// correctly). If no anchor is set, behave like
-    /// [`Self::replace_with`].
-    pub fn extend_to(&mut self, idx: u64) {
-        let Some(anchor) = self.anchor else {
-            self.replace_with(idx);
-            return;
-        };
-        let (lo, hi) = if anchor <= idx {
-            (anchor, idx)
-        } else {
-            (idx, anchor)
-        };
+    /// Shift-click: replace the selection with the row ids spanning the
+    /// **visual** range between the anchor and the clicked row.
+    ///
+    /// Because rows arrive in display order, the *grid* computes which
+    /// ids fall between the anchor's on-screen position and the target's
+    /// (inclusive) and passes them here — so the range follows what the
+    /// user sees, regardless of sort or filter. The anchor is
+    /// intentionally left in place: successive shift-clicks pivot off the
+    /// original anchor, matching native UI conventions.
+    ///
+    /// Replacing (rather than unioning) matches the spreadsheet model:
+    /// a shift-click defines the whole range from the anchor, it doesn't
+    /// accrete. An empty iterator clears the row set (the anchor is left
+    /// untouched — it's independent of which rows are selected).
+    pub fn extend_range(&mut self, ids: impl IntoIterator<Item = u64>) {
         self.rows.clear();
-        for i in lo..=hi {
-            self.rows.insert(i);
-        }
-        // Anchor is intentionally left in place — successive
-        // shift-clicks should pivot off the original anchor, matching
-        // native UI conventions.
+        self.rows.extend(ids);
     }
 
-    /// Returns whether the row at `idx` is currently selected.
+    /// Returns whether the row with `id` is currently selected.
     #[must_use]
-    pub fn contains(&self, idx: u64) -> bool {
-        self.rows.contains(&idx)
+    pub fn contains(&self, id: u64) -> bool {
+        self.rows.contains(&id)
     }
 
-    /// Iterates the selected row indices in ascending order.
+    /// Iterates the selected row ids in ascending id order.
     pub fn iter(&self) -> impl Iterator<Item = u64> + '_ {
         self.rows.iter().copied()
     }
@@ -136,36 +148,45 @@ mod tests {
     }
 
     #[test]
-    fn extend_to_fills_inclusive_range() {
+    fn extend_range_replaces_with_the_supplied_ids() {
         let mut s = SelectionState::new();
         s.replace_with(10);
-        s.extend_to(13);
-        assert_eq!(s.iter().collect::<Vec<_>>(), vec![10, 11, 12, 13]);
+        // The grid resolves the visual range to a set of ids (here the
+        // ids needn't be contiguous — they're whatever rows span the
+        // on-screen range between anchor and target).
+        s.extend_range([10, 42, 7, 99]);
+        assert_eq!(s.iter().collect::<Vec<_>>(), vec![7, 10, 42, 99]);
         // Anchor stays put for further shift-extends.
         assert_eq!(s.anchor(), Some(10));
     }
 
     #[test]
-    fn extend_to_orders_ascending_when_target_below_anchor() {
+    fn extend_range_supersedes_a_prior_range() {
         let mut s = SelectionState::new();
-        s.replace_with(10);
-        s.extend_to(7);
-        assert_eq!(s.iter().collect::<Vec<_>>(), vec![7, 8, 9, 10]);
+        s.replace_with(5);
+        s.extend_range([5, 6, 7]);
+        // A second shift-click redefines the whole range from the anchor
+        // rather than accreting.
+        s.extend_range([5, 4, 3]);
+        assert_eq!(s.iter().collect::<Vec<_>>(), vec![3, 4, 5]);
+        assert_eq!(s.anchor(), Some(5), "anchor unchanged across shift-clicks");
     }
 
     #[test]
-    fn extend_to_without_anchor_becomes_replace() {
+    fn extend_range_empty_clears_rows_but_keeps_anchor() {
         let mut s = SelectionState::new();
-        s.extend_to(4);
-        assert_eq!(s.iter().collect::<Vec<_>>(), vec![4]);
-        assert_eq!(s.anchor(), Some(4));
+        s.replace_with(8);
+        s.extend_range(std::iter::empty());
+        assert!(s.is_empty());
+        // Anchor is independent of the row set.
+        assert_eq!(s.anchor(), Some(8));
     }
 
     #[test]
     fn clear_removes_everything() {
         let mut s = SelectionState::new();
         s.replace_with(1);
-        s.extend_to(5);
+        s.extend_range([1, 2, 3, 4, 5]);
         s.clear();
         assert!(s.is_empty());
         assert_eq!(s.anchor(), None);

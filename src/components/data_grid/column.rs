@@ -1,9 +1,9 @@
 //! Column descriptors for [`super::data_grid`].
 //!
-//! A column is defined by its [`title`](ColumnDef::title), its fixed
-//! pixel [`width`](ColumnDef::width), its in-cell text
-//! [`align`](ColumnDef::align)ment, and a [`render`](ColumnDef::render)
-//! closure that builds a cell view from a row.
+//! A column is defined by its title, its fixed pixel width, its
+//! in-cell text alignment, and a `render` closure that builds a cell
+//! view from a row (all crate-private fields — construct via the
+//! builders below).
 //!
 //! The renderer signature is intentionally widget-returning rather than
 //! string-returning so that future cells can be richer than text — a
@@ -12,10 +12,54 @@
 //! the common case (plain text driven by a `Fn(&R) -> String`
 //! projection) without making callers think about boxing.
 
+use std::cmp::Ordering;
+use std::sync::Arc;
+
 use xilem::AnyWidgetView;
+use xilem::peniko::Color;
+use xilem::style::Style as _;
+use xilem::view::label;
 
 use crate::Theme;
-use crate::label;
+
+/// A **stable, unique identifier** for a column.
+///
+/// This is the column-level analogue of the row `getRowId` contract (see
+/// [`DataGrid::row_id`](super::view::DataGrid::row_id)): column state —
+/// sort, filter, width — is keyed by `ColumnId`, *not* by the column's
+/// position in the `Vec<ColumnDef>`. So when the host reorders or hides
+/// columns, that state stays attached to the right column instead of
+/// teleporting to whatever now occupies the old slot. It mirrors the
+/// `id`/`colId` model every reputable grid uses (`TanStack` Table,
+/// AG Grid, Kendo), where keying column state by array index is the
+/// documented anti-pattern.
+///
+/// Backed by an `Arc<str>` so it's cheap to clone into every cell and
+/// state-map lookup. Construct from any string-ish value (`"price"`,
+/// `column.title.clone()`); a column with no explicit id defaults to its
+/// title (see [`ColumnDef::id`]).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ColumnId(Arc<str>);
+
+impl ColumnId {
+    /// Borrows the id as a string slice.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<S: Into<Arc<str>>> From<S> for ColumnId {
+    fn from(s: S) -> Self {
+        Self(s.into())
+    }
+}
+
+impl std::fmt::Display for ColumnId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
 
 /// In-cell horizontal alignment.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -45,12 +89,34 @@ pub type CellRenderer<R, State> =
 /// clipboard copy.
 ///
 /// A [`ColumnDef`] may carry one of these alongside its widget-
-/// returning [`render`](ColumnDef::render). When the user copies a
+/// returning `render` closure. When the user copies a
 /// selection, the grid walks the selected rows and joins each
 /// column's text projector output with tabs. Columns without a text
 /// projector emit an empty string (a tab will still appear so the
 /// row's columns line up in the spreadsheet target).
 pub type TextProjector<R> = Box<dyn Fn(&R) -> String + Send + Sync + 'static>;
+
+/// Total order over two rows for a sortable column.
+///
+/// Returning a comparator rather than a key projector keeps the column
+/// generic over the row type without forcing the sort key to be an
+/// owned, `'static` value — the closure borrows each row only for the
+/// duration of the comparison. The grid wraps the result with the
+/// active [`SortDirection`](super::sort::SortDirection): the comparator
+/// always describes the *ascending* order, and descending is the
+/// reverse. `Send + Sync` for the same reason as
+/// [`CellRenderer`] — xilem propagates the bound through the row
+/// builder closure.
+pub type RowComparator<R> = Box<dyn Fn(&R, &R) -> Ordering + Send + Sync + 'static>;
+
+/// Predicate that tests a row against a column's filter query.
+///
+/// Given a row and the active query string for this column, returns
+/// whether the row should survive the filter. The grid never calls this
+/// itself — the host runs it via
+/// [`filtered_indices`](super::filter::filtered_indices). `Send + Sync`
+/// for the same reason as [`CellRenderer`].
+pub type RowFilter<R> = Box<dyn Fn(&R, &str) -> bool + Send + Sync + 'static>;
 
 /// Describes one column in a [`super::data_grid`] view.
 ///
@@ -58,25 +124,54 @@ pub type TextProjector<R> = Box<dyn Fn(&R) -> String + Send + Sync + 'static>;
 /// same row. `State` is the host application's app state. Cells are
 /// non-interactive in v1 (the row container intercepts pointer events
 /// for selection), so the action type is fixed at `()`.
+///
+/// Construct via the builder path — [`text_column`] /
+/// [`optional_text_column`] / [`colored_text_column`], or
+/// [`ColumnDef::new`] plus the chained setters. Fields are deliberately
+/// crate-private so the internal representation (boxed closures today)
+/// can evolve without breaking hosts.
 #[must_use]
 pub struct ColumnDef<R, State> {
+    /// Optional explicit [`ColumnId`]. `None` (the default) means the id
+    /// is derived from [`title`](Self::title) when the grid materializes —
+    /// fine as long as titles are unique. Set an explicit id via
+    /// [`Self::id`] when two columns share a title, or when a stable id
+    /// must survive a title change.
+    pub(crate) id: Option<ColumnId>,
     /// Display title shown in the sticky header row.
-    pub title: String,
-    /// Fixed pixel width. The caller is responsible for ensuring the
-    /// sum across columns fits the grid's viewport; otherwise the
-    /// rightmost columns clip (a `tracing::warn!` is emitted in debug
-    /// builds on first under-sized layout).
-    pub width: f64,
+    pub(crate) title: String,
+    /// Fixed pixel width. When the column total exceeds the viewport the
+    /// grid scrolls horizontally (header/filter/body share the offset),
+    /// so wide tables stay reachable rather than clipping.
+    pub(crate) width: f64,
     /// In-cell text alignment.
-    pub align: CellAlign,
+    pub(crate) align: CellAlign,
     /// Builds a cell view for the supplied row at the supplied theme.
-    pub render: CellRenderer<R, State>,
+    pub(crate) render: CellRenderer<R, State>,
     /// Optional text-only projector used for clipboard copy. The
     /// helpers [`text_column`] and [`optional_text_column`] populate
     /// this automatically; custom callers using [`ColumnDef::new`]
     /// can attach one via [`ColumnDef::with_text`]. Columns without a
     /// text projector contribute an empty TSV cell.
-    pub text: Option<TextProjector<R>>,
+    pub(crate) text: Option<TextProjector<R>>,
+    /// Optional ascending-order comparator that makes this column
+    /// sortable. `None` (the default) leaves the column unsortable —
+    /// its header doesn't react to clicks. Attach one via
+    /// [`ColumnDef::sortable_by`] or [`ColumnDef::sortable_by_key`].
+    ///
+    /// Deliberately *not* auto-populated by [`text_column`]: a column
+    /// whose cells render a formatted number (e.g. `"$100.00"`) would
+    /// sort lexicographically — wrong — if it inherited a string
+    /// comparator from its display text. Sortable columns opt in with
+    /// a key that reflects the underlying value.
+    pub(crate) comparator: Option<RowComparator<R>>,
+    /// Optional predicate that makes this column filterable. `None`
+    /// (the default) leaves the column unfilterable. Attach one via
+    /// [`ColumnDef::filterable_by`] or [`ColumnDef::filterable_by_text`].
+    /// The host applies it through
+    /// [`filtered_indices`](super::filter::filtered_indices); the grid
+    /// uses its presence to decide whether to show a filter affordance.
+    pub(crate) filter: Option<RowFilter<R>>,
 }
 
 impl<R, State> ColumnDef<R, State> {
@@ -87,12 +182,90 @@ impl<R, State> ColumnDef<R, State> {
         F: Fn(&R, &Theme) -> Box<AnyWidgetView<State>> + Send + Sync + 'static,
     {
         Self {
+            id: None,
             title: title.into(),
             width,
             align,
             render: Box::new(render),
             text: None,
+            comparator: None,
+            filter: None,
         }
+    }
+
+    /// Sets an explicit [`ColumnId`], overriding the title-derived
+    /// default. Use it when titles aren't unique, or when the id must
+    /// stay stable across a title change. The id keys this column's sort,
+    /// filter, and width state, so it must be unique within the grid.
+    pub fn id(mut self, id: impl Into<ColumnId>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+
+    /// The column's effective [`ColumnId`]: its explicit [`Self::id`] if
+    /// set, else one derived from its [`title`](Self::title).
+    #[must_use]
+    pub fn effective_id(&self) -> ColumnId {
+        self.id
+            .clone()
+            .unwrap_or_else(|| ColumnId::from(self.title.clone()))
+    }
+
+    /// Makes this column filterable with an explicit predicate:
+    /// `Fn(&row, &query) -> bool`. Reach for this when matching needs
+    /// more than a case-insensitive substring (numeric thresholds,
+    /// ranges, custom parsing); most callers want
+    /// [`ColumnDef::filterable_by_text`].
+    pub fn filterable_by<F>(mut self, predicate: F) -> Self
+    where
+        F: Fn(&R, &str) -> bool + Send + Sync + 'static,
+    {
+        self.filter = Some(Box::new(predicate));
+        self
+    }
+
+    /// Makes this column filterable by a case-insensitive substring
+    /// match against text projected from each row — the common case
+    /// (`.filterable_by_text(|r| r.symbol.clone())`). A row passes when
+    /// the projected text contains the query, ignoring case.
+    pub fn filterable_by_text<F>(self, key: F) -> Self
+    where
+        F: Fn(&R) -> String + Send + Sync + 'static,
+    {
+        self.filterable_by(move |row, query| {
+            key(row).to_lowercase().contains(&query.to_lowercase())
+        })
+    }
+
+    /// Makes this column sortable using an explicit ascending-order
+    /// comparator. The grid applies the active
+    /// [`SortDirection`](super::sort::SortDirection) on top — pass the
+    /// comparator that describes the *ascending* order and the grid
+    /// reverses it for descending.
+    ///
+    /// Most callers want [`ColumnDef::sortable_by_key`]; reach for this
+    /// when ordering needs more than a single `Ord` key (e.g. a custom
+    /// collation or a multi-field tiebreak).
+    pub fn sortable_by<F>(mut self, comparator: F) -> Self
+    where
+        F: Fn(&R, &R) -> Ordering + Send + Sync + 'static,
+    {
+        self.comparator = Some(Box::new(comparator));
+        self
+    }
+
+    /// Makes this column sortable by a comparable key projected from
+    /// each row. The common case: `.sortable_by_key(|r| r.price_units)`.
+    ///
+    /// The key is computed twice per comparison rather than cached, so
+    /// keep the projection cheap (a field read or a `Copy` value). For
+    /// expensive keys, precompute them onto the row type instead.
+    pub fn sortable_by_key<K, F>(self, key: F) -> Self
+    where
+        K: Ord,
+        F: Fn(&R) -> K + Send + Sync + 'static,
+    {
+        self.sortable_by(move |a, b| key(a).cmp(&key(b)))
     }
 
     /// Attaches a text projector for clipboard copy. Builders chain
@@ -113,7 +286,7 @@ impl<R, State> ColumnDef<R, State> {
 /// `fmt` projects a row into the text shown in that row's cell. The
 /// label inherits the active theme's body font size and primary text
 /// color. The same projector is wired into the column's clipboard
-/// path (see [`ColumnDef::text`]).
+/// path (the column's clipboard projector).
 pub fn text_column<R, State, F>(
     title: impl Into<String>,
     width: f64,
@@ -132,8 +305,7 @@ where
         let text = fmt_for_render(row);
         let view = label(text)
             .text_size(theme.typography.size_body)
-            .color(theme.palette.text)
-            .render(theme);
+            .color(theme.palette.text);
         Box::new(view)
     })
     .with_text(move |row| fmt_for_text(row))
@@ -166,12 +338,132 @@ where
         };
         let view = label(text)
             .text_size(theme.typography.size_body)
-            .color(color)
-            .render(theme);
+            .color(color);
         Box::new(view)
     })
     // Clipboard cells get an empty string for None, not "—" — the
     // em dash is presentation-only; a spreadsheet target wants the
     // structural absence.
     .with_text(move |row| fmt_for_text(row).unwrap_or_default())
+}
+
+/// A text column whose label color is computed per row — the building
+/// block for conditional formatting (e.g. green gains / red losses, or
+/// categorical coloring).
+///
+/// `fmt` projects the displayed (and clipboard) text exactly like
+/// [`text_column`]; `color` picks the label color from the row and the
+/// active [`Theme`] (so it resolves correctly across theme variants —
+/// pass `theme.palette.green` / `theme.palette.coral`, etc.). Number
+/// and string *formatting* is just the `fmt` closure; this adds the
+/// conditional *color* on top.
+pub fn colored_text_column<R, State, F, C>(
+    title: impl Into<String>,
+    width: f64,
+    align: CellAlign,
+    fmt: F,
+    color: C,
+) -> ColumnDef<R, State>
+where
+    R: 'static,
+    State: 'static,
+    F: Fn(&R) -> String + Send + Sync + 'static,
+    C: Fn(&R, &Theme) -> Color + Send + Sync + 'static,
+{
+    let fmt = std::sync::Arc::new(fmt);
+    let fmt_for_render = std::sync::Arc::clone(&fmt);
+    let fmt_for_text = std::sync::Arc::clone(&fmt);
+    ColumnDef::new(title, width, align, move |row, theme| {
+        let view = label(fmt_for_render(row))
+            .text_size(theme.typography.size_body)
+            .color(color(row, theme));
+        Box::new(view)
+    })
+    .with_text(move |row| fmt_for_text(row))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cmp::Ordering;
+
+    use super::{CellAlign, ColumnDef, ColumnId, text_column};
+
+    #[derive(Clone)]
+    struct Row {
+        n: i64,
+        name: &'static str,
+    }
+
+    #[test]
+    fn effective_id_defaults_to_title() {
+        let col: ColumnDef<Row, ()> =
+            text_column("Price", 10.0, CellAlign::End, |r: &Row| r.n.to_string());
+        assert_eq!(col.effective_id(), ColumnId::from("Price"));
+    }
+
+    #[test]
+    fn explicit_id_overrides_the_title_default() {
+        let col: ColumnDef<Row, ()> =
+            text_column("Price", 10.0, CellAlign::End, |r: &Row| r.n.to_string()).id("price_units");
+        assert_eq!(col.effective_id(), ColumnId::from("price_units"));
+        // The display title is unaffected by the id override.
+        assert_eq!(col.title, "Price");
+    }
+
+    #[test]
+    fn column_id_round_trips_as_str() {
+        let id = ColumnId::from("symbol");
+        assert_eq!(id.as_str(), "symbol");
+        assert_eq!(id.to_string(), "symbol");
+    }
+
+    #[test]
+    fn column_ids_compare_by_value() {
+        // Two ids from independent allocations are equal by content,
+        // which is what the state-map keying relies on.
+        assert_eq!(ColumnId::from("vwap"), ColumnId::from(String::from("vwap")));
+        assert_ne!(ColumnId::from("bid"), ColumnId::from("ask"));
+    }
+
+    #[test]
+    fn columns_are_unsortable_by_default() {
+        let col: ColumnDef<Row, ()> =
+            text_column("N", 10.0, CellAlign::End, |r: &Row| r.n.to_string());
+        assert!(
+            col.comparator.is_none(),
+            "text_column must not auto-attach a comparator"
+        );
+    }
+
+    #[test]
+    fn sortable_by_key_orders_by_the_underlying_value() {
+        // The display projection stringifies, which would sort
+        // lexicographically; the key sorts numerically instead.
+        let col: ColumnDef<Row, ()> =
+            text_column("N", 10.0, CellAlign::End, |r: &Row| r.n.to_string())
+                .sortable_by_key(|r: &Row| r.n);
+        let cmp = col
+            .comparator
+            .expect("sortable_by_key attaches a comparator");
+        let small = Row { n: 9, name: "a" };
+        let large = Row { n: 100, name: "b" };
+        // 9 < 100 numerically, even though "100" < "9" as strings.
+        assert_eq!(cmp(&small, &large), Ordering::Less);
+        assert_eq!(cmp(&large, &small), Ordering::Greater);
+        assert_eq!(cmp(&small, &small), Ordering::Equal);
+    }
+
+    #[test]
+    fn sortable_by_uses_the_explicit_comparator() {
+        let col: ColumnDef<Row, ()> =
+            text_column("Name", 10.0, CellAlign::Start, |r: &Row| r.name.to_string())
+                .sortable_by(|a: &Row, b: &Row| a.name.cmp(b.name));
+        let cmp = col.comparator.expect("sortable_by attaches a comparator");
+        let a = Row {
+            n: 0,
+            name: "alpha",
+        };
+        let b = Row { n: 0, name: "beta" };
+        assert_eq!(cmp(&a, &b), Ordering::Less);
+    }
 }

@@ -1,5 +1,6 @@
 //! Scroll container component — a clipping viewport with scrollbars on both axes.
 
+#[cfg(feature = "gallery")]
 pub mod demo;
 mod view;
 pub mod widget;

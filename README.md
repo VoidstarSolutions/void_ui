@@ -9,16 +9,30 @@ Every component reads its colors, sizes, and type stack from a `Theme` value own
 Shipped components:
 
 - **`Button`** — variants (Default/Danger), active toggle, disabled, leading icon, focus ring
-- **`DataGrid`** — virtualized rows, declarative columns, selection model, copy-to-clipboard shortcut, overflow detection
+- **`Checkbox`** — tri-state-ready boolean control
+- **`DataGrid`** — virtualized rows over very large/append-only streams,
+  declarative columns, stable-`row_id` selection (anchor + shift-range +
+  ctrl/cmd-toggle), TSV copy-to-clipboard, **host-side single + multi-column
+  (tiebreak) sort**, **per-column filtering**, **conditional cell
+  formatting**, **horizontal scroll**, **drag-to-resize**, and **column
+  show/hide + reorder** — all column state keyed by a stable `ColumnId`.
+  Two demos exercise it: a streaming tick blotter (capability) and a
+  NASDAQ-style stock-quote board (the product "value lens"). See
+  [`docs/DATA_GRID_HOST_CONTRACT.md`](docs/DATA_GRID_HOST_CONTRACT.md).
+- **`Radio`** — radio group with single-selection state
+- **`ScrollContainer`** — themed viewport over masonry's `Portal`
 - **`SidebarItem`** — full-width nav row with accent on active
 - **`Tooltip`** — anchored, dismiss-aware
 
 Layout primitives: **`FlexWrap`** (left-to-right wrapping row), **`PointerInert`** (event-transparent wrapper), **`FloatingOverlay`** (the shared overlay primitive — see below).
 
-A live gallery exercises every component end-to-end with source snippets via the `with_source!` macro:
+A live gallery exercises every component end-to-end. Most panels show their
+source inline via the `with_source!` macro; the interactive `Data Grid` and
+`Stock Quotes` panels are full working demos (a streaming blotter and a
+quote board) wired to live app state.
 
 ```sh
-cargo run -p void-ui --example gallery
+cargo run -p void-ui --example gallery --features gallery
 ```
 
 ## Roadmap

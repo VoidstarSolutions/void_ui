@@ -15,6 +15,7 @@
 pub mod button;
 pub mod button_group;
 pub mod checkbox;
+pub(crate) mod click;
 pub mod clipboard;
 pub mod code_view;
 pub mod data_grid;
@@ -30,7 +31,9 @@ pub use checkbox::{Checkbox, CheckboxView, checkbox};
 pub use clipboard::{Clipboard, ClipboardView, clipboard};
 pub use code_view::{ReadOnlyText, ReadOnlyTextView, RustHighlighter, read_only_text};
 pub use data_grid::{
-    CellAlign, ColumnDef, SelectionState, data_grid, optional_text_column, text_column,
+    CellAlign, ColumnDef, ColumnId, ColumnWidths, DataGrid, FilterState, MIN_COLUMN_WIDTH,
+    SelectionState, SortDirection, SortState, colored_text_column, data_grid, filtered_indices,
+    optional_text_column, text_column,
 };
 pub use label::{Label, LabelAlignment, label};
 pub use scroll_container::{
@@ -57,6 +60,7 @@ pub enum ComponentKind {
     CodeView,
     DataGrid,
     Label,
+    StockQuotes,
     Radio,
     ScrollContainer,
     Sidebar,
@@ -75,6 +79,7 @@ impl ComponentKind {
             Self::CodeView => "Code View",
             Self::DataGrid => "Data Grid",
             Self::Label => "Label",
+            Self::StockQuotes => "Stock Quotes",
             Self::Radio => "Radio",
             Self::ScrollContainer => "Scroll Container",
             Self::Sidebar => "Sidebar",
@@ -94,6 +99,7 @@ impl ComponentKind {
             Self::Label,
             Self::Radio,
             Self::DataGrid,
+            Self::StockQuotes,
             Self::ScrollContainer,
             Self::Sidebar,
             Self::Tooltip,

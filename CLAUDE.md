@@ -15,14 +15,16 @@ A general-purpose xilem/Masonry component library. Theme-driven, product-agnosti
 # Build the library
 cargo build
 
-# Run the live component gallery (exercises every shipped component end-to-end)
-cargo run -p void-ui --example gallery
+# Run the live component gallery (exercises every shipped component end-to-end).
+# The `gallery` cargo feature gates the demo panels + with_source! proc-macro
+# so library consumers don't compile them; the example requires it.
+cargo run -p void-ui --example gallery --features gallery
 
 # Lints (workspace denies clippy::pedantic — fix don't allow)
-cargo clippy --all-targets
+cargo clippy --all-targets --all-features
 
 # Tests
-cargo test                                  # all
+cargo test --all-features                   # all (incl. gallery-gated demo tests)
 cargo test --lib <name>                     # a single test by substring
 ```
 

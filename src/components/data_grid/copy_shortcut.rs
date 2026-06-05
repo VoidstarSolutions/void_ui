@@ -9,10 +9,13 @@
 //! to plumb, and no `arboard` dependency, because masonry's
 //! [`EventCtx::set_clipboard`] already speaks to the platform.
 //!
-//! `accepts_focus = true`, but focus is only acquired on pointer
-//! down inside the wrapper — letting the keyboard shortcut work after
-//! the user clicks anywhere in the grid. Other events pass through
-//! to the child; `measure` / `layout` / `paint` delegate verbatim.
+//! `accepts_focus = true`. Focus is taken only on a pointer-down that
+//! lands *directly* on this wrapper, never when the click hits a
+//! focusable descendant (a filter text input, a clickable row) — those
+//! must keep their own focus, and the copy shortcut still works because
+//! the key event bubbles up to this wrapper from the focused descendant.
+//! Other events pass through to the child; `measure` / `layout` /
+//! `paint` delegate verbatim.
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::keyboard::{Key, KeyState};
@@ -22,8 +25,10 @@ use masonry::core::{
     UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Point, Size};
-use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
+use masonry::kurbo::{Axis, Size};
+use masonry::layout::{LenReq, Length};
+
+use super::single_child;
 
 /// Wrap an arbitrary child widget; intercept Ctrl/Cmd+C; on press,
 /// write the cached payload to the clipboard.
@@ -103,10 +108,18 @@ impl Widget for CopyOnShortcut {
         _props: &mut PropertiesMut<'_>,
         event: &PointerEvent,
     ) {
-        if let PointerEvent::Down(..) = event {
-            // Take focus so subsequent keyboard events route here. We
-            // don't capture the pointer — the child still gets to
-            // handle its own clicks (row selection lives inside).
+        // Take focus on a pointer-down that lands *directly* on this
+        // wrapper (empty grid chrome) so a later Ctrl/Cmd+C routes here.
+        // Crucially, do NOT grab focus when the click lands on a
+        // focusable descendant — a filter text input or a clickable row.
+        // Those run their own `request_focus` first; since this widget
+        // is their ancestor it would otherwise override them (event
+        // bubbling reaches ancestors last), stealing focus and breaking
+        // text entry. Copy still works in that case because the keyboard
+        // event bubbles up to this wrapper from the focused descendant.
+        if let PointerEvent::Down(..) = event
+            && ctx.target() == ctx.widget_id()
+        {
             ctx.request_focus();
         }
     }
@@ -142,7 +155,7 @@ impl Widget for CopyOnShortcut {
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.child);
+        single_child::register_children(ctx, &mut self.child);
     }
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
@@ -155,21 +168,11 @@ impl Widget for CopyOnShortcut {
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        let auto_length = len_req.into();
-        ctx.compute_length(
-            &mut self.child,
-            auto_length,
-            LayoutSize::maybe(axis.cross(), cross_length),
-            axis,
-            cross_length,
-        )
+        single_child::measure(ctx, &mut self.child, axis, len_req, cross_length)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let child_size = ctx.compute_size(&mut self.child, SizeDef::fixed(size), size.into());
-        ctx.run_layout(&mut self.child, child_size);
-        ctx.place_child(&mut self.child, Point::ORIGIN);
-        ctx.derive_baselines(&self.child);
+        single_child::layout(ctx, &mut self.child, size);
     }
 
     fn paint(
@@ -193,7 +196,7 @@ impl Widget for CopyOnShortcut {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.child.id()])
+        single_child::children_ids(&self.child)
     }
 
     fn accepts_focus(&self) -> bool {

@@ -1,5 +1,6 @@
 //! Checkbox component — a two-state toggle with an optional text label.
 
+#[cfg(feature = "gallery")]
 pub mod demo;
 mod view;
 pub mod widget;

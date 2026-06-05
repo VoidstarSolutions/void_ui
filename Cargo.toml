@@ -34,16 +34,23 @@ publish = false
 [dependencies]
 masonry = { workspace = true }
 tracing = { workspace = true }
-void-ui-macros = { path = "void-ui-macros" }
+void-ui-macros = { path = "void-ui-macros", optional = true }
 xilem = { workspace = true }
 xilem_masonry = { workspace = true }
 
 [dev-dependencies]
 xilem = { workspace = true }
 
+[features]
+# Demo panels + the gallery's source-snippet tooling (the `with_source!`
+# proc-macro). Off by default so library consumers don't compile the
+# proc-macro crate or the demo modules; the gallery example turns it on.
+gallery = ["dep:void-ui-macros"]
+
 [[example]]
 name = "gallery"
 path = "examples/gallery.rs"
+required-features = ["gallery"]
 
 [lints]
 workspace = true
