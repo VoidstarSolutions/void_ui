@@ -14,7 +14,7 @@ use masonry::core::{
     UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Affine, Axis, BezPath, Point, RoundedRect, Size, Stroke, Vec2};
+use masonry::kurbo::{Affine, Axis, BezPath, Point, RoundedRect, Size, Stroke};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use masonry::peniko::Color;
 use masonry::properties::ContentColor;
@@ -25,6 +25,7 @@ use crate::Theme;
 use crate::components::button::ButtonVariant;
 use crate::components::button::widget::CORNER_RADIUS;
 use crate::components::click::{self, ClickPhase};
+use crate::components::popover::PopoverAnchor;
 use crate::popover_layer::{OnOutsideClick, PopoverLayer};
 
 const FOCUS_RING_WIDTH: f64 = 1.5;
@@ -268,6 +269,7 @@ impl ThemedDropdownButton {
 
     fn open_dropdown(&mut self, ctx: &mut EventCtx<'_>) {
         let creator_id = ctx.widget_id();
+        let border_box = ctx.border_box();
         let content = NewWidget::new(MenuContent::new(
             self.items.clone(),
             creator_id,
@@ -285,11 +287,13 @@ impl ThemedDropdownButton {
             creator_id,
             p.surface_hi,
             p.border_strong,
+            PopoverAnchor::BottomStart,
+            border_box.size(),
             close_cb,
         ));
         let layer_id = layer_widget.id();
-        let border_box = ctx.border_box();
-        let pos = ctx.to_window(border_box.origin()) + Vec2::new(0.0, border_box.size().height);
+        // PopoverLayer handles the BottomStart offset internally — pass trigger top-left.
+        let pos = ctx.to_window(border_box.origin());
         ctx.create_layer(LayerType::Other, layer_widget, pos);
         self.menu_layer_id = Some(layer_id);
         self.open = true;

@@ -23,6 +23,7 @@ pub mod data_grid;
 pub mod dropdown_button;
 pub mod icon;
 pub mod label;
+pub mod popover;
 pub mod radio;
 pub mod resizable;
 pub mod scroll_container;
@@ -45,6 +46,7 @@ pub use data_grid::{
     optional_text_column, text_column,
 };
 pub use dropdown_button::{DropdownButton, DropdownButtonView, dropdown_button};
+pub use popover::{Popover, PopoverAnchor, PopoverHost, PopoverView, popover};
 pub use icon::{Icon, IconName, icon};
 pub use label::{Label, LabelAlignment, label};
 pub use resizable::{
@@ -83,11 +85,13 @@ pub enum ComponentKind {
     DataGrid,
     Icon,
     Label,
+	Popover,
     Radio,
     Resizable,
     ScrollContainer,
     Separator,
     Sidebar,
+	
     Slider,
     Spinner,
     StockQuotes,
@@ -110,6 +114,7 @@ impl ComponentKind {
             Self::DataGrid => "Data Grid",
             Self::Icon => "Icon",
             Self::Label => "Label",
+            Self::Popover => "Popover",
             Self::Radio => "Radio",
             Self::Resizable => "Resizable",
             Self::ScrollContainer => "Scroll Container",
@@ -135,6 +140,7 @@ impl ComponentKind {
             Self::CodeView,
             Self::Collapsible,
             Self::Label,
+            Self::Popover,
             Self::Radio,
             Self::DataGrid,
             Self::Icon,

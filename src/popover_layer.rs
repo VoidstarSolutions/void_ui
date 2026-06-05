@@ -1,4 +1,5 @@
-//! `PopoverLayer` — reusable window-level floating layer with outside-click dismissal.
+//! `PopoverLayer` — reusable window-level floating layer with anchor-aware
+//! positioning and outside-click dismissal.
 //!
 //! Any component that needs a layer-based popover (dropdown menu, context menu,
 //! combobox list, date-picker) wraps its content in `PopoverLayer` instead of
@@ -6,7 +7,23 @@
 //! widget via a caller-supplied `on_outside_click` closure so `PopoverLayer`
 //! stays product-agnostic.
 //!
-//! # Usage
+//! ## Positioning
+//!
+//! The layer's window-space origin is always the **trigger's top-left corner**.
+//! `PopoverLayer` places its child at an offset computed from the `anchor` and
+//! the measured child size:
+//!
+//! ```text
+//! TopStart    TopCenter    TopEnd
+//! [  trigger widget  ]
+//! BottomStart BottomCenter BottomEnd
+//! ```
+//!
+//! This means `Top*` anchors naturally appear above the trigger even though the
+//! layer origin is the trigger's top edge — the child is placed at a negative
+//! local-y offset equal to its own height.
+//!
+//! ## Usage
 //!
 //! ```ignore
 //! let close_cb = Arc::new(|mut w: WidgetMut<dyn Widget>, layer_id: WidgetId| {
@@ -15,9 +32,13 @@
 //!     w.widget.layer_id = None;
 //!     w.ctx.remove_layer(layer_id);
 //! });
-//! let layer_widget = NewWidget::new(PopoverLayer::new(content_widget, creator_id, close_cb));
+//! let layer_widget = NewWidget::new(PopoverLayer::new(
+//!     content_widget, creator_id, bg, border,
+//!     PopoverAnchor::BottomStart, trigger_size, close_cb,
+//! ));
 //! let layer_id = layer_widget.id();
-//! ctx.create_layer(LayerType::Other, layer_widget, window_pos);
+//! // pos = ctx.to_window(ctx.border_box().origin())  — trigger top-left
+//! ctx.create_layer(LayerType::Other, layer_widget, pos);
 //! ```
 
 use std::sync::Arc;
@@ -32,6 +53,8 @@ use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, RoundedRect, Size, Stroke};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 
+use crate::components::popover::PopoverAnchor;
+
 /// Corner radius of the popover container background.
 const CORNER_RADIUS: f64 = 5.0;
 /// Border width of the popover container background.
@@ -42,14 +65,17 @@ const BORDER_WIDTH: f64 = 1.0;
 /// Receives a `WidgetMut` of the *creator* widget and the popover's own
 /// `WidgetId` so the callback can downcast, update state, and call
 /// `ctx.remove_layer(layer_id)`.
-pub type OnOutsideClick = Arc<dyn Fn(WidgetMut<'_, dyn Widget>, WidgetId) + Send + Sync + 'static>;
+pub type OnOutsideClick =
+    Arc<dyn Fn(WidgetMut<'_, dyn Widget>, WidgetId) + Send + Sync + 'static>;
 
 /// Window-level floating layer that wraps arbitrary content with
-/// background/border chrome and outside-click dismissal.
+/// background/border chrome, anchor-aware positioning, and outside-click
+/// dismissal.
 ///
 /// Construct via [`PopoverLayer::new`], then pass the `NewWidget` to
-/// `EventCtx::create_layer`.  The caller retains the `WidgetId` to
-/// identify the layer in `remove_layer` calls.
+/// `EventCtx::create_layer` with `pos = ctx.to_window(ctx.border_box().origin())`
+/// (trigger top-left).  The layer computes the child's local offset from the
+/// supplied `anchor` and `trigger_size` once it knows the child's measured size.
 pub struct PopoverLayer {
     child: WidgetPod<dyn Widget>,
     /// ID of the widget that owns (and is responsible for removing) this layer.
@@ -57,41 +83,80 @@ pub struct PopoverLayer {
     /// Called when a primary-button click outside the popover's bounds is
     /// captured by [`Layer::capture_pointer_event`].
     on_outside_click: OnOutsideClick,
-    /// Cached last-layout size used for outside-click hit-testing.
-    last_size: Size,
-    /// Background color, drawn before the child.
+    /// Background color drawn before the child.
     bg: masonry::peniko::Color,
     /// Border color.  Transparent = no border drawn.
     border: masonry::peniko::Color,
+    /// Where the content appears relative to the trigger.
+    anchor: PopoverAnchor,
+    /// Size of the trigger widget, used to compute `x` offsets for `*End`
+    /// and `*Center` anchors.
+    trigger_size: Size,
+    /// Placed child rect in local coords (set in `layout`).  Used by
+    /// `capture_pointer_event` for outside-click hit-testing.
+    child_rect: Rect,
 }
 
 impl PopoverLayer {
     /// Create a `PopoverLayer` wrapping `child`.
     ///
+    /// Pass `pos = ctx.to_window(ctx.border_box().origin())` (trigger top-left)
+    /// to `EventCtx::create_layer`; the layer places the child at the correct
+    /// offset for the given `anchor`.
+    ///
     /// `on_outside_click` is called (via `mutate_later`) when the user clicks
-    /// outside the popover bounds; it receives the creator's `WidgetMut` and
-    /// this layer's `WidgetId`.
+    /// outside the popover; it receives the creator's `WidgetMut` and this
+    /// layer's `WidgetId`.
     #[must_use]
     pub fn new(
         child: NewWidget<impl Widget + ?Sized>,
         creator: WidgetId,
         bg: masonry::peniko::Color,
         border: masonry::peniko::Color,
+        anchor: PopoverAnchor,
+        trigger_size: Size,
         on_outside_click: OnOutsideClick,
     ) -> Self {
         Self {
             child: child.erased().to_pod(),
             creator,
             on_outside_click,
-            last_size: Size::ZERO,
             bg,
             border,
+            anchor,
+            trigger_size,
+            child_rect: Rect::ZERO,
         }
     }
 
     fn to_local(ctx: &EventCtx<'_>, window_pos: Point) -> Point {
         let origin = ctx.to_window(Point::ZERO);
         window_pos - origin.to_vec2()
+    }
+
+    /// Compute the child's local-coordinate origin given its measured size and
+    /// the anchor.
+    fn child_offset(anchor: PopoverAnchor, trigger: Size, content: Size) -> Point {
+        match anchor {
+            PopoverAnchor::BottomStart => {
+                Point::new(0.0, trigger.height)
+            }
+            PopoverAnchor::BottomCenter => {
+                Point::new((trigger.width - content.width) / 2.0, trigger.height)
+            }
+            PopoverAnchor::BottomEnd => {
+                Point::new(trigger.width - content.width, trigger.height)
+            }
+            PopoverAnchor::TopStart => {
+                Point::new(0.0, -content.height)
+            }
+            PopoverAnchor::TopCenter => {
+                Point::new((trigger.width - content.width) / 2.0, -content.height)
+            }
+            PopoverAnchor::TopEnd => {
+                Point::new(trigger.width - content.width, -content.height)
+            }
+        }
     }
 
     fn dismiss(&self, ctx: &mut EventCtx<'_>) {
@@ -149,6 +214,9 @@ impl Widget for PopoverLayer {
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
+        // Report the child's intrinsic size.  The LayerStack sizes layers with
+        // MaxContent; we forward the query so the layer's logical size matches
+        // the child rather than the whole window.
         ctx.compute_length(
             &mut self.child,
             len_req.into(),
@@ -159,20 +227,21 @@ impl Widget for PopoverLayer {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        self.last_size = size;
-        let child_size = ctx.compute_size(&mut self.child, SizeDef::fit(size), size.into());
+        let child_size = ctx.compute_size(&mut self.child, SizeDef::MIN, size.into());
         ctx.run_layout(&mut self.child, child_size);
-        ctx.place_child(&mut self.child, Point::ORIGIN);
+        let offset = Self::child_offset(self.anchor, self.trigger_size, child_size);
+        ctx.place_child(&mut self.child, offset);
+        self.child_rect = Rect::from_origin_size(offset, child_size);
     }
 
     fn paint(
         &mut self,
-        ctx: &mut PaintCtx<'_>,
+        _ctx: &mut PaintCtx<'_>,
         _props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
-        let size = ctx.border_box_size();
-        let rrect = RoundedRect::from_origin_size(Point::ORIGIN, size, CORNER_RADIUS);
+        let rrect =
+            RoundedRect::from_origin_size(self.child_rect.origin(), self.child_rect.size(), CORNER_RADIUS);
         if self.bg.components[3] > 0.0 {
             painter.fill(rrect, self.bg).draw();
         }
@@ -214,8 +283,7 @@ impl Layer for PopoverLayer {
         }) = event
         {
             let local = Self::to_local(ctx, state.logical_point());
-            let bounds = Rect::from_origin_size(Point::ZERO, self.last_size);
-            if !bounds.contains(local) {
+            if !self.child_rect.contains(local) {
                 self.dismiss(ctx);
             }
         }

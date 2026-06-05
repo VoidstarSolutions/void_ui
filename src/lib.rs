@@ -69,11 +69,12 @@ pub use components::{
     icon, label, optional_text_column, read_only_text, scroll_container, sidebar_item,
     sidebar_panel, text_column, toggle_button_group, tooltip,
     DropdownButton, DropdownButtonView, FilterState, Label, LabelAlignment, MIN_COLUMN_WIDTH,
-    ReadOnlyText, ReadOnlyTextView, RustHighlighter, ScrollContainer, ScrollContainerView,
-    SelectionState, SidebarItem, SidebarItemView, SidebarPanel, SidebarPanelView, SortDirection,
-    SortState, Tooltip, TooltipView, button, button_group, colored_text_column, data_grid,
-    dropdown_button, filtered_indices, label, optional_text_column, read_only_text,
-    scroll_container, sidebar_item, sidebar_panel, text_column, toggle_button_group, tooltip,
+    Popover, PopoverAnchor, PopoverHost, PopoverView, ReadOnlyText, ReadOnlyTextView,
+    RustHighlighter, ScrollContainer, ScrollContainerView, SelectionState, SidebarItem,
+    SidebarItemView, SidebarPanel, SidebarPanelView, SortDirection, SortState, Tooltip, TooltipView,
+    button, button_group, colored_text_column, data_grid, dropdown_button, filtered_indices, label,
+    optional_text_column, popover, read_only_text, scroll_container, sidebar_item, sidebar_panel,
+    text_column, toggle_button_group, tooltip,
 };
 pub use floating::{FloatingOverlay, FloatingOverlayView, floating, interactive_floating};
 #[cfg(feature = "gallery")]
