@@ -12,8 +12,8 @@
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
     AccessCtx, AccessEvent, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, PaintCtx,
-    PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx,
-    TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
+    PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx, Widget,
+    WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, Size};
@@ -21,6 +21,7 @@ use masonry::layout::{LenReq, Length};
 use masonry::peniko::Color;
 
 use super::single_child;
+use crate::components::click::{self, ClickPhase};
 
 /// Action emitted by [`HeaderClickable`] on primary-button release
 /// inside its bounds. Carries whether the Shift modifier was held, which
@@ -83,25 +84,13 @@ impl Widget for HeaderClickable {
         _props: &mut PropertiesMut<'_>,
         event: &PointerEvent,
     ) {
-        match event {
-            PointerEvent::Down(PointerButtonEvent { button, .. }) => {
-                if matches!(button, Some(PointerButton::Primary)) {
-                    // Capture so the release can be matched against
-                    // `is_active`; no focus request — headers don't own
-                    // the keyboard (the grid's copy shortcut does).
-                    ctx.capture_pointer();
-                }
-            }
-            PointerEvent::Up(PointerButtonEvent { button, state, .. })
-                if matches!(button, Some(PointerButton::Primary))
-                    && ctx.is_active()
-                    && ctx.is_hovered() =>
-            {
-                ctx.submit_action::<Self::Action>(HeaderClicked {
-                    multi: state.modifiers.shift(),
-                });
-            }
-            _ => {}
+        // Shared Down→capture / Up-iff-active-and-hovered recognizer.
+        // No focus request on Down — headers don't own the keyboard
+        // (the grid's copy shortcut does).
+        if let Some(ClickPhase::Up(Some(state))) = click::primary_click(ctx, event) {
+            ctx.submit_action::<Self::Action>(HeaderClicked {
+                multi: state.modifiers.shift(),
+            });
         }
     }
 

@@ -18,7 +18,7 @@ use masonry::accesskit::{Node, Role};
 use masonry::core::keyboard::{Key, NamedKey};
 use masonry::core::{
     AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
-    PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef,
+    PaintCtx, PointerButton, PointerEvent, PropertiesMut, PropertiesRef,
     RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
@@ -32,6 +32,7 @@ use masonry::widgets::ButtonPress;
 
 use super::ButtonVariant;
 use crate::Theme;
+use crate::components::click::{self, ClickPhase};
 
 /// Corner radius (`border-radius: 5px`).
 ///
@@ -426,31 +427,26 @@ impl Widget for ThemedButton {
         if self.disabled || self.loading {
             return;
         }
-        match event {
-            PointerEvent::Down(PointerButtonEvent {
-                button: Some(PointerButton::Primary),
-                ..
-            }) => {
+        // Shared Down→capture / Up-iff-active-and-hovered recognizer
+        // (drag out of the button to cancel the press).
+        match click::primary_click(ctx, event) {
+            Some(ClickPhase::Down) => {
                 ctx.request_focus();
-                ctx.capture_pointer();
                 ctx.request_paint_only();
             }
-            PointerEvent::Up(PointerButtonEvent {
-                button: button @ Some(PointerButton::Primary),
-                ..
-            }) => {
-                // Require both active (pointer was captured on Down) and hovered
-                // (pointer is still inside the button) before firing. This lets
-                // the user drag out of the button to cancel the press.
-                if ctx.is_active() && ctx.is_hovered() {
+            Some(ClickPhase::Up(completed)) => {
+                if completed.is_some() {
                     if let Some(payload) = &self.clipboard_payload {
                         ctx.set_clipboard(payload.to_string());
                     }
-                    ctx.submit_action::<Self::Action>(ButtonPress { button: *button });
+                    ctx.submit_action::<Self::Action>(ButtonPress {
+                        button: Some(PointerButton::Primary),
+                    });
                 }
+                // Repaint either way: the release ends the pressed state.
                 ctx.request_paint_only();
             }
-            _ => (),
+            None => (),
         }
     }
 

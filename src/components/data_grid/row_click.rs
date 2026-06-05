@@ -15,14 +15,15 @@
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
     AccessCtx, AccessEvent, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, PaintCtx,
-    PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx,
-    TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
+    PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx, Widget,
+    WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Size};
 use masonry::layout::{LenReq, Length};
 
 use super::single_child;
+use crate::components::click::{self, ClickPhase};
 
 /// Action emitted by [`RowClickable`] on primary-button release. The
 /// receiver inspects the modifiers to decide whether this is a plain
@@ -71,18 +72,12 @@ impl Widget for RowClickable {
         _props: &mut PropertiesMut<'_>,
         event: &PointerEvent,
     ) {
-        match event {
-            PointerEvent::Down(PointerButtonEvent { button, .. }) => {
-                if matches!(button, Some(PointerButton::Primary)) {
-                    ctx.request_focus();
-                    ctx.capture_pointer();
-                }
-            }
-            PointerEvent::Up(PointerButtonEvent { button, state, .. })
-                if matches!(button, Some(PointerButton::Primary))
-                    && ctx.is_active()
-                    && ctx.is_hovered() =>
-            {
+        // Shared Down→capture / Up-iff-active-and-hovered recognizer.
+        match click::primary_click(ctx, event) {
+            // Rows take keyboard focus so a subsequent Ctrl/Cmd+C lands
+            // inside the grid (see the module docs).
+            Some(ClickPhase::Down) => ctx.request_focus(),
+            Some(ClickPhase::Up(Some(state))) => {
                 let action_mod = if cfg!(target_os = "macos") {
                     state.modifiers.meta()
                 } else {

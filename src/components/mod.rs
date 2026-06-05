@@ -15,6 +15,7 @@
 pub mod button;
 pub mod button_group;
 pub mod checkbox;
+pub(crate) mod click;
 pub mod clipboard;
 pub mod code_view;
 pub mod data_grid;
