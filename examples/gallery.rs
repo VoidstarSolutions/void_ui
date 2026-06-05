@@ -154,6 +154,9 @@ fn main_pane(focused: ComponentKind, theme: &Theme) -> Box<AnyWidgetView<State>>
         ComponentKind::ButtonGroup => {
             Box::new(void_ui::components::button_group::demo::panel(theme))
         }
+        ComponentKind::DropdownButton => {
+            Box::new(void_ui::components::dropdown_button::demo::panel(theme))
+        }
         ComponentKind::Checkbox => Box::new(void_ui::components::checkbox::demo::panel(theme)),
         ComponentKind::Collapsible => {
             Box::new(void_ui::components::collapsible::demo::panel(theme))

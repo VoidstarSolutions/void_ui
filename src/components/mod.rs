@@ -20,6 +20,7 @@ pub mod clipboard;
 pub mod code_view;
 pub mod collapsible;
 pub mod data_grid;
+pub mod dropdown_button;
 pub mod icon;
 pub mod label;
 pub mod radio;
@@ -34,6 +35,7 @@ pub mod tooltip;
 
 pub use button::{Button, ButtonVariant, ButtonView, button};
 pub use button_group::{ButtonGroup, button_group, toggle_button_group};
+pub use dropdown_button::{DropdownButton, DropdownButtonView, dropdown_button};
 pub use checkbox::{Checkbox, CheckboxView, checkbox};
 pub use clipboard::{Clipboard, ClipboardView, clipboard};
 pub use code_view::{ReadOnlyText, ReadOnlyTextView, RustHighlighter, read_only_text};
@@ -73,6 +75,7 @@ pub use tooltip::{Tooltip, TooltipView, tooltip};
 pub enum ComponentKind {
     Button,
     ButtonGroup,
+    DropdownButton,
     Checkbox,
     Clipboard,
     CodeView,
@@ -99,6 +102,7 @@ impl ComponentKind {
         match self {
             Self::Button => "Button",
             Self::ButtonGroup => "Button Group",
+            Self::DropdownButton => "Dropdown Button",
             Self::Checkbox => "Checkbox",
             Self::Clipboard => "Clipboard",
             Self::CodeView => "Code View",
@@ -125,6 +129,7 @@ impl ComponentKind {
         &[
             Self::Button,
             Self::ButtonGroup,
+            Self::DropdownButton,
             Self::Checkbox,
             Self::Clipboard,
             Self::CodeView,
