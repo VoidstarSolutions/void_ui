@@ -351,9 +351,10 @@ fn data_grid_panel(theme: &Theme, dg: DataGridSnapshot) -> impl WidgetView<State
         FlexSpacer::Flex(1.0),
         // Column show/hide + reorder (host-owned layout): toggling
         // "Notional" hides/shows it; "Time ←" moves the Time column one
-        // slot left; "Reset cols" restores natural order. Any active
-        // sort/filter/width on a moved/hidden column is preserved (it's
-        // keyed by ColumnId, not position).
+        // slot left; "Reset cols" restores natural order. Sort/filter/
+        // width on a *moved* column follows it (keyed by ColumnId, not
+        // position); *hiding* a column clears its filter and sort level
+        // so no invisible criteria keep trimming/reordering rows.
         button(move |s: &mut State| {
             s.data_grid.toggle_column(&ColumnId::from("Notional"));
         })

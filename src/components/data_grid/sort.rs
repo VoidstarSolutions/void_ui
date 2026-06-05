@@ -189,6 +189,17 @@ impl SortState {
         }
     }
 
+    /// Removes `column`'s level from the sort, if present. The remaining
+    /// levels keep their relative priority order. No-op when the column
+    /// isn't sorted.
+    ///
+    /// The host's hide-a-column path is the canonical caller: once a
+    /// column is hidden there's no header arrow left to explain (or
+    /// clear) its ordering, so its level should go with it.
+    pub fn remove(&mut self, column: &ColumnId) {
+        self.levels.retain(|l| &l.column != column);
+    }
+
     /// Reset to the unsorted state.
     pub fn clear(&mut self) {
         self.levels.clear();
@@ -309,6 +320,28 @@ mod tests {
             "third click on same column clears the sort"
         );
         assert!(s.is_empty());
+    }
+
+    #[test]
+    fn remove_drops_a_level_and_preserves_the_rest() {
+        let mut s = SortState::new();
+        s.cycle(id("a"));
+        s.cycle_additive(id("b"));
+        s.cycle_additive(id("c"));
+
+        s.remove(&id("b"));
+        assert_eq!(s.len(), 2);
+        assert_eq!(s.primary(), Some(&id("a")));
+        assert_eq!(s.direction_for(&id("b")), None, "removed level is gone");
+        assert_eq!(
+            s.priority_of(&id("c")),
+            Some(1),
+            "later levels move up, keeping relative order"
+        );
+
+        // Removing a column that isn't sorted is a no-op.
+        s.remove(&id("missing"));
+        assert_eq!(s.len(), 2);
     }
 
     #[test]

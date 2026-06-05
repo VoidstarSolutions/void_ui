@@ -204,14 +204,21 @@ impl Demo {
         self.layout()
     }
 
-    /// Toggles a column's visibility. Hiding removes it from the layout;
-    /// showing appends it at the end. A no-op that would hide the last
-    /// visible column is rejected (keep at least one).
+    /// Toggles a column's visibility. Hiding removes it from the layout
+    /// **and clears its filter / sort level** — with the column gone there
+    /// is no filter input or header arrow left on screen, so surviving
+    /// criteria would keep trimming/reordering rows with no visible cause.
+    /// Showing appends it at the end (cleared state is not resurrected).
+    /// A toggle that would hide the last visible column is rejected (keep
+    /// at least one).
     pub fn toggle_column(&mut self, id: &ColumnId) {
         let mut order = self.layout();
         if let Some(pos) = order.iter().position(|c| c == id) {
             if order.len() > 1 {
                 order.remove(pos);
+                self.filter.clear(id);
+                self.sort.remove(id);
+                self.refresh_visible();
             }
         } else {
             order.push(id.clone());
@@ -621,13 +628,17 @@ impl StockDemo {
         })
     }
 
-    /// Toggles a column's visibility (hide ⇒ drop; show ⇒ append). Keeps
-    /// at least one column visible. Mirrors [`Demo::toggle_column`].
+    /// Toggles a column's visibility (hide ⇒ drop **and clear its filter /
+    /// sort level**, so no invisible criteria survive; show ⇒ append).
+    /// Keeps at least one column visible. Mirrors [`Demo::toggle_column`].
     pub fn toggle_column(&mut self, id: &ColumnId) {
         let mut order = self.column_layout();
         if let Some(pos) = order.iter().position(|c| c == id) {
             if order.len() > 1 {
                 order.remove(pos);
+                self.filter.clear(id);
+                self.sort.remove(id);
+                self.refresh();
             }
         } else {
             order.push(id.clone());
@@ -1098,6 +1109,64 @@ mod tests {
         // Showing it again appends it back.
         demo.toggle_column(&price_id());
         assert!(demo.column_layout().contains(&price_id()));
+    }
+
+    /// Hiding a column must clear its filter: with the column gone there
+    /// is no filter input (or header indicator) left on screen, so a
+    /// surviving query would keep trimming rows with no visible cause.
+    #[test]
+    fn hiding_a_column_clears_its_filter() {
+        let mut demo = Demo::with_initial(64);
+        demo.set_filter(side_id(), "B");
+        assert!(demo.view_is_materialized());
+
+        demo.toggle_column(&side_id()); // hide the filtered column
+        assert!(
+            demo.filter.get(&side_id()).is_none(),
+            "hidden column's filter is cleared"
+        );
+        // No criteria remain → the view de-materializes; nothing is
+        // invisibly trimmed.
+        assert!(!demo.view_is_materialized());
+        assert!(demo.visible.is_empty());
+    }
+
+    /// Hiding a column must drop its sort level for the same reason: no
+    /// header arrow remains to explain (or clear) the ordering.
+    #[test]
+    fn hiding_a_column_removes_its_sort_level() {
+        let mut demo = Demo::with_initial(64);
+        demo.cycle_sort(side_id(), false); // primary: Side
+        demo.cycle_sort(price_id(), true); // tiebreaker: Price
+
+        demo.toggle_column(&price_id()); // hide the tiebreaker column
+        assert_eq!(
+            demo.sort.direction_for(&price_id()),
+            None,
+            "hidden column's sort level is removed"
+        );
+        // The visible column's sort is untouched.
+        assert_eq!(demo.sort.primary(), Some(&side_id()));
+
+        // Re-showing the column doesn't resurrect the cleared state.
+        demo.toggle_column(&price_id());
+        assert_eq!(demo.sort.direction_for(&price_id()), None);
+    }
+
+    /// Same contract through the stock demo's mirror implementation.
+    #[test]
+    fn stock_demo_hiding_a_column_clears_its_criteria() {
+        let mut demo = StockDemo::new();
+        let sector = ColumnId::from("Sector");
+        demo.set_filter(sector.clone(), "tech");
+        demo.cycle_sort(sector.clone(), false);
+        assert!(demo.view_is_materialized());
+
+        demo.toggle_column(&sector);
+        assert!(demo.filter.get(&sector).is_none());
+        assert_eq!(demo.sort.direction_for(&sector), None);
+        assert!(!demo.view_is_materialized());
+        assert!(demo.visible.is_empty());
     }
 
     #[test]
