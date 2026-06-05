@@ -19,6 +19,7 @@ use masonry::kurbo::RoundedRectRadii;
 use masonry::properties::ContentColor;
 use masonry::widgets::{ButtonPress, Label};
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
+use xilem::peniko::color::{AlphaColor, Srgb};
 use xilem::{Pod, ViewCtx};
 
 use super::ButtonVariant;
@@ -170,6 +171,17 @@ pub struct ButtonView<F, State, Action> {
     callback: F,
     phantom: PhantomData<fn(State) -> Action>,
 }
+impl<F, State, Action> ButtonView<F, State, Action> {
+    fn text_color(&self) -> AlphaColor<Srgb> {
+        if self.disabled {
+            self.theme.palette.text_faint
+        } else if self.variant == ButtonVariant::Link {
+            self.theme.palette.teal
+        } else {
+            self.theme.palette.text
+        }
+    }
+}
 
 impl<F, State, Action> ViewMarker for ButtonView<F, State, Action> {}
 
@@ -183,13 +195,7 @@ where
     type ViewState = ();
 
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
-        let text_color = if self.disabled {
-            self.theme.palette.text_faint
-        } else if self.variant == ButtonVariant::Link {
-            self.theme.palette.teal
-        } else {
-            self.theme.palette.text
-        };
+        let text_color = self.text_color();
         let mut label = Label::new(self.label.clone().unwrap_or_default())
             .with_style(StyleProperty::FontSize(self.theme.density.ui_font_size))
             .prepare();
@@ -242,13 +248,7 @@ where
         // only when needed, so diffing here avoids spurious repaints.
         if self.theme != prev.theme {
             ThemedButton::set_theme(&mut element, &self.theme);
-            let text_color = if self.disabled {
-                self.theme.palette.text_faint
-            } else if self.variant == ButtonVariant::Link {
-                self.theme.palette.teal
-            } else {
-                self.theme.palette.text
-            };
+            let text_color = self.text_color();
             let mut child = ThemedButton::child_mut(&mut element);
             child.insert_prop(ContentColor::new(text_color));
             let mut lbl = child.downcast::<Label>();
@@ -265,13 +265,7 @@ where
         }
         if self.disabled != prev.disabled {
             ThemedButton::set_disabled(&mut element, self.disabled);
-            let text_color = if self.disabled {
-                self.theme.palette.text_faint
-            } else if self.variant == ButtonVariant::Link {
-                self.theme.palette.teal
-            } else {
-                self.theme.palette.text
-            };
+            let text_color = self.text_color();
             let mut child = ThemedButton::child_mut(&mut element);
             child.insert_prop(ContentColor::new(text_color));
         }
