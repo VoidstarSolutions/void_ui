@@ -9,7 +9,9 @@ use crate::label;
 
 use super::tooltip;
 use crate::Theme;
+use crate::components::ScrollBarVisibility;
 use crate::components::button;
+use crate::scroll_container;
 use crate::with_source;
 
 /// Renders the Tooltip demo panel.
@@ -68,12 +70,30 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
         .gap(Length::px(8.0))
     });
 
-    flex_col((
-        header("Default — 300 ms hover-idle, dismiss on pointer activity"),
-        default_example,
-        header("Custom delay — .delay_ms(0) or .delay_ms(1500)"),
-        custom_delay_example,
+    let title_block = flex_col((
+        label("Tooltip")
+            .text_size(theme.typography.size_title)
+            .color(theme.palette.text)
+            .render(theme),
+        label("Timed text overlay that appears near the cursor after a hover idle period.")
+            .color(theme.palette.text_muted)
+            .multiline(true)
+            .render(theme),
     ))
     .cross_axis_alignment(CrossAxisAlignment::Start)
-    .gap(Length::px(16.0))
+    .gap(Length::px(4.0));
+
+    scroll_container(
+        flex_col((
+            title_block,
+            header("Default — 300 ms hover-idle, dismiss on pointer activity"),
+            default_example,
+            header("Custom delay — .delay_ms(0) or .delay_ms(1500)"),
+            custom_delay_example,
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .gap(Length::px(16.0)),
+    )
+    .scroll_bar_visibility(ScrollBarVisibility::OnActivity)
+    .render(theme)
 }

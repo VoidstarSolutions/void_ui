@@ -17,7 +17,9 @@ use crate::label;
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use crate::Theme;
+use crate::components::ScrollBarVisibility;
 use crate::components::radio::radio;
+use crate::scroll_container;
 use crate::with_source;
 
 // ---------------------------------------------------------------------------
@@ -55,16 +57,34 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
         .gap(Length::px(16.0))
     });
 
-    flex_col((
-        header("Standalone "),
-        standalone_example,
-        header("Disabled"),
-        disabled_example,
-        header("Group — click to change selection"),
-        RadioGroupDemo::new(*theme),
+    let title_block = flex_col((
+        label("Radio")
+            .text_size(theme.typography.size_title)
+            .color(theme.palette.text)
+            .render(theme),
+        label("Single-selection button. Group mutual-exclusion is managed by the host.")
+            .color(theme.palette.text_muted)
+            .multiline(true)
+            .render(theme),
     ))
     .cross_axis_alignment(CrossAxisAlignment::Start)
-    .gap(Length::px(16.0))
+    .gap(Length::px(4.0));
+
+    scroll_container(
+        flex_col((
+            title_block,
+            header("Standalone"),
+            standalone_example,
+            header("Disabled"),
+            disabled_example,
+            header("Group — click to change selection"),
+            RadioGroupDemo::new(*theme),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .gap(Length::px(16.0)),
+    )
+    .scroll_bar_visibility(ScrollBarVisibility::OnActivity)
+    .render(theme)
 }
 
 // ---------------------------------------------------------------------------

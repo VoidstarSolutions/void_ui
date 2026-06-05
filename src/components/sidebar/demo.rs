@@ -9,7 +9,9 @@ use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::{sidebar_item, sidebar_panel};
 use crate::Theme;
+use crate::components::ScrollBarVisibility;
 use crate::label;
+use crate::scroll_container;
 use crate::with_source;
 
 // --- MARK: LOCAL STATE
@@ -105,16 +107,34 @@ fn build_inner(theme: &Theme, state: &SidebarDemo) -> impl WidgetView<SidebarDem
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
     });
 
-    flex_col((
-        header("Active — teal accent bar on the selected nav item"),
-        active_example,
-        header("Default — hover shows fill, label muted when inactive"),
-        default_example,
-        header("Collapsible panel — click the ‹ strip on the right to collapse, › to expand"),
-        panel_row,
+    let title_block = flex_col((
+        label("Sidebar")
+            .text_size(theme.typography.size_title)
+            .color(theme.palette.text)
+            .render(theme),
+        label("Collapsible navigation panel with an animated horizontal slide and a built-in toggle strip.")
+            .color(theme.palette.text_muted)
+            .multiline(true)
+            .render(theme),
     ))
     .cross_axis_alignment(CrossAxisAlignment::Start)
-    .gap(Length::px(16.0))
+    .gap(Length::px(4.0));
+
+    scroll_container(
+        flex_col((
+            title_block,
+            header("Active — teal accent bar on the selected nav item"),
+            active_example,
+            header("Default — hover shows fill, label muted when inactive"),
+            default_example,
+            header("Collapsible panel — click the ‹ strip on the right to collapse, › to expand"),
+            panel_row,
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .gap(Length::px(16.0)),
+    )
+    .scroll_bar_visibility(ScrollBarVisibility::OnActivity)
+    .render(theme)
 }
 
 // --- MARK: VIEW IMPL
