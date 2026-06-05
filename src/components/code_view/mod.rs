@@ -7,6 +7,7 @@
 //! [`Highlighter`] trait; [`RustHighlighter`] is the built-in default.
 //! `.copyable()` overlays a copy-to-clipboard button at the right edge.
 
+#[cfg(feature = "gallery")]
 pub mod demo;
 pub mod highlighter;
 mod rust;

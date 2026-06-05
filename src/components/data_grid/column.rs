@@ -1,9 +1,9 @@
 //! Column descriptors for [`super::data_grid`].
 //!
-//! A column is defined by its [`title`](ColumnDef::title), its fixed
-//! pixel [`width`](ColumnDef::width), its in-cell text
-//! [`align`](ColumnDef::align)ment, and a [`render`](ColumnDef::render)
-//! closure that builds a cell view from a row.
+//! A column is defined by its title, its fixed pixel width, its
+//! in-cell text alignment, and a `render` closure that builds a cell
+//! view from a row (all crate-private fields — construct via the
+//! builders below).
 //!
 //! The renderer signature is intentionally widget-returning rather than
 //! string-returning so that future cells can be richer than text — a
@@ -89,7 +89,7 @@ pub type CellRenderer<R, State> =
 /// clipboard copy.
 ///
 /// A [`ColumnDef`] may carry one of these alongside its widget-
-/// returning [`render`](ColumnDef::render). When the user copies a
+/// returning `render` closure. When the user copies a
 /// selection, the grid walks the selected rows and joins each
 /// column's text projector output with tabs. Columns without a text
 /// projector emit an empty string (a tab will still appear so the
@@ -286,7 +286,7 @@ impl<R, State> ColumnDef<R, State> {
 /// `fmt` projects a row into the text shown in that row's cell. The
 /// label inherits the active theme's body font size and primary text
 /// color. The same projector is wired into the column's clipboard
-/// path (see [`ColumnDef::text`]).
+/// path (the column's clipboard projector).
 pub fn text_column<R, State, F>(
     title: impl Into<String>,
     width: f64,

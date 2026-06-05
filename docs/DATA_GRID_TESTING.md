@@ -4,7 +4,7 @@ A click-here / expect-this script for reviewing the `data_grid` component.
 Everything is exercised through the live gallery; no code reading required.
 
 ```sh
-cargo run -p void-ui --example gallery
+cargo run -p void-ui --example gallery --features gallery
 ```
 
 Two panels in the left rail drive the grid:
@@ -30,7 +30,7 @@ cargo clippy --all-targets    # workspace denies clippy::pedantic
 1. Scroll the body vertically. **Expect:** smooth scroll through 100 000
    rows; only visible rows are built (it stays responsive). In a *debug*
    build mild lag at 100k is expected — re-check with
-   `cargo run --release --example gallery` if in doubt.
+   `cargo run --release --example gallery --features gallery` if in doubt.
 2. **Add 100 ticks** / **Add 10k ticks** buttons append rows live.
    **Expect:** row count (top-right) grows; scroll extent updates.
 

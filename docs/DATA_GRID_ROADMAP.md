@@ -120,7 +120,7 @@ checkin from the top, verify, commit, repeat.
   *debug* gallery build. Body still virtualizes (only visible rows
   render), so this is likely (1) the unoptimized build and (2) 12 columns
   × per-row widget rebuilds. Expected use-case max is ~15K rows. **Before
-  optimizing:** re-check with `cargo run --release --example gallery`. If
+  optimizing:** re-check with `cargo run --release --example gallery --features gallery`. If
   still laggy in release, profile the row-builder for per-rebuild
   allocations. Not worth optimizing pre-measurement.
 - **Clipboard TSV recomputed every rebuild** — `CopyOnShortcutView::

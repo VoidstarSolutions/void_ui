@@ -6,6 +6,7 @@
 //! - [`toggle_button_group`] — exclusive selection group; host manages the
 //!   selected index and passes it in; the callback fires with the new index.
 
+#[cfg(feature = "gallery")]
 pub mod demo;
 mod view;
 

@@ -18,6 +18,7 @@
 //!     .render(&theme)
 //! ```
 
+#[cfg(feature = "gallery")]
 pub mod demo;
 mod view;
 

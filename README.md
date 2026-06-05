@@ -32,7 +32,7 @@ source inline via the `with_source!` macro; the interactive `Data Grid` and
 quote board) wired to live app state.
 
 ```sh
-cargo run -p void-ui --example gallery
+cargo run -p void-ui --example gallery --features gallery
 ```
 
 ## Roadmap

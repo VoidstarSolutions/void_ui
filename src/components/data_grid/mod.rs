@@ -7,7 +7,7 @@
 //! tables, drag-to-resize, and column show/hide + reorder. The widget is
 //! generic over the row type so
 //! the same grid can browse synthetic tick streams (see
-//! [`demo::DemoTick`]), event logs, or any other in-memory `&[R]`
+//! `demo::DemoTick`, behind the `gallery` feature), event logs, or any other in-memory `&[R]`
 //! exposed by the host's app state.
 //!
 //! Backed by masonry's [`VirtualScroll`][masonry::widgets::VirtualScroll]
@@ -150,6 +150,7 @@
 pub mod column;
 pub mod column_strip;
 pub mod copy_shortcut;
+#[cfg(feature = "gallery")]
 pub mod demo;
 pub mod filter;
 pub mod header_click;

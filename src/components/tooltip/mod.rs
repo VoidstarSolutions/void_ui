@@ -15,6 +15,7 @@
 //! The widget is exposed publicly so the view's `Element` associated type
 //! can name it without leaking a private type.
 
+#[cfg(feature = "gallery")]
 pub mod demo;
 mod view;
 pub mod widget;

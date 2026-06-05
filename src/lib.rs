@@ -21,6 +21,7 @@ extern crate self as void_ui;
 
 pub mod components;
 pub mod floating;
+#[cfg(feature = "gallery")]
 pub mod gallery;
 pub mod layout;
 pub mod pointer_inert;
@@ -36,7 +37,9 @@ pub use components::{
     text_column, toggle_button_group, tooltip,
 };
 pub use floating::{FloatingOverlay, FloatingOverlayView, floating, interactive_floating};
+#[cfg(feature = "gallery")]
 pub use gallery::code_block;
 pub use pointer_inert::{PointerInert, PointerInertView, pointer_inert};
 pub use theme::{CodePalette, Density, FontStack, Palette, Radii, Theme, ThemeVariant, Typography};
+#[cfg(feature = "gallery")]
 pub use void_ui_macros::with_source;
