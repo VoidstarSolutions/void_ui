@@ -60,6 +60,12 @@ pub struct ThemedDropdownButton {
     theme: Theme,
     pub(super) open: bool,
     pub(super) menu_layer_id: Option<WidgetId>,
+    /// Snapshot of `open` taken at pointer-Down time. Needed because
+    /// `DropdownMenuLayer::capture_pointer_event` queues a `mutate_later`
+    /// that resets `open = false` between the Down and Up events. Without
+    /// this latch, `toggle_dropdown` on Up would see `open == false` (already
+    /// closed by the mutation) and incorrectly re-open the menu.
+    was_open_at_down: bool,
 }
 
 // --- MARK: BUILDERS
@@ -87,6 +93,7 @@ impl ThemedDropdownButton {
             theme: *theme,
             open: false,
             menu_layer_id: None,
+            was_open_at_down: false,
         }
     }
 
@@ -260,11 +267,21 @@ impl Widget for ThemedDropdownButton {
         }
         match click::primary_click(ctx, event) {
             Some(ClickPhase::Down) => {
+                self.was_open_at_down = self.open;
                 ctx.request_focus();
                 ctx.request_paint_only();
             }
             Some(ClickPhase::Up(Some(_))) => {
-                self.toggle_dropdown(ctx);
+                if self.was_open_at_down {
+                    // capture_pointer_event's mutate_later may have already
+                    // reset `open` to false between Down and Up — only call
+                    // close_dropdown if the state hasn't been cleared yet.
+                    if self.open {
+                        self.close_dropdown(ctx);
+                    }
+                } else {
+                    self.open_dropdown(ctx);
+                }
                 ctx.request_paint_only();
             }
             Some(ClickPhase::Up(None)) => ctx.request_paint_only(),
