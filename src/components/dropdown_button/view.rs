@@ -1,11 +1,12 @@
 //! Xilem view layer for the dropdown button component.
 //!
-//! `DropdownButton<F, State, Action>` is the builder; `.render(&theme)`
-//! produces a `DropdownButtonView` which implements xilem's `View` trait.
+//! `DropdownButton<State, Action>` is the builder; `.render(&theme)` produces a
+//! `DropdownButtonView`. Clicking the button (anywhere on it) opens or closes the
+//! floating menu; selecting an item from the menu fires the corresponding callback.
 //!
 //! ```ignore
 //! use void_ui::components::dropdown_button;
-//! dropdown_button("Save", |s: &mut State| s.save())
+//! dropdown_button("Save")
 //!     .item("Save as…", |s: &mut State| s.save_as())
 //!     .item("Export", |s: &mut State| s.export())
 //!     .render(&theme)
@@ -27,14 +28,13 @@ use crate::components::button::ButtonVariant;
 
 type ItemCallback<State, Action> = Box<dyn Fn(&mut State) -> Action + Send + Sync>;
 
-/// Builder for a split dropdown button.
+/// Builder for a dropdown button.
 ///
 /// Create with [`dropdown_button`]; add menu items via [`Self::item`].
 /// Materialize as a xilem view via [`Self::render`].
 #[must_use = "DropdownButton does nothing until rendered with .render(&theme)"]
-pub struct DropdownButton<F, State, Action> {
+pub struct DropdownButton<State, Action> {
     label: ArcStr,
-    main_callback: F,
     icon: Option<Arc<BezPath>>,
     items: Vec<(ArcStr, ItemCallback<State, Action>)>,
     variant: ButtonVariant,
@@ -42,23 +42,18 @@ pub struct DropdownButton<F, State, Action> {
     phantom: PhantomData<fn(State) -> Action>,
 }
 
-/// Construct a dropdown button with the given label and primary-action callback.
+/// Construct a dropdown button with the given label.
 ///
-/// The primary callback fires when the LEFT part of the button is clicked.
-/// Attach menu items via [`DropdownButton::item`]; clicking them opens a
-/// floating overlay with the item list.
-pub fn dropdown_button<F, State, Action>(
-    label: impl Into<ArcStr>,
-    main_callback: F,
-) -> DropdownButton<F, State, Action>
+/// Clicking anywhere on the button opens the floating menu. Attach items via
+/// [`DropdownButton::item`]; selecting an item fires the item's callback and
+/// closes the menu.
+pub fn dropdown_button<State, Action>(label: impl Into<ArcStr>) -> DropdownButton<State, Action>
 where
     State: 'static,
     Action: 'static,
-    F: Fn(&mut State) -> Action + Send + Sync + 'static,
 {
     DropdownButton {
         label: label.into(),
-        main_callback,
         icon: None,
         items: Vec::new(),
         variant: ButtonVariant::Default,
@@ -67,11 +62,10 @@ where
     }
 }
 
-impl<F, State, Action> DropdownButton<F, State, Action>
+impl<State, Action> DropdownButton<State, Action>
 where
     State: 'static,
     Action: 'static,
-    F: Fn(&mut State) -> Action + Send + Sync + 'static,
 {
     /// Add a menu item that fires `callback` when selected.
     pub fn item<G>(mut self, label: impl Into<ArcStr>, callback: G) -> Self
@@ -101,11 +95,10 @@ where
     }
 
     /// Materialize the xilem view at the supplied theme.
-    pub fn render(self, theme: &Theme) -> DropdownButtonView<F, State, Action> {
+    pub fn render(self, theme: &Theme) -> DropdownButtonView<State, Action> {
         let item_labels: Vec<ArcStr> = self.items.iter().map(|(lbl, _)| lbl.clone()).collect();
         DropdownButtonView {
             label: self.label,
-            main_callback: self.main_callback,
             icon: self.icon,
             items: self.items,
             item_labels,
@@ -121,9 +114,8 @@ where
 ///
 /// Not constructed directly; use [`DropdownButton::render`].
 #[must_use = "View values do nothing unless provided to Xilem."]
-pub struct DropdownButtonView<F, State, Action> {
+pub struct DropdownButtonView<State, Action> {
     label: ArcStr,
-    main_callback: F,
     icon: Option<Arc<BezPath>>,
     items: Vec<(ArcStr, ItemCallback<State, Action>)>,
     item_labels: Vec<ArcStr>,
@@ -133,13 +125,12 @@ pub struct DropdownButtonView<F, State, Action> {
     phantom: PhantomData<fn(State) -> Action>,
 }
 
-impl<F, State, Action> ViewMarker for DropdownButtonView<F, State, Action> {}
+impl<State, Action> ViewMarker for DropdownButtonView<State, Action> {}
 
-impl<F, State, Action> View<State, Action, ViewCtx> for DropdownButtonView<F, State, Action>
+impl<State, Action> View<State, Action, ViewCtx> for DropdownButtonView<State, Action>
 where
     State: 'static,
     Action: 'static,
-    F: Fn(&mut State) -> Action + Send + Sync + 'static,
 {
     type Element = Pod<ThemedDropdownButton>;
     type ViewState = ();
@@ -167,7 +158,6 @@ where
     ) {
         if self.theme != prev.theme {
             ThemedDropdownButton::set_theme(&mut element, &self.theme);
-            // Update label text color for new theme
             let text_color = if self.disabled {
                 self.theme.palette.text_faint
             } else if self.variant == ButtonVariant::Link {
@@ -220,9 +210,6 @@ where
     ) -> MessageResult<Action> {
         match message.take_message::<DropdownButtonAction>() {
             Some(action) => match *action {
-                DropdownButtonAction::MainPressed => {
-                    MessageResult::Action((self.main_callback)(app_state))
-                }
                 DropdownButtonAction::ItemSelected(i) => {
                     if let Some((_, cb)) = self.items.get(i) {
                         MessageResult::Action(cb(app_state))

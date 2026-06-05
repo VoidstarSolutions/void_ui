@@ -1,28 +1,20 @@
-//! `ThemedDropdownButton` — split-button masonry widget.
+//! `ThemedDropdownButton` — button with trailing chevron that opens a floating menu.
 //!
-//! A single widget that renders a main action zone (left) and a chevron
-//! toggle zone (right). All pointer interaction is handled at this level
-//! without child button pods, which avoids xilem action-routing ambiguity.
-//!
-//! When the chevron is clicked, the widget creates a [`DropdownMenuLayer`]
-//! window-level layer via [`EventCtx::create_layer`] so the menu floats
-//! above all other content. The layer communicates item selection back via
-//! [`EventCtx::mutate_later`], which calls [`EventCtx::submit_action`] on
-//! this widget's context so the action bubbles to the registered xilem view.
+//! Visually and behaviourally identical to `ThemedButton` with a `trailing_icon`,
+//! except that clicking anywhere on the button (label area or chevron) toggles the
+//! [`DropdownMenuLayer`] instead of firing a primary action. There is no split-zone
+//! concept: the whole surface is one click target.
 
 use std::sync::{Arc, LazyLock};
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
     AccessCtx, ArcStr, ChildrenIds, EventCtx, LayerType, LayoutCtx, MeasureCtx, NewWidget,
-    PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PointerUpdate, PropertiesMut,
-    PropertiesRef, RegisterCtx, StyleProperty, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
-    WidgetPod,
+    PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty, Update,
+    UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{
-    Affine, Axis, BezPath, Point, RoundedRect, RoundedRectRadii, Size, Stroke, Vec2,
-};
+use masonry::kurbo::{Affine, Axis, BezPath, Point, RoundedRect, Size, Stroke, Vec2};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use masonry::peniko::Color;
 use masonry::properties::ContentColor;
@@ -32,12 +24,11 @@ use super::menu_layer::DropdownMenuLayer;
 use crate::Theme;
 use crate::components::button::ButtonVariant;
 use crate::components::button::widget::CORNER_RADIUS;
+use crate::components::click::{self, ClickPhase};
 
-/// Corner radius for both button zones (matches [`CORNER_RADIUS`]).
 const FOCUS_RING_WIDTH: f64 = 1.5;
 const FOCUS_RING_INSET: f64 = 2.0;
 const BORDER_WIDTH: f64 = 1.0;
-const DIVIDER_WIDTH: f64 = 1.0;
 const ICON_GAP: f64 = 5.0;
 
 /// Down-pointing caret icon in unit-square (0..1) space.
@@ -50,25 +41,16 @@ static CARET_PATH: LazyLock<Arc<BezPath>> = LazyLock::new(|| {
 });
 
 /// Action type emitted by [`ThemedDropdownButton`].
-///
-/// Both variants route to the owning [`super::view::DropdownButtonView`] via
-/// xilem's message dispatch.
 #[derive(Debug)]
 pub enum DropdownButtonAction {
-    /// The primary (main-zone) button was pressed.
-    MainPressed,
     /// Menu item at `index` was selected.
     ItemSelected(usize),
 }
 
-/// Which split zone the current click started in.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Zone {
-    Main,
-    Chevron,
-}
-
-/// Themed split-button widget — main action zone + chevron dropdown toggle.
+/// Button widget that opens a floating dropdown menu on click.
+///
+/// Renders as a standard button with a trailing chevron icon. Clicking anywhere
+/// on the button (label area or chevron) toggles the menu layer.
 pub struct ThemedDropdownButton {
     label: WidgetPod<dyn Widget>,
     icon: Option<Arc<BezPath>>,
@@ -76,12 +58,8 @@ pub struct ThemedDropdownButton {
     variant: ButtonVariant,
     disabled: bool,
     theme: Theme,
-    // Open/close state
     pub(super) open: bool,
     pub(super) menu_layer_id: Option<WidgetId>,
-    // Per-zone interaction tracking (None = not hovered)
-    hover_zone: Option<Zone>,
-    click_zone: Option<Zone>,
 }
 
 // --- MARK: BUILDERS
@@ -109,8 +87,6 @@ impl ThemedDropdownButton {
             theme: *theme,
             open: false,
             menu_layer_id: None,
-            hover_zone: None,
-            click_zone: None,
         }
     }
 
@@ -171,7 +147,7 @@ impl ThemedDropdownButton {
         f64::from(self.theme.density.ui_font_size)
     }
 
-    fn chevron_zone_width(&self) -> f64 {
+    fn trailing_icon_width(&self) -> f64 {
         2.0 * f64::from(self.theme.density.button_pad_h) + self.icon_size()
     }
 
@@ -200,63 +176,27 @@ impl ThemedDropdownButton {
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Danger => {
-                let bg = if pressed {
-                    p.coral_deep
-                } else if hovered {
-                    p.coral
-                } else {
-                    p.coral_soft
-                };
+                let bg = if pressed { p.coral_deep } else if hovered { p.coral } else { p.coral_soft };
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Primary => {
-                let bg = if pressed {
-                    p.teal_deep
-                } else if hovered {
-                    p.teal
-                } else {
-                    p.teal_soft
-                };
+                let bg = if pressed { p.teal_deep } else if hovered { p.teal } else { p.teal_soft };
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Warning => {
-                let bg = if pressed {
-                    p.amber_deep
-                } else if hovered {
-                    p.amber
-                } else {
-                    p.amber_soft
-                };
+                let bg = if pressed { p.amber_deep } else if hovered { p.amber } else { p.amber_soft };
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Secondary => {
-                let bg = if pressed {
-                    p.violet_deep
-                } else if hovered {
-                    p.violet
-                } else {
-                    p.violet_soft
-                };
+                let bg = if pressed { p.violet_deep } else if hovered { p.violet } else { p.violet_soft };
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Success => {
-                let bg = if pressed {
-                    p.green_deep
-                } else if hovered {
-                    p.green
-                } else {
-                    p.green_soft
-                };
+                let bg = if pressed { p.green_deep } else if hovered { p.green } else { p.green_soft };
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Info => {
-                let bg = if pressed {
-                    p.blue_deep
-                } else if hovered {
-                    p.blue
-                } else {
-                    p.blue_soft
-                };
+                let bg = if pressed { p.blue_deep } else if hovered { p.blue } else { p.blue_soft };
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Ghost => {
@@ -272,21 +212,9 @@ impl ThemedDropdownButton {
             }
             ButtonVariant::Link => (Color::TRANSPARENT, Color::TRANSPARENT),
             ButtonVariant::Text => {
-                let bg = if pressed {
-                    p.surface_hi
-                } else {
-                    Color::TRANSPARENT
-                };
+                let bg = if pressed { p.surface_hi } else { Color::TRANSPARENT };
                 (bg, Color::TRANSPARENT)
             }
-        }
-    }
-
-    fn zone_at(&self, pos: Point, widget_width: f64) -> Zone {
-        if pos.x < widget_width - self.chevron_zone_width() {
-            Zone::Main
-        } else {
-            Zone::Chevron
         }
     }
 
@@ -295,8 +223,7 @@ impl ThemedDropdownButton {
             NewWidget::new(DropdownMenuLayer::new(self.items.clone(), ctx.widget_id(), &self.theme));
         let layer_id = menu_widget.id();
         let border_box = ctx.border_box();
-        let pos =
-            ctx.to_window(border_box.origin()) + Vec2::new(0.0, border_box.size().height);
+        let pos = ctx.to_window(border_box.origin()) + Vec2::new(0.0, border_box.size().height);
         ctx.create_layer(LayerType::Other, menu_widget, pos);
         self.menu_layer_id = Some(layer_id);
         self.open = true;
@@ -307,6 +234,14 @@ impl ThemedDropdownButton {
             ctx.remove_layer(id);
         }
         self.open = false;
+    }
+
+    fn toggle_dropdown(&mut self, ctx: &mut EventCtx<'_>) {
+        if self.open {
+            self.close_dropdown(ctx);
+        } else {
+            self.open_dropdown(ctx);
+        }
     }
 }
 
@@ -323,63 +258,17 @@ impl Widget for ThemedDropdownButton {
         if self.disabled {
             return;
         }
-
-        match event {
-            PointerEvent::Move(PointerUpdate { current, .. }) => {
-                let pos = current.logical_point();
-                let origin = ctx.to_window(Point::ZERO);
-                let local_pos = pos - origin.to_vec2();
-                let width = ctx.border_box().size().width;
-                let new_zone = Some(self.zone_at(local_pos, width));
-                if self.hover_zone != new_zone {
-                    self.hover_zone = new_zone;
-                    ctx.request_paint_only();
-                }
-            }
-            PointerEvent::Leave(_) if self.hover_zone.is_some() => {
-                self.hover_zone = None;
-                ctx.request_paint_only();
-            }
-            PointerEvent::Down(PointerButtonEvent {
-                button: Some(PointerButton::Primary),
-                state,
-                ..
-            }) => {
-                ctx.capture_pointer();
-                let pos = state.logical_point();
-                let origin = ctx.to_window(Point::ZERO);
-                let local_pos = pos - origin.to_vec2();
-                let width = ctx.border_box().size().width;
-                self.click_zone = Some(self.zone_at(local_pos, width));
+        match click::primary_click(ctx, event) {
+            Some(ClickPhase::Down) => {
                 ctx.request_focus();
                 ctx.request_paint_only();
             }
-            PointerEvent::Up(PointerButtonEvent {
-                button: Some(PointerButton::Primary),
-                state: _,
-                ..
-            }) => {
-                if ctx.is_active() && ctx.is_hovered() {
-                    if let Some(zone) = self.click_zone.take() {
-                        match zone {
-                            Zone::Main => {
-                                ctx.submit_action::<Self::Action>(DropdownButtonAction::MainPressed);
-                            }
-                            Zone::Chevron => {
-                                if self.open {
-                                    self.close_dropdown(ctx);
-                                } else {
-                                    self.open_dropdown(ctx);
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    self.click_zone = None;
-                }
+            Some(ClickPhase::Up(Some(_))) => {
+                self.toggle_dropdown(ctx);
                 ctx.request_paint_only();
             }
-            _ => {}
+            Some(ClickPhase::Up(None)) => ctx.request_paint_only(),
+            None => {}
         }
     }
 
@@ -399,7 +288,7 @@ impl Widget for ThemedDropdownButton {
             && (matches!(&event.key, Key::Character(c) if c == " ")
                 || event.key == Key::Named(NamedKey::Enter))
         {
-            ctx.submit_action::<Self::Action>(DropdownButtonAction::MainPressed);
+            self.toggle_dropdown(ctx);
         }
     }
 
@@ -413,7 +302,10 @@ impl Widget for ThemedDropdownButton {
             Update::WidgetAdded => {
                 ctx.set_disabled(self.disabled);
             }
-            Update::HoveredChanged(_) | Update::DisabledChanged(_) | Update::FocusChanged(_) => {
+            Update::HoveredChanged(_)
+            | Update::ActiveChanged(_)
+            | Update::DisabledChanged(_)
+            | Update::FocusChanged(_) => {
                 ctx.request_paint_only();
             }
             _ => {}
@@ -441,12 +333,10 @@ impl Widget for ThemedDropdownButton {
             Axis::Vertical => (2.0 * pad_v, 2.0 * pad_h),
         };
         let inner_cross = cross_length.map(|c| Length::px((c.get() - cross_pad).max(0.0)));
-        let auto_length = len_req.into();
-        let context_size = LayoutSize::maybe(axis.cross(), inner_cross);
         let child_length = ctx.compute_length(
             &mut self.label,
-            auto_length,
-            context_size,
+            len_req.into(),
+            LayoutSize::maybe(axis.cross(), inner_cross),
             axis,
             inner_cross,
         );
@@ -456,8 +346,9 @@ impl Widget for ThemedDropdownButton {
         } else {
             0.0
         };
+        // Trailing chevron always occupies its fixed slot on the horizontal axis.
         let chevron_extra = if axis == Axis::Horizontal {
-            self.chevron_zone_width()
+            self.trailing_icon_width()
         } else {
             0.0
         };
@@ -468,23 +359,19 @@ impl Widget for ThemedDropdownButton {
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         let pad_v = self.pad_v();
         let pad_h = self.pad_h();
-        let chevron_w = self.chevron_zone_width();
-        let icon_base = if self.icon.is_some() {
-            self.icon_size()
-        } else {
-            0.0
-        };
+        let icon_base = if self.icon.is_some() { self.icon_size() } else { 0.0 };
+        let icon_gap = if self.icon.is_some() { ICON_GAP } else { 0.0 };
+        let trailing_w = self.trailing_icon_width();
 
-        let main_zone_w = (size.width - chevron_w).max(0.0);
         let label_inner = Size::new(
-            (main_zone_w - 2.0 * pad_h - icon_base - if self.icon.is_some() { ICON_GAP } else { 0.0 }).max(0.0),
+            (size.width - 2.0 * pad_h - icon_base - icon_gap - trailing_w).max(0.0),
             (size.height - 2.0 * pad_v).max(0.0),
         );
-        let label_size = ctx.compute_size(&mut self.label, SizeDef::fit(label_inner), label_inner.into());
+        let label_size =
+            ctx.compute_size(&mut self.label, SizeDef::fit(label_inner), label_inner.into());
         ctx.run_layout(&mut self.label, label_size);
 
-        let icon_x_offset = if icon_base > 0.0 { icon_base + ICON_GAP } else { 0.0 };
-        let label_x = pad_h + icon_x_offset;
+        let label_x = pad_h + icon_base + icon_gap;
         let label_y = pad_v + ((label_inner.height - label_size.height) * 0.5).max(0.0);
         ctx.place_child(&mut self.label, Point::new(label_x, label_y));
         ctx.derive_baselines(&self.label);
@@ -498,55 +385,24 @@ impl Widget for ThemedDropdownButton {
     ) {
         let size = ctx.border_box_size();
         let focused = ctx.is_focus_target();
-        let active = ctx.is_active();
+        let hovered = ctx.is_hovered();
+        let pressed = ctx.is_active() && hovered;
         let p = &self.theme.palette;
         let icon_size = self.icon_size();
         let pad_h = self.pad_h();
-        let chevron_w = self.chevron_zone_width();
-        let main_zone_w = (size.width - chevron_w).max(0.0);
 
-        let main_pressed = active && self.click_zone == Some(Zone::Main);
-        let chevron_pressed = active && self.click_zone == Some(Zone::Chevron);
+        // When the dropdown is open, show the button in its hover state so it's
+        // visually clear that it's active.
+        let (bg, border) = self.resolve_colors(hovered || self.open, pressed);
 
-        let (main_bg, main_border) =
-            self.resolve_colors(self.hover_zone == Some(Zone::Main), main_pressed);
-        let (chev_bg, chev_border) =
-            self.resolve_colors(self.hover_zone == Some(Zone::Chevron), chevron_pressed || self.open);
-
-        let r = CORNER_RADIUS;
-
-        // Main zone — rounded left, square right
-        let main_rect = RoundedRect::new(
-            0.0, 0.0, main_zone_w, size.height,
-            RoundedRectRadii::new(r, 0.0, 0.0, r),
-        );
-        if main_bg.components[3] > 0.0 {
-            painter.fill(main_rect, main_bg).draw();
+        let rect = RoundedRect::from_origin_size(Point::ORIGIN, size, CORNER_RADIUS);
+        if bg.components[3] > 0.0 {
+            painter.fill(rect, bg).draw();
         }
-        if main_border.components[3] > 0.0 {
-            painter.stroke(main_rect, &Stroke::new(BORDER_WIDTH), main_border).draw();
+        if border.components[3] > 0.0 {
+            painter.stroke(rect, &Stroke::new(BORDER_WIDTH), border).draw();
         }
 
-        // Chevron zone — square left, rounded right
-        let chev_rect = RoundedRect::new(
-            main_zone_w, 0.0, size.width, size.height,
-            RoundedRectRadii::new(0.0, r, r, 0.0),
-        );
-        if chev_bg.components[3] > 0.0 {
-            painter.fill(chev_rect, chev_bg).draw();
-        }
-        if chev_border.components[3] > 0.0 {
-            painter.stroke(chev_rect, &Stroke::new(BORDER_WIDTH), chev_border).draw();
-        }
-
-        // Divider between zones
-        let divider_color = if self.disabled { p.border } else { p.border_strong };
-        let mut div = BezPath::new();
-        div.move_to(Point::new(main_zone_w, 4.0));
-        div.line_to(Point::new(main_zone_w, size.height - 4.0));
-        painter.stroke(&div, &Stroke::new(DIVIDER_WIDTH), divider_color).draw();
-
-        // Focus ring around the whole button
         if focused && !self.disabled {
             let inset = FOCUS_RING_INSET;
             let focus_rect = RoundedRect::from_origin_size(
@@ -555,28 +411,24 @@ impl Widget for ThemedDropdownButton {
                     (size.width - 2.0 * inset).max(0.0),
                     (size.height - 2.0 * inset).max(0.0),
                 ),
-                r - inset,
+                CORNER_RADIUS - inset,
             );
-            painter
-                .stroke(focus_rect, &Stroke::new(FOCUS_RING_WIDTH), p.teal)
-                .draw();
+            painter.stroke(focus_rect, &Stroke::new(FOCUS_RING_WIDTH), p.teal).draw();
         }
 
-        // Leading icon in main zone
         let icon_color = if self.disabled { p.text_faint } else { p.text };
+
         if let Some(icon) = &self.icon {
             let icon_y = (size.height - icon_size) * 0.5;
             let transform = Affine::translate((pad_h, icon_y)) * Affine::scale(icon_size);
             painter.fill(transform * icon.as_ref(), icon_color).draw();
         }
 
-        // Chevron icon — centered in chevron zone
-        let caret = &**CARET_PATH;
+        // Trailing chevron — same placement as ThemedButton's trailing_icon.
+        let caret_x = size.width - pad_h - icon_size;
         let caret_y = (size.height - icon_size) * 0.5;
-        let caret_x = main_zone_w + (chevron_w - icon_size) * 0.5;
         let transform = Affine::translate((caret_x, caret_y)) * Affine::scale(icon_size);
-        let caret_color = if self.disabled { p.text_faint } else { p.text };
-        painter.stroke(transform * caret, &Stroke::new(1.5), caret_color).draw();
+        painter.stroke(transform * &**CARET_PATH, &Stroke::new(1.5), icon_color).draw();
     }
 
     fn accessibility_role(&self) -> Role {

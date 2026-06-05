@@ -44,49 +44,41 @@ pub fn panel(theme: &Theme) -> DropdownDemoPanel {
 fn variants_row(theme: &Theme) -> impl WidgetView<DropdownDemo> + use<> {
     with_source!(theme, {
         flex_row((
-            dropdown_button("Default", |s: &mut DropdownDemo| {
-                s.last_action = "Default".into();
-            })
-            .item("Option A", |s: &mut DropdownDemo| {
-                s.last_action = "Option A".into();
-            })
-            .item("Option B", |s: &mut DropdownDemo| {
-                s.last_action = "Option B".into();
-            })
-            .render(theme),
-            dropdown_button("Primary", |s: &mut DropdownDemo| {
-                s.last_action = "Primary".into();
-            })
-            .item("Option A", |s: &mut DropdownDemo| {
-                s.last_action = "Primary A".into();
-            })
-            .item("Option B", |s: &mut DropdownDemo| {
-                s.last_action = "Primary B".into();
-            })
-            .variant(ButtonVariant::Primary)
-            .render(theme),
-            dropdown_button("Danger", |s: &mut DropdownDemo| {
-                s.last_action = "Danger".into();
-            })
-            .item("Delete", |s: &mut DropdownDemo| {
-                s.last_action = "Delete".into();
-            })
-            .item("Archive", |s: &mut DropdownDemo| {
-                s.last_action = "Archive".into();
-            })
-            .variant(ButtonVariant::Danger)
-            .render(theme),
-            dropdown_button("Ghost", |s: &mut DropdownDemo| {
-                s.last_action = "Ghost".into();
-            })
-            .item("Option A", |s: &mut DropdownDemo| {
-                s.last_action = "Ghost A".into();
-            })
-            .item("Option B", |s: &mut DropdownDemo| {
-                s.last_action = "Ghost B".into();
-            })
-            .variant(ButtonVariant::Ghost)
-            .render(theme),
+            dropdown_button("Default")
+                .item("Option A", |s: &mut DropdownDemo| {
+                    s.last_action = "Option A".into();
+                })
+                .item("Option B", |s: &mut DropdownDemo| {
+                    s.last_action = "Option B".into();
+                })
+                .render(theme),
+            dropdown_button("Primary")
+                .item("Option A", |s: &mut DropdownDemo| {
+                    s.last_action = "Primary A".into();
+                })
+                .item("Option B", |s: &mut DropdownDemo| {
+                    s.last_action = "Primary B".into();
+                })
+                .variant(ButtonVariant::Primary)
+                .render(theme),
+            dropdown_button("Danger")
+                .item("Delete", |s: &mut DropdownDemo| {
+                    s.last_action = "Delete".into();
+                })
+                .item("Archive", |s: &mut DropdownDemo| {
+                    s.last_action = "Archive".into();
+                })
+                .variant(ButtonVariant::Danger)
+                .render(theme),
+            dropdown_button("Ghost")
+                .item("Option A", |s: &mut DropdownDemo| {
+                    s.last_action = "Ghost A".into();
+                })
+                .item("Option B", |s: &mut DropdownDemo| {
+                    s.last_action = "Ghost B".into();
+                })
+                .variant(ButtonVariant::Ghost)
+                .render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(8.0))
@@ -96,14 +88,12 @@ fn variants_row(theme: &Theme) -> impl WidgetView<DropdownDemo> + use<> {
 fn disabled_row(theme: &Theme) -> impl WidgetView<DropdownDemo> + use<> {
     with_source!(theme, {
         flex_row(
-            dropdown_button("Disabled", |s: &mut DropdownDemo| {
-                s.last_action = "Disabled (unreachable)".into();
-            })
-            .item("Option A", |s: &mut DropdownDemo| {
-                s.last_action = "Disabled A".into();
-            })
-            .disabled(true)
-            .render(theme),
+            dropdown_button("Disabled")
+                .item("Option A", |s: &mut DropdownDemo| {
+                    s.last_action = "Disabled A".into();
+                })
+                .disabled(true)
+                .render(theme),
         )
         .cross_axis_alignment(CrossAxisAlignment::Center)
     })
@@ -124,8 +114,7 @@ fn build_inner(theme: &Theme, state: &DropdownDemo) -> impl WidgetView<DropdownD
             .color(theme.palette.text)
             .render(theme),
         label(
-            "Split button: left side triggers the primary action, right chevron opens a \
-             floating menu above all other content.",
+            "Button with trailing chevron — clicking anywhere opens a floating menu above all other content.",
         )
         .color(theme.palette.text_muted)
         .multiline(true)
