@@ -98,9 +98,15 @@ fn build_inner(
     .gap(Length::px(4.0));
 
     scroll_container(
-        flex_col((title_block, separator().render(theme), header("Clipboard button"), examples, feedback))
-            .cross_axis_alignment(CrossAxisAlignment::Start)
-            .gap(Length::px(16.0)),
+        flex_col((
+            title_block,
+            separator().render(theme),
+            header("Clipboard button"),
+            examples,
+            feedback,
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .gap(Length::px(16.0)),
     )
     .scroll_bar_visibility(ScrollBarVisibility::OnActivity)
     .render(theme)

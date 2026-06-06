@@ -46,7 +46,14 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     .cross_axis_alignment(CrossAxisAlignment::Start)
     .gap(Length::px(4.0));
 
-    flex_col((title_block, separator().render(theme), short_rust, multi_line, no_highlight, copyable))
-        .cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .gap(Length::px(16.0))
+    flex_col((
+        title_block,
+        separator().render(theme),
+        short_rust,
+        multi_line,
+        no_highlight,
+        copyable,
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Stretch)
+    .gap(Length::px(16.0))
 }
