@@ -25,8 +25,9 @@ use masonry::core::FromDynWidget;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
-use super::panel_widget::{SidebarContent, SidebarTogglePressed, ThemedSidebarPanel};
+use super::panel_widget::{SidebarTogglePressed, ThemedSidebarPanel};
 use crate::Theme;
+use crate::animated_clip::AnimatedClip;
 
 /// Builder for an animated collapsible sidebar panel.
 ///
@@ -124,7 +125,7 @@ where
         }
         {
             let mut content = ThemedSidebarPanel::content_mut(&mut element);
-            let mut child = SidebarContent::child_mut(&mut content);
+            let mut child = AnimatedClip::child_mut(&mut content);
             self.child
                 .rebuild(&prev.child, view_state, ctx, child.downcast(), app_state);
         }
@@ -138,7 +139,7 @@ where
     ) {
         {
             let mut content = ThemedSidebarPanel::content_mut(&mut element);
-            let mut child = SidebarContent::child_mut(&mut content);
+            let mut child = AnimatedClip::child_mut(&mut content);
             self.child.teardown(view_state, ctx, child.downcast());
         }
         ctx.teardown_action_source(element);
@@ -162,7 +163,7 @@ where
             return MessageResult::Stale;
         }
         let mut content = ThemedSidebarPanel::content_mut(&mut element);
-        let mut child = SidebarContent::child_mut(&mut content);
+        let mut child = AnimatedClip::child_mut(&mut content);
         self.child
             .message(view_state, message, child.downcast(), app_state)
     }

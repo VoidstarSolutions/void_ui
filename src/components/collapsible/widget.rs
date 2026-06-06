@@ -1,19 +1,20 @@
 //! Masonry widget for the animated collapsible section.
 //!
 //! [`CollapsibleWidget`] renders a clickable header row (title + chevron) above
-//! an animated body that slides vertically between its natural height (open) and
-//! 0 (closed) over 250 ms. The header is always visible so users can reopen the
-//! section.
+//! an [`AnimatedClip`] body that slides vertically between its natural height
+//! (open) and 0 (closed) over 250 ms. The header is always visible so users
+//! can reopen the section.
 //!
 //! Emits [`CollapsibleTogglePressed`] when the header is clicked.
 
 use std::any::TypeId;
 
+use masonry::accesskit::{Node, Role};
 use masonry::core::{
-    AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, FromDynWidget, LayoutCtx, MeasureCtx,
-    NewWidget, NoAction, PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut,
-    PropertiesRef, RegisterCtx, StyleProperty, TextEvent, Update, UpdateCtx, Widget, WidgetId,
-    WidgetMut, WidgetPod,
+    AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
+    PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef,
+    RegisterCtx, StyleProperty, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
+    WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, Size};
@@ -23,6 +24,7 @@ use masonry::properties::ContentColor;
 use masonry::widgets::Label;
 
 use crate::Theme;
+use crate::animated_clip::AnimatedClip;
 use crate::components::icon::{IconName, icon};
 
 // --- MARK: CONSTANTS
@@ -35,8 +37,6 @@ const PAD_H: f64 = 8.0;
 const CHEVRON_GAP: f64 = 4.0;
 /// Thickness of the separator line below the header.
 const SEPARATOR_WIDTH: f64 = 1.0;
-/// Duration of the open/close height animation.
-const SLIDE_MILLIS: f32 = 250.0;
 
 // --- MARK: ACTION
 
@@ -63,173 +63,19 @@ fn make_title(text: ArcStr, theme: &Theme) -> NewWidget<Label> {
     lbl
 }
 
-// --- MARK: CollapsibleBody
-
-/// Widget that clips its child to an animated height.
-///
-/// Only [`CollapsibleWidget`] constructs it. Public so the documented access
-/// path [`CollapsibleWidget::body_mut`] → [`CollapsibleBody::child_mut`] works
-/// outside the crate.
-pub struct CollapsibleBody<W: Widget + ?Sized> {
-    child: WidgetPod<W>,
-    open: bool,
-    /// 0.0 = fully visible (open), 1.0 = fully hidden (closed).
-    collapse_progress: f32,
-    /// Child's natural height from the most recent measure pass.
-    natural_height: f64,
-}
-
-impl<W: Widget + ?Sized> CollapsibleBody<W> {
-    pub(crate) fn new(child: NewWidget<W>, open: bool) -> Self {
-        Self {
-            child: child.to_pod(),
-            open,
-            collapse_progress: if open { 0.0 } else { 1.0 },
-            natural_height: 0.0,
-        }
-    }
-
-    fn animated_height(&self) -> f64 {
-        (self.natural_height * f64::from(1.0 - self.collapse_progress)).max(0.0)
-    }
-}
-
-impl<W: Widget + FromDynWidget> CollapsibleBody<W> {
-    /// Returns a `WidgetMut` for the wrapped content widget.
-    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, W> {
-        this.ctx.get_mut(&mut this.widget.child)
-    }
-}
-
-impl<W: Widget + ?Sized> CollapsibleBody<W> {
-    pub(crate) fn set_open(this: &mut WidgetMut<'_, Self>, open: bool) {
-        if this.widget.open != open {
-            this.widget.open = open;
-            let target: f32 = if open { 0.0 } else { 1.0 };
-            if (target - this.widget.collapse_progress).abs() > 1e-4 {
-                this.ctx.request_anim_frame();
-            }
-        }
-    }
-}
-
-impl<W: Widget + ?Sized> Widget for CollapsibleBody<W> {
-    type Action = NoAction;
-
-    fn on_anim_frame(
-        &mut self,
-        ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        interval: u64,
-    ) {
-        let target: f32 = if self.open { 0.0 } else { 1.0 };
-        let ms = u16::try_from(interval / 1_000_000).unwrap_or(u16::MAX);
-        let delta = f32::from(ms) / SLIDE_MILLIS;
-        let diff = target - self.collapse_progress;
-        if diff.abs() > 1e-4 {
-            self.collapse_progress = if diff > 0.0 {
-                (self.collapse_progress + delta).min(target)
-            } else {
-                (self.collapse_progress - delta).max(target)
-            };
-            ctx.request_layout();
-            if (target - self.collapse_progress).abs() > 1e-4 {
-                ctx.request_anim_frame();
-            }
-        }
-    }
-
-    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.child);
-    }
-
-    fn update(
-        &mut self,
-        _ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &Update,
-    ) {
-    }
-
-    fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: TypeId) {}
-
-    fn measure(
-        &mut self,
-        ctx: &mut MeasureCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        axis: Axis,
-        len_req: LenReq,
-        cross_length: Option<Length>,
-    ) -> Length {
-        let context_size = LayoutSize::maybe(axis.cross(), cross_length);
-        let child_length =
-            ctx.compute_length(&mut self.child, len_req.into(), context_size, axis, cross_length);
-        if axis == Axis::Vertical {
-            let natural = child_length.get();
-            if natural > 0.0 {
-                self.natural_height = natural;
-            }
-            Length::px(self.animated_height())
-        } else {
-            child_length
-        }
-    }
-
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        // Always lay out the child at its full natural height so content doesn't
-        // reflow during the slide animation.
-        let child_height = self.natural_height.max(size.height);
-        ctx.run_layout(&mut self.child, Size::new(size.width, child_height));
-        ctx.place_child(&mut self.child, Point::ORIGIN);
-        // Clip to the animated height so content slides out of view.
-        ctx.set_clip_path(size.to_rect());
-    }
-
-    fn paint(
-        &mut self,
-        _ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
-    ) {
-    }
-
-    fn accessibility_role(&self) -> masonry::accesskit::Role {
-        masonry::accesskit::Role::GenericContainer
-    }
-
-    fn accessibility(
-        &mut self,
-        _ctx: &mut AccessCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _node: &mut masonry::accesskit::Node,
-    ) {
-    }
-
-    fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.child.id()])
-    }
-
-    fn accepts_focus(&self) -> bool {
-        false
-    }
-
-    fn accepts_text_input(&self) -> bool {
-        false
-    }
-}
-
 // --- MARK: CollapsibleWidget
 
 /// Collapsible section with an animated body and a persistent clickable header.
 ///
 /// The header always occupies a fixed row height (icon-font-size + padding).
-/// The body transitions between 0 and its natural height when `open` changes.
+/// The body transitions between 0 and its natural height when `open` changes
+/// via [`AnimatedClip`].
 ///
 /// Emits [`CollapsibleTogglePressed`] when the header row is clicked.
 pub struct CollapsibleWidget<W: Widget + ?Sized> {
     title: WidgetPod<Label>,
     chevron: WidgetPod<Label>,
-    body: WidgetPod<CollapsibleBody<W>>,
+    body: WidgetPod<AnimatedClip<W>>,
     theme: Theme,
     open: bool,
     /// True while the pointer is inside the header area.
@@ -250,7 +96,7 @@ impl<W: Widget + ?Sized> CollapsibleWidget<W> {
         Self {
             title: make_title(title, theme).to_pod(),
             chevron: make_chevron(open, theme).to_pod(),
-            body: WidgetPod::new(CollapsibleBody::new(child, open)),
+            body: WidgetPod::new(AnimatedClip::new(child, Axis::Vertical, open)),
             theme: *theme,
             open,
             header_hovered: false,
@@ -264,9 +110,7 @@ impl<W: Widget + ?Sized> CollapsibleWidget<W> {
 // --- MARK: WIDGETMUT
 
 impl<W: Widget + ?Sized> CollapsibleWidget<W> {
-    pub fn body_mut<'t>(
-        this: &'t mut WidgetMut<'_, Self>,
-    ) -> WidgetMut<'t, CollapsibleBody<W>> {
+    pub fn body_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, AnimatedClip<W>> {
         this.ctx.get_mut(&mut this.widget.body)
     }
 }
@@ -315,7 +159,7 @@ impl<W: Widget + ?Sized> CollapsibleWidget<W> {
                 Label::set_text(&mut chevron, new_char);
             }
             let mut body = this.ctx.get_mut(&mut this.widget.body);
-            CollapsibleBody::set_open(&mut body, open);
+            AnimatedClip::set_open(&mut body, open);
         }
     }
 }
@@ -515,15 +359,15 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
             .draw();
     }
 
-    fn accessibility_role(&self) -> masonry::accesskit::Role {
-        masonry::accesskit::Role::GenericContainer
+    fn accessibility_role(&self) -> Role {
+        Role::GenericContainer
     }
 
     fn accessibility(
         &mut self,
         _ctx: &mut AccessCtx<'_>,
         _props: &PropertiesRef<'_>,
-        _node: &mut masonry::accesskit::Node,
+        _node: &mut Node,
     ) {
     }
 

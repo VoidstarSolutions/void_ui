@@ -19,6 +19,7 @@
 // and from our own modules.
 extern crate self as void_ui;
 
+pub mod animated_clip;
 pub mod components;
 pub mod floating;
 #[cfg(feature = "gallery")]
@@ -37,6 +38,7 @@ pub use components::{
     read_only_text, scroll_container, separator, sidebar_item, sidebar_panel, text_column,
     toggle_button_group, tooltip,
 };
+pub use animated_clip::AnimatedClip;
 pub use floating::{FloatingOverlay, FloatingOverlayView, floating, interactive_floating};
 #[cfg(feature = "gallery")]
 pub use gallery::code_block;

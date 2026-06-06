@@ -24,8 +24,9 @@ use masonry::core::{ArcStr, FromDynWidget};
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
-use super::widget::{CollapsibleBody, CollapsibleTogglePressed, CollapsibleWidget};
+use super::widget::{CollapsibleTogglePressed, CollapsibleWidget};
 use crate::Theme;
+use crate::animated_clip::AnimatedClip;
 
 /// Builder for an animated collapsible section.
 ///
@@ -138,7 +139,7 @@ where
         }
         {
             let mut body = CollapsibleWidget::body_mut(&mut element);
-            let mut child = CollapsibleBody::child_mut(&mut body);
+            let mut child = AnimatedClip::child_mut(&mut body);
             self.child
                 .rebuild(&prev.child, view_state, ctx, child.downcast(), app_state);
         }
@@ -152,7 +153,7 @@ where
     ) {
         {
             let mut body = CollapsibleWidget::body_mut(&mut element);
-            let mut child = CollapsibleBody::child_mut(&mut body);
+            let mut child = AnimatedClip::child_mut(&mut body);
             self.child.teardown(view_state, ctx, child.downcast());
         }
         ctx.teardown_action_source(element);
@@ -172,7 +173,7 @@ where
             return MessageResult::Stale;
         }
         let mut body = CollapsibleWidget::body_mut(&mut element);
-        let mut child = CollapsibleBody::child_mut(&mut body);
+        let mut child = AnimatedClip::child_mut(&mut body);
         self.child
             .message(view_state, message, child.downcast(), app_state)
     }

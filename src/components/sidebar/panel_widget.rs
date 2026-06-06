@@ -3,16 +3,18 @@
 //! [`ThemedSidebarPanel`] wraps any child widget and renders a narrow toggle
 //! strip on its right edge. The strip contains a `‹` chevron when expanded and
 //! `›` when collapsed. Clicking the strip animates the content width between
-//! its natural size (expanded) and 0 (collapsed) over 250 ms; the strip itself
-//! is always visible so users can always reopen the sidebar.
+//! its natural size (expanded) and 0 (collapsed) over 250 ms via
+//! [`AnimatedClip`]; the strip itself is always visible so users can always
+//! reopen the sidebar.
 
 use std::any::TypeId;
 
+use crate::animated_clip::AnimatedClip;
 use crate::components::icon::IconName;
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
-    AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, FromDynWidget, LayoutCtx, MeasureCtx,
-    NewWidget, NoAction, PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut,
+    AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx,
+    NewWidget, PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut,
     PropertiesRef, RegisterCtx, StyleProperty, TextEvent, Update, UpdateCtx, Widget, WidgetId,
     WidgetMut, WidgetPod,
 };
@@ -30,8 +32,6 @@ use crate::components::icon::icon;
 
 /// Width of the collapse/expand toggle strip on the right edge.
 const STRIP_WIDTH: f64 = 20.0;
-/// Duration of the collapse/expand slide animation.
-const SLIDE_MILLIS: f32 = 250.0;
 /// Width of the strip's left separator line.
 const SEPARATOR_WIDTH: f64 = 1.0;
 
@@ -54,178 +54,18 @@ fn make_chevron(collapsed: bool, theme: &Theme) -> NewWidget<Label> {
         .build_widget(theme)
 }
 
-// --- MARK: SidebarContent
-
-/// Widget that clips its child to an animated width.
-///
-/// Only [`ThemedSidebarPanel`] constructs it; it is public so the documented
-/// path from a panel to its content ([`ThemedSidebarPanel::content_mut`] then
-/// [`SidebarContent::child_mut`]) works outside the crate.
-pub struct SidebarContent<W: Widget + ?Sized> {
-    child: WidgetPod<W>,
-    collapsed: bool,
-    /// 0.0 = fully visible, 1.0 = fully hidden.
-    collapse_progress: f32,
-    /// Child's natural width from the most recent measure pass.
-    natural_width: f64,
-}
-
-impl<W: Widget + ?Sized> SidebarContent<W> {
-    pub(crate) fn new(child: NewWidget<W>, collapsed: bool) -> Self {
-        Self {
-            child: child.to_pod(),
-            collapsed,
-            collapse_progress: if collapsed { 1.0 } else { 0.0 },
-            natural_width: 0.0,
-        }
-    }
-}
-
-impl<W: Widget + FromDynWidget> SidebarContent<W> {
-    /// Returns a `WidgetMut` for the wrapped content widget.
-    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, W> {
-        this.ctx.get_mut(&mut this.widget.child)
-    }
-}
-
-impl<W: Widget + ?Sized> SidebarContent<W> {
-    pub(crate) fn set_collapsed(this: &mut WidgetMut<'_, Self>, collapsed: bool) {
-        if this.widget.collapsed != collapsed {
-            this.widget.collapsed = collapsed;
-            let target: f32 = if collapsed { 1.0 } else { 0.0 };
-            if (target - this.widget.collapse_progress).abs() > 1e-4 {
-                this.ctx.request_anim_frame();
-            }
-        }
-    }
-
-    fn animated_width(&self) -> f64 {
-        (self.natural_width * f64::from(1.0 - self.collapse_progress)).max(0.0)
-    }
-}
-
-impl<W: Widget + ?Sized> Widget for SidebarContent<W> {
-    type Action = NoAction;
-
-    fn on_anim_frame(
-        &mut self,
-        ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        interval: u64,
-    ) {
-        let target: f32 = if self.collapsed { 1.0 } else { 0.0 };
-        let ms = u16::try_from(interval / 1_000_000).unwrap_or(u16::MAX);
-        let delta = f32::from(ms) / SLIDE_MILLIS;
-        let diff = target - self.collapse_progress;
-        if diff.abs() > 1e-4 {
-            self.collapse_progress = if diff > 0.0 {
-                (self.collapse_progress + delta).min(target)
-            } else {
-                (self.collapse_progress - delta).max(target)
-            };
-            ctx.request_layout();
-            if (target - self.collapse_progress).abs() > 1e-4 {
-                ctx.request_anim_frame();
-            }
-        }
-    }
-
-    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.child);
-    }
-
-    fn update(
-        &mut self,
-        _ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &Update,
-    ) {
-    }
-
-    fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: TypeId) {}
-
-    fn measure(
-        &mut self,
-        ctx: &mut MeasureCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        axis: Axis,
-        len_req: LenReq,
-        cross_length: Option<Length>,
-    ) -> Length {
-        let context_size = LayoutSize::maybe(axis.cross(), cross_length);
-        let child_length = ctx.compute_length(
-            &mut self.child,
-            len_req.into(),
-            context_size,
-            axis,
-            cross_length,
-        );
-        if axis == Axis::Horizontal {
-            let natural = child_length.get();
-            if natural > 0.0 {
-                self.natural_width = natural;
-            }
-            Length::px(self.animated_width())
-        } else {
-            child_length
-        }
-    }
-
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        // Always lay out the child at full natural width so content doesn't
-        // reflow during the slide animation.
-        let child_width = self.natural_width.max(size.width);
-        let child_size = Size::new(child_width, size.height);
-        ctx.run_layout(&mut self.child, child_size);
-        ctx.place_child(&mut self.child, Point::ORIGIN);
-        // Clip to the currently animated width so content slides off-screen.
-        ctx.set_clip_path(size.to_rect());
-    }
-
-    fn paint(
-        &mut self,
-        _ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
-    ) {
-    }
-
-    fn accessibility_role(&self) -> Role {
-        Role::GenericContainer
-    }
-
-    fn accessibility(
-        &mut self,
-        _ctx: &mut AccessCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _node: &mut Node,
-    ) {
-    }
-
-    fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.child.id()])
-    }
-
-    fn accepts_focus(&self) -> bool {
-        false
-    }
-
-    fn accepts_text_input(&self) -> bool {
-        false
-    }
-}
-
 // --- MARK: ThemedSidebarPanel
 
 /// Sidebar container that animates its content width and renders a persistent
 /// toggle strip on its right edge.
 ///
 /// The strip always occupies [`STRIP_WIDTH`] pixels; the content area
-/// transitions between 0 and its natural width when `collapsed` changes.
+/// transitions between 0 and its natural width when `collapsed` changes via
+/// [`AnimatedClip`].
 ///
 /// Emits [`SidebarTogglePressed`] when the strip is clicked.
 pub struct ThemedSidebarPanel<W: Widget + ?Sized> {
-    content: WidgetPod<SidebarContent<W>>,
+    content: WidgetPod<AnimatedClip<W>>,
     chevron: WidgetPod<Label>,
     theme: Theme,
     collapsed: bool,
@@ -244,7 +84,7 @@ impl<W: Widget + ?Sized> ThemedSidebarPanel<W> {
     #[must_use]
     pub fn new(child: NewWidget<W>, theme: &Theme, collapsed: bool) -> Self {
         Self {
-            content: WidgetPod::new(SidebarContent::new(child, collapsed)),
+            content: WidgetPod::new(AnimatedClip::new(child, Axis::Horizontal, !collapsed)),
             chevron: make_chevron(collapsed, theme).to_pod(),
             theme: *theme,
             collapsed,
@@ -258,7 +98,9 @@ impl<W: Widget + ?Sized> ThemedSidebarPanel<W> {
 
 // --- MARK: WIDGETMUT
 impl<W: Widget + ?Sized> ThemedSidebarPanel<W> {
-    pub fn content_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, SidebarContent<W>> {
+    pub fn content_mut<'t>(
+        this: &'t mut WidgetMut<'_, Self>,
+    ) -> WidgetMut<'t, AnimatedClip<W>> {
         this.ctx.get_mut(&mut this.widget.content)
     }
 }
@@ -294,7 +136,7 @@ impl<W: Widget + ?Sized> ThemedSidebarPanel<W> {
                 Label::set_text(&mut chevron, new_char);
             }
             let mut content = this.ctx.get_mut(&mut this.widget.content);
-            SidebarContent::set_collapsed(&mut content, collapsed);
+            AnimatedClip::set_open(&mut content, !collapsed);
         }
     }
 }
