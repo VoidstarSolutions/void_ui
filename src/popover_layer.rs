@@ -65,8 +65,7 @@ const BORDER_WIDTH: f64 = 1.0;
 /// Receives a `WidgetMut` of the *creator* widget and the popover's own
 /// `WidgetId` so the callback can downcast, update state, and call
 /// `ctx.remove_layer(layer_id)`.
-pub type OnOutsideClick =
-    Arc<dyn Fn(WidgetMut<'_, dyn Widget>, WidgetId) + Send + Sync + 'static>;
+pub type OnOutsideClick = Arc<dyn Fn(WidgetMut<'_, dyn Widget>, WidgetId) + Send + Sync + 'static>;
 
 /// Window-level floating layer that wraps arbitrary content with
 /// background/border chrome, anchor-aware positioning, and outside-click
@@ -138,24 +137,16 @@ impl PopoverLayer {
     /// the anchor.
     fn child_offset(anchor: PopoverAnchor, trigger: Size, content: Size) -> Point {
         match anchor {
-            PopoverAnchor::BottomStart => {
-                Point::new(0.0, trigger.height)
-            }
+            PopoverAnchor::BottomStart => Point::new(0.0, trigger.height),
             PopoverAnchor::BottomCenter => {
                 Point::new((trigger.width - content.width) / 2.0, trigger.height)
             }
-            PopoverAnchor::BottomEnd => {
-                Point::new(trigger.width - content.width, trigger.height)
-            }
-            PopoverAnchor::TopStart => {
-                Point::new(0.0, -content.height)
-            }
+            PopoverAnchor::BottomEnd => Point::new(trigger.width - content.width, trigger.height),
+            PopoverAnchor::TopStart => Point::new(0.0, -content.height),
             PopoverAnchor::TopCenter => {
                 Point::new((trigger.width - content.width) / 2.0, -content.height)
             }
-            PopoverAnchor::TopEnd => {
-                Point::new(trigger.width - content.width, -content.height)
-            }
+            PopoverAnchor::TopEnd => Point::new(trigger.width - content.width, -content.height),
         }
     }
 
@@ -240,8 +231,11 @@ impl Widget for PopoverLayer {
         _props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
-        let rrect =
-            RoundedRect::from_origin_size(self.child_rect.origin(), self.child_rect.size(), CORNER_RADIUS);
+        let rrect = RoundedRect::from_origin_size(
+            self.child_rect.origin(),
+            self.child_rect.size(),
+            CORNER_RADIUS,
+        );
         if self.bg.components[3] > 0.0 {
             painter.fill(rrect, self.bg).draw();
         }

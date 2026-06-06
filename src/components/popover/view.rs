@@ -119,7 +119,13 @@ where
             &self.theme,
         );
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
-        (element, PopoverViewState { trigger_vs, content_vs })
+        (
+            element,
+            PopoverViewState {
+                trigger_vs,
+                content_vs,
+            },
+        )
     }
 
     fn rebuild(

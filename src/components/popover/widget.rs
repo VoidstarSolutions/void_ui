@@ -180,12 +180,7 @@ impl Widget for PopoverHost {
         }
     }
 
-    fn update(
-        &mut self,
-        ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &Update,
-    ) {
+    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         if matches!(event, Update::WidgetAdded | Update::FocusChanged(_)) {
             ctx.request_paint_only();
         }
