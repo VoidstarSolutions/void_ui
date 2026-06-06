@@ -4,10 +4,11 @@ use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::layout::Length;
 use xilem::masonry::widgets::Passthrough;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, flex_col, flex_row};
+use xilem::view::{CrossAxisAlignment, MainAxisAlignment, flex_col, flex_row};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use crate::Theme;
+use crate::components::IconName;
 use crate::components::ScrollBarVisibility;
 use crate::components::button::button;
 use crate::components::popover::{PopoverAnchor, popover};
@@ -63,58 +64,71 @@ fn basic_row(theme: &Theme) -> impl WidgetView<PopoverDemo> + use<> {
 
 fn anchor_row(theme: &Theme) -> impl WidgetView<PopoverDemo> + use<> {
     with_source!(theme, {
-        flex_row((
-            popover(
-                button(|_: &mut PopoverDemo| {})
-                    .label("↙ BottomStart")
-                    .render(theme),
-                label("BottomStart").render(theme),
-            )
-            .anchor(PopoverAnchor::BottomStart)
-            .render(theme),
-            popover(
-                button(|_: &mut PopoverDemo| {})
-                    .label("↓ BottomCenter")
-                    .render(theme),
-                label("BottomCenter").render(theme),
-            )
-            .anchor(PopoverAnchor::BottomCenter)
-            .render(theme),
-            popover(
-                button(|_: &mut PopoverDemo| {})
-                    .label("↘ BottomEnd")
-                    .render(theme),
-                label("BottomEnd").render(theme),
-            )
-            .anchor(PopoverAnchor::BottomEnd)
-            .render(theme),
-            popover(
-                button(|_: &mut PopoverDemo| {})
-                    .label("↖ TopStart")
-                    .render(theme),
-                label("TopStart").render(theme),
-            )
-            .anchor(PopoverAnchor::TopStart)
-            .render(theme),
-            popover(
-                button(|_: &mut PopoverDemo| {})
-                    .label("↑ TopCenter")
-                    .render(theme),
-                label("TopCenter").render(theme),
-            )
-            .anchor(PopoverAnchor::TopCenter)
-            .render(theme),
-            popover(
-                button(|_: &mut PopoverDemo| {})
-                    .label("↗ TopEnd")
-                    .render(theme),
-                label("TopEnd").render(theme),
-            )
-            .anchor(PopoverAnchor::TopEnd)
-            .render(theme),
+        flex_col((
+            flex_row((
+                popover(
+                    button(|_: &mut PopoverDemo| {})
+                        .label("BottomStart")
+                        .icon(IconName::ArrowDownLeft)
+                        .render(theme),
+                    label("BottomStart").render(theme),
+                )
+                .anchor(PopoverAnchor::BottomStart)
+                .render(theme),
+                popover(
+                    button(|_: &mut PopoverDemo| {})
+                        .label("BottomCenter")
+                        .icon(IconName::ArrowDown)
+                        .render(theme),
+                    label("BottomCenter").render(theme),
+                )
+                .anchor(PopoverAnchor::BottomCenter)
+                .render(theme),
+                popover(
+                    button(|_: &mut PopoverDemo| {})
+                        .label("BottomEnd")
+                        .trailing_icon(IconName::ArrowDownRight)
+                        .render(theme),
+                    label("BottomEnd").render(theme),
+                )
+                .anchor(PopoverAnchor::BottomEnd)
+                .render(theme),
+            ))
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .main_axis_alignment(MainAxisAlignment::SpaceBetween),
+            flex_row((
+                popover(
+                    button(|_: &mut PopoverDemo| {})
+                        .label("TopStart")
+                        .icon(IconName::ArrowUpLeft)
+                        .render(theme),
+                    label("TopStart").render(theme),
+                )
+                .anchor(PopoverAnchor::TopStart)
+                .render(theme),
+                popover(
+                    button(|_: &mut PopoverDemo| {})
+                        .label("TopCenter")
+                        .icon(IconName::ArrowUp)
+                        .render(theme),
+                    label("TopCenter").render(theme),
+                )
+                .anchor(PopoverAnchor::TopCenter)
+                .render(theme),
+                popover(
+                    button(|_: &mut PopoverDemo| {})
+                        .label("TopEnd")
+                        .trailing_icon(IconName::ArrowUpRight)
+                        .render(theme),
+                    label("TopEnd").render(theme),
+                )
+                .anchor(PopoverAnchor::TopEnd)
+                .render(theme),
+            ))
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .main_axis_alignment(MainAxisAlignment::SpaceBetween),
         ))
-        .cross_axis_alignment(CrossAxisAlignment::Center)
-        .gap(Length::px(8.0))
+        .gap(Length::px(48.0))
     })
 }
 
