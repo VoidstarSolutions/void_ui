@@ -25,15 +25,16 @@ use xilem::{Pod, ViewCtx};
 
 use super::widget::SliderWidget;
 use super::{SliderChanged, SliderValue};
-use crate::Theme;
+use crate::{Orientation, Theme};
 
-/// Shared range/step/disabled configuration for both slider flavors.
+/// Shared range/step/disabled/orientation configuration for both slider flavors.
 #[derive(Clone, Copy, PartialEq)]
 struct SliderConfig {
     min: f64,
     max: f64,
     step: f64,
     disabled: bool,
+    orientation: Orientation,
 }
 
 impl Default for SliderConfig {
@@ -43,6 +44,7 @@ impl Default for SliderConfig {
             max: 1.0,
             step: 0.0,
             disabled: false,
+            orientation: Orientation::Horizontal,
         }
     }
 }
@@ -96,6 +98,15 @@ impl<F> Slider<F> {
         self
     }
 
+    /// Sets the slider's layout axis. Defaults to [`Orientation::Horizontal`].
+    ///
+    /// A vertical slider travels bottom-to-top: `min` at the bottom, `max` at
+    /// the top, matching the conventional orientation of vertical sliders.
+    pub fn orientation(mut self, orientation: Orientation) -> Self {
+        self.config.orientation = orientation;
+        self
+    }
+
     /// Materialize the xilem view at the supplied theme.
     pub fn render<State, Action>(self, theme: &Theme) -> SliderView<F, State, Action>
     where
@@ -144,6 +155,7 @@ where
             self.config.max,
             self.config.step,
             self.config.disabled,
+            self.config.orientation,
         );
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, ())
@@ -243,6 +255,15 @@ impl<F> RangeSlider<F> {
         self
     }
 
+    /// Sets the slider's layout axis. Defaults to [`Orientation::Horizontal`].
+    ///
+    /// A vertical slider travels bottom-to-top: `min` at the bottom, `max` at
+    /// the top, matching the conventional orientation of vertical sliders.
+    pub fn orientation(mut self, orientation: Orientation) -> Self {
+        self.config.orientation = orientation;
+        self
+    }
+
     /// Materialize the xilem view at the supplied theme.
     pub fn render<State, Action>(self, theme: &Theme) -> RangeSliderView<F, State, Action>
     where
@@ -294,6 +315,7 @@ where
             self.config.max,
             self.config.step,
             self.config.disabled,
+            self.config.orientation,
         );
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, ())
@@ -341,7 +363,7 @@ where
     }
 }
 
-/// Applies theme/range/step/disabled changes shared by both slider flavors.
+/// Applies theme/range/step/disabled/orientation changes shared by both slider flavors.
 fn rebuild_shared(
     theme: &Theme,
     prev_theme: &Theme,
@@ -362,5 +384,8 @@ fn rebuild_shared(
     }
     if config.disabled != prev_config.disabled {
         SliderWidget::set_disabled(element, config.disabled);
+    }
+    if config.orientation != prev_config.orientation {
+        SliderWidget::set_orientation(element, config.orientation);
     }
 }

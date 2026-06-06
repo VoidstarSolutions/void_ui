@@ -27,7 +27,7 @@ use masonry::layout::{LenReq, Length};
 use masonry::peniko::Color;
 
 use super::{SliderChanged, SliderValue};
-use crate::Theme;
+use crate::{Orientation, Theme};
 
 /// Diameter of a draggable thumb circle, in logical pixels.
 const THUMB_DIAMETER: f64 = 14.0;
@@ -63,6 +63,9 @@ pub struct SliderWidget {
     /// Snap increment. `0.0` (or negative) means continuous — no snapping.
     step: f64,
     disabled: bool,
+    /// Layout axis. Horizontal travels left-to-right; vertical travels
+    /// bottom-to-top (`min` at the bottom, `max` at the top).
+    orientation: Orientation,
     theme: Theme,
     /// Thumb captured by an in-progress primary-pointer drag gesture.
     dragging: Option<Thumb>,
@@ -79,8 +82,17 @@ pub struct SliderWidget {
 impl SliderWidget {
     /// Creates a new single-thumb slider in the given state.
     #[must_use]
-    pub fn new_single(theme: &Theme, value: f64, min: f64, max: f64, step: f64, disabled: bool) -> Self {
-        Self::new(theme, SliderValue::Single(value), min, max, step, disabled)
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_single(
+        theme: &Theme,
+        value: f64,
+        min: f64,
+        max: f64,
+        step: f64,
+        disabled: bool,
+        orientation: Orientation,
+    ) -> Self {
+        Self::new(theme, SliderValue::Single(value), min, max, step, disabled, orientation)
     }
 
     /// Creates a new dual-thumb range slider in the given state.
@@ -88,6 +100,7 @@ impl SliderWidget {
     /// `low` and `high` are clamped to `low <= high` by the host; the widget
     /// trusts the values it's given.
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new_range(
         theme: &Theme,
         low: f64,
@@ -96,11 +109,29 @@ impl SliderWidget {
         max: f64,
         step: f64,
         disabled: bool,
+        orientation: Orientation,
     ) -> Self {
-        Self::new(theme, SliderValue::Range(low, high), min, max, step, disabled)
+        Self::new(
+            theme,
+            SliderValue::Range(low, high),
+            min,
+            max,
+            step,
+            disabled,
+            orientation,
+        )
     }
 
-    fn new(theme: &Theme, value: SliderValue, min: f64, max: f64, step: f64, disabled: bool) -> Self {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        theme: &Theme,
+        value: SliderValue,
+        min: f64,
+        max: f64,
+        step: f64,
+        disabled: bool,
+        orientation: Orientation,
+    ) -> Self {
         let focused_thumb = match value {
             SliderValue::Single(_) => Thumb::Single,
             SliderValue::Range(..) => Thumb::High,
@@ -111,6 +142,7 @@ impl SliderWidget {
             max,
             step,
             disabled,
+            orientation,
             theme: *theme,
             dragging: None,
             last_emitted: None,
@@ -167,6 +199,15 @@ impl SliderWidget {
         }
     }
 
+    /// Sets the layout axis. Requests a re-layout and repaint on change.
+    pub fn set_orientation(this: &mut WidgetMut<'_, Self>, orientation: Orientation) {
+        if this.widget.orientation != orientation {
+            this.widget.orientation = orientation;
+            this.ctx.request_layout();
+            this.ctx.request_paint_only();
+        }
+    }
+
     /// Replaces the theme. Requests a repaint on change.
     pub fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
         if this.widget.theme != *theme {
@@ -198,31 +239,68 @@ impl SliderWidget {
         }
     }
 
-    /// Range of a thumb center's horizontal travel within `size`, as
-    /// `(start_x, usable_width)`.
-    fn travel(size: Size) -> (f64, f64) {
+    /// The widget's main (travel) axis length and cross-axis length, given
+    /// its border-box `size` and [`Self::orientation`] — horizontal sliders
+    /// travel along the width, vertical sliders along the height.
+    fn axis_lengths(&self, size: Size) -> (f64, f64) {
+        match self.orientation {
+            Orientation::Horizontal => (size.width, size.height),
+            Orientation::Vertical => (size.height, size.width),
+        }
+    }
+
+    /// Range of a thumb center's travel along the main axis within `size`, as
+    /// `(start, usable_length)`.
+    fn travel(&self, size: Size) -> (f64, f64) {
+        let (main, _) = self.axis_lengths(size);
         let thumb_radius = THUMB_DIAMETER / 2.0;
         let start = thumb_radius + EDGE_PAD;
-        let end = (size.width - thumb_radius - EDGE_PAD).max(start);
+        let end = (main - thumb_radius - EDGE_PAD).max(start);
         (start, end - start)
     }
 
-    /// Horizontal center of the thumb representing value `v`.
-    fn thumb_x(&self, size: Size, v: f64) -> f64 {
-        let (start, usable) = Self::travel(size);
+    /// Position along the main axis of the thumb center representing value `v`.
+    ///
+    /// Horizontal sliders place `min` at the start (left); vertical sliders
+    /// place `min` at the end (bottom), matching conventional vertical-slider
+    /// layout where values increase upward.
+    fn thumb_main_axis_pos(&self, size: Size, v: f64) -> f64 {
+        let (start, usable) = self.travel(size);
         let span = self.max - self.min;
         let t = if span > 0.0 {
             ((v - self.min) / span).clamp(0.0, 1.0)
         } else {
             0.0
         };
-        start + t * usable
+        match self.orientation {
+            Orientation::Horizontal => start + t * usable,
+            Orientation::Vertical => start + (1.0 - t) * usable,
+        }
+    }
+
+    /// Center point of the thumb representing value `v`.
+    fn thumb_center(&self, size: Size, v: f64) -> Point {
+        let main = self.thumb_main_axis_pos(size, v);
+        let (_, cross_len) = self.axis_lengths(size);
+        let cross = cross_len * 0.5;
+        match self.orientation {
+            Orientation::Horizontal => Point::new(main, cross),
+            Orientation::Vertical => Point::new(cross, main),
+        }
     }
 
     /// Converts a local-space pointer position to a snapped value in `[min, max]`.
     fn value_from_position(&self, size: Size, pos: Point) -> f64 {
-        let (start, usable) = Self::travel(size);
-        let t = ((pos.x - start) / usable.max(1e-6)).clamp(0.0, 1.0);
+        let (start, usable) = self.travel(size);
+        let coord = match self.orientation {
+            Orientation::Horizontal => pos.x,
+            Orientation::Vertical => pos.y,
+        };
+        let raw_t = ((coord - start) / usable.max(1e-6)).clamp(0.0, 1.0);
+        let t = match self.orientation {
+            Orientation::Horizontal => raw_t,
+            Orientation::Vertical => 1.0 - raw_t,
+        };
         self.snap(self.min + t * (self.max - self.min))
     }
 
@@ -239,9 +317,9 @@ impl SliderWidget {
     fn thumb_at(&self, size: Size, pos: Point) -> Thumb {
         match self.range_bounds() {
             Some((low, high)) => {
-                let low_x = self.thumb_x(size, low);
-                let high_x = self.thumb_x(size, high);
-                if (pos.x - low_x).abs() <= (pos.x - high_x).abs() {
+                let low_center = self.thumb_center(size, low);
+                let high_center = self.thumb_center(size, high);
+                if pos.distance(low_center) <= pos.distance(high_center) {
                     Thumb::Low
                 } else {
                     Thumb::High
@@ -302,6 +380,25 @@ impl SliderWidget {
         }
         let thumb = if active || hovered { p.teal_deep } else { p.teal };
         (p.surface_2, p.teal, thumb)
+    }
+
+    /// A bar spanning `[main_start, main_end]` along the main axis, centered
+    /// on the cross axis with the given `thickness` and `corner_radius`.
+    fn bar_rect(&self, size: Size, main_start: f64, main_end: f64, thickness: f64, corner_radius: f64) -> RoundedRect {
+        let half_thickness = thickness * 0.5;
+        let (_, cross_len) = self.axis_lengths(size);
+        let cross_center = cross_len * 0.5;
+        let (origin, bar_size) = match self.orientation {
+            Orientation::Horizontal => (
+                Point::new(main_start, cross_center - half_thickness),
+                Size::new(main_end - main_start, thickness),
+            ),
+            Orientation::Vertical => (
+                Point::new(cross_center - half_thickness, main_start),
+                Size::new(thickness, main_end - main_start),
+            ),
+        };
+        RoundedRect::from_origin_size(origin, bar_size, corner_radius)
     }
 }
 
@@ -438,12 +535,17 @@ impl Widget for SliderWidget {
         _cross_length: Option<Length>,
     ) -> Length {
         let cross = Length::px(THUMB_DIAMETER + 2.0 * EDGE_PAD);
-        match axis {
-            Axis::Horizontal => match len_req {
+        let main_axis = match self.orientation {
+            Orientation::Horizontal => Axis::Horizontal,
+            Orientation::Vertical => Axis::Vertical,
+        };
+        if axis == main_axis {
+            match len_req {
                 LenReq::FitContent(available) => available,
                 _ => cross,
-            },
-            Axis::Vertical => cross,
+            }
+        } else {
+            cross
         }
     }
 
@@ -461,45 +563,32 @@ impl Widget for SliderWidget {
         let focused = ctx.is_focus_target();
         let p = &self.theme.palette;
 
-        let (start, usable) = Self::travel(size);
-        let center_y = size.height * 0.5;
+        let (start, usable) = self.travel(size);
         let thumb_radius = THUMB_DIAMETER / 2.0;
         let half_track = TRACK_HEIGHT * 0.5;
 
         let (track_color, fill_color, thumb_color) = self.resolve_colors(hovered, active);
 
-        let track_rect = RoundedRect::from_origin_size(
-            Point::new(start, center_y - half_track),
-            Size::new(usable, TRACK_HEIGHT),
-            half_track,
-        );
+        let track_rect = self.bar_rect(size, start, start + usable, TRACK_HEIGHT, half_track);
         painter.fill(track_rect, track_color).draw();
 
         // Fill spans [min, value] in single mode, or [low, high] in range mode.
-        let (fill_start_x, fill_end_x, thumb_xs): (f64, f64, [Option<f64>; 2]) = match self.value {
-            SliderValue::Single(v) => {
-                let x = self.thumb_x(size, v);
-                (start, x, [Some(x), None])
-            }
-            SliderValue::Range(low, high) => {
-                let low_x = self.thumb_x(size, low);
-                let high_x = self.thumb_x(size, high);
-                (low_x, high_x, [Some(low_x), Some(high_x)])
-            }
+        let (fill_lo, fill_hi, thumb_values): (f64, f64, [Option<f64>; 2]) = match self.value {
+            SliderValue::Single(v) => (self.min, v, [Some(v), None]),
+            SliderValue::Range(low, high) => (low, high, [Some(low), Some(high)]),
         };
 
-        let fill_width = fill_end_x - fill_start_x;
-        if fill_width > 0.0 {
-            let fill_rect = RoundedRect::from_origin_size(
-                Point::new(fill_start_x, center_y - half_track),
-                Size::new(fill_width, TRACK_HEIGHT),
-                half_track,
-            );
+        let fill_a = self.thumb_main_axis_pos(size, fill_lo);
+        let fill_b = self.thumb_main_axis_pos(size, fill_hi);
+        let (fill_start, fill_end) = (fill_a.min(fill_b), fill_a.max(fill_b));
+
+        if fill_end > fill_start {
+            let fill_rect = self.bar_rect(size, fill_start, fill_end, TRACK_HEIGHT, half_track);
             painter.fill(fill_rect, fill_color).draw();
         }
 
-        for thumb_x in thumb_xs.into_iter().flatten() {
-            let center = Point::new(thumb_x, center_y);
+        for value in thumb_values.into_iter().flatten() {
+            let center = self.thumb_center(size, value);
             painter.fill(Circle::new(center, thumb_radius), thumb_color).draw();
 
             if focused && !self.disabled {
