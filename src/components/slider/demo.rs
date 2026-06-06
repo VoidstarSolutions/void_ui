@@ -9,7 +9,7 @@ use crate::label;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
-use super::slider;
+use super::{range_slider, slider};
 use crate::Theme;
 use crate::components::ScrollBarVisibility;
 use crate::scroll_container;
@@ -21,6 +21,8 @@ struct SliderDemo {
     continuous: f64,
     stepped: f64,
     range: f64,
+    range_low: f64,
+    range_high: f64,
 }
 
 impl SliderDemo {
@@ -29,6 +31,8 @@ impl SliderDemo {
             continuous: 0.4,
             stepped: 30.0,
             range: 0.0,
+            range_low: 34.0,
+            range_high: 56.0,
         }
     }
 }
@@ -110,6 +114,19 @@ fn build_inner(theme: &Theme, state: &SliderDemo) -> impl WidgetView<SliderDemo>
         )
     });
 
+    let range_mode = with_source!(theme, {
+        row(
+            theme,
+            range_slider(state.range_low, state.range_high, |s: &mut SliderDemo, lo, hi| {
+                s.range_low = lo;
+                s.range_high = hi;
+            })
+            .range(0.0, 100.0)
+            .render(theme),
+            format!("{:.0}..{:.0}", state.range_low, state.range_high),
+        )
+    });
+
     let disabled = with_source!(theme, {
         flex_row((
             sized_box(slider(0.3, |_: &mut SliderDemo, _| {}).disabled(true).render(theme))
@@ -127,9 +144,9 @@ fn build_inner(theme: &Theme, state: &SliderDemo) -> impl WidgetView<SliderDemo>
             .color(theme.palette.text)
             .render(theme),
         label(
-            "Draggable single-value range control. Value, range, and step are \
-             host-controlled — drive them from app state and apply the emitted \
-             value in the change callback.",
+            "Draggable value control with single-thumb and dual-thumb range \
+             modes. Value, range, and step are host-controlled — drive them \
+             from app state and apply the emitted value in the change callback.",
         )
         .color(theme.palette.text_muted)
         .multiline(true)
@@ -148,6 +165,8 @@ fn build_inner(theme: &Theme, state: &SliderDemo) -> impl WidgetView<SliderDemo>
             stepped,
             header("Custom range (-50 – 50)"),
             custom_range,
+            header("Range mode (dual thumb, 0 – 100)"),
+            range_mode,
             header("Disabled"),
             disabled,
         ))

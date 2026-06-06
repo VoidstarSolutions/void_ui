@@ -49,7 +49,7 @@ pub use separator::{Orientation, Separator, SeparatorStyle, separator};
 pub use sidebar::{
     SidebarItem, SidebarItemView, SidebarPanel, SidebarPanelView, sidebar_item, sidebar_panel,
 };
-pub use slider::{Slider, SliderView, slider};
+pub use slider::{RangeSlider, RangeSliderView, Slider, SliderView, range_slider, slider};
 pub use tooltip::{Tooltip, TooltipView, tooltip};
 
 /// One entry per component the gallery exposes.

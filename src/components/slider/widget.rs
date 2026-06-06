@@ -1,11 +1,16 @@
 //! Masonry widget owning the slider's paint and pointer/keyboard interaction.
 //!
-//! Paints a track, an active-range fill, and a draggable circular thumb
-//! directly from a [`Theme`] value. `value`, `min`, `max`, and `step` are
-//! host-controlled — the widget never mutates them itself, it only emits
+//! Paints a track, an active-range fill, and one or two draggable circular
+//! thumbs directly from a [`Theme`] value. `value`, `min`, `max`, and `step`
+//! are host-controlled — the widget never mutates them itself, it only emits
 //! [`SliderChanged`] for the host to apply via [`set_value`](Self::set_value).
 //!
-//! Emits [`SliderChanged`] continuously while the thumb is dragged, on
+//! In [`SliderValue::Range`] mode the widget tracks two independent thumbs
+//! (low/high) that cannot cross; whichever thumb is closer to a press or the
+//! most recently dragged/nudged thumb receives keyboard and accessibility
+//! adjustments.
+//!
+//! Emits [`SliderChanged`] continuously while a thumb is dragged, on
 //! click-to-jump within the track, on Left/Right/Up/Down/Home/End while
 //! focused, and on an accessibility `SetValue`/`Increment`/`Decrement`.
 
@@ -21,10 +26,10 @@ use masonry::kurbo::{Axis, Circle, Point, RoundedRect, Size, Stroke};
 use masonry::layout::{LenReq, Length};
 use masonry::peniko::Color;
 
-use super::SliderChanged;
+use super::{SliderChanged, SliderValue};
 use crate::Theme;
 
-/// Diameter of the draggable thumb circle, in logical pixels.
+/// Diameter of a draggable thumb circle, in logical pixels.
 const THUMB_DIAMETER: f64 = 14.0;
 /// Thickness of the track and fill bar.
 const TRACK_HEIGHT: f64 = 4.0;
@@ -32,34 +37,74 @@ const TRACK_HEIGHT: f64 = 4.0;
 const FOCUS_RING_WIDTH: f64 = 1.5;
 /// Gap between the thumb edge and the focus ring.
 const FOCUS_RING_OUTSET: f64 = 2.0;
-/// Clearance from the widget edge to the thumb's travel limits — keeps the
-/// thumb and its focus ring from being clipped at the ends of the track.
+/// Clearance from the widget edge to the thumbs' travel limits — keeps the
+/// thumbs and their focus rings from being clipped at the ends of the track.
 const EDGE_PAD: f64 = FOCUS_RING_OUTSET + FOCUS_RING_WIDTH;
 
-/// Interactive horizontal slider widget.
+/// Identifies which thumb a gesture or keyboard adjustment targets.
+///
+/// `Single` is the only variant in [`SliderValue::Single`] mode. `Low`/`High`
+/// only arise in [`SliderValue::Range`] mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Thumb {
+    Single,
+    Low,
+    High,
+}
+
+/// Interactive horizontal slider widget — single-thumb or dual-thumb range.
 ///
 /// `value`, `min`, `max`, and `step` mirror host state; the host drives them
 /// via the `set_*` associated functions in response to [`SliderChanged`].
 pub struct SliderWidget {
-    value: f64,
+    value: SliderValue,
     min: f64,
     max: f64,
     /// Snap increment. `0.0` (or negative) means continuous — no snapping.
     step: f64,
     disabled: bool,
     theme: Theme,
-    /// Tracks an in-progress primary-pointer drag gesture.
-    dragging: bool,
+    /// Thumb captured by an in-progress primary-pointer drag gesture.
+    dragging: Option<Thumb>,
     /// Last value emitted during the current gesture — deduplicates
     /// [`SliderChanged`] while the host's `value` round-trips back.
-    last_emitted: Option<f64>,
+    last_emitted: Option<SliderValue>,
+    /// The thumb most recently targeted by a gesture or key/access action —
+    /// keyboard nudges and accessibility actions apply to this thumb. Always
+    /// `Single` outside range mode.
+    focused_thumb: Thumb,
 }
 
 // --- MARK: BUILDERS
 impl SliderWidget {
-    /// Creates a new slider in the given state.
+    /// Creates a new single-thumb slider in the given state.
     #[must_use]
-    pub fn new(theme: &Theme, value: f64, min: f64, max: f64, step: f64, disabled: bool) -> Self {
+    pub fn new_single(theme: &Theme, value: f64, min: f64, max: f64, step: f64, disabled: bool) -> Self {
+        Self::new(theme, SliderValue::Single(value), min, max, step, disabled)
+    }
+
+    /// Creates a new dual-thumb range slider in the given state.
+    ///
+    /// `low` and `high` are clamped to `low <= high` by the host; the widget
+    /// trusts the values it's given.
+    #[must_use]
+    pub fn new_range(
+        theme: &Theme,
+        low: f64,
+        high: f64,
+        min: f64,
+        max: f64,
+        step: f64,
+        disabled: bool,
+    ) -> Self {
+        Self::new(theme, SliderValue::Range(low, high), min, max, step, disabled)
+    }
+
+    fn new(theme: &Theme, value: SliderValue, min: f64, max: f64, step: f64, disabled: bool) -> Self {
+        let focused_thumb = match value {
+            SliderValue::Single(_) => Thumb::Single,
+            SliderValue::Range(..) => Thumb::High,
+        };
         Self {
             value,
             min,
@@ -67,8 +112,9 @@ impl SliderWidget {
             step,
             disabled,
             theme: *theme,
-            dragging: false,
+            dragging: None,
             last_emitted: None,
+            focused_thumb,
         }
     }
 }
@@ -76,9 +122,19 @@ impl SliderWidget {
 // --- MARK: WIDGETMUT
 impl SliderWidget {
     /// Sets the current value. Requests a repaint and accessibility update on change.
-    pub fn set_value(this: &mut WidgetMut<'_, Self>, value: f64) {
-        if (this.widget.value - value).abs() > f64::EPSILON {
+    ///
+    /// Switching between [`SliderValue::Single`] and [`SliderValue::Range`]
+    /// is supported and resets the focused-thumb tracking accordingly.
+    pub fn set_value(this: &mut WidgetMut<'_, Self>, value: SliderValue) {
+        if this.widget.value != value {
+            let mode_changed = std::mem::discriminant(&this.widget.value) != std::mem::discriminant(&value);
             this.widget.value = value;
+            if mode_changed {
+                this.widget.focused_thumb = match value {
+                    SliderValue::Single(_) => Thumb::Single,
+                    SliderValue::Range(..) => Thumb::High,
+                };
+            }
             this.ctx.request_paint_only();
             this.ctx.request_accessibility_update();
         }
@@ -122,16 +178,6 @@ impl SliderWidget {
 
 // --- MARK: VALUE MATH
 impl SliderWidget {
-    /// Normalized thumb position in `[0.0, 1.0]`.
-    fn progress(&self) -> f64 {
-        let span = self.max - self.min;
-        if span <= 0.0 {
-            0.0
-        } else {
-            ((self.value - self.min) / span).clamp(0.0, 1.0)
-        }
-    }
-
     /// Snaps `raw` to the configured step (if any) and clamps to `[min, max]`.
     fn snap(&self, raw: f64) -> f64 {
         let snapped = if self.step > 0.0 {
@@ -152,7 +198,7 @@ impl SliderWidget {
         }
     }
 
-    /// Range of the thumb center's horizontal travel within `size`, as
+    /// Range of a thumb center's horizontal travel within `size`, as
     /// `(start_x, usable_width)`.
     fn travel(size: Size) -> (f64, f64) {
         let thumb_radius = THUMB_DIAMETER / 2.0;
@@ -161,18 +207,85 @@ impl SliderWidget {
         (start, end - start)
     }
 
-    /// Converts a local-space pointer position to a snapped value.
+    /// Horizontal center of the thumb representing value `v`.
+    fn thumb_x(&self, size: Size, v: f64) -> f64 {
+        let (start, usable) = Self::travel(size);
+        let span = self.max - self.min;
+        let t = if span > 0.0 {
+            ((v - self.min) / span).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        start + t * usable
+    }
+
+    /// Converts a local-space pointer position to a snapped value in `[min, max]`.
     fn value_from_position(&self, size: Size, pos: Point) -> f64 {
         let (start, usable) = Self::travel(size);
         let t = ((pos.x - start) / usable.max(1e-6)).clamp(0.0, 1.0);
         self.snap(self.min + t * (self.max - self.min))
     }
 
+    /// The current `(low, high)` in range mode, or `None` outside it.
+    fn range_bounds(&self) -> Option<(f64, f64)> {
+        match self.value {
+            SliderValue::Range(low, high) => Some((low, high)),
+            SliderValue::Single(_) => None,
+        }
+    }
+
+    /// Picks the thumb a press at local-space `pos` should drive: the nearer
+    /// of the two thumbs in range mode, or the only thumb otherwise.
+    fn thumb_at(&self, size: Size, pos: Point) -> Thumb {
+        match self.range_bounds() {
+            Some((low, high)) => {
+                let low_x = self.thumb_x(size, low);
+                let high_x = self.thumb_x(size, high);
+                if (pos.x - low_x).abs() <= (pos.x - high_x).abs() {
+                    Thumb::Low
+                } else {
+                    Thumb::High
+                }
+            }
+            None => Thumb::Single,
+        }
+    }
+
+    /// Computes the slider's new value when `thumb` is driven to raw value
+    /// `target` (already snapped to the step grid). Range-mode thumbs are
+    /// clamped against each other so they cannot cross.
+    fn value_for_thumb(&self, thumb: Thumb, target: f64) -> SliderValue {
+        match thumb {
+            Thumb::Single => SliderValue::Single(target),
+            Thumb::Low => {
+                let high = self.range_bounds().map_or(self.max, |(_, high)| high);
+                SliderValue::Range(target.min(high), high)
+            }
+            Thumb::High => {
+                let low = self.range_bounds().map_or(self.min, |(low, _)| low);
+                SliderValue::Range(low, target.max(low))
+            }
+        }
+    }
+
+    /// Applies `nudge` to `self.focused_thumb`'s current value and returns the result.
+    fn nudged_value(&self, delta: f64) -> SliderValue {
+        // `set_value` resets `focused_thumb` on mode changes, so `Low` only
+        // arises paired with `Range`; `Single`/`High` both read the value
+        // that the corresponding `SliderValue` variant carries as "the" value.
+        let current = match self.value {
+            SliderValue::Range(low, _) if self.focused_thumb == Thumb::Low => low,
+            SliderValue::Range(_, high) => high,
+            SliderValue::Single(v) => v,
+        };
+        self.value_for_thumb(self.focused_thumb, self.snap(current + delta))
+    }
+
     /// Emits [`SliderChanged`] if `new_value` differs from the last value
     /// emitted during this gesture (or from the host value, outside a gesture).
-    fn emit_if_changed(&mut self, ctx: &mut EventCtx<'_>, new_value: f64) {
+    fn emit_if_changed(&mut self, ctx: &mut EventCtx<'_>, new_value: SliderValue) {
         let baseline = self.last_emitted.unwrap_or(self.value);
-        if (new_value - baseline).abs() > f64::EPSILON {
+        if baseline != new_value {
             self.last_emitted = Some(new_value);
             ctx.submit_action::<<Self as Widget>::Action>(SliderChanged(new_value));
         }
@@ -187,11 +300,7 @@ impl SliderWidget {
         if self.disabled {
             return (p.surface_2, p.text_faint, p.text_faint);
         }
-        let thumb = if active || hovered {
-            p.teal_deep
-        } else {
-            p.teal
-        };
+        let thumb = if active || hovered { p.teal_deep } else { p.teal };
         (p.surface_2, p.teal, thumb)
     }
 }
@@ -218,25 +327,31 @@ impl Widget for SliderWidget {
             }) => {
                 ctx.request_focus();
                 ctx.capture_pointer();
-                self.dragging = true;
                 let local = ctx.local_position(state.position);
-                let new_value = self.value_from_position(size, local);
+                let thumb = self.thumb_at(size, local);
+                self.dragging = Some(thumb);
+                self.focused_thumb = thumb;
+                let target = self.value_from_position(size, local);
+                let new_value = self.value_for_thumb(thumb, target);
                 self.emit_if_changed(ctx, new_value);
                 ctx.request_paint_only();
             }
-            PointerEvent::Move(update) if self.dragging => {
-                let local = ctx.local_position(update.current.position);
-                let new_value = self.value_from_position(size, local);
-                self.emit_if_changed(ctx, new_value);
+            PointerEvent::Move(update) => {
+                if let Some(thumb) = self.dragging {
+                    let local = ctx.local_position(update.current.position);
+                    let target = self.value_from_position(size, local);
+                    let new_value = self.value_for_thumb(thumb, target);
+                    self.emit_if_changed(ctx, new_value);
+                }
             }
             PointerEvent::Up(PointerButtonEvent {
                 button: Some(PointerButton::Primary),
                 ..
             })
             | PointerEvent::Cancel(_)
-                if self.dragging =>
+                if self.dragging.is_some() =>
             {
-                self.dragging = false;
+                self.dragging = None;
                 self.last_emitted = None;
                 ctx.request_paint_only();
             }
@@ -261,18 +376,14 @@ impl Widget for SliderWidget {
         }
         let nudge = self.nudge();
         let new_value = match &event.key {
-            Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowDown) => {
-                Some(self.snap(self.value - nudge))
-            }
-            Key::Named(NamedKey::ArrowRight | NamedKey::ArrowUp) => {
-                Some(self.snap(self.value + nudge))
-            }
-            Key::Named(NamedKey::Home) => Some(self.min),
-            Key::Named(NamedKey::End) => Some(self.max),
+            Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowDown) => Some(self.nudged_value(-nudge)),
+            Key::Named(NamedKey::ArrowRight | NamedKey::ArrowUp) => Some(self.nudged_value(nudge)),
+            Key::Named(NamedKey::Home) => Some(self.value_for_thumb(self.focused_thumb, self.min)),
+            Key::Named(NamedKey::End) => Some(self.value_for_thumb(self.focused_thumb, self.max)),
             _ => None,
         };
         if let Some(new_value) = new_value
-            && (new_value - self.value).abs() > f64::EPSILON
+            && new_value != self.value
         {
             ctx.submit_action::<Self::Action>(SliderChanged(new_value));
         }
@@ -288,13 +399,15 @@ impl Widget for SliderWidget {
             return;
         }
         let new_value = match (event.action, &event.data) {
-            (accesskit::Action::SetValue, Some(ActionData::NumericValue(v))) => Some(self.snap(*v)),
-            (accesskit::Action::Increment, _) => Some(self.snap(self.value + self.nudge())),
-            (accesskit::Action::Decrement, _) => Some(self.snap(self.value - self.nudge())),
+            (accesskit::Action::SetValue, Some(ActionData::NumericValue(v))) => {
+                Some(self.value_for_thumb(self.focused_thumb, self.snap(*v)))
+            }
+            (accesskit::Action::Increment, _) => Some(self.nudged_value(self.nudge())),
+            (accesskit::Action::Decrement, _) => Some(self.nudged_value(-self.nudge())),
             _ => None,
         };
         if let Some(new_value) = new_value
-            && (new_value - self.value).abs() > f64::EPSILON
+            && new_value != self.value
         {
             ctx.submit_action::<Self::Action>(SliderChanged(new_value));
         }
@@ -349,40 +462,55 @@ impl Widget for SliderWidget {
         let p = &self.theme.palette;
 
         let (start, usable) = Self::travel(size);
-        let thumb_x = start + self.progress() * usable;
         let center_y = size.height * 0.5;
         let thumb_radius = THUMB_DIAMETER / 2.0;
+        let half_track = TRACK_HEIGHT * 0.5;
 
         let (track_color, fill_color, thumb_color) = self.resolve_colors(hovered, active);
 
         let track_rect = RoundedRect::from_origin_size(
-            Point::new(start, center_y - TRACK_HEIGHT * 0.5),
+            Point::new(start, center_y - half_track),
             Size::new(usable, TRACK_HEIGHT),
-            TRACK_HEIGHT * 0.5,
+            half_track,
         );
         painter.fill(track_rect, track_color).draw();
 
-        let fill_width = thumb_x - start;
+        // Fill spans [min, value] in single mode, or [low, high] in range mode.
+        let (fill_start_x, fill_end_x, thumb_xs): (f64, f64, [Option<f64>; 2]) = match self.value {
+            SliderValue::Single(v) => {
+                let x = self.thumb_x(size, v);
+                (start, x, [Some(x), None])
+            }
+            SliderValue::Range(low, high) => {
+                let low_x = self.thumb_x(size, low);
+                let high_x = self.thumb_x(size, high);
+                (low_x, high_x, [Some(low_x), Some(high_x)])
+            }
+        };
+
+        let fill_width = fill_end_x - fill_start_x;
         if fill_width > 0.0 {
             let fill_rect = RoundedRect::from_origin_size(
-                Point::new(start, center_y - TRACK_HEIGHT * 0.5),
+                Point::new(fill_start_x, center_y - half_track),
                 Size::new(fill_width, TRACK_HEIGHT),
-                TRACK_HEIGHT * 0.5,
+                half_track,
             );
             painter.fill(fill_rect, fill_color).draw();
         }
 
-        let center = Point::new(thumb_x, center_y);
-        painter.fill(Circle::new(center, thumb_radius), thumb_color).draw();
+        for thumb_x in thumb_xs.into_iter().flatten() {
+            let center = Point::new(thumb_x, center_y);
+            painter.fill(Circle::new(center, thumb_radius), thumb_color).draw();
 
-        if focused && !self.disabled {
-            painter
-                .stroke(
-                    Circle::new(center, thumb_radius + FOCUS_RING_OUTSET),
-                    &Stroke::new(FOCUS_RING_WIDTH),
-                    p.teal,
-                )
-                .draw();
+            if focused && !self.disabled {
+                painter
+                    .stroke(
+                        Circle::new(center, thumb_radius + FOCUS_RING_OUTSET),
+                        &Stroke::new(FOCUS_RING_WIDTH),
+                        p.teal,
+                    )
+                    .draw();
+            }
         }
     }
 
@@ -396,7 +524,15 @@ impl Widget for SliderWidget {
             node.add_action(accesskit::Action::Increment);
             node.add_action(accesskit::Action::Decrement);
         }
-        node.set_numeric_value(self.value);
+        // Accessibility trees model a single numeric value; in range mode we
+        // report the focused thumb's bound, matching what keyboard/access
+        // adjustments operate on.
+        let reported = match (self.focused_thumb, self.value) {
+            (Thumb::Low, SliderValue::Range(low, _)) => low,
+            (_, SliderValue::Range(_, high)) => high,
+            (_, SliderValue::Single(v)) => v,
+        };
+        node.set_numeric_value(reported);
         node.set_min_numeric_value(self.min);
         node.set_max_numeric_value(self.max);
         if self.step > 0.0 {
