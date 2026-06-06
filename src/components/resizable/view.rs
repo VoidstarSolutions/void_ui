@@ -1,0 +1,223 @@
+//! Xilem view wrapper for the resizable split panel.
+//!
+//! ```ignore
+//! h_resizable(
+//!     left_content,
+//!     right_content,
+//!     |s: &mut State, ratio: f32| s.split_ratio = ratio,
+//! )
+//! .ratio(state.split_ratio)
+//! .render(&theme)
+//! ```
+
+use std::marker::PhantomData;
+
+use masonry::core::FromDynWidget;
+use masonry::kurbo::Axis;
+use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
+use xilem::{Pod, ViewCtx, WidgetView};
+
+use super::widget::{MIN_PANEL_SIZE, ResizeHandleDragged, ResizableWidget};
+use crate::Theme;
+
+// --- MARK: BUILDER
+
+/// Builder for a two-pane resizable split.
+///
+/// Created with [`h_resizable`] or [`v_resizable`]; returns a xilem
+/// `WidgetView` via [`Self::render`].
+#[must_use = "Resizable does nothing until rendered with .render(&theme)"]
+pub struct Resizable<V1, V2, F> {
+    first: V1,
+    second: V2,
+    on_resize: F,
+    axis: Axis,
+    ratio: f32,
+    min_size: f64,
+}
+
+/// Create a horizontal (left | right) split. `ratio` defaults to `0.5`.
+pub fn h_resizable<V1, V2, F>(first: V1, second: V2, on_resize: F) -> Resizable<V1, V2, F> {
+    Resizable {
+        first,
+        second,
+        on_resize,
+        axis: Axis::Horizontal,
+        ratio: 0.5,
+        min_size: MIN_PANEL_SIZE,
+    }
+}
+
+/// Create a vertical (top / bottom) split. `ratio` defaults to `0.5`.
+pub fn v_resizable<V1, V2, F>(first: V1, second: V2, on_resize: F) -> Resizable<V1, V2, F> {
+    Resizable {
+        first,
+        second,
+        on_resize,
+        axis: Axis::Vertical,
+        ratio: 0.5,
+        min_size: MIN_PANEL_SIZE,
+    }
+}
+
+impl<V1, V2, F> Resizable<V1, V2, F> {
+    /// Set the initial first-panel fraction (0.0–1.0). Defaults to `0.5`.
+    pub fn ratio(mut self, ratio: f32) -> Self {
+        self.ratio = ratio;
+        self
+    }
+
+    /// Override the minimum panel size in pixels. Defaults to [`MIN_PANEL_SIZE`].
+    pub fn min_size(mut self, min_size: f64) -> Self {
+        self.min_size = min_size;
+        self
+    }
+
+    /// Materialize the xilem view at the supplied theme.
+    pub fn render<State, Action>(self, theme: &Theme) -> ResizableView<V1, V2, F, State, Action>
+    where
+        State: 'static,
+        Action: 'static,
+        V1: WidgetView<State, Action>,
+        V2: WidgetView<State, Action>,
+        F: Fn(&mut State, f32) -> Action + Send + Sync + 'static,
+    {
+        ResizableView {
+            first: self.first,
+            second: self.second,
+            on_resize: self.on_resize,
+            axis: self.axis,
+            ratio: self.ratio,
+            min_size: self.min_size,
+            theme: *theme,
+            phantom: PhantomData,
+        }
+    }
+}
+
+// --- MARK: VIEW
+
+/// The materialized [`View`] backing a [`Resizable`].
+///
+/// Built only through [`Resizable::render`]; not constructed directly.
+#[must_use = "View values do nothing unless provided to Xilem."]
+pub struct ResizableView<V1, V2, F, State, Action> {
+    first: V1,
+    second: V2,
+    on_resize: F,
+    axis: Axis,
+    ratio: f32,
+    min_size: f64,
+    theme: Theme,
+    phantom: PhantomData<fn(State) -> Action>,
+}
+
+impl<V1, V2, F, State, Action> ViewMarker for ResizableView<V1, V2, F, State, Action> {}
+
+impl<V1, V2, F, State, Action> View<State, Action, ViewCtx>
+    for ResizableView<V1, V2, F, State, Action>
+where
+    V1: WidgetView<State, Action>,
+    V1::Widget: FromDynWidget + Sized,
+    V2: WidgetView<State, Action>,
+    V2::Widget: FromDynWidget + Sized,
+    State: 'static,
+    Action: 'static,
+    F: Fn(&mut State, f32) -> Action + Send + Sync + 'static,
+{
+    type Element = Pod<ResizableWidget<V1::Widget, V2::Widget>>;
+    type ViewState = (V1::ViewState, V2::ViewState);
+
+    fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
+        let (first_pod, first_state) = self.first.build(ctx, app_state);
+        let (second_pod, second_state) = self.second.build(ctx, app_state);
+        let widget = ResizableWidget::new(
+            first_pod.new_widget,
+            second_pod.new_widget,
+            self.axis,
+            self.ratio,
+            self.min_size,
+            &self.theme,
+        );
+        let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
+        (element, (first_state, second_state))
+    }
+
+    fn rebuild(
+        &self,
+        prev: &Self,
+        view_state: &mut Self::ViewState,
+        ctx: &mut ViewCtx,
+        mut element: Mut<'_, Self::Element>,
+        app_state: &mut State,
+    ) {
+        if self.theme != prev.theme {
+            ResizableWidget::set_theme(&mut element, &self.theme);
+        }
+        if (self.ratio - prev.ratio).abs() > 1e-5 {
+            ResizableWidget::set_ratio(&mut element, self.ratio);
+        }
+        if (self.min_size - prev.min_size).abs() > 1e-5 {
+            ResizableWidget::set_min_size(&mut element, self.min_size);
+        }
+        {
+            let mut first = ResizableWidget::first_mut(&mut element);
+            self.first
+                .rebuild(&prev.first, &mut view_state.0, ctx, first.downcast(), app_state);
+        }
+        {
+            let mut second = ResizableWidget::second_mut(&mut element);
+            self.second
+                .rebuild(&prev.second, &mut view_state.1, ctx, second.downcast(), app_state);
+        }
+    }
+
+    fn teardown(
+        &self,
+        view_state: &mut Self::ViewState,
+        ctx: &mut ViewCtx,
+        mut element: Mut<'_, Self::Element>,
+    ) {
+        {
+            let mut first = ResizableWidget::first_mut(&mut element);
+            self.first.teardown(&mut view_state.0, ctx, first.downcast());
+        }
+        {
+            let mut second = ResizableWidget::second_mut(&mut element);
+            self.second
+                .teardown(&mut view_state.1, ctx, second.downcast());
+        }
+        ctx.teardown_action_source(element);
+    }
+
+    fn message(
+        &self,
+        view_state: &mut Self::ViewState,
+        message: &mut MessageCtx,
+        mut element: Mut<'_, Self::Element>,
+        app_state: &mut State,
+    ) -> MessageResult<Action> {
+        if message.remaining_path().is_empty() {
+            if let Some(msg) = message.take_message::<ResizeHandleDragged>() {
+                return MessageResult::Action((self.on_resize)(app_state, msg.0));
+            }
+            return MessageResult::Stale;
+        }
+        // Route to whichever child the path points at. Each child view checks
+        // the path against its element ID and returns Stale on mismatch.
+        {
+            let mut first = ResizableWidget::first_mut(&mut element);
+            let result =
+                self.first
+                    .message(&mut view_state.0, message, first.downcast(), app_state);
+            if !matches!(result, MessageResult::Stale) {
+                return result;
+            }
+        }
+        {
+            let mut second = ResizableWidget::second_mut(&mut element);
+            self.second
+                .message(&mut view_state.1, message, second.downcast(), app_state)
+        }
+    }
+}
