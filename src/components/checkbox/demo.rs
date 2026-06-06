@@ -13,6 +13,7 @@ use super::checkbox;
 use crate::Theme;
 use crate::components::ScrollBarVisibility;
 use crate::scroll_container;
+use crate::separator;
 use crate::with_source;
 
 #[derive(Debug, Clone, Default)]
@@ -125,6 +126,7 @@ fn build_inner(theme: &Theme, state: &CheckboxDemo) -> impl WidgetView<CheckboxD
     scroll_container(
         flex_col((
             title_block,
+            separator().render(theme),
             header("Box only"),
             bare,
             header("With label"),

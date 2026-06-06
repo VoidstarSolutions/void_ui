@@ -12,6 +12,7 @@ use crate::Theme;
 use crate::components::ScrollBarVisibility;
 use crate::components::button;
 use crate::scroll_container;
+use crate::separator;
 use crate::with_source;
 
 /// Renders the Tooltip demo panel.
@@ -86,6 +87,7 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     scroll_container(
         flex_col((
             title_block,
+            separator().render(theme),
             header("Default — 300 ms hover-idle, dismiss on pointer activity"),
             default_example,
             header("Custom delay — .delay_ms(0) or .delay_ms(1500)"),

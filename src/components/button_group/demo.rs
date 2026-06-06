@@ -18,7 +18,7 @@ use crate::components::ButtonVariant;
 use crate::components::scroll_container::ScrollBarVisibility;
 use crate::label as ui_label;
 use crate::with_source;
-use crate::{Theme, scroll_container};
+use crate::{Theme, scroll_container, separator};
 
 /// Renders the Button Group demo panel.
 #[must_use]
@@ -100,6 +100,7 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     scroll_container(
         flex_col((
             title_block,
+            separator().render(theme),
             header("Horizontal group"),
             horizontal_example,
             header("Vertical group"),

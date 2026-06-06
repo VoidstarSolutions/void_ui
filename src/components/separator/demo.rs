@@ -10,18 +10,16 @@ use crate::components::ScrollBarVisibility;
 use crate::with_source;
 use crate::{Theme, label, scroll_container};
 
-/// Renders the Separator demo panel.
-#[must_use]
-pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
-    let section_header = |text: &'static str| {
-        label(text)
-            .text_size(theme.typography.size_caption)
-            .letter_spacing(1.2)
-            .color(theme.palette.text_faint)
-            .render(theme)
-    };
+fn section_header<S: 'static>(text: &'static str, theme: &Theme) -> impl WidgetView<S> + use<S> {
+    label(text)
+        .text_size(theme.typography.size_caption)
+        .letter_spacing(1.2)
+        .color(theme.palette.text_faint)
+        .render(theme)
+}
 
-    let horizontal_solid = with_source!(theme, {
+fn horizontal_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
+    with_source!(theme, {
         flex_col((
             label("Content above").render(theme),
             separator().render(theme),
@@ -29,9 +27,11 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
         ))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .gap(Length::px(8.0))
-    });
+    })
+}
 
-    let horizontal_dashed = with_source!(theme, {
+fn horizontal_dashed_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
+    with_source!(theme, {
         flex_col((
             label("Content above").render(theme),
             separator().dashed().render(theme),
@@ -39,9 +39,11 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
         ))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .gap(Length::px(8.0))
-    });
+    })
+}
 
-    let color_override = with_source!(theme, {
+fn color_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
+    with_source!(theme, {
         flex_col((
             separator().color(theme.palette.teal).render(theme),
             separator().color(theme.palette.coral).render(theme),
@@ -49,9 +51,11 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
         ))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .gap(Length::px(8.0))
-    });
+    })
+}
 
-    let labeled = with_source!(theme, {
+fn labeled_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
+    with_source!(theme, {
         flex_col((
             separator().label("Section A").render(theme),
             label("Some content").render(theme),
@@ -59,9 +63,11 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
         ))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .gap(Length::px(8.0))
-    });
+    })
+}
 
-    let vertical = with_source!(theme, {
+fn vertical_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
+    with_source!(theme, {
         sized_box(
             flex_row((
                 label("A").render(theme),
@@ -74,9 +80,11 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
             .gap(Length::px(8.0)),
         )
         .height(Length::px(40.0))
-    });
+    })
+}
 
-    let vertical_labeled = with_source!(theme, {
+fn vertical_labeled_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
+    with_source!(theme, {
         sized_box(
             flex_row((
                 label("A").render(theme),
@@ -93,24 +101,45 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
             .gap(Length::px(8.0)),
         )
         .height(Length::px(40.0))
-    });
+    })
+}
+
+/// Renders the Separator demo panel.
+#[must_use]
+pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
+    let title_block = flex_col((
+        label("Separator")
+            .text_size(theme.typography.size_title)
+            .color(theme.palette.text)
+            .render(theme),
+        label(
+            "Themed divider line — horizontal or vertical, solid or dashed, with optional label.",
+        )
+        .color(theme.palette.text_muted)
+        .multiline(true)
+        .render(theme),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Stretch)
+    .gap(Length::px(4.0));
 
     scroll_container(
         flex_col((
-            section_header("Horizontal — solid (default)"),
-            horizontal_solid,
-            section_header("Horizontal — dashed"),
-            horizontal_dashed,
-            section_header("Color override"),
-            color_override,
-            section_header("With label"),
-            labeled,
-            section_header("Vertical"),
-            vertical,
-            section_header("Vertical, colorful, labeled"),
-            vertical_labeled,
+            title_block,
+            separator().render(theme),
+            section_header("Horizontal — solid (default)", theme),
+            horizontal_section(theme),
+            section_header("Horizontal — dashed", theme),
+            horizontal_dashed_section(theme),
+            section_header("Color override", theme),
+            color_section(theme),
+            section_header("With label", theme),
+            labeled_section(theme),
+            section_header("Vertical", theme),
+            vertical_section(theme),
+            section_header("Vertical, labeled", theme),
+            vertical_labeled_section(theme),
         ))
-        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .gap(Length::px(16.0)),
     )
     .scroll_bar_visibility(ScrollBarVisibility::OnActivity)
