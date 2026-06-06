@@ -15,6 +15,7 @@
 pub mod button;
 pub mod button_group;
 pub mod checkbox;
+pub mod collapsible;
 pub(crate) mod click;
 pub mod clipboard;
 pub mod code_view;
@@ -30,6 +31,7 @@ pub mod tooltip;
 pub use button::{Button, ButtonVariant, ButtonView, button};
 pub use button_group::{ButtonGroup, button_group, toggle_button_group};
 pub use checkbox::{Checkbox, CheckboxView, checkbox};
+pub use collapsible::{Collapsible, CollapsibleView, collapsible};
 pub use clipboard::{Clipboard, ClipboardView, clipboard};
 pub use code_view::{ReadOnlyText, ReadOnlyTextView, RustHighlighter, read_only_text};
 pub use data_grid::{
@@ -62,6 +64,7 @@ pub enum ComponentKind {
     Checkbox,
     Clipboard,
     CodeView,
+    Collapsible,
     DataGrid,
     Icon,
     Label,
@@ -83,6 +86,7 @@ impl ComponentKind {
             Self::Checkbox => "Checkbox",
             Self::Clipboard => "Clipboard",
             Self::CodeView => "Code View",
+            Self::Collapsible => "Collapsible",
             Self::DataGrid => "Data Grid",
             Self::Icon => "Icon",
             Self::Label => "Label",
@@ -104,6 +108,7 @@ impl ComponentKind {
             Self::Checkbox,
             Self::Clipboard,
             Self::CodeView,
+            Self::Collapsible,
             Self::Label,
             Self::Radio,
             Self::DataGrid,
