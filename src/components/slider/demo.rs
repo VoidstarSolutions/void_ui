@@ -131,22 +131,12 @@ fn title_block(theme: &Theme) -> impl WidgetView<SliderDemo> + use<> {
 
 fn disabled_demo(theme: &Theme) -> impl WidgetView<SliderDemo> + use<> {
     with_source!(theme, {
-        flex_row((
-            sized_box(
-                slider(0.3, |_: &mut SliderDemo, _| {})
-                    .disabled(true)
-                    .render(theme),
-            )
-            .fixed_width(Length::px(280.0)),
-            sized_box(
-                slider(0.7, |_: &mut SliderDemo, _| {})
-                    .disabled(true)
-                    .render(theme),
-            )
-            .fixed_width(Length::px(280.0)),
-        ))
-        .cross_axis_alignment(CrossAxisAlignment::Center)
-        .gap(Length::px(24.0))
+        sized_box(
+            slider(0.3, |_: &mut SliderDemo, _| {})
+                .disabled(true)
+                .render(theme),
+        )
+        .fixed_width(Length::px(280.0))
     })
 }
 
@@ -261,6 +251,7 @@ fn build_inner(theme: &Theme, state: &SliderDemo) -> impl WidgetView<SliderDemo>
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(16.0)),
     )
+    .constrain_horizontal(true)
     .scroll_bar_visibility(ScrollBarVisibility::OnActivity)
     .render(theme)
 }
