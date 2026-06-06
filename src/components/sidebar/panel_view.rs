@@ -103,7 +103,8 @@ where
     type ViewState = V::ViewState;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        let (child_pod, child_state) = ctx.with_id(ViewId::new(0), |ctx| self.child.build(ctx, app_state));
+        let (child_pod, child_state) =
+            ctx.with_id(ViewId::new(0), |ctx| self.child.build(ctx, app_state));
         let panel = ThemedSidebarPanel::new(child_pod.new_widget, &self.theme, self.collapsed);
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(panel));
         (element, child_state)

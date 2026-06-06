@@ -21,7 +21,7 @@
 
 #[cfg(feature = "gallery")]
 pub mod demo;
-pub mod widget;
 mod view;
+pub mod widget;
 
 pub use view::{Collapsible, CollapsibleView, collapsible};

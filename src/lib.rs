@@ -28,6 +28,7 @@ pub mod layout;
 pub mod pointer_inert;
 pub mod theme;
 
+pub use animated_clip::AnimatedClip;
 pub use components::{
     Button, ButtonGroup, ButtonVariant, ButtonView, CellAlign, ColumnDef, ColumnWidths, DataGrid,
     FilterState, Icon, IconName, Label, LabelAlignment, MIN_COLUMN_WIDTH, Orientation,
@@ -38,7 +39,6 @@ pub use components::{
     read_only_text, scroll_container, separator, sidebar_item, sidebar_panel, text_column,
     toggle_button_group, tooltip,
 };
-pub use animated_clip::AnimatedClip;
 pub use floating::{FloatingOverlay, FloatingOverlayView, floating, interactive_floating};
 #[cfg(feature = "gallery")]
 pub use gallery::code_block;

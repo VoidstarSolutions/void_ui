@@ -52,7 +52,9 @@ fn make_chevron(open: bool, theme: &Theme) -> NewWidget<Label> {
     } else {
         IconName::ChevronRight
     };
-    icon(name).color(theme.palette.text_muted).build_widget(theme)
+    icon(name)
+        .color(theme.palette.text_muted)
+        .build_widget(theme)
 }
 
 fn make_title(text: ArcStr, theme: &Theme) -> NewWidget<Label> {
@@ -249,12 +251,7 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
     ) {
     }
 
-    fn update(
-        &mut self,
-        ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &Update,
-    ) {
+    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         if let Update::HoveredChanged(false) = event
             && self.header_hovered
         {
@@ -299,8 +296,13 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
             cross_length,
         );
         // Body drives width; header adapts to allocated width.
-        let body_length =
-            ctx.compute_length(&mut self.body, len_req.into(), context_size, axis, cross_length);
+        let body_length = ctx.compute_length(
+            &mut self.body,
+            len_req.into(),
+            context_size,
+            axis,
+            cross_length,
+        );
 
         if axis == Axis::Vertical {
             Length::px(self.header_height() + body_length.get())

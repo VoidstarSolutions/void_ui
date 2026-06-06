@@ -143,8 +143,13 @@ impl<W: Widget + ?Sized> Widget for AnimatedClip<W> {
         cross_length: Option<Length>,
     ) -> Length {
         let context_size = LayoutSize::maybe(axis.cross(), cross_length);
-        let child_length =
-            ctx.compute_length(&mut self.child, len_req.into(), context_size, axis, cross_length);
+        let child_length = ctx.compute_length(
+            &mut self.child,
+            len_req.into(),
+            context_size,
+            axis,
+            cross_length,
+        );
         if axis == self.axis {
             let natural = child_length.get();
             if natural > 0.0 {

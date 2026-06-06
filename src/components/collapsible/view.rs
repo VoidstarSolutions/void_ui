@@ -61,10 +61,7 @@ impl<V, F> Collapsible<V, F> {
     }
 
     /// Materialize the xilem view at the supplied theme.
-    pub fn render<State, Action>(
-        self,
-        theme: &Theme,
-    ) -> CollapsibleView<V, F, State, Action>
+    pub fn render<State, Action>(self, theme: &Theme) -> CollapsibleView<V, F, State, Action>
     where
         State: 'static,
         Action: 'static,
@@ -109,7 +106,8 @@ where
     type ViewState = V::ViewState;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        let (child_pod, child_state) = ctx.with_id(ViewId::new(0), |ctx| self.child.build(ctx, app_state));
+        let (child_pod, child_state) =
+            ctx.with_id(ViewId::new(0), |ctx| self.child.build(ctx, app_state));
         let widget = CollapsibleWidget::new(
             self.title.clone(),
             child_pod.new_widget,

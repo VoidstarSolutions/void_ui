@@ -13,10 +13,10 @@ use crate::animated_clip::AnimatedClip;
 use crate::components::icon::IconName;
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
-    AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx,
-    NewWidget, PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut,
-    PropertiesRef, RegisterCtx, StyleProperty, TextEvent, Update, UpdateCtx, Widget, WidgetId,
-    WidgetMut, WidgetPod,
+    AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
+    PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef,
+    RegisterCtx, StyleProperty, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
+    WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, Size};
@@ -98,9 +98,7 @@ impl<W: Widget + ?Sized> ThemedSidebarPanel<W> {
 
 // --- MARK: WIDGETMUT
 impl<W: Widget + ?Sized> ThemedSidebarPanel<W> {
-    pub fn content_mut<'t>(
-        this: &'t mut WidgetMut<'_, Self>,
-    ) -> WidgetMut<'t, AnimatedClip<W>> {
+    pub fn content_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, AnimatedClip<W>> {
         this.ctx.get_mut(&mut this.widget.content)
     }
 }
