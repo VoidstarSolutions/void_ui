@@ -7,9 +7,9 @@ use xilem::view::{CrossAxisAlignment, flex_col, flex_row};
 
 use super::{IconName, icon};
 use crate::components::ScrollBarVisibility;
-use crate::label;
 use crate::with_source;
 use crate::{Theme, scroll_container};
+use crate::{label, separator};
 
 /// Renders the Icon demo panel.
 ///
@@ -75,9 +75,23 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(16.0))
     });
+    let title_block = flex_col((
+        label("Icon")
+            .text_size(theme.typography.size_title)
+            .color(theme.palette.text)
+            .render(theme),
+        label("Named icons from the Lucide set, with color and size overrides.")
+            .color(theme.palette.text_muted)
+            .multiline(true)
+            .render(theme),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Start)
+    .gap(Length::px(4.0));
 
     scroll_container(
         flex_col((
+            title_block,
+            separator().render(theme),
             header("Named icons — Lucide 1.17.0, all at default size and color"),
             named_example,
             header("Color override — .color(palette.*)"),
