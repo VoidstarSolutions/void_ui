@@ -4,12 +4,12 @@ use masonry::layout::Length;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::widgets::Passthrough;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, flex_col, flex_row, label};
+use xilem::view::{CrossAxisAlignment, flex_col, flex_row};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::clipboard;
 use crate::components::ScrollBarVisibility;
-use crate::label as ui_label;
+use crate::label;
 use crate::with_source;
 use crate::{Theme, scroll_container, separator};
 
@@ -47,12 +47,14 @@ fn build_inner(
             .text_size(theme.typography.size_caption)
             .letter_spacing(1.2)
             .color(theme.palette.text_faint)
+            .render(theme)
     };
 
     let row = |value: &'static str| {
         let value_label = label(value)
             .text_size(theme.typography.size_body)
-            .color(theme.palette.text_muted);
+            .color(theme.palette.text_muted)
+            .render(theme);
 
         let btn = clipboard(value, |s: &mut ClipboardDemoState, text: &str| {
             s.last_copied = Some(text.to_owned());
@@ -82,14 +84,15 @@ fn build_inner(
         label(msg)
             .text_size(theme.typography.size_caption)
             .color(theme.palette.text_muted)
+            .render(theme)
     };
 
     let title_block = flex_col((
-        ui_label("Clipboard")
+        label("Clipboard")
             .text_size(theme.typography.size_title)
             .color(theme.palette.text)
             .render(theme),
-        ui_label("Icon button that copies a value to the system clipboard and shows a brief checkmark on success.")
+        label("Icon button that copies a value to the system clipboard and shows a brief checkmark on success.")
             .color(theme.palette.text_muted)
             .multiline(true)
             .render(theme),

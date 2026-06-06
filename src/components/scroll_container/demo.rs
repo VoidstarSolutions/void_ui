@@ -5,15 +5,13 @@ use xilem::AnyWidgetView;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::layout::Length;
 use xilem::style::Style as _;
-use xilem::view::{
-    AnyFlexChild, CrossAxisAlignment, FlexExt as _, flex_col, flex_row, label, sized_box,
-};
+use xilem::view::{AnyFlexChild, CrossAxisAlignment, FlexExt as _, flex_col, flex_row, sized_box};
 use xilem::{Pod, ViewCtx, WidgetView};
 
 use super::{ScrollBarVisibility, scroll_container};
 use crate::Theme;
 use crate::components::radio::radio;
-use crate::label as ui_label;
+use crate::label;
 use crate::separator;
 use crate::with_source;
 
@@ -31,6 +29,7 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
             .text_size(theme.typography.size_caption)
             .letter_spacing(1.2)
             .color(theme.palette.text_faint)
+            .render(theme)
     };
 
     let both_axes = with_source!(theme, {
@@ -50,11 +49,11 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     });
 
     let title_block = flex_col((
-        ui_label("Scroll Container")
+        label("Scroll Container")
             .text_size(theme.typography.size_title)
             .color(theme.palette.text)
             .render(theme),
-        ui_label("A scrollable region that clips its child and shows a scroll bar on overflow.")
+        label("A scrollable region that clips its child and shows a scroll bar on overflow.")
             .color(theme.palette.text_muted)
             .multiline(true)
             .render(theme),
@@ -98,7 +97,8 @@ fn content_grid<S: 'static>(theme: &Theme, cols: u32, rows: u32) -> impl WidgetV
                     sized_box(
                         label(format!("{r},{c}"))
                             .text_size(caption)
-                            .color(text_muted),
+                            .color(text_muted)
+                            .render(theme),
                     )
                     .fixed_width(Length::px(cell_w))
                     .fixed_height(Length::px(cell_h))

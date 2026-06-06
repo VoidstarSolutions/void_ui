@@ -10,13 +10,13 @@ use masonry::widgets::Passthrough;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewId, ViewMarker, ViewPathTracker};
 use xilem::masonry::layout::Length;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, flex_col, flex_row, label};
+use xilem::view::{CrossAxisAlignment, flex_col, flex_row};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::{button_group, toggle_button_group};
 use crate::components::ButtonVariant;
 use crate::components::scroll_container::ScrollBarVisibility;
-use crate::label as ui_label;
+use crate::label;
 use crate::with_source;
 use crate::{Theme, scroll_container, separator};
 
@@ -28,6 +28,7 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
             .text_size(theme.typography.size_caption)
             .letter_spacing(1.2)
             .color(theme.palette.text_faint)
+            .render(theme)
     };
 
     let horizontal_example = with_source!(theme, {
@@ -85,11 +86,11 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     let toggle_vertical_example = ToggleGroupDemo::vertical(*theme, 3);
 
     let title_block = flex_col((
-        ui_label("Button Group")
+        label("Button Group")
             .text_size(theme.typography.size_title)
             .color(theme.palette.text)
             .render(theme),
-        ui_label("A row or column of related buttons that share a visual grouping. Supports toggle selection.")
+        label("A row or column of related buttons that share a visual grouping. Supports toggle selection.")
             .color(theme.palette.text_muted)
             .multiline(true)
             .render(theme),
