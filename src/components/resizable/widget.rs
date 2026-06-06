@@ -355,7 +355,7 @@ impl<A: Widget + ?Sized, B: Widget + ?Sized> Widget for ResizableWidget<A, B> {
     }
 
     fn propagates_pointer_interaction(&self) -> bool {
-        false
+        true
     }
 
     fn accepts_focus(&self) -> bool {
