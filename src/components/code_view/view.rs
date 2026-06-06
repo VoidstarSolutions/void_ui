@@ -102,11 +102,10 @@ impl ReadOnlyText {
         State: 'static,
     {
         let copy_button = self.copyable.then(|| {
-            // Vertically centered on the block, fixed inset from the right
-            // edge matching the code chrome's inner padding.
+            // Top-right corner, inset matching the code chrome's inner padding.
             sized_box(clipboard(self.text.clone(), |_: &mut State, _: &str| {}).render(theme))
                 .padding(Length::px(f64::from(theme.density.pad)))
-                .alignment(UnitPoint::RIGHT)
+                .alignment(UnitPoint::TOP_RIGHT)
         });
         let code = ReadOnlyTextView {
             text: self.text,
