@@ -11,7 +11,7 @@ use super::{LabelAlignment, label};
 use crate::components::ScrollBarVisibility;
 use crate::components::checkbox::checkbox;
 use crate::with_source;
-use crate::{Theme, scroll_container};
+use crate::{Theme, scroll_container, separator};
 
 struct LabelDemoState {
     masked: bool,
@@ -160,6 +160,7 @@ fn build_inner(theme: &Theme, state: &LabelDemoState) -> impl WidgetView<LabelDe
     scroll_container(
         flex_col((
             title_block,
+            separator().render(theme),
             section_header("Sizes", theme),
             sizes_section(theme),
             section_header("Colors", theme),

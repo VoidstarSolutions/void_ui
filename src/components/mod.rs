@@ -23,6 +23,7 @@ pub mod icon;
 pub mod label;
 pub mod radio;
 pub mod scroll_container;
+pub mod separator;
 pub mod sidebar;
 pub mod tooltip;
 
@@ -41,6 +42,7 @@ pub use label::{Label, LabelAlignment, label};
 pub use scroll_container::{
     ScrollBarVisibility, ScrollContainer, ScrollContainerView, scroll_container,
 };
+pub use separator::{Orientation, Separator, SeparatorStyle, separator};
 pub use sidebar::{
     SidebarItem, SidebarItemView, SidebarPanel, SidebarPanelView, sidebar_item, sidebar_panel,
 };
@@ -66,6 +68,7 @@ pub enum ComponentKind {
     StockQuotes,
     Radio,
     ScrollContainer,
+    Separator,
     Sidebar,
     Tooltip,
 }
@@ -86,6 +89,7 @@ impl ComponentKind {
             Self::StockQuotes => "Stock Quotes",
             Self::Radio => "Radio",
             Self::ScrollContainer => "Scroll Container",
+            Self::Separator => "Separator",
             Self::Sidebar => "Sidebar",
             Self::Tooltip => "Tooltip",
         }
@@ -106,6 +110,7 @@ impl ComponentKind {
             Self::Icon,
             Self::StockQuotes,
             Self::ScrollContainer,
+            Self::Separator,
             Self::Sidebar,
             Self::Tooltip,
         ]

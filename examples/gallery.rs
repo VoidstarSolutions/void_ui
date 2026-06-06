@@ -265,6 +265,11 @@ fn sidebar_items(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State
         })
         .active(focused == ComponentKind::ScrollContainer)
         .render(theme),
+        sidebar_item("Separator", |s: &mut State| {
+            s.focused = ComponentKind::Separator;
+        })
+        .active(focused == ComponentKind::Separator)
+        .render(theme),
         sidebar_item("Sidebar", |s: &mut State| {
             s.focused = ComponentKind::Sidebar;
         })
@@ -301,6 +306,7 @@ fn main_pane(
         ComponentKind::ScrollContainer => {
             Box::new(void_ui::components::scroll_container::demo::panel(theme))
         }
+        ComponentKind::Separator => Box::new(void_ui::components::separator::demo::panel(theme)),
         ComponentKind::Sidebar => Box::new(void_ui::components::sidebar::demo::panel(theme)),
         ComponentKind::CodeView => Box::new(void_ui::components::code_view::demo::panel(theme)),
         ComponentKind::Tooltip => Box::new(void_ui::components::tooltip::demo::panel(theme)),

@@ -18,7 +18,7 @@ use super::button;
 use crate::components::checkbox::checkbox;
 use crate::components::{ButtonVariant, IconName, ScrollBarVisibility};
 use crate::with_source;
-use crate::{Theme, scroll_container};
+use crate::{Theme, scroll_container, separator};
 
 struct ButtonDemoState {
     disabled: bool,
@@ -252,6 +252,7 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
     scroll_container(
         flex_col((
             title_block,
+            separator().render(theme),
             controls_row(theme, state),
             variants_section,
             icons_section(theme, state.disabled),

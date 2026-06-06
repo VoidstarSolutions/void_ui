@@ -20,6 +20,7 @@ use crate::Theme;
 use crate::components::ScrollBarVisibility;
 use crate::components::radio::radio;
 use crate::scroll_container;
+use crate::separator;
 use crate::with_source;
 
 // ---------------------------------------------------------------------------
@@ -73,6 +74,7 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     scroll_container(
         flex_col((
             title_block,
+            separator().render(theme),
             header("Standalone"),
             standalone_example,
             header("Disabled"),

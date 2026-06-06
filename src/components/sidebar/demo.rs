@@ -12,6 +12,7 @@ use crate::Theme;
 use crate::components::ScrollBarVisibility;
 use crate::label;
 use crate::scroll_container;
+use crate::separator;
 use crate::with_source;
 
 // --- MARK: LOCAL STATE
@@ -123,6 +124,7 @@ fn build_inner(theme: &Theme, state: &SidebarDemo) -> impl WidgetView<SidebarDem
     scroll_container(
         flex_col((
             title_block,
+            separator().render(theme),
             header("Active — teal accent bar on the selected nav item"),
             active_example,
             header("Default — hover shows fill, label muted when inactive"),

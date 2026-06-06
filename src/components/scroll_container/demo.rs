@@ -14,6 +14,7 @@ use super::{ScrollBarVisibility, scroll_container};
 use crate::Theme;
 use crate::components::radio::radio;
 use crate::label as ui_label;
+use crate::separator;
 use crate::with_source;
 
 // --- Static scroll demos ------------------------------------------------
@@ -65,6 +66,7 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
         scroll_container(
             flex_col((
                 title_block,
+                separator().render(theme),
                 header("Both axes — 12 × 8 grid in a 320 × 200 viewport"),
                 both_axes,
                 header("Vertical only — constrain_horizontal(true)"),
