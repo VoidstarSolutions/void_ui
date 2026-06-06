@@ -10,9 +10,10 @@ use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 use super::collapsible;
 use crate::Theme;
 use crate::components::ScrollBarVisibility;
-use crate::components::checkbox::{checkbox};
+use crate::components::checkbox::checkbox;
 use crate::label;
 use crate::scroll_container;
+use crate::separator;
 use crate::with_source;
 
 // --- MARK: LOCAL STATE
@@ -64,9 +65,11 @@ fn static_examples(
     let open_example = with_source!(theme, {
         collapsible(
             "Open section",
-            flex_col((label("This body is visible.").color(theme.palette.text_muted).render(theme),))
-                .cross_axis_alignment(CrossAxisAlignment::Start)
-                .gap(Length::px(8.0)),
+            flex_col((label("This body is visible.")
+                .color(theme.palette.text_muted)
+                .render(theme),))
+            .cross_axis_alignment(CrossAxisAlignment::Start)
+            .gap(Length::px(8.0)),
             |_: &mut CollapsibleDemo| {},
         )
         .open(true)
@@ -76,9 +79,11 @@ fn static_examples(
     let closed_example = with_source!(theme, {
         collapsible(
             "Closed section",
-            flex_col((label("This body is hidden.").color(theme.palette.text_muted).render(theme),))
-                .cross_axis_alignment(CrossAxisAlignment::Start)
-                .gap(Length::px(8.0)),
+            flex_col((label("This body is hidden.")
+                .color(theme.palette.text_muted)
+                .render(theme),))
+            .cross_axis_alignment(CrossAxisAlignment::Start)
+            .gap(Length::px(8.0)),
             |_: &mut CollapsibleDemo| {},
         )
         .open(false)
@@ -143,11 +148,9 @@ fn interactive_examples(
             "Outer section",
             flex_col((collapsible(
                 "Inner section",
-                flex_col((
-                    label("Nested body content.")
-                        .color(theme.palette.text_muted)
-                        .render(theme),
-                ))
+                flex_col((label("Nested body content.")
+                    .color(theme.palette.text_muted)
+                    .render(theme),))
                 .cross_axis_alignment(CrossAxisAlignment::Start),
                 |s: &mut CollapsibleDemo| s.third_open = !s.third_open,
             )
@@ -191,6 +194,7 @@ fn build_inner(theme: &Theme, state: &CollapsibleDemo) -> impl WidgetView<Collap
     scroll_container(
         flex_col((
             title_block,
+            separator().render(theme),
             header("Open — body fully visible"),
             open_example,
             header("Closed — body hidden"),
