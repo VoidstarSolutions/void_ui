@@ -17,7 +17,7 @@ use masonry::kurbo::Axis;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewId, ViewMarker, ViewPathTracker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
-use super::widget::{MIN_PANEL_SIZE, ResizeHandleDragged, ResizableWidget};
+use super::widget::{MIN_PANEL_SIZE, ResizableWidget, ResizeHandleDragged};
 use crate::Theme;
 
 // --- MARK: BUILDER
@@ -129,8 +129,10 @@ where
     type ViewState = (V1::ViewState, V2::ViewState);
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        let (first_pod, first_state) = ctx.with_id(ViewId::new(0), |ctx| self.first.build(ctx, app_state));
-        let (second_pod, second_state) = ctx.with_id(ViewId::new(1), |ctx| self.second.build(ctx, app_state));
+        let (first_pod, first_state) =
+            ctx.with_id(ViewId::new(0), |ctx| self.first.build(ctx, app_state));
+        let (second_pod, second_state) =
+            ctx.with_id(ViewId::new(1), |ctx| self.second.build(ctx, app_state));
         let widget = ResizableWidget::new(
             first_pod.new_widget,
             second_pod.new_widget,
@@ -162,13 +164,23 @@ where
         }
         ctx.with_id(ViewId::new(0), |ctx| {
             let mut first = ResizableWidget::first_mut(&mut element);
-            self.first
-                .rebuild(&prev.first, &mut view_state.0, ctx, first.downcast(), app_state);
+            self.first.rebuild(
+                &prev.first,
+                &mut view_state.0,
+                ctx,
+                first.downcast(),
+                app_state,
+            );
         });
         ctx.with_id(ViewId::new(1), |ctx| {
             let mut second = ResizableWidget::second_mut(&mut element);
-            self.second
-                .rebuild(&prev.second, &mut view_state.1, ctx, second.downcast(), app_state);
+            self.second.rebuild(
+                &prev.second,
+                &mut view_state.1,
+                ctx,
+                second.downcast(),
+                app_state,
+            );
         });
     }
 
@@ -180,11 +192,13 @@ where
     ) {
         ctx.with_id(ViewId::new(0), |ctx| {
             let mut first = ResizableWidget::first_mut(&mut element);
-            self.first.teardown(&mut view_state.0, ctx, first.downcast());
+            self.first
+                .teardown(&mut view_state.0, ctx, first.downcast());
         });
         ctx.with_id(ViewId::new(1), |ctx| {
             let mut second = ResizableWidget::second_mut(&mut element);
-            self.second.teardown(&mut view_state.1, ctx, second.downcast());
+            self.second
+                .teardown(&mut view_state.1, ctx, second.downcast());
         });
         ctx.teardown_action_source(element);
     }
