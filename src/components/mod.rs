@@ -26,6 +26,7 @@ pub mod radio;
 pub mod scroll_container;
 pub mod separator;
 pub mod sidebar;
+pub mod slider;
 pub mod tooltip;
 
 pub use button::{Button, ButtonVariant, ButtonView, button};
@@ -48,6 +49,7 @@ pub use separator::{Orientation, Separator, SeparatorStyle, separator};
 pub use sidebar::{
     SidebarItem, SidebarItemView, SidebarPanel, SidebarPanelView, sidebar_item, sidebar_panel,
 };
+pub use slider::{Slider, SliderView, slider};
 pub use tooltip::{Tooltip, TooltipView, tooltip};
 
 /// One entry per component the gallery exposes.
@@ -73,6 +75,7 @@ pub enum ComponentKind {
     ScrollContainer,
     Separator,
     Sidebar,
+    Slider,
     Tooltip,
 }
 
@@ -95,6 +98,7 @@ impl ComponentKind {
             Self::ScrollContainer => "Scroll Container",
             Self::Separator => "Separator",
             Self::Sidebar => "Sidebar",
+            Self::Slider => "Slider",
             Self::Tooltip => "Tooltip",
         }
     }
@@ -117,6 +121,7 @@ impl ComponentKind {
             Self::ScrollContainer,
             Self::Separator,
             Self::Sidebar,
+            Self::Slider,
             Self::Tooltip,
         ]
     }

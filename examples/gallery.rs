@@ -282,6 +282,11 @@ fn sidebar_items(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State
             })
             .active(focused == ComponentKind::Sidebar)
             .render(theme),
+        sidebar_item("Slider", |s: &mut State| {
+            s.focused = ComponentKind::Slider;
+        })
+        .active(focused == ComponentKind::Slider)
+        .render(theme),
             sidebar_item("Tooltip", |s: &mut State| {
                 s.focused = ComponentKind::Tooltip;
             })
@@ -322,6 +327,7 @@ fn main_pane(
         }
         ComponentKind::Separator => Box::new(void_ui::components::separator::demo::panel(theme)),
         ComponentKind::Sidebar => Box::new(void_ui::components::sidebar::demo::panel(theme)),
+        ComponentKind::Slider => Box::new(void_ui::components::slider::demo::panel(theme)),
         ComponentKind::CodeView => Box::new(void_ui::components::code_view::demo::panel(theme)),
         ComponentKind::Tooltip => Box::new(void_ui::components::tooltip::demo::panel(theme)),
     }
