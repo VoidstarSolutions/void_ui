@@ -10,11 +10,11 @@ use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::{range_slider, slider};
-use crate::{LabelAlignment, Orientation, Theme};
 use crate::components::ScrollBarVisibility;
 use crate::scroll_container;
 use crate::separator;
 use crate::with_source;
+use crate::{LabelAlignment, Orientation, Theme};
 
 #[derive(Debug, Clone)]
 struct SliderDemo {
@@ -75,8 +75,12 @@ where
 {
     flex_row((
         sized_box(track).fixed_width(Length::px(280.0)),
-        sized_box(label(value_text).color(theme.palette.text_muted).render(theme))
-            .fixed_width(Length::px(56.0)),
+        sized_box(
+            label(value_text)
+                .color(theme.palette.text_muted)
+                .render(theme),
+        )
+        .fixed_width(Length::px(56.0)),
     ))
     .cross_axis_alignment(CrossAxisAlignment::Center)
     .gap(Length::px(12.0))
@@ -84,7 +88,11 @@ where
 
 /// Pairs a vertical slider with a value readout below it, both inside a
 /// fixed-height track so the slider's travel length stays constant.
-fn vertical_column<V>(theme: &Theme, track: V, value_text: String) -> impl WidgetView<SliderDemo> + use<V>
+fn vertical_column<V>(
+    theme: &Theme,
+    track: V,
+    value_text: String,
+) -> impl WidgetView<SliderDemo> + use<V>
 where
     V: WidgetView<SliderDemo> + 'static,
 {
@@ -124,13 +132,52 @@ fn title_block(theme: &Theme) -> impl WidgetView<SliderDemo> + use<> {
 fn disabled_demo(theme: &Theme) -> impl WidgetView<SliderDemo> + use<> {
     with_source!(theme, {
         flex_row((
-            sized_box(slider(0.3, |_: &mut SliderDemo, _| {}).disabled(true).render(theme))
-                .fixed_width(Length::px(280.0)),
-            sized_box(slider(0.7, |_: &mut SliderDemo, _| {}).disabled(true).render(theme))
-                .fixed_width(Length::px(280.0)),
+            sized_box(
+                slider(0.3, |_: &mut SliderDemo, _| {})
+                    .disabled(true)
+                    .render(theme),
+            )
+            .fixed_width(Length::px(280.0)),
+            sized_box(
+                slider(0.7, |_: &mut SliderDemo, _| {})
+                    .disabled(true)
+                    .render(theme),
+            )
+            .fixed_width(Length::px(280.0)),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(24.0))
+    })
+}
+
+fn vertical_demo(theme: &Theme, state: &SliderDemo) -> impl WidgetView<SliderDemo> + use<> {
+    with_source!(theme, {
+        flex_row((
+            vertical_column(
+                theme,
+                slider(state.vertical, |s: &mut SliderDemo, v| s.vertical = v)
+                    .orientation(Orientation::Vertical)
+                    .render(theme),
+                format!("{:.2}", state.vertical),
+            ),
+            vertical_column(
+                theme,
+                range_slider(
+                    state.vertical_low,
+                    state.vertical_high,
+                    |s: &mut SliderDemo, lo, hi| {
+                        s.vertical_low = lo;
+                        s.vertical_high = hi;
+                    },
+                )
+                .range(0.0, 100.0)
+                .orientation(Orientation::Vertical)
+                .render(theme),
+                format!("{:.0}..{:.0}", state.vertical_low, state.vertical_high),
+            ),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .gap(Length::px(48.0))
     })
 }
 
@@ -140,6 +187,7 @@ fn build_inner(theme: &Theme, state: &SliderDemo) -> impl WidgetView<SliderDemo>
             .text_size(theme.typography.size_caption)
             .letter_spacing(1.2)
             .color(theme.palette.text_faint)
+            .multiline(true)
             .render(theme)
     };
 
@@ -175,40 +223,21 @@ fn build_inner(theme: &Theme, state: &SliderDemo) -> impl WidgetView<SliderDemo>
     let range_mode = with_source!(theme, {
         row(
             theme,
-            range_slider(state.range_low, state.range_high, |s: &mut SliderDemo, lo, hi| {
-                s.range_low = lo;
-                s.range_high = hi;
-            })
+            range_slider(
+                state.range_low,
+                state.range_high,
+                |s: &mut SliderDemo, lo, hi| {
+                    s.range_low = lo;
+                    s.range_high = hi;
+                },
+            )
             .range(0.0, 100.0)
             .render(theme),
             format!("{:.0}..{:.0}", state.range_low, state.range_high),
         )
     });
 
-    let vertical = with_source!(theme, {
-        flex_row((
-            vertical_column(
-                theme,
-                slider(state.vertical, |s: &mut SliderDemo, v| s.vertical = v)
-                    .orientation(Orientation::Vertical)
-                    .render(theme),
-                format!("{:.2}", state.vertical),
-            ),
-            vertical_column(
-                theme,
-                range_slider(state.vertical_low, state.vertical_high, |s: &mut SliderDemo, lo, hi| {
-                    s.vertical_low = lo;
-                    s.vertical_high = hi;
-                })
-                .range(0.0, 100.0)
-                .orientation(Orientation::Vertical)
-                .render(theme),
-                format!("{:.0}..{:.0}", state.vertical_low, state.vertical_high),
-            ),
-        ))
-        .cross_axis_alignment(CrossAxisAlignment::Start)
-        .gap(Length::px(48.0))
-    });
+    let vertical = vertical_demo(theme, state);
 
     let disabled = disabled_demo(theme);
 
