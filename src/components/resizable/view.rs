@@ -14,7 +14,7 @@ use std::marker::PhantomData;
 
 use masonry::core::FromDynWidget;
 use masonry::kurbo::Axis;
-use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
+use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewId, ViewMarker, ViewPathTracker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
 use super::widget::{MIN_PANEL_SIZE, ResizeHandleDragged, ResizableWidget};
@@ -129,8 +129,8 @@ where
     type ViewState = (V1::ViewState, V2::ViewState);
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        let (first_pod, first_state) = self.first.build(ctx, app_state);
-        let (second_pod, second_state) = self.second.build(ctx, app_state);
+        let (first_pod, first_state) = ctx.with_id(ViewId::new(0), |ctx| self.first.build(ctx, app_state));
+        let (second_pod, second_state) = ctx.with_id(ViewId::new(1), |ctx| self.second.build(ctx, app_state));
         let widget = ResizableWidget::new(
             first_pod.new_widget,
             second_pod.new_widget,
@@ -160,16 +160,16 @@ where
         if (self.min_size - prev.min_size).abs() > 1e-5 {
             ResizableWidget::set_min_size(&mut element, self.min_size);
         }
-        {
+        ctx.with_id(ViewId::new(0), |ctx| {
             let mut first = ResizableWidget::first_mut(&mut element);
             self.first
                 .rebuild(&prev.first, &mut view_state.0, ctx, first.downcast(), app_state);
-        }
-        {
+        });
+        ctx.with_id(ViewId::new(1), |ctx| {
             let mut second = ResizableWidget::second_mut(&mut element);
             self.second
                 .rebuild(&prev.second, &mut view_state.1, ctx, second.downcast(), app_state);
-        }
+        });
     }
 
     fn teardown(
@@ -178,15 +178,14 @@ where
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
     ) {
-        {
+        ctx.with_id(ViewId::new(0), |ctx| {
             let mut first = ResizableWidget::first_mut(&mut element);
             self.first.teardown(&mut view_state.0, ctx, first.downcast());
-        }
-        {
+        });
+        ctx.with_id(ViewId::new(1), |ctx| {
             let mut second = ResizableWidget::second_mut(&mut element);
-            self.second
-                .teardown(&mut view_state.1, ctx, second.downcast());
-        }
+            self.second.teardown(&mut view_state.1, ctx, second.downcast());
+        });
         ctx.teardown_action_source(element);
     }
 
@@ -203,21 +202,19 @@ where
             }
             return MessageResult::Stale;
         }
-        // Route to whichever child the path points at. Each child view checks
-        // the path against its element ID and returns Stale on mismatch.
-        {
-            let mut first = ResizableWidget::first_mut(&mut element);
-            let result =
+        let id = message.take_first().expect("remaining_path was non-empty");
+        match id.routing_id() {
+            0 => {
+                let mut first = ResizableWidget::first_mut(&mut element);
                 self.first
-                    .message(&mut view_state.0, message, first.downcast(), app_state);
-            if !matches!(result, MessageResult::Stale) {
-                return result;
+                    .message(&mut view_state.0, message, first.downcast(), app_state)
             }
-        }
-        {
-            let mut second = ResizableWidget::second_mut(&mut element);
-            self.second
-                .message(&mut view_state.1, message, second.downcast(), app_state)
+            1 => {
+                let mut second = ResizableWidget::second_mut(&mut element);
+                self.second
+                    .message(&mut view_state.1, message, second.downcast(), app_state)
+            }
+            _ => MessageResult::Stale,
         }
     }
 }

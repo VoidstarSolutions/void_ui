@@ -11,10 +11,10 @@ use std::any::TypeId;
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
-    AccessCtx, AccessEvent, ChildrenIds, EventCtx, FromDynWidget, LayoutCtx, MeasureCtx,
-    NewWidget, PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut,
-    PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
-    WidgetPod,
+    AccessCtx, AccessEvent, ChildrenIds, CursorIcon, EventCtx, FromDynWidget, LayoutCtx,
+    MeasureCtx, NewWidget, PaintCtx, PointerButton, PointerButtonEvent, PointerEvent,
+    PropertiesMut, PropertiesRef, QueryCtx, RegisterCtx, TextEvent, Update, UpdateCtx, Widget,
+    WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, Size};
@@ -26,9 +26,9 @@ use crate::Theme;
 // --- MARK: CONSTANTS
 
 /// Thickness of the visual divider line.
-const HANDLE_THICKNESS: f64 = 1.0;
+const HANDLE_THICKNESS: f64 = 4.0;
 /// Half-width of the invisible grab region on each side of the handle center.
-const GRAB_HALF: f64 = 4.0;
+const GRAB_HALF: f64 = 8.0;
 /// Default minimum panel size in pixels; callers may override via [`ResizableWidget::set_min_size`].
 pub const MIN_PANEL_SIZE: f64 = 40.0;
 
@@ -208,6 +208,7 @@ impl<A: Widget + ?Sized, B: Widget + ?Sized> Widget for ResizableWidget<A, B> {
                 if self.in_handle(pos) {
                     self.dragging = true;
                     ctx.capture_pointer();
+                    ctx.set_handled();
                     ctx.request_paint_only();
                 }
             }
@@ -336,6 +337,18 @@ impl<A: Widget + ?Sized, B: Widget + ?Sized> Widget for ResizableWidget<A, B> {
             ),
         };
         painter.fill(rect, color).draw();
+    }
+
+    fn get_cursor(&self, ctx: &QueryCtx<'_>, pos: Point) -> CursorIcon {
+        let local = ctx.to_local(pos);
+        if self.in_handle(local) {
+            match self.axis {
+                Axis::Horizontal => CursorIcon::ColResize,
+                Axis::Vertical => CursorIcon::RowResize,
+            }
+        } else {
+            CursorIcon::Default
+        }
     }
 
     fn accessibility_role(&self) -> Role {
