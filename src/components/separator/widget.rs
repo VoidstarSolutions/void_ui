@@ -55,11 +55,23 @@ impl Widget for SeparatorWidget {
         &mut self,
         _ctx: &mut MeasureCtx<'_>,
         _props: &PropertiesRef<'_>,
-        _axis: Axis,
-        _len_req: LenReq,
+        axis: Axis,
+        len_req: LenReq,
         _cross_length: Option<Length>,
     ) -> Length {
-        Length::px(1.0)
+        let thin = match self.orientation {
+            Orientation::Horizontal => axis == Axis::Vertical,
+            Orientation::Vertical => axis == Axis::Horizontal,
+        };
+        if thin {
+            Length::px(1.0)
+        } else {
+            // Fill available space in the main axis.
+            match len_req {
+                LenReq::FitContent(available) => available,
+                _ => Length::px(0.0),
+            }
+        }
     }
 
     fn layout(&mut self, _ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, _size: Size) {}
