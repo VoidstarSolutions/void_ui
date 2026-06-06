@@ -117,6 +117,7 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(16.0)),
     )
+    .constrain_horizontal(true)
     .scroll_bar_visibility(ScrollBarVisibility::OnActivity)
     .render(theme)
 }
