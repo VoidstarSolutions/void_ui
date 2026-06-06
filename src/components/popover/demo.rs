@@ -176,13 +176,13 @@ impl<S: 'static> View<S, (), ViewCtx> for PopoverDemoPanel {
     type Element = Pod<Passthrough>;
 
     fn build(&self, ctx: &mut ViewCtx, _: &mut S) -> (Self::Element, Self::ViewState) {
-        let state = PopoverDemo::default();
+        let state = PopoverDemo;
         let inner_view: InnerView = Box::new(build_inner(&self.theme));
         let (element, inner_state) = inner_view.build(ctx, &mut { state });
         (
             element,
             PopoverDemoPanelState {
-                state: PopoverDemo::default(),
+                state: PopoverDemo,
                 inner_view,
                 inner_state,
             },
