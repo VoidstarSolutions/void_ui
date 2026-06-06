@@ -21,7 +21,7 @@
 use std::marker::PhantomData;
 
 use masonry::core::{ArcStr, FromDynWidget};
-use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
+use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewId, ViewMarker, ViewPathTracker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
 use super::widget::{CollapsibleTogglePressed, CollapsibleWidget};
@@ -109,7 +109,7 @@ where
     type ViewState = V::ViewState;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        let (child_pod, child_state) = self.child.build(ctx, app_state);
+        let (child_pod, child_state) = ctx.with_id(ViewId::new(0), |ctx| self.child.build(ctx, app_state));
         let widget = CollapsibleWidget::new(
             self.title.clone(),
             child_pod.new_widget,
@@ -137,12 +137,12 @@ where
         if self.open != prev.open {
             CollapsibleWidget::set_open(&mut element, self.open);
         }
-        {
+        ctx.with_id(ViewId::new(0), |ctx| {
             let mut body = CollapsibleWidget::body_mut(&mut element);
             let mut child = AnimatedClip::child_mut(&mut body);
             self.child
                 .rebuild(&prev.child, view_state, ctx, child.downcast(), app_state);
-        }
+        });
     }
 
     fn teardown(
@@ -151,11 +151,11 @@ where
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
     ) {
-        {
+        ctx.with_id(ViewId::new(0), |ctx| {
             let mut body = CollapsibleWidget::body_mut(&mut element);
             let mut child = AnimatedClip::child_mut(&mut body);
             self.child.teardown(view_state, ctx, child.downcast());
-        }
+        });
         ctx.teardown_action_source(element);
     }
 
@@ -170,6 +170,10 @@ where
             if message.take_message::<CollapsibleTogglePressed>().is_some() {
                 return MessageResult::Action((self.on_toggle)(app_state));
             }
+            return MessageResult::Stale;
+        }
+        let id = message.take_first().expect("remaining_path was non-empty");
+        if id.routing_id() != 0 {
             return MessageResult::Stale;
         }
         let mut body = CollapsibleWidget::body_mut(&mut element);

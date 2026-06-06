@@ -22,7 +22,7 @@
 use std::marker::PhantomData;
 
 use masonry::core::FromDynWidget;
-use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
+use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewId, ViewMarker, ViewPathTracker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
 use super::panel_widget::{SidebarTogglePressed, ThemedSidebarPanel};
@@ -103,7 +103,7 @@ where
     type ViewState = V::ViewState;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        let (child_pod, child_state) = self.child.build(ctx, app_state);
+        let (child_pod, child_state) = ctx.with_id(ViewId::new(0), |ctx| self.child.build(ctx, app_state));
         let panel = ThemedSidebarPanel::new(child_pod.new_widget, &self.theme, self.collapsed);
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(panel));
         (element, child_state)
@@ -123,12 +123,12 @@ where
         if self.collapsed != prev.collapsed {
             ThemedSidebarPanel::set_collapsed(&mut element, self.collapsed);
         }
-        {
+        ctx.with_id(ViewId::new(0), |ctx| {
             let mut content = ThemedSidebarPanel::content_mut(&mut element);
             let mut child = AnimatedClip::child_mut(&mut content);
             self.child
                 .rebuild(&prev.child, view_state, ctx, child.downcast(), app_state);
-        }
+        });
     }
 
     fn teardown(
@@ -137,11 +137,11 @@ where
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
     ) {
-        {
+        ctx.with_id(ViewId::new(0), |ctx| {
             let mut content = ThemedSidebarPanel::content_mut(&mut element);
             let mut child = AnimatedClip::child_mut(&mut content);
             self.child.teardown(view_state, ctx, child.downcast());
-        }
+        });
         ctx.teardown_action_source(element);
     }
 
@@ -160,6 +160,10 @@ where
             if message.take_message::<SidebarTogglePressed>().is_some() {
                 return MessageResult::Action((self.on_toggle)(app_state));
             }
+            return MessageResult::Stale;
+        }
+        let id = message.take_first().expect("remaining_path was non-empty");
+        if id.routing_id() != 0 {
             return MessageResult::Stale;
         }
         let mut content = ThemedSidebarPanel::content_mut(&mut element);
