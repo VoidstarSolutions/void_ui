@@ -18,8 +18,8 @@
 
 #[cfg(feature = "gallery")]
 pub mod demo;
-pub mod widget;
 mod view;
+pub mod widget;
 
 pub use view::{Resizable, ResizableView, h_resizable, v_resizable};
 pub use widget::MIN_PANEL_SIZE;

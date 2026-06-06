@@ -152,11 +152,11 @@ impl<A: Widget + ?Sized, B: Widget + ?Sized> ResizableWidget<A, B> {
     fn ratio_from_pos(&self, pos: f64) -> f32 {
         let usable = (self.total_extent - HANDLE_THICKNESS).max(1.0);
         let min = self.min_size.min(usable * 0.5);
-        let first = (pos - HANDLE_THICKNESS * 0.5)
-            .max(min)
-            .min(usable - min);
+        let first = (pos - HANDLE_THICKNESS * 0.5).max(min).min(usable - min);
         #[allow(clippy::cast_possible_truncation)]
-        { (first / usable) as f32 }
+        {
+            (first / usable) as f32
+        }
     }
 
     fn handle_color(&self) -> Color {
@@ -243,12 +243,7 @@ impl<A: Widget + ?Sized, B: Widget + ?Sized> Widget for ResizableWidget<A, B> {
     ) {
     }
 
-    fn update(
-        &mut self,
-        ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &Update,
-    ) {
+    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         if let Update::HoveredChanged(false) = event
             && self.handle_hovered
         {
@@ -273,10 +268,20 @@ impl<A: Widget + ?Sized, B: Widget + ?Sized> Widget for ResizableWidget<A, B> {
         cross_length: Option<Length>,
     ) -> Length {
         let context_size = LayoutSize::maybe(axis.cross(), cross_length);
-        let first_len =
-            ctx.compute_length(&mut self.first, len_req.into(), context_size, axis, cross_length);
-        let second_len =
-            ctx.compute_length(&mut self.second, len_req.into(), context_size, axis, cross_length);
+        let first_len = ctx.compute_length(
+            &mut self.first,
+            len_req.into(),
+            context_size,
+            axis,
+            cross_length,
+        );
+        let second_len = ctx.compute_length(
+            &mut self.second,
+            len_req.into(),
+            context_size,
+            axis,
+            cross_length,
+        );
         if axis == self.axis {
             Length::px(first_len.get() + HANDLE_THICKNESS + second_len.get())
         } else {
@@ -291,9 +296,7 @@ impl<A: Widget + ?Sized, B: Widget + ?Sized> Widget for ResizableWidget<A, B> {
         };
         let usable = (total - HANDLE_THICKNESS).max(0.0);
         let min = self.min_size.min(usable * 0.5);
-        let first_extent = (usable * f64::from(self.ratio))
-            .max(min)
-            .min(usable - min);
+        let first_extent = (usable * f64::from(self.ratio)).max(min).min(usable - min);
         let second_extent = usable - first_extent;
 
         self.total_extent = total;
@@ -305,13 +308,19 @@ impl<A: Widget + ?Sized, B: Widget + ?Sized> Widget for ResizableWidget<A, B> {
                 ctx.run_layout(&mut self.first, Size::new(first_extent, size.height));
                 ctx.place_child(&mut self.first, Point::ORIGIN);
                 ctx.run_layout(&mut self.second, Size::new(second_extent, size.height));
-                ctx.place_child(&mut self.second, Point::new(first_extent + HANDLE_THICKNESS, 0.0));
+                ctx.place_child(
+                    &mut self.second,
+                    Point::new(first_extent + HANDLE_THICKNESS, 0.0),
+                );
             }
             Axis::Vertical => {
                 ctx.run_layout(&mut self.first, Size::new(size.width, first_extent));
                 ctx.place_child(&mut self.first, Point::ORIGIN);
                 ctx.run_layout(&mut self.second, Size::new(size.width, second_extent));
-                ctx.place_child(&mut self.second, Point::new(0.0, first_extent + HANDLE_THICKNESS));
+                ctx.place_child(
+                    &mut self.second,
+                    Point::new(0.0, first_extent + HANDLE_THICKNESS),
+                );
             }
         }
     }
@@ -324,7 +333,11 @@ impl<A: Widget + ?Sized, B: Widget + ?Sized> Widget for ResizableWidget<A, B> {
     ) {
         let color = self.handle_color();
         // Widen slightly on hover/drag for easier targeting feedback.
-        let visual = if self.dragging || self.handle_hovered { 2.0 } else { HANDLE_THICKNESS };
+        let visual = if self.dragging || self.handle_hovered {
+            2.0
+        } else {
+            HANDLE_THICKNESS
+        };
         let offset = self.handle_center - visual * 0.5;
         let rect = match self.axis {
             Axis::Horizontal => Rect::from_origin_size(

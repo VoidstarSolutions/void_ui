@@ -56,7 +56,12 @@ pub struct ResizableDemoPanel {
 // `Passthrough`, which satisfies `Sized + FromDynWidget` as required by
 // `ResizableView`'s `View` impl bounds.
 
-fn pane(text: &'static str, bg: Color, text_color: Color, font_size: f32) -> Box<AnyWidgetView<ResizableDemo>> {
+fn pane(
+    text: &'static str,
+    bg: Color,
+    text_color: Color,
+    font_size: f32,
+) -> Box<AnyWidgetView<ResizableDemo>> {
     Box::new(
         sized_box(
             flex_col((xl_label(text).text_size(font_size).color(text_color),))
@@ -189,7 +194,13 @@ impl<S: 'static> View<S, (), ViewCtx> for ResizableDemoPanel {
         _: &mut S,
     ) {
         let new_inner: InnerView = Box::new(build_inner(&self.theme, &vs.demo));
-        new_inner.rebuild(&vs.inner_view, &mut vs.inner_state, ctx, element, &mut vs.demo);
+        new_inner.rebuild(
+            &vs.inner_view,
+            &mut vs.inner_state,
+            ctx,
+            element,
+            &mut vs.demo,
+        );
         vs.inner_view = new_inner;
     }
 
