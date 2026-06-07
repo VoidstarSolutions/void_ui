@@ -251,7 +251,8 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
         _props: &mut PropertiesMut<'_>,
         event: &TextEvent,
     ) {
-        if let TextEvent::Keyboard(event) = event
+        if ctx.is_focus_target()
+            && let TextEvent::Keyboard(event) = event
             && event.state.is_up()
             && (matches!(&event.key, Key::Character(c) if c == " ")
                 || event.key == Key::Named(NamedKey::Enter))
@@ -266,7 +267,7 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
         _props: &mut PropertiesMut<'_>,
         event: &AccessEvent,
     ) {
-        if event.action == accesskit::Action::Click {
+        if ctx.target() == ctx.widget_id() && event.action == accesskit::Action::Click {
             ctx.submit_action::<Self::Action>(CollapsibleTogglePressed);
         }
     }
