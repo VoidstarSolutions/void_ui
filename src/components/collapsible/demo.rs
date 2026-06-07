@@ -23,6 +23,7 @@ struct CollapsibleDemo {
     first_open: bool,
     second_open: bool,
     third_open: bool,
+    nested_outer_open: bool,
     check_a: bool,
     check_b: bool,
 }
@@ -33,6 +34,7 @@ impl CollapsibleDemo {
             first_open: true,
             second_open: false,
             third_open: true,
+            nested_outer_open: true,
             check_a: false,
             check_b: true,
         }
@@ -157,9 +159,9 @@ fn interactive_examples(
             .open(state.third_open)
             .render(theme),))
             .cross_axis_alignment(CrossAxisAlignment::Stretch),
-            |s: &mut CollapsibleDemo| s.first_open = !s.first_open,
+            |s: &mut CollapsibleDemo| s.nested_outer_open = !s.nested_outer_open,
         )
-        .open(state.first_open)
+        .open(state.nested_outer_open)
         .render(theme)
     });
 
