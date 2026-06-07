@@ -213,6 +213,16 @@ impl SliderWidget {
         if this.widget.disabled != disabled {
             this.widget.disabled = disabled;
             this.ctx.set_disabled(disabled);
+            // Disabling mid-drag: the `if self.disabled { return; }` guard in
+            // `on_pointer_event` swallows the synthetic `Cancel` masonry sends
+            // to release capture, so `dragging`/`last_emitted` would otherwise
+            // survive re-enabling — and a later hover-`Move` with no button
+            // held would then match `Move(_) if let Some(thumb) = self.dragging`
+            // and emit `SliderChanged` from mouse movement alone. Same hazard
+            // class `set_orientation` resets for; clear the gesture state here
+            // too rather than relying on a `Cancel` that won't arrive.
+            this.widget.dragging = None;
+            this.widget.last_emitted = None;
             this.ctx.request_paint_only();
         }
     }
