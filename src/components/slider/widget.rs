@@ -75,6 +75,13 @@ pub struct SliderWidget {
     /// keyboard nudges and accessibility actions apply to this thumb. Always
     /// `Single` outside range mode.
     focused_thumb: Thumb,
+    /// In range mode, whether `Tab`/`Shift+Tab` has already moved focus from
+    /// one thumb to the other during the current focus session. The first Tab
+    /// press while focused retargets `focused_thumb` and is consumed; the
+    /// second is left unhandled so focus leaves the widget — this is what
+    /// makes both thumbs reachable by keyboard regardless of which one focus
+    /// initially lands on. Reset whenever focus is gained or lost.
+    thumb_tab_visited: bool,
 }
 
 // --- MARK: BUILDERS
@@ -154,6 +161,7 @@ impl SliderWidget {
             dragging: None,
             last_emitted: None,
             focused_thumb,
+            thumb_tab_visited: false,
         }
     }
 }
@@ -645,10 +653,15 @@ impl Widget for SliderWidget {
         painter.fill(track_rect, track_color).draw();
 
         // Fill spans [min, value] in single mode, or [low, high] in range mode.
-        let (fill_lo, fill_hi, thumb_values): (f64, f64, [Option<f64>; 2]) = match self.value {
-            SliderValue::Single(v) => (self.min, v, [Some(v), None]),
-            SliderValue::Range(low, high) => (low, high, [Some(low), Some(high)]),
-        };
+        let (fill_lo, fill_hi, thumb_values): (f64, f64, [(Thumb, Option<f64>); 2]) =
+            match self.value {
+                SliderValue::Single(v) => (self.min, v, [(Thumb::Single, Some(v)), (Thumb::Single, None)]),
+                SliderValue::Range(low, high) => (
+                    low,
+                    high,
+                    [(Thumb::Low, Some(low)), (Thumb::High, Some(high))],
+                ),
+            };
 
         let fill_a = self.thumb_main_axis_pos(size, fill_lo);
         let fill_b = self.thumb_main_axis_pos(size, fill_hi);
@@ -659,13 +672,14 @@ impl Widget for SliderWidget {
             painter.fill(fill_rect, fill_color).draw();
         }
 
-        for value in thumb_values.into_iter().flatten() {
+        for (thumb, value) in thumb_values {
+            let Some(value) = value else { continue };
             let center = self.thumb_center(size, value);
             painter
                 .fill(Circle::new(center, thumb_radius), thumb_color)
                 .draw();
 
-            if focused && !self.disabled {
+            if focused && !self.disabled && self.focused_thumb == thumb {
                 paint_focus_ring(
                     painter,
                     Circle::new(center, thumb_radius + FOCUS_RING_OUTSET),
