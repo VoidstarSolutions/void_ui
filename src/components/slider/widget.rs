@@ -328,12 +328,37 @@ impl SliderWidget {
     fn thumb_at(&self, size: Size, pos: Point) -> Thumb {
         match self.range_bounds() {
             Some((low, high)) => {
-                let low_center = self.thumb_center(size, low);
-                let high_center = self.thumb_center(size, high);
-                if pos.distance(low_center) <= pos.distance(high_center) {
-                    Thumb::Low
+                if (low - high).abs() <= f64::EPSILON {
+                    // Collapsed range: both thumbs occupy the same spot, so
+                    // distance-to-center can't disambiguate (it always ties,
+                    // and a tie always favored Low — making High permanently
+                    // unreachable here). Break the tie by which side of the
+                    // shared thumb the pointer landed on: at-or-past it in the
+                    // increasing-value direction grabs High, short of it grabs
+                    // Low. This is the only way to pull a collapsed range
+                    // apart from the high end.
+                    let center = self.thumb_center(size, low);
+                    let (main_pos, center_main) = match self.orientation {
+                        Orientation::Horizontal => (pos.x, center.x),
+                        Orientation::Vertical => (pos.y, center.y),
+                    };
+                    let pointer_is_higher = match self.orientation {
+                        Orientation::Horizontal => main_pos >= center_main,
+                        Orientation::Vertical => main_pos <= center_main,
+                    };
+                    if pointer_is_higher {
+                        Thumb::High
+                    } else {
+                        Thumb::Low
+                    }
                 } else {
-                    Thumb::High
+                    let low_center = self.thumb_center(size, low);
+                    let high_center = self.thumb_center(size, high);
+                    if pos.distance(low_center) <= pos.distance(high_center) {
+                        Thumb::Low
+                    } else {
+                        Thumb::High
+                    }
                 }
             }
             None => Thumb::Single,
