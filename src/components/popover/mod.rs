@@ -46,7 +46,11 @@ impl PopoverAnchor {
     /// Compute the content's local-coordinate origin given the trigger's and
     /// content's measured sizes and this anchor.
     #[must_use]
-    pub(crate) fn child_offset(self, trigger: masonry::kurbo::Size, content: masonry::kurbo::Size) -> masonry::kurbo::Point {
+    pub(crate) fn child_offset(
+        self,
+        trigger: masonry::kurbo::Size,
+        content: masonry::kurbo::Size,
+    ) -> masonry::kurbo::Point {
         use masonry::kurbo::Point;
         match self {
             Self::BottomStart => Point::new(0.0, trigger.height),

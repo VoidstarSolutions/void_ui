@@ -102,7 +102,10 @@ impl MenuContent {
             let mut lbl = this.ctx.get_mut(label);
             lbl.insert_prop(ContentColor::new(theme.palette.text));
             let mut lbl = lbl.downcast::<Label>();
-            Label::insert_style(&mut lbl, StyleProperty::FontSize(theme.density.ui_font_size));
+            Label::insert_style(
+                &mut lbl,
+                StyleProperty::FontSize(theme.density.ui_font_size),
+            );
         }
         this.ctx.request_layout();
         this.ctx.request_paint_only();
@@ -265,11 +268,8 @@ impl Widget for MenuContent {
         // Background/border chrome — formerly drawn by the wrapping
         // `PopoverLayer` (`popover_layer.rs::paint`); `MenuContent` now paints
         // it directly since it's hosted in-tree, with no such wrapper.
-        let bg_rect = RoundedRect::from_origin_size(
-            Point::ORIGIN,
-            ctx.border_box_size(),
-            CORNER_RADIUS,
-        );
+        let bg_rect =
+            RoundedRect::from_origin_size(Point::ORIGIN, ctx.border_box_size(), CORNER_RADIUS);
         painter.fill(bg_rect, p.surface_hi).draw();
         painter
             .stroke(bg_rect, &Stroke::new(BORDER_WIDTH), p.border_strong)

@@ -277,12 +277,22 @@ where
             AnchoredOverlay::set_anchor(&mut element, self.anchor);
         }
         let mut primary = AnchoredOverlay::primary_mut(&mut element);
-        self.primary
-            .rebuild(&prev.primary, &mut view_state.0, ctx, primary.downcast(), app_state);
+        self.primary.rebuild(
+            &prev.primary,
+            &mut view_state.0,
+            ctx,
+            primary.downcast(),
+            app_state,
+        );
         drop(primary);
         let mut overlay = AnchoredOverlay::overlay_mut(&mut element);
-        self.overlay
-            .rebuild(&prev.overlay, &mut view_state.1, ctx, overlay.downcast(), app_state);
+        self.overlay.rebuild(
+            &prev.overlay,
+            &mut view_state.1,
+            ctx,
+            overlay.downcast(),
+            app_state,
+        );
     }
 
     fn teardown(
@@ -292,10 +302,12 @@ where
         mut element: Mut<'_, Self::Element>,
     ) {
         let mut primary = AnchoredOverlay::primary_mut(&mut element);
-        self.primary.teardown(&mut view_state.0, ctx, primary.downcast());
+        self.primary
+            .teardown(&mut view_state.0, ctx, primary.downcast());
         drop(primary);
         let mut overlay = AnchoredOverlay::overlay_mut(&mut element);
-        self.overlay.teardown(&mut view_state.1, ctx, overlay.downcast());
+        self.overlay
+            .teardown(&mut view_state.1, ctx, overlay.downcast());
     }
 
     fn message(
@@ -306,9 +318,9 @@ where
         app_state: &mut State,
     ) -> MessageResult<Action> {
         let mut primary = AnchoredOverlay::primary_mut(&mut element);
-        let result = self
-            .primary
-            .message(&mut view_state.0, message, primary.downcast(), app_state);
+        let result =
+            self.primary
+                .message(&mut view_state.0, message, primary.downcast(), app_state);
         drop(primary);
         match result {
             MessageResult::Nop => {

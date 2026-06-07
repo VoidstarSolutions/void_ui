@@ -115,8 +115,7 @@ impl ThemedDropdownButton {
             this.ctx.request_layout();
             this.ctx.request_paint_only();
 
-            let text_color =
-                Self::text_color_for(theme, this.widget.variant, this.widget.disabled);
+            let text_color = Self::text_color_for(theme, this.widget.variant, this.widget.disabled);
             {
                 let mut overlay_host = this.ctx.get_mut(&mut this.widget.overlay_host);
                 let mut lbl = AnchoredOverlay::primary_mut(&mut overlay_host);

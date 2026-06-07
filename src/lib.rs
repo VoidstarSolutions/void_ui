@@ -31,6 +31,7 @@ pub mod popover_layer;
 pub mod theme;
 
 pub use animated_clip::AnimatedClip;
+pub use anchored_overlay::{AnchoredOverlay, AnchoredOverlayView, anchored_overlay};
 pub use components::{
     Button, ButtonGroup, ButtonVariant, ButtonView, CellAlign, ColumnDef, ColumnWidths, DataGrid,
     FilterState, Icon, IconName, Label, LabelAlignment, MIN_COLUMN_WIDTH, MIN_PANEL_SIZE,
@@ -74,7 +75,6 @@ pub use components::{
     read_only_text, scroll_container, separator, sidebar_item, sidebar_panel, text_column,
     toggle_button_group, tooltip,
 };
-pub use anchored_overlay::{AnchoredOverlay, AnchoredOverlayView, anchored_overlay};
 pub use floating::{FloatingOverlay, FloatingOverlayView, floating, interactive_floating};
 #[cfg(feature = "gallery")]
 pub use gallery::code_block;
