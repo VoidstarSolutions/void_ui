@@ -7,6 +7,7 @@
 //! (right side) with theme/density controls plus a live reference of
 //! the current palette, text samples, and density numbers.
 
+use void_ui::components::ScrollBarVisibility::{AlwaysHidden, OnActivity};
 use xilem::masonry::layout::Length;
 use xilem::peniko::Color;
 use xilem::style::Style as _;
@@ -24,9 +25,9 @@ use void_ui::components::{
     ColumnId, ColumnWidths, ComponentKind, FilterState, SortState, button, data_grid, sidebar_item,
     sidebar_panel,
 };
-use void_ui::label;
 use void_ui::layout::flex_wrap;
 use void_ui::theme::{Density, Theme};
+use void_ui::{label, scroll_container};
 
 struct State {
     theme: Theme,
@@ -209,80 +210,84 @@ fn topbar(theme_panel_open: bool, theme: &Theme) -> impl WidgetView<State> + use
 }
 
 fn sidebar_items(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State> + use<> {
-    flex_col((
-        sidebar_item("Button", |s: &mut State| {
-            s.focused = ComponentKind::Button;
-        })
-        .active(focused == ComponentKind::Button)
-        .render(theme),
-        sidebar_item("Button Group", |s: &mut State| {
-            s.focused = ComponentKind::ButtonGroup;
-        })
-        .active(focused == ComponentKind::ButtonGroup)
-        .render(theme),
-        sidebar_item("Checkbox", |s: &mut State| {
-            s.focused = ComponentKind::Checkbox;
-        })
-        .active(focused == ComponentKind::Checkbox)
-        .render(theme),
-        sidebar_item("Clipboard", |s: &mut State| {
-            s.focused = ComponentKind::Clipboard;
-        })
-        .active(focused == ComponentKind::Clipboard)
-        .render(theme),
-        sidebar_item("Code View", |s: &mut State| {
-            s.focused = ComponentKind::CodeView;
-        })
-        .active(focused == ComponentKind::CodeView)
-        .render(theme),
-        sidebar_item("Data Grid", |s: &mut State| {
-            s.focused = ComponentKind::DataGrid;
-        })
-        .active(focused == ComponentKind::DataGrid)
-        .render(theme),
-        sidebar_item("Icon", |s: &mut State| {
-            s.focused = ComponentKind::Icon;
-        })
-        .active(focused == ComponentKind::Icon)
-        .render(theme),
-        sidebar_item("Label", |s: &mut State| {
-            s.focused = ComponentKind::Label;
-        })
-        .active(focused == ComponentKind::Label)
-        .render(theme),
-        sidebar_item("Stock Quotes", |s: &mut State| {
-            s.focused = ComponentKind::StockQuotes;
-        })
-        .active(focused == ComponentKind::StockQuotes)
-        .render(theme),
-        sidebar_item("Radio", |s: &mut State| {
-            s.focused = ComponentKind::Radio;
-        })
-        .active(focused == ComponentKind::Radio)
-        .render(theme),
-        sidebar_item("Scroll Container", |s: &mut State| {
-            s.focused = ComponentKind::ScrollContainer;
-        })
-        .active(focused == ComponentKind::ScrollContainer)
-        .render(theme),
-        sidebar_item("Separator", |s: &mut State| {
-            s.focused = ComponentKind::Separator;
-        })
-        .active(focused == ComponentKind::Separator)
-        .render(theme),
-        sidebar_item("Sidebar", |s: &mut State| {
-            s.focused = ComponentKind::Sidebar;
-        })
-        .active(focused == ComponentKind::Sidebar)
-        .render(theme),
-        sidebar_item("Tooltip", |s: &mut State| {
-            s.focused = ComponentKind::Tooltip;
-        })
-        .active(focused == ComponentKind::Tooltip)
-        .render(theme),
-    ))
-    .cross_axis_alignment(CrossAxisAlignment::Stretch)
-    .gap(Length::px(2.0))
+    scroll_container(
+        flex_col((
+            sidebar_item("Button", |s: &mut State| {
+                s.focused = ComponentKind::Button;
+            })
+            .active(focused == ComponentKind::Button)
+            .render(theme),
+            sidebar_item("Button Group", |s: &mut State| {
+                s.focused = ComponentKind::ButtonGroup;
+            })
+            .active(focused == ComponentKind::ButtonGroup)
+            .render(theme),
+            sidebar_item("Checkbox", |s: &mut State| {
+                s.focused = ComponentKind::Checkbox;
+            })
+            .active(focused == ComponentKind::Checkbox)
+            .render(theme),
+            sidebar_item("Clipboard", |s: &mut State| {
+                s.focused = ComponentKind::Clipboard;
+            })
+            .active(focused == ComponentKind::Clipboard)
+            .render(theme),
+            sidebar_item("Code View", |s: &mut State| {
+                s.focused = ComponentKind::CodeView;
+            })
+            .active(focused == ComponentKind::CodeView)
+            .render(theme),
+            sidebar_item("Data Grid", |s: &mut State| {
+                s.focused = ComponentKind::DataGrid;
+            })
+            .active(focused == ComponentKind::DataGrid)
+            .render(theme),
+            sidebar_item("Icon", |s: &mut State| {
+                s.focused = ComponentKind::Icon;
+            })
+            .active(focused == ComponentKind::Icon)
+            .render(theme),
+            sidebar_item("Label", |s: &mut State| {
+                s.focused = ComponentKind::Label;
+            })
+            .active(focused == ComponentKind::Label)
+            .render(theme),
+            sidebar_item("Stock Quotes", |s: &mut State| {
+                s.focused = ComponentKind::StockQuotes;
+            })
+            .active(focused == ComponentKind::StockQuotes)
+            .render(theme),
+            sidebar_item("Radio", |s: &mut State| {
+                s.focused = ComponentKind::Radio;
+            })
+            .active(focused == ComponentKind::Radio)
+            .render(theme),
+            sidebar_item("Scroll Container", |s: &mut State| {
+                s.focused = ComponentKind::ScrollContainer;
+            })
+            .active(focused == ComponentKind::ScrollContainer)
+            .render(theme),
+            sidebar_item("Separator", |s: &mut State| {
+                s.focused = ComponentKind::Separator;
+            })
+            .active(focused == ComponentKind::Separator)
+            .render(theme),
+            sidebar_item("Sidebar", |s: &mut State| {
+                s.focused = ComponentKind::Sidebar;
+            })
+            .active(focused == ComponentKind::Sidebar)
+            .render(theme),
+            sidebar_item("Tooltip", |s: &mut State| {
+                s.focused = ComponentKind::Tooltip;
+            })
+            .active(focused == ComponentKind::Tooltip)
+            .render(theme),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .gap(Length::px(2.0)),
+    )
+    .constrain_horizontal(true)
+    .render(theme)
 }
 
 fn main_pane(
