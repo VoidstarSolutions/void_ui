@@ -7,7 +7,8 @@
 //! The grab zone around the handle is wider than the visual line so small
 //! handles remain easy to hit. The handle also accepts focus: arrow keys
 //! (Left/Right for a horizontal split, Up/Down for a vertical one) nudge the
-//! divider in pixel-sized steps, same as a mouse drag.
+//! divider in pixel-sized steps, same as a mouse drag. Hold Shift for
+//! finer-grained nudging.
 
 use std::any::TypeId;
 
@@ -38,6 +39,9 @@ pub const MIN_PANEL_SIZE: f64 = 40.0;
 /// Pixel adjustment to the first panel's extent per arrow-key press, for
 /// keyboard nudging once the divider is focused.
 const ARROW_NUDGE_PX: f64 = 16.0;
+/// Pixel adjustment per arrow-key press while Shift is held, for finer-grained
+/// keyboard nudging.
+const ARROW_NUDGE_FINE_PX: f64 = 1.0;
 /// Width of the focus ring stroke drawn around the grab zone when focused.
 const FOCUS_RING_WIDTH: f64 = 1.5;
 
@@ -329,11 +333,16 @@ impl<A: Widget + ?Sized, B: Widget + ?Sized> Widget for ResizableWidget<A, B> {
         if !key_event.state.is_down() {
             return;
         }
+        let step = if key_event.modifiers.shift() {
+            ARROW_NUDGE_FINE_PX
+        } else {
+            ARROW_NUDGE_PX
+        };
         let delta = match (self.axis, &key_event.key) {
             (Axis::Horizontal, Key::Named(NamedKey::ArrowLeft))
-            | (Axis::Vertical, Key::Named(NamedKey::ArrowUp)) => -ARROW_NUDGE_PX,
+            | (Axis::Vertical, Key::Named(NamedKey::ArrowUp)) => -step,
             (Axis::Horizontal, Key::Named(NamedKey::ArrowRight))
-            | (Axis::Vertical, Key::Named(NamedKey::ArrowDown)) => ARROW_NUDGE_PX,
+            | (Axis::Vertical, Key::Named(NamedKey::ArrowDown)) => step,
             _ => return,
         };
 
