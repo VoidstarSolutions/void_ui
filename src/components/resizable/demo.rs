@@ -22,6 +22,11 @@ struct ResizableDemo {
     v_ratio: f32,
     nested_h: f32,
     nested_v: f32,
+    nested_three_outer: f32,
+    nested_three_inner: f32,
+    nested_three_v: f32,
+    constrained_ratio: f32,
+    constrained_second_ratio: f32,
 }
 
 impl ResizableDemo {
@@ -31,6 +36,11 @@ impl ResizableDemo {
             v_ratio: 0.4,
             nested_h: 0.5,
             nested_v: 0.5,
+            nested_three_outer: 0.3,
+            nested_three_inner: 0.5,
+            nested_three_v: 0.5,
+            constrained_ratio: 0.3,
+            constrained_second_ratio: 0.7,
         }
     }
 }
@@ -83,7 +93,7 @@ fn build_inner(theme: &Theme, state: &ResizableDemo) -> impl WidgetView<Resizabl
         sized_box(
             h_resizable(
                 pane("Left", p.surface, p.text_muted, caption),
-                pane("Right", p.surface_2, p.text_muted, caption),
+                pane("Right", p.surface, p.text_muted, caption),
                 |s: &mut ResizableDemo, ratio: f32| s.h_ratio = ratio,
             )
             .ratio(state.h_ratio)
@@ -96,7 +106,7 @@ fn build_inner(theme: &Theme, state: &ResizableDemo) -> impl WidgetView<Resizabl
         sized_box(
             v_resizable(
                 pane("Top", p.surface, p.text_muted, caption),
-                pane("Bottom", p.surface_2, p.text_muted, caption),
+                pane("Bottom", p.surface, p.text_muted, caption),
                 |s: &mut ResizableDemo, ratio: f32| s.v_ratio = ratio,
             )
             .ratio(state.v_ratio)
@@ -111,8 +121,8 @@ fn build_inner(theme: &Theme, state: &ResizableDemo) -> impl WidgetView<Resizabl
             h_resizable(
                 pane("Left", p.surface, p.text_muted, caption),
                 v_resizable(
-                    pane("Top right", p.surface_2, p.text_muted, caption),
-                    pane("Bottom right", p.bg_deep, p.text_faint, caption),
+                    pane("Top right", p.surface, p.text_muted, caption),
+                    pane("Bottom right", p.surface, p.text_faint, caption),
                     |s: &mut ResizableDemo, ratio: f32| s.nested_v = ratio,
                 )
                 .ratio(state.nested_v)
@@ -123,6 +133,66 @@ fn build_inner(theme: &Theme, state: &ResizableDemo) -> impl WidgetView<Resizabl
             .render(theme),
         )
         .fixed_height(Length::px(200.0))
+    });
+
+    // Nested: Three panes horizontally, with the middle pane split horizontally.
+    let nested_three_example = with_source!(theme, {
+        sized_box(
+            h_resizable(
+                pane("Left", p.surface, p.text_muted, caption),
+                h_resizable(
+                    v_resizable(
+                        pane("Middle top", p.surface, p.text_muted, caption),
+                        pane("Middle bottom", p.surface, p.text_faint, caption),
+                        |s: &mut ResizableDemo, ratio: f32| s.nested_three_v = ratio,
+                    )
+                    .ratio(state.nested_three_v)
+                    .render(theme),
+                    pane("Right", p.surface, p.text_faint, caption),
+                    |s: &mut ResizableDemo, ratio: f32| s.nested_three_inner = ratio,
+                )
+                .ratio(state.nested_three_inner)
+                .render(theme),
+                |s: &mut ResizableDemo, ratio: f32| s.nested_three_outer = ratio,
+            )
+            .ratio(state.nested_three_outer)
+            .render(theme),
+        )
+        .fixed_height(Length::px(200.0))
+    });
+
+    // Sidebar-style: the left pane is clamped to a 120–280px pixel range
+    // while the right pane takes whatever's left.
+    let constrained_example = with_source!(theme, {
+        sized_box(
+            h_resizable(
+                pane("Sidebar (120–280px)", p.surface, p.text_muted, caption),
+                pane("Content", p.surface, p.text_muted, caption),
+                |s: &mut ResizableDemo, ratio: f32| s.constrained_ratio = ratio,
+            )
+            .ratio(state.constrained_ratio)
+            .first_min_size(120.0)
+            .first_max_size(280.0)
+            .render(theme),
+        )
+        .fixed_height(Length::px(160.0))
+    });
+
+    // Right-sidebar-style: the constraint targets the second (right) pane
+    // this time, clamping it to a 120–280px pixel range.
+    let constrained_second_example = with_source!(theme, {
+        sized_box(
+            h_resizable(
+                pane("Content", p.surface, p.text_muted, caption),
+                pane("Sidebar (120–280px)", p.surface, p.text_muted, caption),
+                |s: &mut ResizableDemo, ratio: f32| s.constrained_second_ratio = ratio,
+            )
+            .ratio(state.constrained_second_ratio)
+            .second_min_size(120.0)
+            .second_max_size(280.0)
+            .render(theme),
+        )
+        .fixed_height(Length::px(160.0))
     });
 
     let header = |text: &'static str| {
@@ -156,6 +226,11 @@ fn build_inner(theme: &Theme, state: &ResizableDemo) -> impl WidgetView<Resizabl
             v_example,
             header("Nested splits"),
             nested_example,
+            nested_three_example,
+            header("Constrained — first pane clamped to a min/max pixel range"),
+            constrained_example,
+            header("Constrained — second pane clamped to a min/max pixel range"),
+            constrained_second_example,
         ))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .gap(Length::px(16.0)),

@@ -37,8 +37,9 @@ pub const MIN_PANEL_SIZE: f64 = 40.0;
 
 /// Action emitted on every pointer-move while the resize handle is dragged.
 ///
-/// Carries the updated first-panel fraction (clamped to keep both panels at
-/// least `min_size` pixels wide/tall).
+/// Carries the updated first-panel fraction, clamped so each panel's pixel
+/// size stays within its own optional min/max range and neither panel shrinks
+/// below the structural [`MIN_PANEL_SIZE`] floor.
 #[derive(Debug, Clone)]
 pub struct ResizeHandleDragged(pub f32);
 
@@ -55,8 +56,14 @@ pub struct ResizableWidget<A: Widget + ?Sized, B: Widget + ?Sized> {
     axis: Axis,
     /// First panel fraction of the usable extent (0.0–1.0).
     ratio: f32,
-    /// Minimum size for either panel in pixels.
-    min_size: f64,
+    /// Optional lower bound on the first panel's pixel size.
+    first_min_size: Option<f64>,
+    /// Optional upper bound on the first panel's pixel size.
+    first_max_size: Option<f64>,
+    /// Optional lower bound on the second panel's pixel size.
+    second_min_size: Option<f64>,
+    /// Optional upper bound on the second panel's pixel size.
+    second_max_size: Option<f64>,
     theme: Theme,
     handle_hovered: bool,
     dragging: bool,
@@ -72,12 +79,16 @@ pub struct ResizableWidget<A: Widget + ?Sized, B: Widget + ?Sized> {
 
 impl<A: Widget + ?Sized, B: Widget + ?Sized> ResizableWidget<A, B> {
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         first: NewWidget<A>,
         second: NewWidget<B>,
         axis: Axis,
         ratio: f32,
-        min_size: f64,
+        first_min_size: Option<f64>,
+        first_max_size: Option<f64>,
+        second_min_size: Option<f64>,
+        second_max_size: Option<f64>,
         theme: &Theme,
     ) -> Self {
         Self {
@@ -85,7 +96,10 @@ impl<A: Widget + ?Sized, B: Widget + ?Sized> ResizableWidget<A, B> {
             second: second.to_pod(),
             axis,
             ratio,
-            min_size,
+            first_min_size,
+            first_max_size,
+            second_min_size,
+            second_max_size,
             theme: *theme,
             handle_hovered: false,
             dragging: false,
@@ -127,9 +141,30 @@ impl<A: Widget + ?Sized, B: Widget + ?Sized> ResizableWidget<A, B> {
         }
     }
 
-    pub fn set_min_size(this: &mut WidgetMut<'_, Self>, min_size: f64) {
-        if (this.widget.min_size - min_size).abs() > 1e-5 {
-            this.widget.min_size = min_size;
+    pub fn set_first_min_size(this: &mut WidgetMut<'_, Self>, min_size: Option<f64>) {
+        if this.widget.first_min_size != min_size {
+            this.widget.first_min_size = min_size;
+            this.ctx.request_layout();
+        }
+    }
+
+    pub fn set_first_max_size(this: &mut WidgetMut<'_, Self>, max_size: Option<f64>) {
+        if this.widget.first_max_size != max_size {
+            this.widget.first_max_size = max_size;
+            this.ctx.request_layout();
+        }
+    }
+
+    pub fn set_second_min_size(this: &mut WidgetMut<'_, Self>, min_size: Option<f64>) {
+        if this.widget.second_min_size != min_size {
+            this.widget.second_min_size = min_size;
+            this.ctx.request_layout();
+        }
+    }
+
+    pub fn set_second_max_size(this: &mut WidgetMut<'_, Self>, max_size: Option<f64>) {
+        if this.widget.second_max_size != max_size {
+            this.widget.second_max_size = max_size;
             this.ctx.request_layout();
         }
     }
@@ -149,11 +184,42 @@ impl<A: Widget + ?Sized, B: Widget + ?Sized> ResizableWidget<A, B> {
         (self.pos_on_axis(pos) - self.handle_center).abs() <= GRAB_HALF
     }
 
+    /// Allowed `[lower, upper]` pixel range for the first panel's extent.
+    ///
+    /// Layers the optional, asymmetric per-panel `*_min_size`/`*_max_size`
+    /// constraints on top of the structural [`MIN_PANEL_SIZE`] floor, which
+    /// always applies to both panels so neither can be squeezed out of
+    /// existence. Constraints on the second panel's pixel size are translated
+    /// into bounds on the first panel's extent via `second_extent = usable -
+    /// first_extent`.
+    fn first_extent_bounds(&self, usable: f64) -> (f64, f64) {
+        let floor = MIN_PANEL_SIZE.min(usable * 0.5);
+        let mut lower = floor;
+        let mut upper = usable - floor;
+
+        if let Some(min) = self.first_min_size {
+            lower = lower.max(min);
+        }
+        if let Some(max) = self.first_max_size {
+            upper = upper.min(max);
+        }
+        if let Some(second_max) = self.second_max_size {
+            lower = lower.max(usable - second_max);
+        }
+        if let Some(second_min) = self.second_min_size {
+            upper = upper.min(usable - second_min);
+        }
+
+        let upper = upper.max(lower).min(usable);
+        let lower = lower.min(upper);
+        (lower, upper)
+    }
+
     /// Map a cursor position to a clamped first-panel ratio.
     fn ratio_from_pos(&self, pos: f64) -> f32 {
         let usable = (self.total_extent - HANDLE_THICKNESS).max(1.0);
-        let min = self.min_size.min(usable * 0.5);
-        let first = (pos - HANDLE_THICKNESS * 0.5).max(min).min(usable - min);
+        let (lower, upper) = self.first_extent_bounds(usable);
+        let first = (pos - HANDLE_THICKNESS * 0.5).max(lower).min(upper);
         #[allow(clippy::cast_possible_truncation)]
         {
             (first / usable) as f32
@@ -296,8 +362,8 @@ impl<A: Widget + ?Sized, B: Widget + ?Sized> Widget for ResizableWidget<A, B> {
             Axis::Vertical => (size.height, size.width),
         };
         let usable = (total - HANDLE_THICKNESS).max(0.0);
-        let min = self.min_size.min(usable * 0.5);
-        let first_extent = (usable * f64::from(self.ratio)).max(min).min(usable - min);
+        let (lower, upper) = self.first_extent_bounds(usable);
+        let first_extent = (usable * f64::from(self.ratio)).max(lower).min(upper);
         let second_extent = usable - first_extent;
 
         self.total_extent = total;

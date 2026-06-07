@@ -17,7 +17,7 @@ use masonry::kurbo::Axis;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewId, ViewMarker, ViewPathTracker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
-use super::widget::{MIN_PANEL_SIZE, ResizableWidget, ResizeHandleDragged};
+use super::widget::{ResizableWidget, ResizeHandleDragged};
 use crate::Theme;
 
 // --- MARK: BUILDER
@@ -33,7 +33,10 @@ pub struct Resizable<V1, V2, F> {
     on_resize: F,
     axis: Axis,
     ratio: f32,
-    min_size: f64,
+    first_min_size: Option<f64>,
+    first_max_size: Option<f64>,
+    second_min_size: Option<f64>,
+    second_max_size: Option<f64>,
 }
 
 /// Create a horizontal (left | right) split. `ratio` defaults to `0.5`.
@@ -44,7 +47,10 @@ pub fn h_resizable<V1, V2, F>(first: V1, second: V2, on_resize: F) -> Resizable<
         on_resize,
         axis: Axis::Horizontal,
         ratio: 0.5,
-        min_size: MIN_PANEL_SIZE,
+        first_min_size: None,
+        first_max_size: None,
+        second_min_size: None,
+        second_max_size: None,
     }
 }
 
@@ -56,7 +62,10 @@ pub fn v_resizable<V1, V2, F>(first: V1, second: V2, on_resize: F) -> Resizable<
         on_resize,
         axis: Axis::Vertical,
         ratio: 0.5,
-        min_size: MIN_PANEL_SIZE,
+        first_min_size: None,
+        first_max_size: None,
+        second_min_size: None,
+        second_max_size: None,
     }
 }
 
@@ -67,9 +76,35 @@ impl<V1, V2, F> Resizable<V1, V2, F> {
         self
     }
 
-    /// Override the minimum panel size in pixels. Defaults to [`MIN_PANEL_SIZE`].
-    pub fn min_size(mut self, min_size: f64) -> Self {
-        self.min_size = min_size;
+    /// Constrain the first (left/top) pane's pixel size to be at least this
+    /// many pixels. Unset by default — the pane can shrink down to the
+    /// structural collapse-prevention floor ([`MIN_PANEL_SIZE`](super::widget::MIN_PANEL_SIZE)).
+    pub fn first_min_size(mut self, min_size: f64) -> Self {
+        self.first_min_size = Some(min_size);
+        self
+    }
+
+    /// Constrain the first (left/top) pane's pixel size to be at most this
+    /// many pixels. Unset by default — the pane can grow to fill the
+    /// available space (minus the second pane's collapse-prevention floor).
+    pub fn first_max_size(mut self, max_size: f64) -> Self {
+        self.first_max_size = Some(max_size);
+        self
+    }
+
+    /// Constrain the second (right/bottom) pane's pixel size to be at least
+    /// this many pixels. Unset by default — the pane can shrink down to the
+    /// structural collapse-prevention floor ([`MIN_PANEL_SIZE`](super::widget::MIN_PANEL_SIZE)).
+    pub fn second_min_size(mut self, min_size: f64) -> Self {
+        self.second_min_size = Some(min_size);
+        self
+    }
+
+    /// Constrain the second (right/bottom) pane's pixel size to be at most
+    /// this many pixels. Unset by default — the pane can grow to fill the
+    /// available space (minus the first pane's collapse-prevention floor).
+    pub fn second_max_size(mut self, max_size: f64) -> Self {
+        self.second_max_size = Some(max_size);
         self
     }
 
@@ -88,7 +123,10 @@ impl<V1, V2, F> Resizable<V1, V2, F> {
             on_resize: self.on_resize,
             axis: self.axis,
             ratio: self.ratio,
-            min_size: self.min_size,
+            first_min_size: self.first_min_size,
+            first_max_size: self.first_max_size,
+            second_min_size: self.second_min_size,
+            second_max_size: self.second_max_size,
             theme: *theme,
             phantom: PhantomData,
         }
@@ -107,7 +145,10 @@ pub struct ResizableView<V1, V2, F, State, Action> {
     on_resize: F,
     axis: Axis,
     ratio: f32,
-    min_size: f64,
+    first_min_size: Option<f64>,
+    first_max_size: Option<f64>,
+    second_min_size: Option<f64>,
+    second_max_size: Option<f64>,
     theme: Theme,
     phantom: PhantomData<fn(State) -> Action>,
 }
@@ -138,7 +179,10 @@ where
             second_pod.new_widget,
             self.axis,
             self.ratio,
-            self.min_size,
+            self.first_min_size,
+            self.first_max_size,
+            self.second_min_size,
+            self.second_max_size,
             &self.theme,
         );
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
@@ -159,8 +203,17 @@ where
         if (self.ratio - prev.ratio).abs() > 1e-5 {
             ResizableWidget::set_ratio(&mut element, self.ratio);
         }
-        if (self.min_size - prev.min_size).abs() > 1e-5 {
-            ResizableWidget::set_min_size(&mut element, self.min_size);
+        if self.first_min_size != prev.first_min_size {
+            ResizableWidget::set_first_min_size(&mut element, self.first_min_size);
+        }
+        if self.first_max_size != prev.first_max_size {
+            ResizableWidget::set_first_max_size(&mut element, self.first_max_size);
+        }
+        if self.second_min_size != prev.second_min_size {
+            ResizableWidget::set_second_min_size(&mut element, self.second_min_size);
+        }
+        if self.second_max_size != prev.second_max_size {
+            ResizableWidget::set_second_max_size(&mut element, self.second_max_size);
         }
         ctx.with_id(ViewId::new(0), |ctx| {
             let mut first = ResizableWidget::first_mut(&mut element);
