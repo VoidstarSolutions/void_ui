@@ -45,7 +45,10 @@ pub use data_grid::{
 };
 pub use icon::{Icon, IconName, icon};
 pub use label::{Label, LabelAlignment, label};
-pub use resizable::{MIN_PANEL_SIZE, Resizable, ResizableView, h_resizable, v_resizable};
+pub use resizable::{
+    MIN_PANEL_SIZE, Resizable, ResizablePanel, ResizablePanels, ResizablePanelsView,
+    ResizableView, h_resizable, h_resizable_panels, v_resizable, v_resizable_panels,
+};
 pub use scroll_container::{
     ScrollBarVisibility, ScrollContainer, ScrollContainerView, scroll_container,
 };

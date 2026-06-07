@@ -21,5 +21,8 @@ pub mod demo;
 mod view;
 pub mod widget;
 
-pub use view::{Resizable, ResizableView, h_resizable, v_resizable};
+pub use view::{
+    Resizable, ResizablePanel, ResizablePanels, ResizablePanelsView, ResizableView, h_resizable,
+    h_resizable_panels, v_resizable, v_resizable_panels,
+};
 pub use widget::MIN_PANEL_SIZE;

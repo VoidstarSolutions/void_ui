@@ -59,12 +59,13 @@ pub use components::{
     sidebar_panel, text_column, toggle_button_group, tooltip,
     MIN_PANEL_SIZE, Resizable, ResizableView, h_resizable, v_resizable,
     FilterState, Icon, IconName, Label, LabelAlignment, MIN_COLUMN_WIDTH, MIN_PANEL_SIZE,
-    Orientation, ReadOnlyText, ReadOnlyTextView, Resizable, ResizableView, RustHighlighter,
-    ScrollContainer, ScrollContainerView, SelectionState, Separator, SeparatorStyle, SidebarItem,
-    SidebarItemView, SidebarPanel, SidebarPanelView, SortDirection, SortState, Tooltip,
-    TooltipView, button, button_group, colored_text_column, data_grid, filtered_indices,
-    h_resizable, icon, label, optional_text_column, read_only_text, scroll_container, separator,
-    sidebar_item, sidebar_panel, text_column, toggle_button_group, tooltip, v_resizable,
+    Orientation, ReadOnlyText, ReadOnlyTextView, Resizable, ResizablePanel, ResizablePanels,
+    ResizablePanelsView, ResizableView, RustHighlighter, ScrollContainer, ScrollContainerView,
+    SelectionState, Separator, SeparatorStyle, SidebarItem, SidebarItemView, SidebarPanel,
+    SidebarPanelView, SortDirection, SortState, Tooltip, TooltipView, button, button_group,
+    colored_text_column, data_grid, filtered_indices, h_resizable, h_resizable_panels, icon,
+    label, optional_text_column, read_only_text, scroll_container, separator, sidebar_item,
+    sidebar_panel, text_column, toggle_button_group, tooltip, v_resizable, v_resizable_panels,
 };
 pub use floating::{FloatingOverlay, FloatingOverlayView, floating, interactive_floating};
 #[cfg(feature = "gallery")]

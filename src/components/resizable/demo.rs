@@ -10,9 +10,9 @@ use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::{h_resizable, v_resizable};
 use crate::components::ScrollBarVisibility;
-use crate::label;
 use crate::scroll_container;
 use crate::with_source;
+use crate::{ResizablePanel, h_resizable_panels, label};
 use crate::{Theme, separator};
 
 // --- MARK: LOCAL STATE
@@ -22,9 +22,8 @@ struct ResizableDemo {
     v_ratio: f32,
     nested_h: f32,
     nested_v: f32,
-    nested_three_outer: f32,
-    nested_three_inner: f32,
-    nested_three_v: f32,
+    three_pane_ratios: Vec<f32>,
+    three_pane_middle_v: f32,
     constrained_ratio: f32,
     constrained_second_ratio: f32,
 }
@@ -36,9 +35,8 @@ impl ResizableDemo {
             v_ratio: 0.4,
             nested_h: 0.5,
             nested_v: 0.5,
-            nested_three_outer: 0.3,
-            nested_three_inner: 0.5,
-            nested_three_v: 0.5,
+            three_pane_ratios: vec![0.25, 0.4, 0.35],
+            three_pane_middle_v: 0.5,
             constrained_ratio: 0.3,
             constrained_second_ratio: 0.7,
         }
@@ -135,27 +133,30 @@ fn build_inner(theme: &Theme, state: &ResizableDemo) -> impl WidgetView<Resizabl
         .fixed_height(Length::px(200.0))
     });
 
-    // Nested: Three panes horizontally, with the middle pane split horizontally.
-    let nested_three_example = with_source!(theme, {
+    // Native N-pane: a single resizable with three panels and two
+    // independently-draggable handles, driven by one Vec<f32> of fractions.
+    // The middle panel further nests a v_resizable, showing the two compose.
+    let three_pane_example = with_source!(theme, {
         sized_box(
-            h_resizable(
-                pane("Left", p.surface, p.text_muted, caption),
-                h_resizable(
-                    v_resizable(
-                        pane("Middle top", p.surface, p.text_muted, caption),
-                        pane("Middle bottom", p.surface, p.text_faint, caption),
-                        |s: &mut ResizableDemo, ratio: f32| s.nested_three_v = ratio,
-                    )
-                    .ratio(state.nested_three_v)
-                    .render(theme),
-                    pane("Right", p.surface, p.text_faint, caption),
-                    |s: &mut ResizableDemo, ratio: f32| s.nested_three_inner = ratio,
-                )
-                .ratio(state.nested_three_inner)
-                .render(theme),
-                |s: &mut ResizableDemo, ratio: f32| s.nested_three_outer = ratio,
+            h_resizable_panels(
+                vec![
+                    ResizablePanel::new(pane("Left", p.surface, p.text_muted, caption)),
+                    ResizablePanel::new(
+                        v_resizable(
+                            pane("Top", p.surface, p.text_muted, caption),
+                            pane("Bottom", p.surface, p.text_faint, caption),
+                            |s: &mut ResizableDemo, ratio: f32| s.three_pane_middle_v = ratio,
+                        )
+                        .ratio(state.three_pane_middle_v)
+                        .render(theme),
+                    ),
+                    ResizablePanel::new(pane("Right", p.surface, p.text_faint, caption)),
+                ],
+                state.three_pane_ratios.clone(),
+                |s: &mut ResizableDemo, _handle: usize, ratios: Vec<f32>| {
+                    s.three_pane_ratios = ratios;
+                },
             )
-            .ratio(state.nested_three_outer)
             .render(theme),
         )
         .fixed_height(Length::px(200.0))
@@ -226,7 +227,8 @@ fn build_inner(theme: &Theme, state: &ResizableDemo) -> impl WidgetView<Resizabl
             v_example,
             header("Nested splits"),
             nested_example,
-            nested_three_example,
+            header("Native multi-pane — three panels, two independent handles"),
+            three_pane_example,
             header("Constrained — first pane clamped to a min/max pixel range"),
             constrained_example,
             header("Constrained — second pane clamped to a min/max pixel range"),
