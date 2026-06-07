@@ -457,10 +457,17 @@ impl Widget for ThemedDropdownButton {
             0.0
         };
 
-        Length::px(child_length.get() + main_pad + icon_extra + chevron_extra)
+        let result = Length::px(child_length.get() + main_pad + icon_extra + chevron_extra);
+        eprintln!(
+            "[DDB measure] axis={axis:?} len_req={len_req:?} cross_length={cross_length:?} child_length={:.2} -> {:.2}",
+            child_length.get(),
+            result.get()
+        );
+        result
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
+        eprintln!("[DDB layout] incoming size={size:?}");
         let pad_v = self.pad_v();
         let pad_h = self.pad_h();
         let icon_base = if self.icon.is_some() {

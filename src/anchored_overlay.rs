@@ -27,7 +27,7 @@ use masonry::core::{
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, Size};
-use masonry::layout::{LenReq, Length, SizeDef};
+use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use xilem_masonry::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem_masonry::{Pod, ViewCtx, WidgetView};
 
@@ -128,13 +128,26 @@ impl Widget for AnchoredOverlay {
         ctx: &mut MeasureCtx<'_>,
         _props: &PropertiesRef<'_>,
         axis: Axis,
-        _len_req: LenReq,
+        len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
         // Ignore the overlay entirely for sizing — the container's footprint
         // is the primary's footprint, full stop. This is what guarantees
         // showing/hiding the overlay never reflows surrounding layout.
-        ctx.redirect_measurement(&mut self.primary, axis, cross_length)
+        //
+        // A transparent forward of the received `len_req`/`cross_length` —
+        // not `redirect_measurement` (which substitutes this measurement
+        // pass's own `auto_length`/`context_size` and disables caching,
+        // and was observed to produce a smaller measured height than the
+        // primary's actual laid-out height, causing flex siblings to
+        // overlap the button).
+        ctx.compute_length(
+            &mut self.primary,
+            len_req.into(),
+            LayoutSize::maybe(axis.cross(), cross_length),
+            axis,
+            cross_length,
+        )
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
