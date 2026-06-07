@@ -403,7 +403,11 @@ impl SliderWidget {
         match self.value {
             SliderValue::Single(v) => v,
             SliderValue::Range(low, high) => {
-                if thumb == Thumb::Low { low } else { high }
+                if thumb == Thumb::Low {
+                    low
+                } else {
+                    high
+                }
             }
         }
     }
@@ -687,7 +691,11 @@ impl Widget for SliderWidget {
         // Fill spans [min, value] in single mode, or [low, high] in range mode.
         let (fill_lo, fill_hi, thumb_values): (f64, f64, [(Thumb, Option<f64>); 2]) =
             match self.value {
-                SliderValue::Single(v) => (self.min, v, [(Thumb::Single, Some(v)), (Thumb::Single, None)]),
+                SliderValue::Single(v) => (
+                    self.min,
+                    v,
+                    [(Thumb::Single, Some(v)), (Thumb::Single, None)],
+                ),
                 SliderValue::Range(low, high) => (
                     low,
                     high,
