@@ -22,24 +22,23 @@ use masonry::core::{
     UpdateCtx, Widget, WidgetMut,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Circle, Point, RoundedRect, Size, Stroke};
+use masonry::kurbo::{Axis, Circle, Point, RoundedRect, Size};
 use masonry::layout::{LenReq, Length};
 use masonry::peniko::Color;
 
 use super::{SliderChanged, SliderValue};
+use crate::focus_ring::paint_focus_ring;
 use crate::{Orientation, Theme};
 
 /// Diameter of a draggable thumb circle, in logical pixels.
 const THUMB_DIAMETER: f64 = 14.0;
 /// Thickness of the track and fill bar.
 const TRACK_HEIGHT: f64 = 4.0;
-/// Focus-ring stroke width.
-const FOCUS_RING_WIDTH: f64 = 1.5;
 /// Gap between the thumb edge and the focus ring.
 const FOCUS_RING_OUTSET: f64 = 2.0;
 /// Clearance from the widget edge to the thumbs' travel limits — keeps the
 /// thumbs and their focus rings from being clipped at the ends of the track.
-const EDGE_PAD: f64 = FOCUS_RING_OUTSET + FOCUS_RING_WIDTH;
+const EDGE_PAD: f64 = FOCUS_RING_OUTSET + crate::focus_ring::FOCUS_RING_WIDTH;
 
 /// Identifies which thumb a gesture or keyboard adjustment targets.
 ///
@@ -374,6 +373,23 @@ impl SliderWidget {
         }
     }
 
+    /// The value `thumb` currently represents — the lone value in `Single`
+    /// mode, or the corresponding bound in `Range` mode.
+    ///
+    /// `Low`/`High` paired with `Single` (or `Single` paired with `Range`)
+    /// can't arise in practice: `set_value` resets `focused_thumb` on mode
+    /// changes, and gesture-picked thumbs come from `thumb_at`, which only
+    /// returns `Low`/`High` when `range_bounds` is `Some`. The match stays
+    /// total by reading the mode's actual value either way.
+    fn thumb_value(&self, thumb: Thumb) -> f64 {
+        match self.value {
+            SliderValue::Single(v) => v,
+            SliderValue::Range(low, high) => {
+                if thumb == Thumb::Low { low } else { high }
+            }
+        }
+    }
+
     /// Computes the slider's new value when `thumb` is driven to raw value
     /// `target` (already snapped to the step grid). Range-mode thumbs are
     /// clamped against each other so they cannot cross.
@@ -381,11 +397,11 @@ impl SliderWidget {
         match thumb {
             Thumb::Single => SliderValue::Single(target),
             Thumb::Low => {
-                let high = self.range_bounds().map_or(self.max, |(_, high)| high);
+                let high = self.thumb_value(Thumb::High);
                 SliderValue::Range(target.min(high), high)
             }
             Thumb::High => {
-                let low = self.range_bounds().map_or(self.min, |(low, _)| low);
+                let low = self.thumb_value(Thumb::Low);
                 SliderValue::Range(low, target.max(low))
             }
         }
@@ -393,14 +409,7 @@ impl SliderWidget {
 
     /// Applies `nudge` to `self.focused_thumb`'s current value and returns the result.
     fn nudged_value(&self, delta: f64) -> SliderValue {
-        // `set_value` resets `focused_thumb` on mode changes, so `Low` only
-        // arises paired with `Range`; `Single`/`High` both read the value
-        // that the corresponding `SliderValue` variant carries as "the" value.
-        let current = match self.value {
-            SliderValue::Range(low, _) if self.focused_thumb == Thumb::Low => low,
-            SliderValue::Range(_, high) => high,
-            SliderValue::Single(v) => v,
-        };
+        let current = self.thumb_value(self.focused_thumb);
         self.value_for_thumb(self.focused_thumb, self.snap(current + delta))
     }
 
@@ -619,7 +628,6 @@ impl Widget for SliderWidget {
         let hovered = ctx.is_hovered();
         let active = ctx.is_active() && hovered;
         let focused = ctx.is_focus_target();
-        let p = &self.theme.palette;
 
         let (start, usable) = self.travel(size);
         let thumb_radius = THUMB_DIAMETER / 2.0;
@@ -652,13 +660,11 @@ impl Widget for SliderWidget {
                 .draw();
 
             if focused && !self.disabled {
-                painter
-                    .stroke(
-                        Circle::new(center, thumb_radius + FOCUS_RING_OUTSET),
-                        &Stroke::new(FOCUS_RING_WIDTH),
-                        p.teal,
-                    )
-                    .draw();
+                paint_focus_ring(
+                    painter,
+                    Circle::new(center, thumb_radius + FOCUS_RING_OUTSET),
+                    &self.theme,
+                );
             }
         }
     }

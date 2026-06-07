@@ -21,6 +21,7 @@ use masonry::peniko::Color;
 use masonry::widgets::ButtonPress;
 
 use crate::Theme;
+use crate::focus_ring::paint_focus_ring;
 
 /// Diameter of the radio circle in logical pixels.
 const RADIO_DIAMETER: f64 = 14.0;
@@ -30,8 +31,6 @@ const RADIO_GAP: f64 = 6.0;
 const BORDER_WIDTH: f64 = 1.5;
 /// Radius of the inner selection dot (drawn when `active`).
 const DOT_RADIUS: f64 = 3.5;
-/// Focus-ring stroke width.
-const FOCUS_RING_WIDTH: f64 = 1.5;
 /// Focus-ring outset from the circle edge.
 const FOCUS_RING_OUTSET: f64 = 2.0;
 
@@ -313,13 +312,7 @@ impl Widget for ThemedRadio {
 
         if focused && !self.disabled {
             let focus_radius = (RADIO_DIAMETER * 0.5) + FOCUS_RING_OUTSET;
-            painter
-                .stroke(
-                    Circle::new(center, focus_radius),
-                    &Stroke::new(FOCUS_RING_WIDTH),
-                    self.theme.palette.teal,
-                )
-                .draw();
+            paint_focus_ring(painter, Circle::new(center, focus_radius), &self.theme);
         }
     }
 

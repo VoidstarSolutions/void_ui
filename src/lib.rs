@@ -22,6 +22,7 @@ extern crate self as void_ui;
 pub mod animated_clip;
 pub mod components;
 pub mod floating;
+pub mod focus_ring;
 #[cfg(feature = "gallery")]
 pub mod gallery;
 pub mod layout;
