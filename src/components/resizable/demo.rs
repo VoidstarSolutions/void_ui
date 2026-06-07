@@ -9,11 +9,11 @@ use xilem::view::{CrossAxisAlignment, MainAxisAlignment, flex_col, label as xl_l
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::{h_resizable, v_resizable};
-use crate::Theme;
 use crate::components::ScrollBarVisibility;
 use crate::label;
 use crate::scroll_container;
 use crate::with_source;
+use crate::{Theme, separator};
 
 // --- MARK: LOCAL STATE
 
@@ -149,6 +149,7 @@ fn build_inner(theme: &Theme, state: &ResizableDemo) -> impl WidgetView<Resizabl
     scroll_container(
         flex_col((
             title_block,
+            separator().render(theme),
             header("Horizontal split — drag the vertical handle"),
             h_example,
             header("Vertical split — drag the horizontal handle"),
