@@ -78,9 +78,10 @@ pub struct SliderWidget {
     /// In range mode, whether `Tab`/`Shift+Tab` has already moved focus from
     /// one thumb to the other during the current focus session. The first Tab
     /// press while focused retargets `focused_thumb` and is consumed; the
-    /// second is left unhandled so focus leaves the widget — this is what
-    /// makes both thumbs reachable by keyboard regardless of which one focus
-    /// initially lands on. Reset whenever focus is gained or lost.
+    /// second is left unhandled so focus leaves the widget — combined with
+    /// resetting `focused_thumb` to the low thumb on focus gain, this makes
+    /// tabbing into the slider always select low first, then high. Reset
+    /// whenever focus is gained or lost.
     thumb_tab_visited: bool,
 }
 
@@ -628,8 +629,11 @@ impl Widget for SliderWidget {
             Update::WidgetAdded => {
                 ctx.set_disabled(self.disabled);
             }
-            Update::FocusChanged(_) => {
+            Update::FocusChanged(gained) => {
                 self.thumb_tab_visited = false;
+                if *gained && let SliderValue::Range(..) = self.value {
+                    self.focused_thumb = Thumb::Low;
+                }
                 ctx.request_paint_only();
             }
             Update::HoveredChanged(_) | Update::DisabledChanged(_) => {
