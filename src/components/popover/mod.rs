@@ -41,3 +41,20 @@ pub enum PopoverAnchor {
     /// Above the trigger, right-aligned.
     TopEnd,
 }
+
+impl PopoverAnchor {
+    /// Compute the content's local-coordinate origin given the trigger's and
+    /// content's measured sizes and this anchor.
+    #[must_use]
+    pub(crate) fn child_offset(self, trigger: masonry::kurbo::Size, content: masonry::kurbo::Size) -> masonry::kurbo::Point {
+        use masonry::kurbo::Point;
+        match self {
+            Self::BottomStart => Point::new(0.0, trigger.height),
+            Self::BottomCenter => Point::new((trigger.width - content.width) / 2.0, trigger.height),
+            Self::BottomEnd => Point::new(trigger.width - content.width, trigger.height),
+            Self::TopStart => Point::new(0.0, -content.height),
+            Self::TopCenter => Point::new((trigger.width - content.width) / 2.0, -content.height),
+            Self::TopEnd => Point::new(trigger.width - content.width, -content.height),
+        }
+    }
+}

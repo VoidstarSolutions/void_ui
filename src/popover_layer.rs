@@ -133,23 +133,6 @@ impl PopoverLayer {
         window_pos - origin.to_vec2()
     }
 
-    /// Compute the child's local-coordinate origin given its measured size and
-    /// the anchor.
-    fn child_offset(anchor: PopoverAnchor, trigger: Size, content: Size) -> Point {
-        match anchor {
-            PopoverAnchor::BottomStart => Point::new(0.0, trigger.height),
-            PopoverAnchor::BottomCenter => {
-                Point::new((trigger.width - content.width) / 2.0, trigger.height)
-            }
-            PopoverAnchor::BottomEnd => Point::new(trigger.width - content.width, trigger.height),
-            PopoverAnchor::TopStart => Point::new(0.0, -content.height),
-            PopoverAnchor::TopCenter => {
-                Point::new((trigger.width - content.width) / 2.0, -content.height)
-            }
-            PopoverAnchor::TopEnd => Point::new(trigger.width - content.width, -content.height),
-        }
-    }
-
     fn dismiss(&self, ctx: &mut EventCtx<'_>) {
         let self_id = ctx.widget_id();
         let creator = self.creator;
@@ -220,7 +203,7 @@ impl Widget for PopoverLayer {
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         let child_size = ctx.compute_size(&mut self.child, SizeDef::MIN, size.into());
         ctx.run_layout(&mut self.child, child_size);
-        let offset = Self::child_offset(self.anchor, self.trigger_size, child_size);
+        let offset = self.anchor.child_offset(self.trigger_size, child_size);
         ctx.place_child(&mut self.child, offset);
         self.child_rect = Rect::from_origin_size(offset, child_size);
     }
