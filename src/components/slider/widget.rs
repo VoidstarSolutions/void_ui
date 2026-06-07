@@ -546,10 +546,16 @@ impl Widget for SliderWidget {
             Key::Named(NamedKey::End) => Some(self.value_for_thumb(self.focused_thumb, self.max)),
             _ => None,
         };
-        if let Some(new_value) = new_value
-            && new_value != self.value
-        {
-            ctx.submit_action::<Self::Action>(SliderChanged(new_value));
+        if let Some(new_value) = new_value {
+            // Claim arrow/Home/End once focused, even at the value's min/max
+            // where it's a no-op — otherwise an ancestor (e.g. a scroll
+            // container) treats the same keypress as unhandled and reacts to
+            // it too, which reads as "the page scrolled" instead of the
+            // slider responding.
+            ctx.set_handled();
+            if new_value != self.value {
+                ctx.submit_action::<Self::Action>(SliderChanged(new_value));
+            }
         }
     }
 
