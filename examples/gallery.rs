@@ -282,11 +282,11 @@ fn sidebar_items(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State
             })
             .active(focused == ComponentKind::Sidebar)
             .render(theme),
-        sidebar_item("Slider", |s: &mut State| {
-            s.focused = ComponentKind::Slider;
-        })
-        .active(focused == ComponentKind::Slider)
-        .render(theme),
+            sidebar_item("Slider", |s: &mut State| {
+                s.focused = ComponentKind::Slider;
+            })
+            .active(focused == ComponentKind::Slider)
+            .render(theme),
             sidebar_item("Tooltip", |s: &mut State| {
                 s.focused = ComponentKind::Tooltip;
             })
