@@ -5,11 +5,14 @@
 //! between the panes and emits [`ResizeHandleDragged`] with the updated ratio.
 //!
 //! The grab zone around the handle is wider than the visual line so small
-//! handles remain easy to hit.
+//! handles remain easy to hit. The handle also accepts focus: arrow keys
+//! (Left/Right for a horizontal split, Up/Down for a vertical one) nudge the
+//! divider in pixel-sized steps, same as a mouse drag.
 
 use std::any::TypeId;
 
 use masonry::accesskit::{Node, Role};
+use masonry::core::keyboard::{Key, NamedKey};
 use masonry::core::{
     AccessCtx, AccessEvent, ChildrenIds, CursorIcon, EventCtx, FromDynWidget, LayoutCtx,
     MeasureCtx, NewWidget, PaintCtx, PointerButton, PointerButtonEvent, PointerEvent,
@@ -17,7 +20,7 @@ use masonry::core::{
     WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Point, Rect, Size};
+use masonry::kurbo::{Axis, Point, Rect, Size, Stroke};
 use masonry::layout::{LayoutSize, LenReq, Length};
 use masonry::peniko::Color;
 
@@ -32,6 +35,11 @@ const HANDLE_THICKNESS: f64 = 1.0;
 const GRAB_HALF: f64 = 8.0;
 /// Default minimum panel size in pixels; callers may override via [`ResizableWidget::set_min_size`].
 pub const MIN_PANEL_SIZE: f64 = 40.0;
+/// Pixel adjustment to the first panel's extent per arrow-key press, for
+/// keyboard nudging once the divider is focused.
+const ARROW_NUDGE_PX: f64 = 16.0;
+/// Width of the focus ring stroke drawn around the grab zone when focused.
+const FOCUS_RING_WIDTH: f64 = 1.5;
 
 // --- MARK: ACTION
 
@@ -226,6 +234,20 @@ impl<A: Widget + ?Sized, B: Widget + ?Sized> ResizableWidget<A, B> {
         }
     }
 
+    /// Compute the ratio that results from nudging the first panel's extent
+    /// by `delta` pixels (negative shrinks, positive grows), clamped to the
+    /// same bounds that constrain dragging.
+    fn nudge_ratio(&self, delta: f64) -> f32 {
+        let usable = (self.total_extent - HANDLE_THICKNESS).max(1.0);
+        let (lower, upper) = self.first_extent_bounds(usable);
+        let current = (usable * f64::from(self.ratio)).clamp(lower, upper);
+        let nudged = (current + delta).clamp(lower, upper);
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            (nudged / usable) as f32
+        }
+    }
+
     fn handle_color(&self) -> Color {
         let p = &self.theme.palette;
         if self.dragging {
@@ -274,6 +296,7 @@ impl<A: Widget + ?Sized, B: Widget + ?Sized> Widget for ResizableWidget<A, B> {
                 let pos = ctx.local_position(state.position);
                 if self.in_handle(pos) {
                     self.dragging = true;
+                    ctx.request_focus();
                     ctx.capture_pointer();
                     ctx.set_handled();
                     ctx.request_paint_only();
@@ -296,10 +319,31 @@ impl<A: Widget + ?Sized, B: Widget + ?Sized> Widget for ResizableWidget<A, B> {
 
     fn on_text_event(
         &mut self,
-        _ctx: &mut EventCtx<'_>,
+        ctx: &mut EventCtx<'_>,
         _props: &mut PropertiesMut<'_>,
-        _event: &TextEvent,
+        event: &TextEvent,
     ) {
+        let TextEvent::Keyboard(key_event) = event else {
+            return;
+        };
+        if !key_event.state.is_down() {
+            return;
+        }
+        let delta = match (self.axis, &key_event.key) {
+            (Axis::Horizontal, Key::Named(NamedKey::ArrowLeft))
+            | (Axis::Vertical, Key::Named(NamedKey::ArrowUp)) => -ARROW_NUDGE_PX,
+            (Axis::Horizontal, Key::Named(NamedKey::ArrowRight))
+            | (Axis::Vertical, Key::Named(NamedKey::ArrowDown)) => ARROW_NUDGE_PX,
+            _ => return,
+        };
+
+        let new_ratio = self.nudge_ratio(delta);
+        if (new_ratio - self.ratio).abs() > 1e-5 {
+            self.ratio = new_ratio;
+            ctx.request_layout();
+            ctx.submit_action::<Self::Action>(ResizeHandleDragged(new_ratio));
+            ctx.set_handled();
+        }
     }
 
     fn on_access_event(
@@ -311,11 +355,15 @@ impl<A: Widget + ?Sized, B: Widget + ?Sized> Widget for ResizableWidget<A, B> {
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        if let Update::HoveredChanged(false) = event
-            && self.handle_hovered
-        {
-            self.handle_hovered = false;
-            ctx.request_paint_only();
+        match event {
+            Update::HoveredChanged(false) if self.handle_hovered => {
+                self.handle_hovered = false;
+                ctx.request_paint_only();
+            }
+            Update::FocusChanged(_) => {
+                ctx.request_paint_only();
+            }
+            _ => {}
         }
     }
 
@@ -394,7 +442,7 @@ impl<A: Widget + ?Sized, B: Widget + ?Sized> Widget for ResizableWidget<A, B> {
 
     fn paint(
         &mut self,
-        _ctx: &mut PaintCtx<'_>,
+        ctx: &mut PaintCtx<'_>,
         _props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
@@ -417,6 +465,28 @@ impl<A: Widget + ?Sized, B: Widget + ?Sized> Widget for ResizableWidget<A, B> {
             ),
         };
         painter.fill(rect, color).draw();
+
+        if ctx.is_focus_target() {
+            let grab = GRAB_HALF * 2.0;
+            let grab_offset = self.handle_center - GRAB_HALF;
+            let focus_rect = match self.axis {
+                Axis::Horizontal => Rect::from_origin_size(
+                    Point::new(grab_offset, 0.0),
+                    Size::new(grab, self.cross_extent),
+                ),
+                Axis::Vertical => Rect::from_origin_size(
+                    Point::new(0.0, grab_offset),
+                    Size::new(self.cross_extent, grab),
+                ),
+            };
+            painter
+                .stroke(
+                    focus_rect,
+                    &Stroke::new(FOCUS_RING_WIDTH),
+                    self.theme.palette.teal,
+                )
+                .draw();
+        }
     }
 
     fn get_cursor(&self, ctx: &QueryCtx<'_>, pos: Point) -> CursorIcon {
@@ -452,7 +522,7 @@ impl<A: Widget + ?Sized, B: Widget + ?Sized> Widget for ResizableWidget<A, B> {
     }
 
     fn accepts_focus(&self) -> bool {
-        false
+        true
     }
 
     fn accepts_text_input(&self) -> bool {
