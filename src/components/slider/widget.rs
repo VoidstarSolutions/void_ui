@@ -544,14 +544,32 @@ impl Widget for SliderWidget {
         if !event.state.is_down() {
             return;
         }
+        if event.key == Key::Named(NamedKey::Tab)
+            && let SliderValue::Range(..) = self.value
+            && !self.thumb_tab_visited
+        {
+            self.focused_thumb = match self.focused_thumb {
+                Thumb::Low => Thumb::High,
+                _ => Thumb::Low,
+            };
+            self.thumb_tab_visited = true;
+            ctx.set_handled();
+            ctx.request_paint_only();
+            ctx.request_accessibility_update();
+            return;
+        }
         let nudge = self.nudge();
         let new_value = match &event.key {
             Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowDown) => {
                 Some(self.nudged_value(-nudge))
             }
             Key::Named(NamedKey::ArrowRight | NamedKey::ArrowUp) => Some(self.nudged_value(nudge)),
-            Key::Named(NamedKey::Home) => Some(self.value_for_thumb(self.focused_thumb, self.min)),
-            Key::Named(NamedKey::End) => Some(self.value_for_thumb(self.focused_thumb, self.max)),
+            Key::Named(NamedKey::Home) => {
+                Some(self.value_for_thumb(self.focused_thumb, self.snap(self.min)))
+            }
+            Key::Named(NamedKey::End) => {
+                Some(self.value_for_thumb(self.focused_thumb, self.snap(self.max)))
+            }
             _ => None,
         };
         if let Some(new_value) = new_value {
@@ -596,7 +614,11 @@ impl Widget for SliderWidget {
             Update::WidgetAdded => {
                 ctx.set_disabled(self.disabled);
             }
-            Update::HoveredChanged(_) | Update::DisabledChanged(_) | Update::FocusChanged(_) => {
+            Update::FocusChanged(_) => {
+                self.thumb_tab_visited = false;
+                ctx.request_paint_only();
+            }
+            Update::HoveredChanged(_) | Update::DisabledChanged(_) => {
                 ctx.request_paint_only();
             }
             _ => {}
