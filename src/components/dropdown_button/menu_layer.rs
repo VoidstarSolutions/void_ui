@@ -1,61 +1,72 @@
-//! `MenuContent` — item-list widget rendered inside a `PopoverLayer`.
+//! `MenuContent` — item-list widget hosted inside `ThemedDropdownButton`'s
+//! `overlay_host: AnchoredOverlay`.
 //!
-//! Handles layout of label children, per-item hover tracking, and selection.
-//! No `Layer` impl — that's provided by the wrapping `PopoverLayer`.
+//! Handles layout of label children, per-item hover tracking, chrome
+//! painting, and selection — selection is reported to the trigger via
+//! [`MenuItemSelected`], which bubbles through [`Widget::on_action`] to
+//! [`ThemedDropdownButton::on_action`](super::widget::ThemedDropdownButton).
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
-    AccessCtx, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NoAction, PaintCtx,
-    PointerButton, PointerButtonEvent, PointerEvent, PointerUpdate, PropertiesMut, PropertiesRef,
-    RegisterCtx, StyleProperty, Update, UpdateCtx, Widget, WidgetId, WidgetPod,
+    AccessCtx, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, PaintCtx, PointerButton,
+    PointerButtonEvent, PointerEvent, PointerUpdate, PropertiesMut, PropertiesRef, RegisterCtx,
+    StyleProperty, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Point, Rect, Size};
+use masonry::kurbo::{Axis, Point, Rect, RoundedRect, Size, Stroke};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use masonry::properties::ContentColor;
 use masonry::widgets::Label;
 
-use super::widget::{DropdownButtonAction, ThemedDropdownButton};
 use crate::Theme;
 
 /// Vertical padding above and below the item list.
 const MENU_PAD_V: f64 = 4.0;
+/// Corner radius of the menu's background chrome.
+const CORNER_RADIUS: f64 = 5.0;
+/// Border width of the menu's background chrome.
+const BORDER_WIDTH: f64 = 1.0;
+
+/// Action emitted when the user selects item `0` (the index) from the menu.
+///
+/// Bubbles up to [`ThemedDropdownButton::on_action`](super::widget::ThemedDropdownButton),
+/// which closes the menu and re-emits a [`super::widget::DropdownButtonAction::ItemSelected`].
+#[derive(Debug)]
+pub struct MenuItemSelected(pub usize);
 
 /// Item-list widget for a dropdown menu.
 ///
-/// Lays out one [`Label`] per item, tracks hover, and fires selection back to
-/// the creator [`ThemedDropdownButton`] via `mutate_later`.  Pointer
-/// interaction is handled at this widget level; labels are display-only.
+/// Lays out one [`Label`] per item, tracks hover, paints its own
+/// background/border chrome, and fires [`MenuItemSelected`] on selection.
 pub struct MenuContent {
     labels: Vec<WidgetPod<dyn Widget>>,
     /// Rects populated during `layout()` — used for hit-testing in local coords.
     item_rects: Vec<Rect>,
     hover_index: Option<usize>,
-    /// ID of the [`ThemedDropdownButton`] that owns the containing layer.
-    creator: WidgetId,
     theme: Theme,
 }
 
 impl MenuContent {
     #[must_use]
-    pub fn new(items: impl IntoIterator<Item = ArcStr>, creator: WidgetId, theme: &Theme) -> Self {
+    pub fn new(items: impl IntoIterator<Item = ArcStr>, theme: &Theme) -> Self {
         let labels = items
             .into_iter()
-            .map(|text| {
-                let mut lbl = Label::new(text)
-                    .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
-                    .prepare();
-                lbl.properties.insert(ContentColor::new(theme.palette.text));
-                lbl.erased().to_pod()
-            })
+            .map(|text| Self::make_label(&text, theme))
             .collect();
         Self {
             labels,
             item_rects: Vec::new(),
             hover_index: None,
-            creator,
             theme: *theme,
         }
+    }
+
+    fn make_label(text: &ArcStr, theme: &Theme) -> WidgetPod<dyn Widget> {
+        let mut lbl = Label::new(text.clone())
+            .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
+            .prepare();
+        lbl.properties.insert(ContentColor::new(theme.palette.text));
+        lbl.erased().to_pod()
     }
 
     fn item_height(&self) -> f64 {
@@ -75,24 +86,49 @@ impl MenuContent {
         let origin = ctx.to_window(Point::ZERO);
         window_pos - origin.to_vec2()
     }
+}
 
-    fn select_item_via_mutate(&self, ctx: &mut EventCtx<'_>, index: usize) {
-        let creator = self.creator;
-        ctx.mutate_later(creator, move |mut w| {
-            let mut w = w.downcast::<ThemedDropdownButton>();
-            // Remove the PopoverLayer using the creator's stored layer id.
-            if let Some(layer_id) = w.widget.menu_layer_id.take() {
-                w.ctx.remove_layer(layer_id);
-            }
-            w.widget.open = false;
-            w.ctx
-                .submit_action::<DropdownButtonAction>(DropdownButtonAction::ItemSelected(index));
-        });
+// --- MARK: WIDGETMUT SETTERS
+impl MenuContent {
+    /// Restyle existing labels and store the new theme — needed because, unlike
+    /// before, `MenuContent` is now a permanent child rather than rebuilt fresh
+    /// each time the menu opens.
+    pub fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
+        if this.widget.theme == *theme {
+            return;
+        }
+        this.widget.theme = *theme;
+        for label in &mut this.widget.labels {
+            let mut lbl = this.ctx.get_mut(label);
+            lbl.insert_prop(ContentColor::new(theme.palette.text));
+            let mut lbl = lbl.downcast::<Label>();
+            Label::insert_style(&mut lbl, StyleProperty::FontSize(theme.density.ui_font_size));
+        }
+        this.ctx.request_layout();
+        this.ctx.request_paint_only();
+    }
+
+    /// Replace the item list — needed for the same reason as `set_theme`:
+    /// `MenuContent` persists across opens, so a live item-list change must
+    /// be reflected even while the menu has never been (re)opened.
+    pub fn set_items(this: &mut WidgetMut<'_, Self>, items: impl IntoIterator<Item = ArcStr>) {
+        for label in this.widget.labels.drain(..) {
+            this.ctx.remove_child(label);
+        }
+        let theme = this.widget.theme;
+        this.widget.labels = items
+            .into_iter()
+            .map(|text| Self::make_label(&text, &theme))
+            .collect();
+        this.widget.hover_index = None;
+        this.ctx.children_changed();
+        this.ctx.request_layout();
+        this.ctx.request_paint_only();
     }
 }
 
 impl Widget for MenuContent {
-    type Action = NoAction;
+    type Action = MenuItemSelected;
 
     fn accepts_pointer_interaction(&self) -> bool {
         true
@@ -130,7 +166,8 @@ impl Widget for MenuContent {
             }) if ctx.is_active() && ctx.is_hovered() => {
                 let local = Self::to_local(ctx, state.logical_point());
                 if let Some(i) = self.hit_item(local) {
-                    self.select_item_via_mutate(ctx, i);
+                    ctx.submit_action::<Self::Action>(MenuItemSelected(i));
+                    ctx.set_handled();
                 }
             }
             PointerEvent::Leave(_) if self.hover_index.is_some() => {
@@ -219,11 +256,25 @@ impl Widget for MenuContent {
 
     fn paint(
         &mut self,
-        _ctx: &mut PaintCtx<'_>,
+        ctx: &mut PaintCtx<'_>,
         _props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
         let p = &self.theme.palette;
+
+        // Background/border chrome — formerly drawn by the wrapping
+        // `PopoverLayer` (`popover_layer.rs::paint`); `MenuContent` now paints
+        // it directly since it's hosted in-tree, with no such wrapper.
+        let bg_rect = RoundedRect::from_origin_size(
+            Point::ORIGIN,
+            ctx.border_box_size(),
+            CORNER_RADIUS,
+        );
+        painter.fill(bg_rect, p.surface_hi).draw();
+        painter
+            .stroke(bg_rect, &Stroke::new(BORDER_WIDTH), p.border_strong)
+            .draw();
+
         if let Some(i) = self.hover_index
             && let Some(&rect) = self.item_rects.get(i)
         {

@@ -15,10 +15,8 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use masonry::core::{ArcStr, StyleProperty};
+use masonry::core::ArcStr;
 use masonry::kurbo::BezPath;
-use masonry::properties::ContentColor;
-use masonry::widgets::Label;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx};
 
@@ -158,20 +156,6 @@ where
     ) {
         if self.theme != prev.theme {
             ThemedDropdownButton::set_theme(&mut element, &self.theme);
-            let text_color = if self.disabled {
-                self.theme.palette.text_faint
-            } else if self.variant == ButtonVariant::Link {
-                self.theme.palette.teal
-            } else {
-                self.theme.palette.text
-            };
-            let mut lbl = ThemedDropdownButton::label_mut(&mut element);
-            lbl.insert_prop(ContentColor::new(text_color));
-            let mut lbl = lbl.downcast::<Label>();
-            Label::insert_style(
-                &mut lbl,
-                StyleProperty::FontSize(self.theme.density.ui_font_size),
-            );
         }
         if self.disabled != prev.disabled {
             ThemedDropdownButton::set_disabled(&mut element, self.disabled);

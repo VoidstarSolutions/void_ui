@@ -9,9 +9,9 @@ use std::sync::{Arc, LazyLock};
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
-    AccessCtx, ArcStr, ChildrenIds, EventCtx, LayerType, LayoutCtx, MeasureCtx, NewWidget,
-    PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty, Update,
-    UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, ActionCtx, ArcStr, ChildrenIds, ErasedAction, EventCtx, LayoutCtx, MeasureCtx,
+    NewWidget, PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty,
+    Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Affine, Axis, BezPath, Point, RoundedRect, Size, Stroke};
@@ -20,13 +20,13 @@ use masonry::peniko::Color;
 use masonry::properties::ContentColor;
 use masonry::widgets::Label;
 
-use super::menu_layer::MenuContent;
+use super::menu_layer::{MenuContent, MenuItemSelected};
+use crate::AnchoredOverlay;
 use crate::Theme;
 use crate::components::button::ButtonVariant;
 use crate::components::button::widget::CORNER_RADIUS;
 use crate::components::click::{self, ClickPhase};
 use crate::components::popover::PopoverAnchor;
-use crate::popover_layer::{OnOutsideClick, PopoverLayer};
 
 const FOCUS_RING_WIDTH: f64 = 1.5;
 const FOCUS_RING_INSET: f64 = 2.0;
@@ -54,25 +54,13 @@ pub enum DropdownButtonAction {
 /// Renders as a standard button with a trailing chevron icon. Clicking anywhere
 /// on the button (label area or chevron) toggles the menu layer.
 pub struct ThemedDropdownButton {
-    label: WidgetPod<dyn Widget>,
+    overlay_host: WidgetPod<AnchoredOverlay>,
     icon: Option<Arc<BezPath>>,
     items: Vec<ArcStr>,
     variant: ButtonVariant,
     disabled: bool,
     theme: Theme,
     pub(super) open: bool,
-    pub(super) menu_layer_id: Option<WidgetId>,
-    /// Window-space position the open menu layer was last placed at — the
-    /// trigger's border-box top-left corner. Tracked so `on_anim_frame` can
-    /// detect movement (e.g. from an ancestor scrolling) and reposition the
-    /// layer to keep it anchored to the trigger.
-    menu_layer_anchor: Option<Point>,
-    /// Snapshot of `open` taken at pointer-Down time. Needed because
-    /// `PopoverLayer::capture_pointer_event` queues a `mutate_later`
-    /// that resets `open = false` between the Down and Up events. Without
-    /// this latch, `toggle_dropdown` on Up would see `open == false` (already
-    /// closed by the mutation) and incorrectly re-open the menu.
-    was_open_at_down: bool,
 }
 
 // --- MARK: BUILDERS
@@ -91,17 +79,20 @@ impl ThemedDropdownButton {
             .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
             .prepare();
         lbl.properties.insert(ContentColor::new(text_color));
+        let overlay_host = AnchoredOverlay::new(
+            lbl.erased(),
+            NewWidget::new(MenuContent::new(items.clone(), theme)),
+            false,
+            PopoverAnchor::BottomStart,
+        );
         Self {
-            label: lbl.erased().to_pod(),
+            overlay_host: NewWidget::new(overlay_host).to_pod(),
             icon,
             items,
             variant,
             disabled,
             theme: *theme,
             open: false,
-            menu_layer_id: None,
-            menu_layer_anchor: None,
-            was_open_at_down: false,
         }
     }
 
@@ -123,6 +114,25 @@ impl ThemedDropdownButton {
             this.widget.theme = *theme;
             this.ctx.request_layout();
             this.ctx.request_paint_only();
+
+            let text_color =
+                Self::text_color_for(theme, this.widget.variant, this.widget.disabled);
+            {
+                let mut overlay_host = this.ctx.get_mut(&mut this.widget.overlay_host);
+                let mut lbl = AnchoredOverlay::primary_mut(&mut overlay_host);
+                lbl.insert_prop(ContentColor::new(text_color));
+                let mut lbl = lbl.downcast::<Label>();
+                Label::insert_style(
+                    &mut lbl,
+                    StyleProperty::FontSize(theme.density.ui_font_size),
+                );
+            }
+            {
+                let mut overlay_host = this.ctx.get_mut(&mut this.widget.overlay_host);
+                let mut menu = AnchoredOverlay::overlay_mut(&mut overlay_host);
+                let mut menu = menu.downcast::<MenuContent>();
+                MenuContent::set_theme(&mut menu, theme);
+            }
         }
     }
 
@@ -142,17 +152,17 @@ impl ThemedDropdownButton {
     }
 
     pub fn set_items(this: &mut WidgetMut<'_, Self>, items: Vec<ArcStr>) {
-        this.widget.items = items;
+        this.widget.items.clone_from(&items);
+        let mut overlay_host = this.ctx.get_mut(&mut this.widget.overlay_host);
+        let mut menu = AnchoredOverlay::overlay_mut(&mut overlay_host);
+        let mut menu = menu.downcast::<MenuContent>();
+        MenuContent::set_items(&mut menu, items);
     }
 
     pub fn set_icon(this: &mut WidgetMut<'_, Self>, icon: Option<Arc<BezPath>>) {
         this.widget.icon = icon;
         this.ctx.request_layout();
         this.ctx.request_paint_only();
-    }
-
-    pub fn label_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
-        this.ctx.get_mut(&mut this.widget.label)
     }
 }
 
@@ -273,48 +283,22 @@ impl ThemedDropdownButton {
         }
     }
 
-    fn open_dropdown(&mut self, ctx: &mut EventCtx<'_>) {
-        let creator_id = ctx.widget_id();
-        let border_box = ctx.border_box();
-        let content = NewWidget::new(MenuContent::new(
-            self.items.clone(),
-            creator_id,
-            &self.theme,
-        ));
-        let p = &self.theme.palette;
-        let close_cb: OnOutsideClick = Arc::new(|mut w, layer_id| {
-            let mut w = w.downcast::<ThemedDropdownButton>();
-            w.widget.open = false;
-            w.widget.menu_layer_id = None;
-            w.ctx.remove_layer(layer_id);
+    fn set_overlay_visible(&mut self, ctx: &mut EventCtx<'_>, visible: bool) {
+        ctx.mutate_child_later(&mut self.overlay_host, move |mut w| {
+            AnchoredOverlay::set_overlay_visible(&mut w, visible);
         });
-        let layer_widget = NewWidget::new(PopoverLayer::new(
-            content,
-            creator_id,
-            p.surface_hi,
-            p.border_strong,
-            PopoverAnchor::BottomStart,
-            border_box.size(),
-            close_cb,
-        ));
-        let layer_id = layer_widget.id();
-        // PopoverLayer handles the BottomStart offset internally — pass trigger top-left.
-        let pos = ctx.to_window(border_box.origin());
-        ctx.create_layer(LayerType::Other, layer_widget, pos);
-        self.menu_layer_id = Some(layer_id);
-        self.menu_layer_anchor = Some(pos);
+    }
+
+    fn open_dropdown(&mut self, ctx: &mut EventCtx<'_>) {
         self.open = true;
-        // Kick off polling so the layer stays anchored to the trigger if it
-        // moves (e.g. an ancestor scroll container scrolls). See `on_anim_frame`.
-        ctx.request_anim_frame();
+        self.set_overlay_visible(ctx, true);
+        ctx.request_paint_only();
     }
 
     fn close_dropdown(&mut self, ctx: &mut EventCtx<'_>) {
-        if let Some(id) = self.menu_layer_id.take() {
-            ctx.remove_layer(id);
-        }
-        self.menu_layer_anchor = None;
         self.open = false;
+        self.set_overlay_visible(ctx, false);
+        ctx.request_paint_only();
     }
 
     fn toggle_dropdown(&mut self, ctx: &mut EventCtx<'_>) {
@@ -339,27 +323,48 @@ impl Widget for ThemedDropdownButton {
         if self.disabled {
             return;
         }
+        // While open, `MenuContent` (now a real descendant — see the removed
+        // `propagates_pointer_interaction` override) handles its own pointer
+        // events, which then bubble up here. `is_hovered` — "the pointer is
+        // directly over *my* border box," not a descendant's — is `false` for
+        // those bubbled events (the menu can legally extend outside our box
+        // via `AnchoredOverlay`'s unclamped placement), so this skips them and
+        // leaves `MenuContent` to handle its own clicks/selection untouched.
+        if self.open && !ctx.is_hovered() {
+            return;
+        }
         match click::primary_click(ctx, event) {
             Some(ClickPhase::Down) => {
-                self.was_open_at_down = self.open;
                 ctx.request_focus();
                 ctx.request_paint_only();
             }
             Some(ClickPhase::Up(Some(_))) => {
-                if self.was_open_at_down {
-                    // capture_pointer_event's mutate_later may have already
-                    // reset `open` to false between Down and Up — only call
-                    // close_dropdown if the state hasn't been cleared yet.
-                    if self.open {
-                        self.close_dropdown(ctx);
-                    }
-                } else {
-                    self.open_dropdown(ctx);
-                }
+                self.toggle_dropdown(ctx);
                 ctx.request_paint_only();
             }
             Some(ClickPhase::Up(None)) => ctx.request_paint_only(),
             None => {}
+        }
+    }
+
+    /// Handles [`MenuItemSelected`] bubbling up from `MenuContent` (nested
+    /// inside `overlay_host`): closes the dropdown and re-emits the selection
+    /// as our own [`DropdownButtonAction::ItemSelected`].
+    fn on_action(
+        &mut self,
+        ctx: &mut ActionCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        action: &ErasedAction,
+        _source: WidgetId,
+    ) {
+        if let Some(&MenuItemSelected(index)) = action.downcast_ref::<MenuItemSelected>() {
+            self.open = false;
+            ctx.mutate_child_later(&mut self.overlay_host, |mut w| {
+                AnchoredOverlay::set_overlay_visible(&mut w, false);
+            });
+            ctx.submit_action::<Self::Action>(DropdownButtonAction::ItemSelected(index));
+            ctx.set_handled();
+            ctx.request_paint_only();
         }
     }
 
@@ -388,6 +393,19 @@ impl Widget for ThemedDropdownButton {
             Update::WidgetAdded => {
                 ctx.set_disabled(self.disabled);
             }
+            // A click landing outside our subtree clears our focus — masonry's
+            // standard "click outside to dismiss" signal. This only works
+            // because the menu remains a *descendant*: clicks on the trigger
+            // or inside the menu keep our subtree focused (see
+            // `event.rs::226-235` for the ancestor-chain check), so the menu
+            // only closes for genuine outside clicks.
+            Update::FocusChanged(false) if self.open => {
+                self.open = false;
+                ctx.mutate_child_later(&mut self.overlay_host, |mut w| {
+                    AnchoredOverlay::set_overlay_visible(&mut w, false);
+                });
+                ctx.request_paint_only();
+            }
             Update::HoveredChanged(_)
             | Update::ActiveChanged(_)
             | Update::DisabledChanged(_)
@@ -399,27 +417,7 @@ impl Widget for ThemedDropdownButton {
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.label);
-    }
-
-    fn on_anim_frame(
-        &mut self,
-        ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _interval: u64,
-    ) {
-        let Some(layer_id) = self.menu_layer_id else {
-            return;
-        };
-        let pos = ctx.to_window(ctx.border_box().origin());
-        if self.menu_layer_anchor != Some(pos) {
-            self.menu_layer_anchor = Some(pos);
-            ctx.reposition_layer(layer_id, pos);
-        }
-        // Masonry has no "ancestor transform changed" notification, so while the
-        // menu is open we poll once per frame to keep the layer anchored to the
-        // trigger when an ancestor scroll container moves it.
-        ctx.request_anim_frame();
+        ctx.register_child(&mut self.overlay_host);
     }
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
@@ -440,7 +438,7 @@ impl Widget for ThemedDropdownButton {
         };
         let inner_cross = cross_length.map(|c| Length::px((c.get() - cross_pad).max(0.0)));
         let child_length = ctx.compute_length(
-            &mut self.label,
+            &mut self.overlay_host,
             len_req.into(),
             LayoutSize::maybe(axis.cross(), inner_cross),
             axis,
@@ -478,16 +476,16 @@ impl Widget for ThemedDropdownButton {
             (size.height - 2.0 * pad_v).max(0.0),
         );
         let label_size = ctx.compute_size(
-            &mut self.label,
+            &mut self.overlay_host,
             SizeDef::fit(label_inner),
             label_inner.into(),
         );
-        ctx.run_layout(&mut self.label, label_size);
+        ctx.run_layout(&mut self.overlay_host, label_size);
 
         let label_x = pad_h + icon_base + icon_gap;
         let label_y = pad_v + ((label_inner.height - label_size.height) * 0.5).max(0.0);
-        ctx.place_child(&mut self.label, Point::new(label_x, label_y));
-        ctx.derive_baselines(&self.label);
+        ctx.place_child(&mut self.overlay_host, Point::new(label_x, label_y));
+        ctx.derive_baselines(&self.overlay_host);
     }
 
     fn paint(
@@ -498,8 +496,8 @@ impl Widget for ThemedDropdownButton {
     ) {
         let size = ctx.border_box_size();
         let focused = ctx.is_focus_target();
-        let hovered = ctx.is_hovered();
-        let pressed = ctx.is_active() && hovered;
+        let hovered = ctx.has_hovered();
+        let pressed = ctx.has_active() && hovered;
         let p = &self.theme.palette;
         let icon_size = self.icon_size();
         let pad_h = self.pad_h();
@@ -567,11 +565,7 @@ impl Widget for ThemedDropdownButton {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.label.id()])
-    }
-
-    fn propagates_pointer_interaction(&self) -> bool {
-        false
+        ChildrenIds::from_slice(&[self.overlay_host.id()])
     }
 
     fn accepts_focus(&self) -> bool {

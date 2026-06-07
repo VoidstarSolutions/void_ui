@@ -1,7 +1,10 @@
 //! Split dropdown button — primary action (left) + chevron menu toggle (right).
 //!
-//! The menu floats above all other content using masonry's window-level layer
-//! infrastructure so it is never clipped by the button's parent container.
+//! The menu is hosted in-tree via [`crate::AnchoredOverlay`]: it's a real
+//! descendant of the button, anchored below it and free to overflow the
+//! button's own box, but otherwise subject to normal paint order and
+//! ancestor clipping — confined by whatever scroll viewport or card actually
+//! clips it, rather than floating above all other content.
 //!
 //! ```ignore
 //! use void_ui::components::dropdown_button;

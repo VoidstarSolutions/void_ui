@@ -4,7 +4,7 @@ use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::layout::Length;
 use xilem::masonry::widgets::Passthrough;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, flex_col, flex_row};
+use xilem::view::{CrossAxisAlignment, flex_col, flex_row, sized_box};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use crate::Theme;
@@ -99,6 +99,53 @@ fn disabled_row(theme: &Theme) -> impl WidgetView<DropdownDemo> + use<> {
     })
 }
 
+/// Nests a dropdown — with enough items that its menu is taller than its
+/// host — inside an undersized scroll viewport, to confirm the menu is
+/// clipped at the viewport's edge rather than painting over the rest of the
+/// gallery (the headline behavior of the in-tree `AnchoredOverlay` hosting).
+fn confinement_demo(theme: &Theme) -> impl WidgetView<DropdownDemo> + use<> {
+    with_source!(theme, {
+        sized_box(
+            scroll_container(
+                flex_col((
+                    label("Scroll down, then open the menu — it's clipped by this box.")
+                        .color(theme.palette.text_muted)
+                        .multiline(true)
+                        .render(theme),
+                    dropdown_button("Actions")
+                        .item("Alpha", |s: &mut DropdownDemo| {
+                            s.last_action = "Alpha".into();
+                        })
+                        .item("Bravo", |s: &mut DropdownDemo| {
+                            s.last_action = "Bravo".into();
+                        })
+                        .item("Charlie", |s: &mut DropdownDemo| {
+                            s.last_action = "Charlie".into();
+                        })
+                        .item("Delta", |s: &mut DropdownDemo| {
+                            s.last_action = "Delta".into();
+                        })
+                        .item("Echo", |s: &mut DropdownDemo| {
+                            s.last_action = "Echo".into();
+                        })
+                        .item("Foxtrot", |s: &mut DropdownDemo| {
+                            s.last_action = "Foxtrot".into();
+                        })
+                        .render(theme),
+                    label("More content below the trigger…")
+                        .color(theme.palette.text_faint)
+                        .render(theme),
+                ))
+                .cross_axis_alignment(CrossAxisAlignment::Start)
+                .gap(Length::px(120.0)),
+            )
+            .render(theme),
+        )
+        .fixed_width(Length::px(280.0))
+        .fixed_height(Length::px(160.0))
+    })
+}
+
 fn build_inner(theme: &Theme, state: &DropdownDemo) -> impl WidgetView<DropdownDemo> + use<> {
     let header = |text: &'static str| {
         label(text)
@@ -114,7 +161,7 @@ fn build_inner(theme: &Theme, state: &DropdownDemo) -> impl WidgetView<DropdownD
             .color(theme.palette.text)
             .render(theme),
         label(
-            "Button with trailing chevron — clicking anywhere opens a floating menu above all other content.",
+            "Button with trailing chevron — opens a menu anchored beneath it that's confined to its container's clip bounds.",
         )
         .color(theme.palette.text_muted)
         .multiline(true)
@@ -135,6 +182,8 @@ fn build_inner(theme: &Theme, state: &DropdownDemo) -> impl WidgetView<DropdownD
             variants_row(theme),
             header("Disabled"),
             disabled_row(theme),
+            header("Confined to its container"),
+            confinement_demo(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(16.0)),
