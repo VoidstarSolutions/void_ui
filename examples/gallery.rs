@@ -237,11 +237,11 @@ fn sidebar_items(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State
             })
             .active(focused == ComponentKind::CodeView)
             .render(theme),
-        sidebar_item("Collapsible", |s: &mut State| {
-            s.focused = ComponentKind::Collapsible;
-        })
-        .active(focused == ComponentKind::Collapsible)
-        .render(theme),
+            sidebar_item("Collapsible", |s: &mut State| {
+                s.focused = ComponentKind::Collapsible;
+            })
+            .active(focused == ComponentKind::Collapsible)
+            .render(theme),
             sidebar_item("Data Grid", |s: &mut State| {
                 s.focused = ComponentKind::DataGrid;
             })
