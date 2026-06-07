@@ -34,7 +34,9 @@ use crate::Theme;
 const HANDLE_THICKNESS: f64 = 1.0;
 /// Half-width of the invisible grab region on each side of the handle center.
 const GRAB_HALF: f64 = 8.0;
-/// Default minimum panel size in pixels; callers may override via [`ResizableWidget::set_min_size`].
+/// Structural minimum panel size in pixels, used as a collapse-prevention floor;
+/// callers may set per-panel minimums via [`ResizableWidget::set_first_min_size`]/
+/// [`ResizableWidget::set_second_min_size`], which are layered on top of this floor.
 pub const MIN_PANEL_SIZE: f64 = 40.0;
 /// Pixel adjustment to the first panel's extent per arrow-key press, for
 /// keyboard nudging once the divider is focused.
