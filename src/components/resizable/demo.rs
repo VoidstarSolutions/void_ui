@@ -159,6 +159,7 @@ fn build_inner(theme: &Theme, state: &ResizableDemo) -> impl WidgetView<Resizabl
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .gap(Length::px(16.0)),
     )
+    .constrain_horizontal(true)
     .scroll_bar_visibility(ScrollBarVisibility::OnActivity)
     .render(theme)
 }
