@@ -9,7 +9,8 @@
 
 use std::any::TypeId;
 
-use masonry::accesskit::{Node, Role};
+use masonry::accesskit::{self, Node, Role};
+use masonry::core::keyboard::{Key, NamedKey};
 use masonry::core::{
     AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
     PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef,
@@ -17,7 +18,7 @@ use masonry::core::{
     WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Point, Rect, Size};
+use masonry::kurbo::{Axis, Point, Rect, Size, Stroke};
 use masonry::layout::{LayoutSize, LenReq, Length};
 use masonry::peniko::Color;
 use masonry::properties::ContentColor;
@@ -37,6 +38,10 @@ const PAD_H: f64 = 8.0;
 const CHEVRON_GAP: f64 = 4.0;
 /// Thickness of the separator line below the header.
 const SEPARATOR_WIDTH: f64 = 1.0;
+/// Stroke width of the keyboard-focus ring drawn around the header.
+const FOCUS_RING_WIDTH: f64 = 1.5;
+/// Gap between the header edge and the focus ring.
+const FOCUS_RING_INSET: f64 = 1.5;
 
 // --- MARK: ACTION
 
@@ -213,6 +218,7 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
                 let pos = ctx.local_position(state.position);
                 if pos.y < self.current_header_height {
                     self.header_pressed = true;
+                    ctx.request_focus();
                     ctx.capture_pointer();
                     ctx.request_paint_only();
                 }
@@ -241,18 +247,28 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
 
     fn on_text_event(
         &mut self,
-        _ctx: &mut EventCtx<'_>,
+        ctx: &mut EventCtx<'_>,
         _props: &mut PropertiesMut<'_>,
-        _event: &TextEvent,
+        event: &TextEvent,
     ) {
+        if let TextEvent::Keyboard(event) = event
+            && event.state.is_up()
+            && (matches!(&event.key, Key::Character(c) if c == " ")
+                || event.key == Key::Named(NamedKey::Enter))
+        {
+            ctx.submit_action::<Self::Action>(CollapsibleTogglePressed);
+        }
     }
 
     fn on_access_event(
         &mut self,
-        _ctx: &mut EventCtx<'_>,
+        ctx: &mut EventCtx<'_>,
         _props: &mut PropertiesMut<'_>,
-        _event: &AccessEvent,
+        event: &AccessEvent,
     ) {
+        if event.action == accesskit::Action::Click {
+            ctx.submit_action::<Self::Action>(CollapsibleTogglePressed);
+        }
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
@@ -260,6 +276,9 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
             && self.header_hovered
         {
             self.header_hovered = false;
+            ctx.request_paint_only();
+        }
+        if let Update::FocusChanged(_) = event {
             ctx.request_paint_only();
         }
     }
@@ -340,7 +359,7 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
 
     fn paint(
         &mut self,
-        _ctx: &mut PaintCtx<'_>,
+        ctx: &mut PaintCtx<'_>,
         _props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
@@ -356,6 +375,18 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
                 .draw();
         }
 
+        // Keyboard-focus ring around the header.
+        if ctx.is_focus_target() {
+            let inset = FOCUS_RING_INSET;
+            let focus_rect = Rect::from_origin_size(
+                Point::new(inset, inset),
+                Size::new((w - 2.0 * inset).max(0.0), (h - 2.0 * inset).max(0.0)),
+            );
+            painter
+                .stroke(focus_rect, &Stroke::new(FOCUS_RING_WIDTH), p.teal)
+                .draw();
+        }
+
         // Separator below the header.
         painter
             .fill(
@@ -366,15 +397,17 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
     }
 
     fn accessibility_role(&self) -> Role {
-        Role::GenericContainer
+        Role::Button
     }
 
     fn accessibility(
         &mut self,
         _ctx: &mut AccessCtx<'_>,
         _props: &PropertiesRef<'_>,
-        _node: &mut Node,
+        node: &mut Node,
     ) {
+        node.add_action(accesskit::Action::Click);
+        node.set_expanded(self.open);
     }
 
     fn children_ids(&self) -> ChildrenIds {
@@ -387,7 +420,7 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
     }
 
     fn accepts_focus(&self) -> bool {
-        false
+        true
     }
 
     fn accepts_text_input(&self) -> bool {
