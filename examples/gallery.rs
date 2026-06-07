@@ -7,7 +7,7 @@
 //! (right side) with theme/density controls plus a live reference of
 //! the current palette, text samples, and density numbers.
 
-use void_ui::components::ScrollBarVisibility::{AlwaysHidden, OnActivity};
+use void_ui::components::ScrollBarVisibility::OnActivity;
 use xilem::masonry::layout::Length;
 use xilem::peniko::Color;
 use xilem::style::Style as _;
@@ -287,6 +287,7 @@ fn sidebar_items(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State
         .gap(Length::px(2.0)),
     )
     .constrain_horizontal(true)
+    .scroll_bar_visibility(OnActivity)
     .render(theme)
 }
 
