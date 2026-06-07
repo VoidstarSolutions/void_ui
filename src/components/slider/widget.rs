@@ -214,6 +214,15 @@ impl SliderWidget {
     pub fn set_orientation(this: &mut WidgetMut<'_, Self>, orientation: Orientation) {
         if this.widget.orientation != orientation {
             this.widget.orientation = orientation;
+            // A drag in progress was interpreting the captured pointer
+            // position under the old axis mapping (`value_from_position`
+            // reads x vs. y and flips the travel direction per orientation).
+            // Swapping axes mid-gesture would reinterpret that same position
+            // under the new mapping and emit a bogus jump. Cancel the
+            // gesture instead — masonry releases the pointer capture
+            // automatically once the in-flight Up/Cancel event completes.
+            this.widget.dragging = None;
+            this.widget.last_emitted = None;
             this.ctx.request_layout();
             this.ctx.request_paint_only();
         }
