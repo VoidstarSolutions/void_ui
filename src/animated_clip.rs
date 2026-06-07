@@ -151,10 +151,7 @@ impl<W: Widget + ?Sized> Widget for AnimatedClip<W> {
             cross_length,
         );
         if axis == self.axis {
-            let natural = child_length.get();
-            if natural > 0.0 {
-                self.natural_extent = natural;
-            }
+            self.natural_extent = child_length.get();
             Length::px(self.animated_extent())
         } else {
             child_length
