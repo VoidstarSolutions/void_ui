@@ -219,12 +219,16 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
             }
             PointerEvent::Up(PointerButtonEvent {
                 button: Some(PointerButton::Primary),
+                state,
                 ..
             }) if self.header_pressed => {
-                if ctx.is_hovered() && self.header_hovered {
+                let pos = ctx.local_position(state.position);
+                let in_header = pos.y < self.current_header_height;
+                if ctx.is_hovered() && in_header {
                     ctx.submit_action::<Self::Action>(CollapsibleTogglePressed);
                 }
                 self.header_pressed = false;
+                self.header_hovered = in_header;
                 ctx.request_paint_only();
             }
             PointerEvent::Leave(_) if self.header_hovered => {
