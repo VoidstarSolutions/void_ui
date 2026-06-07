@@ -62,6 +62,11 @@ pub struct ThemedDropdownButton {
     theme: Theme,
     pub(super) open: bool,
     pub(super) menu_layer_id: Option<WidgetId>,
+    /// Window-space position the open menu layer was last placed at — the
+    /// trigger's border-box top-left corner. Tracked so `on_anim_frame` can
+    /// detect movement (e.g. from an ancestor scrolling) and reposition the
+    /// layer to keep it anchored to the trigger.
+    menu_layer_anchor: Option<Point>,
     /// Snapshot of `open` taken at pointer-Down time. Needed because
     /// `PopoverLayer::capture_pointer_event` queues a `mutate_later`
     /// that resets `open = false` between the Down and Up events. Without
@@ -95,6 +100,7 @@ impl ThemedDropdownButton {
             theme: *theme,
             open: false,
             menu_layer_id: None,
+            menu_layer_anchor: None,
             was_open_at_down: false,
         }
     }
@@ -296,13 +302,18 @@ impl ThemedDropdownButton {
         let pos = ctx.to_window(border_box.origin());
         ctx.create_layer(LayerType::Other, layer_widget, pos);
         self.menu_layer_id = Some(layer_id);
+        self.menu_layer_anchor = Some(pos);
         self.open = true;
+        // Kick off polling so the layer stays anchored to the trigger if it
+        // moves (e.g. an ancestor scroll container scrolls). See `on_anim_frame`.
+        ctx.request_anim_frame();
     }
 
     fn close_dropdown(&mut self, ctx: &mut EventCtx<'_>) {
         if let Some(id) = self.menu_layer_id.take() {
             ctx.remove_layer(id);
         }
+        self.menu_layer_anchor = None;
         self.open = false;
     }
 
@@ -389,6 +400,26 @@ impl Widget for ThemedDropdownButton {
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
         ctx.register_child(&mut self.label);
+    }
+
+    fn on_anim_frame(
+        &mut self,
+        ctx: &mut UpdateCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _interval: u64,
+    ) {
+        let Some(layer_id) = self.menu_layer_id else {
+            return;
+        };
+        let pos = ctx.to_window(ctx.border_box().origin());
+        if self.menu_layer_anchor != Some(pos) {
+            self.menu_layer_anchor = Some(pos);
+            ctx.reposition_layer(layer_id, pos);
+        }
+        // Masonry has no "ancestor transform changed" notification, so while the
+        // menu is open we poll once per frame to keep the layer anchored to the
+        // trigger when an ancestor scroll container moves it.
+        ctx.request_anim_frame();
     }
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
