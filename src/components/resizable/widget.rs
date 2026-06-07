@@ -12,7 +12,7 @@
 
 use std::any::TypeId;
 
-use masonry::accesskit::{Node, Role};
+use masonry::accesskit::{Action, ActionData, Node, Role};
 use masonry::core::keyboard::{Key, NamedKey};
 use masonry::core::{
     AccessCtx, AccessEvent, ChildrenIds, CursorIcon, EventCtx, FromDynWidget, LayoutCtx,
@@ -359,10 +359,36 @@ impl<A: Widget + ?Sized, B: Widget + ?Sized> Widget for ResizableWidget<A, B> {
 
     fn on_access_event(
         &mut self,
-        _ctx: &mut EventCtx<'_>,
+        ctx: &mut EventCtx<'_>,
         _props: &mut PropertiesMut<'_>,
-        _event: &AccessEvent,
+        event: &AccessEvent,
     ) {
+        let usable = (self.total_extent - HANDLE_THICKNESS).max(1.0);
+        let (lower, upper) = self.first_extent_bounds(usable);
+        let new_ratio = match event.action {
+            Action::Increment => Some(self.nudge_ratio(ARROW_NUDGE_PX)),
+            Action::Decrement => Some(self.nudge_ratio(-ARROW_NUDGE_PX)),
+            Action::SetValue => match event.data {
+                Some(ActionData::NumericValue(percent)) => {
+                    let target = (percent / 100.0 * usable).clamp(lower, upper);
+                    #[allow(clippy::cast_possible_truncation)]
+                    {
+                        Some((target / usable) as f32)
+                    }
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+
+        if let Some(new_ratio) = new_ratio
+            && (new_ratio - self.ratio).abs() > 1e-5
+        {
+            self.ratio = new_ratio;
+            ctx.request_layout();
+            ctx.submit_action::<Self::Action>(ResizeHandleDragged(new_ratio));
+            ctx.set_handled();
+        }
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
@@ -513,15 +539,23 @@ impl<A: Widget + ?Sized, B: Widget + ?Sized> Widget for ResizableWidget<A, B> {
     }
 
     fn accessibility_role(&self) -> Role {
-        Role::GenericContainer
+        Role::Splitter
     }
 
     fn accessibility(
         &mut self,
         _ctx: &mut AccessCtx<'_>,
         _props: &PropertiesRef<'_>,
-        _node: &mut Node,
+        node: &mut Node,
     ) {
+        let usable = (self.total_extent - HANDLE_THICKNESS).max(1.0);
+        let (lower, upper) = self.first_extent_bounds(usable);
+        node.set_numeric_value(f64::from(self.ratio) * 100.0);
+        node.set_min_numeric_value(lower / usable * 100.0);
+        node.set_max_numeric_value(upper / usable * 100.0);
+        node.add_action(Action::Increment);
+        node.add_action(Action::Decrement);
+        node.add_action(Action::SetValue);
     }
 
     fn children_ids(&self) -> ChildrenIds {
