@@ -74,15 +74,13 @@ pub struct SliderWidget {
     /// The thumb most recently targeted by a gesture or key/access action —
     /// keyboard nudges and accessibility actions apply to this thumb. Always
     /// `Single` outside range mode.
+    ///
+    /// In range mode, `Tab` steps this from low to high and `Shift+Tab` steps
+    /// it from high to low (each consuming the keypress); stepping past
+    /// either end leaves the keypress unhandled so focus moves on. Reset to
+    /// the low thumb whenever the slider gains focus, so tabbing in always
+    /// lands on low first regardless of how focus arrived.
     focused_thumb: Thumb,
-    /// In range mode, whether `Tab`/`Shift+Tab` has already moved focus from
-    /// one thumb to the other during the current focus session. The first Tab
-    /// press while focused retargets `focused_thumb` and is consumed; the
-    /// second is left unhandled so focus leaves the widget — combined with
-    /// resetting `focused_thumb` to the low thumb on focus gain, this makes
-    /// tabbing into the slider always select low first, then high. Reset
-    /// whenever focus is gained or lost.
-    thumb_tab_visited: bool,
 }
 
 // --- MARK: BUILDERS
@@ -162,7 +160,6 @@ impl SliderWidget {
             dragging: None,
             last_emitted: None,
             focused_thumb,
-            thumb_tab_visited: false,
         }
     }
 }
@@ -561,16 +558,24 @@ impl Widget for SliderWidget {
         }
         if event.key == Key::Named(NamedKey::Tab)
             && let SliderValue::Range(..) = self.value
-            && !self.thumb_tab_visited
         {
-            self.focused_thumb = match self.focused_thumb {
-                Thumb::Low => Thumb::High,
-                _ => Thumb::Low,
+            // `Tab` steps low -> high, `Shift+Tab` steps high -> low; either
+            // is consumed when it has somewhere to go. Stepping past either
+            // end leaves the keypress unhandled so focus moves on to the next
+            // (or previous) widget — this is what makes both thumbs reachable
+            // by keyboard while still letting focus traverse through the
+            // slider like any other control.
+            let target = match (self.focused_thumb, event.modifiers.shift()) {
+                (Thumb::Low, false) => Some(Thumb::High),
+                (Thumb::High, true) => Some(Thumb::Low),
+                _ => None,
             };
-            self.thumb_tab_visited = true;
-            ctx.set_handled();
-            ctx.request_paint_only();
-            ctx.request_accessibility_update();
+            if let Some(target) = target {
+                self.focused_thumb = target;
+                ctx.set_handled();
+                ctx.request_paint_only();
+                ctx.request_accessibility_update();
+            }
             return;
         }
         let nudge = self.nudge();
@@ -630,7 +635,6 @@ impl Widget for SliderWidget {
                 ctx.set_disabled(self.disabled);
             }
             Update::FocusChanged(gained) => {
-                self.thumb_tab_visited = false;
                 if *gained && let SliderValue::Range(..) = self.value {
                     self.focused_thumb = Thumb::Low;
                 }
