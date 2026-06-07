@@ -118,7 +118,10 @@ impl ResizableWidget {
         max_sizes: Vec<Option<f64>>,
         theme: &Theme,
     ) -> Self {
-        assert!(panels.len() >= 2, "ResizableWidget needs at least two panels");
+        assert!(
+            panels.len() >= 2,
+            "ResizableWidget needs at least two panels"
+        );
         assert_eq!(panels.len(), ratios.len());
         assert_eq!(panels.len(), min_sizes.len());
         assert_eq!(panels.len(), max_sizes.len());
@@ -143,7 +146,10 @@ impl ResizableWidget {
 
 impl ResizableWidget {
     /// Returns a `WidgetMut` for the panel at `index`.
-    pub fn panel_mut<'t>(this: &'t mut WidgetMut<'_, Self>, index: usize) -> WidgetMut<'t, Passthrough> {
+    pub fn panel_mut<'t>(
+        this: &'t mut WidgetMut<'_, Self>,
+        index: usize,
+    ) -> WidgetMut<'t, Passthrough> {
         this.ctx.get_mut(&mut this.widget.panels[index])
     }
 
@@ -186,7 +192,10 @@ impl ResizableWidget {
     ///
     /// Panics if `panels` has fewer than two entries.
     pub fn set_panels(this: &mut WidgetMut<'_, Self>, panels: Vec<NewWidget<Passthrough>>) {
-        assert!(panels.len() >= 2, "ResizableWidget needs at least two panels");
+        assert!(
+            panels.len() >= 2,
+            "ResizableWidget needs at least two panels"
+        );
         for old in std::mem::take(&mut this.widget.panels) {
             this.ctx.remove_child(old);
         }
@@ -286,7 +295,13 @@ impl ResizableWidget {
     /// Recomputes the full ratio vector that results from setting handle `i`'s
     /// adjacent pair so panel `i` occupies `extent` pixels of their combined
     /// `pair_extent`, clamped to the bounds that constrain dragging/nudging.
-    fn ratios_from_pair_extent(&self, usable: f64, i: usize, pair_extent: f64, extent: f64) -> Vec<f32> {
+    fn ratios_from_pair_extent(
+        &self,
+        usable: f64,
+        i: usize,
+        pair_extent: f64,
+        extent: f64,
+    ) -> Vec<f32> {
         let (lower, upper) = self.pair_extent_bounds(pair_extent, i);
         let extent = extent.clamp(lower, upper);
         let mut ratios = self.ratios.clone();
@@ -422,7 +437,10 @@ impl Widget for ResizableWidget {
             if new_ratios != self.ratios {
                 self.ratios.clone_from(&new_ratios);
                 ctx.request_layout();
-                ctx.submit_action::<Self::Action>(ResizeHandleDragged(self.active_handle, new_ratios));
+                ctx.submit_action::<Self::Action>(ResizeHandleDragged(
+                    self.active_handle,
+                    new_ratios,
+                ));
                 ctx.set_handled();
             }
             return;
@@ -570,12 +588,12 @@ impl Widget for ResizableWidget {
         for (index, &center) in self.handle_centers.iter().enumerate() {
             let color = self.handle_color(index);
             // Widen slightly on hover/drag for easier targeting feedback.
-            let visual = if self.dragging_handle == Some(index) || self.hovered_handle == Some(index)
-            {
-                2.0
-            } else {
-                HANDLE_THICKNESS
-            };
+            let visual =
+                if self.dragging_handle == Some(index) || self.hovered_handle == Some(index) {
+                    2.0
+                } else {
+                    HANDLE_THICKNESS
+                };
             let offset = center - visual * 0.5;
             let rect = match self.axis {
                 Axis::Horizontal => Rect::from_origin_size(

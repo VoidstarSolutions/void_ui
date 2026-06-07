@@ -191,8 +191,9 @@ where
         let mut states = Vec::with_capacity(self.panels.len());
         for (i, panel) in self.panels.iter().enumerate() {
             #[allow(clippy::cast_possible_truncation)]
-            let (pod, state) =
-                ctx.with_id(ViewId::new(i as u64), |ctx| panel.view.build(ctx, app_state));
+            let (pod, state) = ctx.with_id(ViewId::new(i as u64), |ctx| {
+                panel.view.build(ctx, app_state)
+            });
             new_widgets.push(pod.new_widget);
             states.push(state);
         }
@@ -262,8 +263,9 @@ where
             let mut new_states = Vec::with_capacity(self.panels.len());
             for (i, panel) in self.panels.iter().enumerate() {
                 #[allow(clippy::cast_possible_truncation)]
-                let (pod, state) =
-                    ctx.with_id(ViewId::new(i as u64), |ctx| panel.view.build(ctx, app_state));
+                let (pod, state) = ctx.with_id(ViewId::new(i as u64), |ctx| {
+                    panel.view.build(ctx, app_state)
+                });
                 new_widgets.push(pod.new_widget);
                 new_states.push(state);
             }
@@ -424,9 +426,10 @@ impl<V1, V2, F> Resizable<V1, V2, F> {
         F: Fn(&mut State, f32) -> Action + Send + Sync + 'static,
     {
         let on_resize = self.on_resize;
-        let adapter: ResizeAdapter<State, Action> = Box::new(
-            move |state: &mut State, _handle: usize, ratios: Vec<f32>| on_resize(state, ratios[0]),
-        );
+        let adapter: ResizeAdapter<State, Action> =
+            Box::new(move |state: &mut State, _handle: usize, ratios: Vec<f32>| {
+                on_resize(state, ratios[0])
+            });
         ResizablePanelsView {
             panels: vec![
                 ResizablePanel {
@@ -453,4 +456,5 @@ impl<V1, V2, F> Resizable<V1, V2, F> {
 ///
 /// Built only through [`Resizable::render`]; not constructed directly. A thin
 /// two-pane specialization of [`ResizablePanelsView`].
-pub type ResizableView<State, Action> = ResizablePanelsView<State, Action, ResizeAdapter<State, Action>>;
+pub type ResizableView<State, Action> =
+    ResizablePanelsView<State, Action, ResizeAdapter<State, Action>>;
