@@ -25,8 +25,9 @@ use crate::Theme;
 
 // --- MARK: CONSTANTS
 
-/// Thickness of the visual divider line.
-const HANDLE_THICKNESS: f64 = 4.0;
+/// Thickness of the visual divider line at rest — matches [`Separator`](crate::Separator)'s
+/// default 1px line so a resizable divider reads the same as a static one.
+const HANDLE_THICKNESS: f64 = 1.0;
 /// Half-width of the invisible grab region on each side of the handle center.
 const GRAB_HALF: f64 = 8.0;
 /// Default minimum panel size in pixels; callers may override via [`ResizableWidget::set_min_size`].
