@@ -19,7 +19,7 @@
 // and from our own modules.
 extern crate self as void_ui;
 
-pub mod animated_clip;
+pub mod anchored_overlay;
 pub mod components;
 pub mod floating;
 pub mod focus_ring;
@@ -74,6 +74,7 @@ pub use components::{
     read_only_text, scroll_container, separator, sidebar_item, sidebar_panel, text_column,
     toggle_button_group, tooltip,
 };
+pub use anchored_overlay::{AnchoredOverlay, AnchoredOverlayView, anchored_overlay};
 pub use floating::{FloatingOverlay, FloatingOverlayView, floating, interactive_floating};
 #[cfg(feature = "gallery")]
 pub use gallery::code_block;
