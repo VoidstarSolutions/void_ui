@@ -92,7 +92,15 @@ impl SliderWidget {
         disabled: bool,
         orientation: Orientation,
     ) -> Self {
-        Self::new(theme, SliderValue::Single(value), min, max, step, disabled, orientation)
+        Self::new(
+            theme,
+            SliderValue::Single(value),
+            min,
+            max,
+            step,
+            disabled,
+            orientation,
+        )
     }
 
     /// Creates a new dual-thumb range slider in the given state.
@@ -159,7 +167,8 @@ impl SliderWidget {
     /// is supported and resets the focused-thumb tracking accordingly.
     pub fn set_value(this: &mut WidgetMut<'_, Self>, value: SliderValue) {
         if this.widget.value != value {
-            let mode_changed = std::mem::discriminant(&this.widget.value) != std::mem::discriminant(&value);
+            let mode_changed =
+                std::mem::discriminant(&this.widget.value) != std::mem::discriminant(&value);
             this.widget.value = value;
             if mode_changed {
                 this.widget.focused_thumb = match value {
@@ -174,7 +183,9 @@ impl SliderWidget {
 
     /// Sets the value range. Requests a repaint and accessibility update on change.
     pub fn set_range(this: &mut WidgetMut<'_, Self>, min: f64, max: f64) {
-        if (this.widget.min - min).abs() > f64::EPSILON || (this.widget.max - max).abs() > f64::EPSILON {
+        if (this.widget.min - min).abs() > f64::EPSILON
+            || (this.widget.max - max).abs() > f64::EPSILON
+        {
             this.widget.min = min;
             this.widget.max = max;
             this.ctx.request_paint_only();
@@ -378,13 +389,24 @@ impl SliderWidget {
         if self.disabled {
             return (p.surface_2, p.text_faint, p.text_faint);
         }
-        let thumb = if active || hovered { p.teal_deep } else { p.teal };
+        let thumb = if active || hovered {
+            p.teal_deep
+        } else {
+            p.teal
+        };
         (p.surface_2, p.teal, thumb)
     }
 
     /// A bar spanning `[main_start, main_end]` along the main axis, centered
     /// on the cross axis with the given `thickness` and `corner_radius`.
-    fn bar_rect(&self, size: Size, main_start: f64, main_end: f64, thickness: f64, corner_radius: f64) -> RoundedRect {
+    fn bar_rect(
+        &self,
+        size: Size,
+        main_start: f64,
+        main_end: f64,
+        thickness: f64,
+        corner_radius: f64,
+    ) -> RoundedRect {
         let half_thickness = thickness * 0.5;
         let (_, cross_len) = self.axis_lengths(size);
         let cross_center = cross_len * 0.5;
@@ -473,7 +495,9 @@ impl Widget for SliderWidget {
         }
         let nudge = self.nudge();
         let new_value = match &event.key {
-            Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowDown) => Some(self.nudged_value(-nudge)),
+            Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowDown) => {
+                Some(self.nudged_value(-nudge))
+            }
             Key::Named(NamedKey::ArrowRight | NamedKey::ArrowUp) => Some(self.nudged_value(nudge)),
             Key::Named(NamedKey::Home) => Some(self.value_for_thumb(self.focused_thumb, self.min)),
             Key::Named(NamedKey::End) => Some(self.value_for_thumb(self.focused_thumb, self.max)),
@@ -589,7 +613,9 @@ impl Widget for SliderWidget {
 
         for value in thumb_values.into_iter().flatten() {
             let center = self.thumb_center(size, value);
-            painter.fill(Circle::new(center, thumb_radius), thumb_color).draw();
+            painter
+                .fill(Circle::new(center, thumb_radius), thumb_color)
+                .draw();
 
             if focused && !self.disabled {
                 painter
@@ -607,7 +633,12 @@ impl Widget for SliderWidget {
         Role::Slider
     }
 
-    fn accessibility(&mut self, _ctx: &mut AccessCtx<'_>, _props: &PropertiesRef<'_>, node: &mut Node) {
+    fn accessibility(
+        &mut self,
+        _ctx: &mut AccessCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        node: &mut Node,
+    ) {
         if !self.disabled {
             node.add_action(accesskit::Action::SetValue);
             node.add_action(accesskit::Action::Increment);

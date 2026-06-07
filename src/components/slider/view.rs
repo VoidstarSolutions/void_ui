@@ -169,7 +169,13 @@ where
         mut element: Mut<'_, Self::Element>,
         _app_state: &mut State,
     ) {
-        rebuild_shared(&self.theme, &prev.theme, &self.config, &prev.config, &mut element);
+        rebuild_shared(
+            &self.theme,
+            &prev.theme,
+            &self.config,
+            &prev.config,
+            &mut element,
+        );
         if (self.value - prev.value).abs() > f64::EPSILON {
             SliderWidget::set_value(&mut element, SliderValue::Single(self.value));
         }
@@ -329,8 +335,16 @@ where
         mut element: Mut<'_, Self::Element>,
         _app_state: &mut State,
     ) {
-        rebuild_shared(&self.theme, &prev.theme, &self.config, &prev.config, &mut element);
-        if (self.low - prev.low).abs() > f64::EPSILON || (self.high - prev.high).abs() > f64::EPSILON {
+        rebuild_shared(
+            &self.theme,
+            &prev.theme,
+            &self.config,
+            &prev.config,
+            &mut element,
+        );
+        if (self.low - prev.low).abs() > f64::EPSILON
+            || (self.high - prev.high).abs() > f64::EPSILON
+        {
             SliderWidget::set_value(&mut element, SliderValue::Range(self.low, self.high));
         }
     }
