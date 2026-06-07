@@ -260,6 +260,7 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(16.0)),
     )
+    .constrain_horizontal(true)
     .scroll_bar_visibility(ScrollBarVisibility::OnActivity)
     .render(theme)
 }
