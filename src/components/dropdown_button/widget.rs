@@ -207,7 +207,10 @@ impl ThemedDropdownButton {
         let mut child = ThemedButton::child_mut(&mut trigger);
         child.insert_prop(ContentColor::new(text_color));
         let mut child = child.downcast::<Label>();
-        Label::insert_style(&mut child, StyleProperty::FontSize(theme.density.ui_font_size));
+        Label::insert_style(
+            &mut child,
+            StyleProperty::FontSize(theme.density.ui_font_size),
+        );
         Label::set_text(&mut child, label);
     }
 
