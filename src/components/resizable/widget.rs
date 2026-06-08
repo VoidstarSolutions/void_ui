@@ -664,7 +664,8 @@ impl Widget for ResizableWidget {
         let i = self.active_handle;
         let (_, pair_extent) = self.pair_region(usable, i);
         let (lower, upper) = self.pair_extent_bounds(pair_extent, i);
-        node.set_numeric_value(f64::from(self.ratios[i]) * 100.0);
+        let current = (usable * f64::from(self.ratios[i])).clamp(lower, upper);
+        node.set_numeric_value(current / pair_extent.max(1.0) * 100.0);
         node.set_min_numeric_value(lower / pair_extent.max(1.0) * 100.0);
         node.set_max_numeric_value(upper / pair_extent.max(1.0) * 100.0);
         node.add_action(Action::Increment);
