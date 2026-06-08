@@ -116,7 +116,10 @@ pub fn with_source(input: TokenStream) -> TokenStream {
     // occlude it once it overflows its own footprint. See
     // `crate::layout::overlap_column` for the mechanism.
     let mut overlap_expr = TokenStream::new();
-    push_path(&mut overlap_expr, &["", "void_ui", "layout", "overlap_column"]);
+    push_path(
+        &mut overlap_expr,
+        &["", "void_ui", "layout", "overlap_column"],
+    );
 
     let mut call_args = TokenStream::new();
     push_ident(&mut call_args, "__vs_view");

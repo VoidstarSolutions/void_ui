@@ -135,9 +135,9 @@ where
         app_state: &mut State,
     ) -> MessageResult<Action> {
         let mut front = widget::OverlapColumn::front_mut(&mut element);
-        let result =
-            self.front
-                .message(&mut view_state.0, message, front.downcast(), app_state);
+        let result = self
+            .front
+            .message(&mut view_state.0, message, front.downcast(), app_state);
         drop(front);
         match result {
             MessageResult::Nop => {

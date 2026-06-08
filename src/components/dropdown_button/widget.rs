@@ -192,6 +192,35 @@ impl ThemedDropdownButton {
             this.ctx.set_disabled(disabled);
             this.ctx.request_paint_only();
 
+            // Disabling mid-open must close the menu — a disabled trigger
+            // can no longer be clicked to dismiss it, and a stale open menu
+            // would stay interactable (selections could still fire). Mirrors
+            // `close_dropdown`/the `Update::ChildFocusChanged(false)` path.
+            if disabled && this.widget.open {
+                this.widget.open = false;
+                match this
+                    .widget
+                    .scope
+                    .as_ref()
+                    .and_then(OverlayScopeHandle::widget_id)
+                {
+                    Some(scope_id) => this.ctx.mutate_later(scope_id, |mut w| {
+                        let mut scope = w.downcast::<OverlayScope>();
+                        OverlayScope::set_overlay(
+                            &mut scope,
+                            None,
+                            Rect::ZERO,
+                            PopoverAnchor::BottomStart,
+                        );
+                    }),
+                    None => this
+                        .ctx
+                        .mutate_child_later(&mut this.widget.overlay_host, |mut w| {
+                            AnchoredOverlay::set_overlay_visible(&mut w, false);
+                        }),
+                }
+            }
+
             let theme = this.widget.theme;
             let text_color = Self::text_color_for(&theme, this.widget.variant, disabled);
             let icon_color = Self::icon_color_for(&theme, disabled);
