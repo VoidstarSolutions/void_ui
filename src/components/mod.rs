@@ -18,6 +18,7 @@ pub mod checkbox;
 pub(crate) mod click;
 pub mod clipboard;
 pub mod code_view;
+pub mod collapsible;
 pub mod data_grid;
 pub mod icon;
 pub mod label;
@@ -32,6 +33,7 @@ pub use button_group::{ButtonGroup, button_group, toggle_button_group};
 pub use checkbox::{Checkbox, CheckboxView, checkbox};
 pub use clipboard::{Clipboard, ClipboardView, clipboard};
 pub use code_view::{ReadOnlyText, ReadOnlyTextView, RustHighlighter, read_only_text};
+pub use collapsible::{Collapsible, CollapsibleView, collapsible};
 pub use data_grid::{
     CellAlign, ColumnDef, ColumnId, ColumnWidths, DataGrid, FilterState, MIN_COLUMN_WIDTH,
     SelectionState, SortDirection, SortState, colored_text_column, data_grid, filtered_indices,
@@ -62,6 +64,7 @@ pub enum ComponentKind {
     Checkbox,
     Clipboard,
     CodeView,
+    Collapsible,
     DataGrid,
     Icon,
     Label,
@@ -83,6 +86,7 @@ impl ComponentKind {
             Self::Checkbox => "Checkbox",
             Self::Clipboard => "Clipboard",
             Self::CodeView => "Code View",
+            Self::Collapsible => "Collapsible",
             Self::DataGrid => "Data Grid",
             Self::Icon => "Icon",
             Self::Label => "Label",
@@ -104,6 +108,7 @@ impl ComponentKind {
             Self::Checkbox,
             Self::Clipboard,
             Self::CodeView,
+            Self::Collapsible,
             Self::Label,
             Self::Radio,
             Self::DataGrid,

@@ -237,6 +237,11 @@ fn sidebar_items(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State
             })
             .active(focused == ComponentKind::CodeView)
             .render(theme),
+            sidebar_item("Collapsible", |s: &mut State| {
+                s.focused = ComponentKind::Collapsible;
+            })
+            .active(focused == ComponentKind::Collapsible)
+            .render(theme),
             sidebar_item("Data Grid", |s: &mut State| {
                 s.focused = ComponentKind::DataGrid;
             })
@@ -303,6 +308,9 @@ fn main_pane(
             Box::new(void_ui::components::button_group::demo::panel(theme))
         }
         ComponentKind::Checkbox => Box::new(void_ui::components::checkbox::demo::panel(theme)),
+        ComponentKind::Collapsible => {
+            Box::new(void_ui::components::collapsible::demo::panel(theme))
+        }
         ComponentKind::Clipboard => Box::new(void_ui::components::clipboard::demo::panel(theme)),
         ComponentKind::DataGrid => Box::new(data_grid_panel(theme, dg)),
         ComponentKind::Icon => Box::new(void_ui::components::icon::demo::panel(theme)),

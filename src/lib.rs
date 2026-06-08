@@ -19,6 +19,7 @@
 // and from our own modules.
 extern crate self as void_ui;
 
+pub mod animated_clip;
 pub mod components;
 pub mod floating;
 #[cfg(feature = "gallery")]
@@ -27,6 +28,7 @@ pub mod layout;
 pub mod pointer_inert;
 pub mod theme;
 
+pub use animated_clip::AnimatedClip;
 pub use components::{
     Button, ButtonGroup, ButtonVariant, ButtonView, CellAlign, ColumnDef, ColumnWidths, DataGrid,
     FilterState, Icon, IconName, Label, LabelAlignment, MIN_COLUMN_WIDTH, Orientation,
