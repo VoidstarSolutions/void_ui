@@ -41,8 +41,6 @@ use crate::components::click::{self, ClickPhase};
 pub(crate) const CORNER_RADIUS: f64 = 5.0;
 /// Border thickness for the active and focus states.
 const BORDER_WIDTH: f64 = 1.0;
-/// Focus-ring stroke width (inset 2px from button edge).
-const FOCUS_RING_WIDTH: f64 = 1.5;
 /// Inset of the focus ring from the button edge.
 const FOCUS_RING_INSET: f64 = 2.0;
 /// Gap between a leading icon and the label.
@@ -706,9 +704,7 @@ impl Widget for ThemedButton {
                     (self.corners.bottom_left - inset).max(0.0),
                 ),
             );
-            painter
-                .stroke(focus_rect, &Stroke::new(FOCUS_RING_WIDTH), p.teal)
-                .draw();
+            crate::focus_ring::paint_focus_ring(painter, focus_rect, &self.theme);
         }
 
         let icon_size = self.icon_size();

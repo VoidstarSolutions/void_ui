@@ -24,13 +24,12 @@ use masonry::widgets::Label;
 use super::CheckboxPress;
 use crate::Theme;
 use crate::components::icon::{IconName, icon};
+use crate::focus_ring::paint_focus_ring;
 
 /// Corner radius of the checkbox box.
 const BOX_RADIUS: f64 = 3.0;
 /// Stroke width of the box border.
 const BOX_BORDER: f64 = 1.0;
-/// Focus-ring stroke width.
-const FOCUS_RING_WIDTH: f64 = 1.5;
 /// Gap between the box edge and the focus ring.
 const FOCUS_RING_INSET: f64 = 1.5;
 /// Gap between the box and an optional text label.
@@ -374,7 +373,6 @@ impl Widget for CheckboxWidget {
         let hovered = ctx.is_hovered();
         let pressed = ctx.is_active() && hovered;
         let focused = ctx.is_focus_target();
-        let p = &self.theme.palette;
         let box_sz = self.box_size();
 
         let content_h = (size.height - 2.0 * PAD).max(0.0);
@@ -402,9 +400,7 @@ impl Widget for CheckboxWidget {
                 Size::new(box_sz + 2.0 * inset, box_sz + 2.0 * inset),
                 BOX_RADIUS + inset,
             );
-            painter
-                .stroke(focus_rect, &Stroke::new(FOCUS_RING_WIDTH), p.teal)
-                .draw();
+            paint_focus_ring(painter, focus_rect, &self.theme);
         }
 
         // Check icon is a self-painting Label child placed at the box position during layout.

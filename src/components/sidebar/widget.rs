@@ -17,7 +17,7 @@ use masonry::core::{
     TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Point, RoundedRect, Size, Stroke};
+use masonry::kurbo::{Axis, Point, RoundedRect, Size};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use masonry::peniko::Color;
 use masonry::widgets::ButtonPress;
@@ -33,7 +33,6 @@ const PAD_H: f64 = 8.0;
 /// Vertical padding above and below the label.
 const PAD_V: f64 = 6.0;
 /// Focus-ring stroke width.
-const FOCUS_RING_WIDTH: f64 = 1.5;
 /// Inset of the focus ring from the item edge.
 const FOCUS_RING_INSET: f64 = 2.0;
 
@@ -265,9 +264,7 @@ impl Widget for ThemedSidebarItem {
                 ),
                 0.0,
             );
-            painter
-                .stroke(focus_rect, &Stroke::new(FOCUS_RING_WIDTH), p.teal)
-                .draw();
+            crate::focus_ring::paint_focus_ring(painter, focus_rect, &self.theme);
         }
     }
 
