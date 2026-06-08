@@ -10,10 +10,11 @@
 //! surface, same as it would for a plain action button.
 
 use masonry::accesskit::{Node, Role};
+use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
-    AccessCtx, ActionCtx, ArcStr, ChildrenIds, ComposeCtx, ErasedAction, LayoutCtx, MeasureCtx,
-    NewWidget, PaintCtx, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty, Update,
-    UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, ActionCtx, ArcStr, ChildrenIds, ComposeCtx, ErasedAction, EventCtx, LayoutCtx,
+    MeasureCtx, NewWidget, PaintCtx, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty,
+    TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, Size};
@@ -59,6 +60,10 @@ pub struct ThemedDropdownButton {
     disabled: bool,
     theme: Theme,
     pub(super) open: bool,
+    /// Keyboard-highlighted item index for roving-tab-stop navigation.
+    /// `None` means no keyboard highlight; updated on arrow keys and cleared
+    /// when the menu closes or an item is selected.
+    highlighted: Option<usize>,
 }
 
 // --- MARK: BUILDERS
@@ -114,6 +119,7 @@ impl ThemedDropdownButton {
             disabled,
             theme: *theme,
             open: false,
+            highlighted: None,
         }
     }
 
@@ -349,11 +355,58 @@ impl ThemedDropdownButton {
 
     fn close_dropdown(&mut self, ctx: &mut ActionCtx<'_>) {
         self.open = false;
+        self.highlighted = None;
         match self.scope.as_ref().and_then(OverlayScopeHandle::widget_id) {
             Some(scope_id) => Self::clear_from_scope(ctx, scope_id),
             None => self.set_overlay_visible(ctx, false),
         }
         ctx.request_paint_only();
+    }
+
+    /// Push `index` into the `MenuContent` widget for painting, then store it.
+    fn set_highlight(&mut self, ctx: &mut EventCtx<'_>, index: Option<usize>) {
+        self.highlighted = index;
+        match self.scope.as_ref().and_then(OverlayScopeHandle::widget_id) {
+            Some(scope_id) => {
+                ctx.mutate_later(scope_id, move |mut w| {
+                    let mut scope = w.downcast::<OverlayScope>();
+                    if let Some(mut overlay) = OverlayScope::overlay_mut(&mut scope) {
+                        let mut menu = overlay.downcast::<MenuContent>();
+                        MenuContent::set_highlighted(&mut menu, index);
+                    }
+                });
+            }
+            None => {
+                ctx.mutate_child_later(&mut self.overlay_host, move |mut w| {
+                    let mut menu = AnchoredOverlay::overlay_mut(&mut w);
+                    let mut menu = menu.downcast::<MenuContent>();
+                    MenuContent::set_highlighted(&mut menu, index);
+                });
+            }
+        }
+    }
+
+    /// Move the keyboard highlight by `delta` positions (wrapping).
+    ///
+    /// Called from `on_text_event` in response to arrow keys.
+    fn move_highlight(&mut self, ctx: &mut EventCtx<'_>, delta: isize) {
+        let n = self.items.len();
+        if n == 0 {
+            return;
+        }
+        let next = match self.highlighted {
+            None => {
+                if delta >= 0 {
+                    0usize
+                } else {
+                    n - 1
+                }
+            }
+            Some(i) => (i.cast_signed() + delta)
+                .rem_euclid(n.cast_signed())
+                .cast_unsigned(),
+        };
+        self.set_highlight(ctx, Some(next));
     }
 
     fn toggle_dropdown(&mut self, ctx: &mut ActionCtx<'_>) {
@@ -381,8 +434,35 @@ impl Widget for ThemedDropdownButton {
         action: &ErasedAction,
         _source: WidgetId,
     ) {
-        if action.downcast_ref::<ButtonPress>().is_some() {
+        if let Some(press) = action.downcast_ref::<ButtonPress>() {
             if !self.disabled {
+                // Keyboard activation (Enter/Space) while the menu is open and
+                // an item is highlighted → select that item; otherwise toggle.
+                if self.open
+                    && press.button.is_none()
+                    && let Some(index) = self.highlighted
+                {
+                    self.open = false;
+                    self.highlighted = None;
+                    match self.scope.as_ref().and_then(OverlayScopeHandle::widget_id) {
+                        Some(scope_id) => ctx.mutate_later(scope_id, |mut w| {
+                            let mut scope = w.downcast::<OverlayScope>();
+                            OverlayScope::set_overlay(
+                                &mut scope,
+                                None,
+                                Rect::ZERO,
+                                PopoverAnchor::BottomStart,
+                            );
+                        }),
+                        None => ctx.mutate_child_later(&mut self.overlay_host, |mut w| {
+                            AnchoredOverlay::set_overlay_visible(&mut w, false);
+                        }),
+                    }
+                    ctx.submit_action::<Self::Action>(DropdownButtonAction::ItemSelected(index));
+                    ctx.set_handled();
+                    ctx.request_paint_only();
+                    return;
+                }
                 self.toggle_dropdown(ctx);
             }
             ctx.set_handled();
@@ -391,6 +471,7 @@ impl Widget for ThemedDropdownButton {
         }
         if let Some(&MenuItemSelected(index)) = action.downcast_ref::<MenuItemSelected>() {
             self.open = false;
+            self.highlighted = None;
             match self.scope.as_ref().and_then(OverlayScopeHandle::widget_id) {
                 Some(scope_id) => ctx.mutate_later(scope_id, |mut w| {
                     let mut scope = w.downcast::<OverlayScope>();
@@ -411,6 +492,68 @@ impl Widget for ThemedDropdownButton {
         }
     }
 
+    fn on_text_event(
+        &mut self,
+        ctx: &mut EventCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        event: &TextEvent,
+    ) {
+        if !self.open {
+            return;
+        }
+        let TextEvent::Keyboard(key) = event else {
+            return;
+        };
+        if key.state != KeyState::Down {
+            return;
+        }
+        match &key.key {
+            Key::Named(NamedKey::ArrowDown) => {
+                self.move_highlight(ctx, 1);
+                ctx.set_handled();
+            }
+            Key::Named(NamedKey::ArrowUp) => {
+                self.move_highlight(ctx, -1);
+                ctx.set_handled();
+            }
+            Key::Named(NamedKey::Home) if !self.items.is_empty() => {
+                self.set_highlight(ctx, Some(0));
+                ctx.set_handled();
+            }
+            Key::Named(NamedKey::End) if !self.items.is_empty() => {
+                self.set_highlight(ctx, Some(self.items.len() - 1));
+                ctx.set_handled();
+            }
+            Key::Named(NamedKey::Escape) => {
+                // Close without selecting; returns focus to the trigger button
+                // naturally (it was always focused).
+                self.open = false;
+                self.highlighted = None;
+                match self.scope.as_ref().and_then(OverlayScopeHandle::widget_id) {
+                    Some(scope_id) => {
+                        ctx.mutate_later(scope_id, |mut w| {
+                            let mut scope = w.downcast::<OverlayScope>();
+                            OverlayScope::set_overlay(
+                                &mut scope,
+                                None,
+                                Rect::ZERO,
+                                PopoverAnchor::BottomStart,
+                            );
+                        });
+                    }
+                    None => {
+                        ctx.mutate_child_later(&mut self.overlay_host, |mut w| {
+                            AnchoredOverlay::set_overlay_visible(&mut w, false);
+                        });
+                    }
+                }
+                ctx.set_handled();
+                ctx.request_paint_only();
+            }
+            _ => {}
+        }
+    }
+
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
             Update::WidgetAdded => {
@@ -426,6 +569,7 @@ impl Widget for ThemedDropdownButton {
             // outside clicks.
             Update::ChildFocusChanged(false) if self.open => {
                 self.open = false;
+                self.highlighted = None;
                 match self.scope.as_ref().and_then(OverlayScopeHandle::widget_id) {
                     Some(scope_id) => ctx.mutate_later(scope_id, |mut w| {
                         let mut scope = w.downcast::<OverlayScope>();

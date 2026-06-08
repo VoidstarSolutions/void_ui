@@ -147,6 +147,13 @@ impl OverlayScope {
         this.ctx.get_mut(&mut this.widget.content)
     }
 
+    /// Mutable access to the overlay popup, if one is currently present —
+    /// used by triggers (e.g. `ThemedDropdownButton`) to push live state
+    /// updates (like keyboard-highlight) into their menu while it's open.
+    pub fn overlay_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, dyn Widget>> {
+        this.widget.overlay.as_mut().map(|o| this.ctx.get_mut(o))
+    }
+
     /// The overlay's last-placed rect in local coordinates, valid while an
     /// overlay is present.
     #[must_use]

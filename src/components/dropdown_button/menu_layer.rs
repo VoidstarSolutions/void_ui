@@ -19,6 +19,7 @@ use masonry::properties::ContentColor;
 use masonry::widgets::Label;
 
 use crate::Theme;
+use crate::focus_ring::paint_focus_ring;
 
 /// Vertical padding above and below the item list.
 const MENU_PAD_V: f64 = 4.0;
@@ -26,6 +27,8 @@ const MENU_PAD_V: f64 = 4.0;
 const CORNER_RADIUS: f64 = 5.0;
 /// Border width of the menu's background chrome.
 const BORDER_WIDTH: f64 = 1.0;
+/// Inset of the keyboard-highlight ring from its item's bounds.
+const HIGHLIGHT_RING_INSET: f64 = 2.0;
 
 /// Action emitted when the user selects item `0` (the index) from the menu.
 ///
@@ -43,6 +46,10 @@ pub struct MenuContent {
     /// Rects populated during `layout()` — used for hit-testing in local coords.
     item_rects: Vec<Rect>,
     hover_index: Option<usize>,
+    /// Keyboard-highlighted item for the roving-tab-stop navigation model.
+    /// Driven externally by `ThemedDropdownButton` in response to arrow keys;
+    /// painted as a focus ring distinct from the pointer-hover fill.
+    highlighted: Option<usize>,
     theme: Theme,
 }
 
@@ -57,6 +64,7 @@ impl MenuContent {
             labels,
             item_rects: Vec::new(),
             hover_index: None,
+            highlighted: None,
             theme: *theme,
         }
     }
@@ -124,9 +132,19 @@ impl MenuContent {
             .map(|text| Self::make_label(&text, &theme))
             .collect();
         this.widget.hover_index = None;
+        this.widget.highlighted = None;
         this.ctx.children_changed();
         this.ctx.request_layout();
         this.ctx.request_paint_only();
+    }
+
+    /// Set the keyboard-highlighted item index (from the roving-tab-stop arrow
+    /// navigation in `ThemedDropdownButton`). Pass `None` to clear highlighting.
+    pub(super) fn set_highlighted(this: &mut WidgetMut<'_, Self>, index: Option<usize>) {
+        if this.widget.highlighted != index {
+            this.widget.highlighted = index;
+            this.ctx.request_paint_only();
+        }
     }
 }
 
@@ -279,6 +297,19 @@ impl Widget for MenuContent {
             && let Some(&rect) = self.item_rects.get(i)
         {
             painter.fill(rect, p.surface_2).draw();
+        }
+
+        if let Some(i) = self.highlighted
+            && let Some(&rect) = self.item_rects.get(i)
+        {
+            let inset = HIGHLIGHT_RING_INSET;
+            let ring_rect = Rect::new(
+                rect.x0 + inset,
+                rect.y0 + inset,
+                rect.x1 - inset,
+                rect.y1 - inset,
+            );
+            paint_focus_ring(painter, ring_rect, &self.theme);
         }
     }
 
