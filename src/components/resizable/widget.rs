@@ -258,6 +258,13 @@ impl ResizableWidget {
     /// out of existence. Constraints on the neighbor's pixel size are
     /// translated into bounds on `index`'s extent via
     /// `neighbor_extent = pair_extent - extent`.
+    ///
+    /// When the layered constraints conflict — e.g. `index`'s minimum plus the
+    /// neighbor's minimum exceeds `pair_extent` — `lower` and `upper` collapse
+    /// to a single point, effectively locking the pair's split at that value
+    /// rather than producing an invalid (empty or inverted) range. The result
+    /// is finally clamped to `[0, pair_extent]` via `upper.max(lower).min(pair_extent)`
+    /// followed by `lower.min(upper)`, so callers always get a valid range.
     fn pair_extent_bounds(&self, pair_extent: f64, index: usize) -> (f64, f64) {
         let floor = MIN_PANEL_SIZE.min(pair_extent * 0.5);
         let mut lower = floor;
