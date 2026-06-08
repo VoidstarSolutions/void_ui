@@ -685,3 +685,242 @@ impl Widget for ResizableWidget {
         tracing::trace_span!("ResizableWidget", id = id.trace())
     }
 }
+
+// --- MARK: TESTS
+
+#[cfg(test)]
+mod tests {
+    use masonry::widgets::SizedBox;
+
+    use super::*;
+
+    /// Float comparison with a tolerance — these values are derived via
+    /// division and clamping so exact bit-equality isn't guaranteed, and
+    /// clippy's `float_cmp` (pedantic) forbids `==` on floats anyway.
+    fn approx(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-9
+    }
+
+    fn approx_f32(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-6
+    }
+
+    fn panel() -> NewWidget<Passthrough> {
+        NewWidget::new(Passthrough::new(NewWidget::new(SizedBox::empty())))
+    }
+
+    fn no_constraints(n: usize) -> Vec<Option<f64>> {
+        vec![None; n]
+    }
+
+    /// Builds a widget with the given per-panel ratios/constraints and a
+    /// fixed `total_extent`, as if a layout pass had already run — the
+    /// pair-extent math under test only reads these fields, never `panels`'
+    /// contents, so placeholder children are enough.
+    fn widget(
+        ratios: Vec<f32>,
+        min_sizes: Vec<Option<f64>>,
+        max_sizes: Vec<Option<f64>>,
+        total_extent: f64,
+    ) -> ResizableWidget {
+        let theme = Theme::default();
+        let panels = (0..ratios.len()).map(|_| panel()).collect();
+        let mut w = ResizableWidget::new(panels, Axis::Horizontal, ratios, min_sizes, max_sizes, &theme);
+        w.total_extent = total_extent;
+        w
+    }
+
+    // --- pair_extent_bounds ---
+
+    #[test]
+    fn pair_extent_bounds_unconstrained_uses_structural_floor() {
+        let w = widget(vec![0.5, 0.5], no_constraints(2), no_constraints(2), 301.0);
+        // floor = MIN_PANEL_SIZE.min(pair_extent * 0.5) = 40.0.min(100.0) = 40.0
+        let (lower, upper) = w.pair_extent_bounds(200.0, 0);
+        assert!(approx(lower, 40.0));
+        assert!(approx(upper, 160.0));
+    }
+
+    #[test]
+    fn pair_extent_bounds_near_floor_squeeze_collapses_to_a_single_point() {
+        // pair_extent (60) is below 2 * MIN_PANEL_SIZE, so the floor itself
+        // shrinks to half the pair: both panels already sit at their minimum
+        // share and the handle has no room left to move either of them.
+        let w = widget(vec![0.5, 0.5], no_constraints(2), no_constraints(2), 61.0);
+        let (lower, upper) = w.pair_extent_bounds(60.0, 0);
+        assert!(approx(lower, 30.0));
+        assert!(approx(upper, 30.0));
+    }
+
+    #[test]
+    fn pair_extent_bounds_applies_own_min_and_max() {
+        let raises_floor = widget(
+            vec![0.5, 0.5],
+            vec![Some(80.0), None],
+            vec![None, None],
+            301.0,
+        );
+        let (lower, _) = raises_floor.pair_extent_bounds(200.0, 0);
+        assert!(approx(lower, 80.0), "own min raises the lower bound");
+
+        let lowers_ceiling = widget(
+            vec![0.5, 0.5],
+            vec![None, None],
+            vec![Some(50.0), None],
+            301.0,
+        );
+        let (_, upper) = lowers_ceiling.pair_extent_bounds(200.0, 0);
+        assert!(approx(upper, 50.0), "own max lowers the upper bound");
+    }
+
+    #[test]
+    fn pair_extent_bounds_translates_neighbor_constraints_via_pair_extent() {
+        // neighbor_extent = pair_extent - extent, so a constraint on the
+        // neighbor's pixel size becomes the opposite bound on this panel.
+        let neighbor_max = widget(
+            vec![0.5, 0.5],
+            vec![None, None],
+            vec![None, Some(50.0)],
+            301.0,
+        );
+        let (lower, _) = neighbor_max.pair_extent_bounds(200.0, 0);
+        assert!(approx(lower, 150.0), "neighbor max 50 -> lower = 200 - 50");
+
+        let neighbor_min = widget(
+            vec![0.5, 0.5],
+            vec![None, Some(60.0)],
+            vec![None, None],
+            301.0,
+        );
+        let (_, upper) = neighbor_min.pair_extent_bounds(200.0, 0);
+        assert!(
+            approx(upper, 140.0),
+            "neighbor min 60 -> upper = 200 - 60 (tighter than the 160 floor-derived bound)"
+        );
+    }
+
+    #[test]
+    fn pair_extent_bounds_resolves_conflicting_constraints_to_a_single_point() {
+        // index wants >= 150px of a 200px pair; its neighbor wants >= 100px,
+        // i.e. index <= 100px. The two requests can't both be satisfied —
+        // bounds collapse to the (clamped) lower request rather than crossing
+        // into an inverted [lower, upper) that would panic `extent.clamp`.
+        let w = widget(
+            vec![0.5, 0.5],
+            vec![Some(150.0), Some(100.0)],
+            vec![None, None],
+            301.0,
+        );
+        let (lower, upper) = w.pair_extent_bounds(200.0, 0);
+        assert!(approx(lower, 150.0));
+        assert!(approx(upper, 150.0));
+    }
+
+    #[test]
+    fn pair_extent_bounds_clamps_oversized_min_to_the_pair_extent() {
+        let w = widget(
+            vec![0.5, 0.5],
+            vec![Some(500.0), None],
+            vec![None, None],
+            301.0,
+        );
+        let (lower, upper) = w.pair_extent_bounds(200.0, 0);
+        assert!(approx(lower, 200.0));
+        assert!(approx(upper, 200.0));
+    }
+
+    // --- ratios_from_pair_extent ---
+
+    #[test]
+    fn ratios_from_pair_extent_redistributes_only_the_dragged_pair() {
+        let w = widget(
+            vec![0.5, 0.3, 0.2],
+            no_constraints(3),
+            no_constraints(3),
+            301.0,
+        );
+        let ratios = w.ratios_from_pair_extent(300.0, 0, 240.0, 100.0);
+        assert!(approx_f32(ratios[0], 100.0 / 300.0));
+        assert!(approx_f32(ratios[1], 140.0 / 300.0));
+        assert!(approx_f32(ratios[2], 0.2), "untouched panel keeps its ratio");
+    }
+
+    #[test]
+    fn ratios_from_pair_extent_clamps_extent_to_bounds() {
+        let w = widget(vec![0.5, 0.5], no_constraints(2), no_constraints(2), 301.0);
+        // Bounds for a 200px pair are [40, 160]; an under- and an overshoot
+        // should both land exactly on the nearest bound, not past it.
+        let undershoot = w.ratios_from_pair_extent(200.0, 0, 200.0, -1000.0);
+        assert!(approx_f32(undershoot[0], 40.0 / 200.0));
+        assert!(approx_f32(undershoot[1], 160.0 / 200.0));
+
+        let overshoot = w.ratios_from_pair_extent(200.0, 0, 200.0, 1000.0);
+        assert!(approx_f32(overshoot[0], 160.0 / 200.0));
+        assert!(approx_f32(overshoot[1], 40.0 / 200.0));
+    }
+
+    // --- ratios_from_pos ---
+
+    #[test]
+    fn ratios_from_pos_maps_cursor_position_to_a_split_point() {
+        let w = widget(vec![0.5, 0.5], no_constraints(2), no_constraints(2), 301.0);
+        // usable = total_extent(301) - handles_extent(1) = 300; the lone
+        // handle's pair spans the full widget, starting at 0.
+        let ratios = w.ratios_from_pos(0, 100.5);
+        assert!(approx_f32(ratios[0], 100.0 / 300.0));
+        assert!(approx_f32(ratios[1], 200.0 / 300.0));
+    }
+
+    #[test]
+    fn ratios_from_pos_clamps_at_the_drag_extremes() {
+        let w = widget(vec![0.5, 0.5], no_constraints(2), no_constraints(2), 301.0);
+        let dragged_far_left = w.ratios_from_pos(0, -1000.0);
+        assert!(
+            approx_f32(dragged_far_left[0], 40.0 / 300.0),
+            "clamped to the structural floor rather than collapsing the panel"
+        );
+        assert!(approx_f32(dragged_far_left[1], 260.0 / 300.0));
+    }
+
+    // --- nudge_ratios ---
+
+    #[test]
+    fn nudge_ratios_moves_the_split_by_delta_pixels() {
+        let w = widget(vec![0.5, 0.5], no_constraints(2), no_constraints(2), 301.0);
+
+        let grown = w.nudge_ratios(0, 50.0);
+        assert!(approx_f32(grown[0], 200.0 / 300.0));
+        assert!(approx_f32(grown[1], 100.0 / 300.0));
+
+        let shrunk = w.nudge_ratios(0, -50.0);
+        assert!(approx_f32(shrunk[0], 100.0 / 300.0));
+        assert!(approx_f32(shrunk[1], 200.0 / 300.0));
+    }
+
+    #[test]
+    fn nudge_ratios_clamps_at_bounds_instead_of_overshooting() {
+        let w = widget(vec![0.5, 0.5], no_constraints(2), no_constraints(2), 301.0);
+        let ratios = w.nudge_ratios(0, -1000.0);
+        assert!(
+            approx_f32(ratios[0], 40.0 / 300.0),
+            "can't nudge past the structural floor"
+        );
+        assert!(approx_f32(ratios[1], 260.0 / 300.0));
+    }
+
+    #[test]
+    fn nudge_ratios_respects_per_panel_min_size() {
+        let w = widget(
+            vec![0.5, 0.5],
+            vec![Some(100.0), None],
+            vec![None, None],
+            301.0,
+        );
+        // Without the constraint this would clamp to the 40px structural
+        // floor (see `nudge_ratios_clamps_at_bounds_instead_of_overshooting`);
+        // the explicit 100px minimum raises the floor it stops at instead.
+        let ratios = w.nudge_ratios(0, -1000.0);
+        assert!(approx_f32(ratios[0], 100.0 / 300.0));
+        assert!(approx_f32(ratios[1], 200.0 / 300.0));
+    }
+}
