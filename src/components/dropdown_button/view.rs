@@ -13,10 +13,9 @@
 //! ```
 
 use std::marker::PhantomData;
-use std::sync::Arc;
 
+use lucide_icons::Icon as LucideIcon;
 use masonry::core::ArcStr;
-use masonry::kurbo::BezPath;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker, ViewPathTracker};
 use xilem::{Pod, ViewCtx};
 
@@ -34,7 +33,7 @@ type ItemCallback<State, Action> = Box<dyn Fn(&mut State) -> Action + Send + Syn
 #[must_use = "DropdownButton does nothing until rendered with .render(&theme)"]
 pub struct DropdownButton<State, Action> {
     label: ArcStr,
-    icon: Option<Arc<BezPath>>,
+    icon: Option<LucideIcon>,
     items: Vec<(ArcStr, ItemCallback<State, Action>)>,
     variant: ButtonVariant,
     disabled: bool,
@@ -75,9 +74,9 @@ where
         self
     }
 
-    /// Attach a leading icon (unit-square `BezPath`, scaled to UI font size).
-    pub fn icon(mut self, path: BezPath) -> Self {
-        self.icon = Some(Arc::new(path));
+    /// Attach a leading icon from the Lucide icon set.
+    pub fn icon(mut self, name: LucideIcon) -> Self {
+        self.icon = Some(name);
         self
     }
 
@@ -115,7 +114,7 @@ where
 #[must_use = "View values do nothing unless provided to Xilem."]
 pub struct DropdownButtonView<State, Action> {
     label: ArcStr,
-    icon: Option<Arc<BezPath>>,
+    icon: Option<LucideIcon>,
     items: Vec<(ArcStr, ItemCallback<State, Action>)>,
     item_labels: Vec<ArcStr>,
     variant: ButtonVariant,
@@ -148,7 +147,7 @@ where
             .cloned();
         let widget = ThemedDropdownButton::new(
             self.label.clone(),
-            self.icon.clone(),
+            self.icon,
             self.item_labels.clone(),
             self.variant,
             self.disabled,
@@ -176,13 +175,8 @@ where
         if self.variant != prev.variant {
             ThemedDropdownButton::set_variant(&mut element, self.variant);
         }
-        let icon_changed = match (&self.icon, &prev.icon) {
-            (None, None) => false,
-            (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
-            _ => true,
-        };
-        if icon_changed {
-            ThemedDropdownButton::set_icon(&mut element, self.icon.clone());
+        if self.icon.map(char::from) != prev.icon.map(char::from) {
+            ThemedDropdownButton::set_icon(&mut element, self.icon);
         }
         if self.item_labels != prev.item_labels {
             ThemedDropdownButton::set_items(&mut element, self.item_labels.clone());

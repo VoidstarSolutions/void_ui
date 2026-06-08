@@ -29,9 +29,7 @@ use masonry::core::{
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, Size};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
-use xilem_masonry::core::{
-    MessageCtx, MessageResult, Mut, Resource, View, ViewMarker, provides,
-};
+use xilem_masonry::core::{MessageCtx, MessageResult, Mut, Resource, View, ViewMarker, provides};
 use xilem_masonry::{Pod, ViewCtx, WidgetView};
 
 use crate::components::popover::PopoverAnchor;
@@ -209,7 +207,9 @@ impl Widget for OverlayScope {
             // No bounds enforcement — the overlay may extend past `placement`
             // or even this scope's own border box; `set_clip_path` above
             // handles confinement regardless. Mirrors `AnchoredOverlay::layout`.
-            let offset = self.anchor.child_offset(self.placement.size(), overlay_size)
+            let offset = self
+                .anchor
+                .child_offset(self.placement.size(), overlay_size)
                 + self.placement.origin().to_vec2();
             ctx.place_child(overlay, offset);
             self.placed_overlay_rect = Rect::from_origin_size(offset, overlay_size);
@@ -227,7 +227,12 @@ impl Widget for OverlayScope {
         // Purely structural — both children paint themselves.
     }
 
-    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut masonry::core::PropertiesMut<'_>, event: &Update) {
+    fn update(
+        &mut self,
+        ctx: &mut UpdateCtx<'_>,
+        _props: &mut masonry::core::PropertiesMut<'_>,
+        event: &Update,
+    ) {
         if let Update::WidgetAdded = event {
             // The moment we exist, publish our ID so descendants that cloned
             // this handle at `View::build` time can resolve it lazily.
@@ -319,8 +324,13 @@ where
         app_state: &mut State,
     ) {
         let mut content = OverlayScope::content_mut(&mut element);
-        self.content
-            .rebuild(&prev.content, view_state, ctx, content.downcast(), app_state);
+        self.content.rebuild(
+            &prev.content,
+            view_state,
+            ctx,
+            content.downcast(),
+            app_state,
+        );
     }
 
     fn teardown(
@@ -330,8 +340,7 @@ where
         mut element: Mut<'_, Self::Element>,
     ) {
         let mut content = OverlayScope::content_mut(&mut element);
-        self.content
-            .teardown(view_state, ctx, content.downcast());
+        self.content.teardown(view_state, ctx, content.downcast());
     }
 
     fn message(

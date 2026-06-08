@@ -1,47 +1,35 @@
-//! `ThemedDropdownButton` — button with trailing chevron that opens a floating menu.
+//! `ThemedDropdownButton` — a [`crate::components::button::widget::ThemedButton`]
+//! trigger (with a trailing chevron) that opens a floating menu on click.
 //!
-//! Visually and behaviourally identical to `ThemedButton` with a `trailing_icon`,
-//! except that clicking anywhere on the button (label area or chevron) toggles the
-//! floating [`crate::popover_layer::PopoverLayer`] instead of firing a primary action. There is no split-zone
-//! concept: the whole surface is one click target.
-
-use std::sync::{Arc, LazyLock};
+//! Composes a real `ThemedButton` as `AnchoredOverlay::primary` and delegates all
+//! chrome/color/layout/focus/click handling to it — this widget owns only what's
+//! genuinely dropdown-shaped: menu hosting (`overlay_host` / `OverlayScope`
+//! integration), `items`, `open` state, and item-selection routing. Clicking
+//! anywhere on the wrapped button (label, leading icon, or chevron) toggles the
+//! menu — the inner `ThemedButton` submits a single `ButtonPress` for the whole
+//! surface, same as it would for a plain action button.
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
-    AccessCtx, ActionCtx, ArcStr, ChildrenIds, ComposeCtx, ErasedAction, EventCtx, LayoutCtx,
-    MeasureCtx, NewWidget, PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx,
-    StyleProperty, Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, ActionCtx, ArcStr, ChildrenIds, ComposeCtx, ErasedAction, LayoutCtx, MeasureCtx,
+    NewWidget, PaintCtx, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty, Update,
+    UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Affine, Axis, BezPath, Point, Rect, RoundedRect, Size, Stroke};
-use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
+use masonry::kurbo::{Axis, Point, Rect, Size};
+use masonry::layout::{LenReq, Length};
 use masonry::peniko::Color;
 use masonry::properties::ContentColor;
-use masonry::widgets::Label;
+use masonry::widgets::{ButtonPress, Label};
 
 use super::menu_layer::{MenuContent, MenuItemSelected};
 use crate::AnchoredOverlay;
 use crate::Theme;
 use crate::components::button::ButtonVariant;
-use crate::components::button::widget::CORNER_RADIUS;
-use crate::components::click::{self, ClickPhase};
+use crate::components::button::widget::ThemedButton;
+use crate::components::icon::IconName;
 use crate::components::popover::PopoverAnchor;
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
-
-const FOCUS_RING_WIDTH: f64 = 1.5;
-const FOCUS_RING_INSET: f64 = 2.0;
-const BORDER_WIDTH: f64 = 1.0;
-const ICON_GAP: f64 = 5.0;
-
-/// Down-pointing caret icon in unit-square (0..1) space.
-static CARET_PATH: LazyLock<Arc<BezPath>> = LazyLock::new(|| {
-    let mut p = BezPath::new();
-    p.move_to((0.2, 0.35));
-    p.line_to((0.5, 0.65));
-    p.line_to((0.8, 0.35));
-    Arc::new(p)
-});
 
 /// Action type emitted by [`ThemedDropdownButton`].
 #[derive(Debug)]
@@ -52,8 +40,8 @@ pub enum DropdownButtonAction {
 
 /// Button widget that opens a floating dropdown menu on click.
 ///
-/// Renders as a standard button with a trailing chevron icon. Clicking anywhere
-/// on the button (label area or chevron) toggles the menu layer.
+/// Wraps a [`ThemedButton`] (label + optional leading icon + trailing chevron)
+/// as its trigger; toggles the menu in response to the trigger's `ButtonPress`.
 pub struct ThemedDropdownButton {
     overlay_host: WidgetPod<AnchoredOverlay>,
     /// Nearest `OverlayScope` ancestor, discovered at `View::build` time via
@@ -65,7 +53,7 @@ pub struct ThemedDropdownButton {
     /// push — used by `compose` to detect "did I move" during scrolling
     /// without busy-looping (see `Widget::compose`).
     last_anchor_rect_window: Option<Rect>,
-    icon: Option<Arc<BezPath>>,
+    icon: Option<IconName>,
     items: Vec<ArcStr>,
     variant: ButtonVariant,
     disabled: bool,
@@ -78,7 +66,7 @@ impl ThemedDropdownButton {
     #[must_use]
     pub fn new(
         label_text: ArcStr,
-        icon: Option<Arc<BezPath>>,
+        icon: Option<IconName>,
         items: Vec<ArcStr>,
         variant: ButtonVariant,
         disabled: bool,
@@ -86,12 +74,32 @@ impl ThemedDropdownButton {
         scope: Option<OverlayScopeHandle>,
     ) -> Self {
         let text_color = Self::text_color_for(theme, variant, disabled);
-        let mut lbl = Label::new(label_text)
+        let icon_color = Self::icon_color_for(theme, disabled);
+
+        let label = Label::new(label_text)
             .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
             .prepare();
-        lbl.properties.insert(ContentColor::new(text_color));
+        let mut label = label.erased();
+        label.properties.insert(ContentColor::new(text_color));
+
+        let mut trigger = ThemedButton::new(label, theme)
+            .with_variant(variant)
+            .with_disabled(disabled)
+            .with_trailing_icon(
+                crate::components::icon::icon(IconName::ChevronDown)
+                    .color(icon_color)
+                    .build_widget(theme),
+            );
+        if let Some(name) = icon {
+            trigger = trigger.with_icon(
+                crate::components::icon::icon(name)
+                    .color(icon_color)
+                    .build_widget(theme),
+            );
+        }
+
         let overlay_host = AnchoredOverlay::new(
-            lbl.erased(),
+            NewWidget::new(trigger).erased(),
             NewWidget::new(MenuContent::new(items.clone(), theme)),
             false,
             PopoverAnchor::BottomStart,
@@ -118,6 +126,29 @@ impl ThemedDropdownButton {
             theme.palette.text
         }
     }
+
+    fn icon_color_for(theme: &Theme, disabled: bool) -> Color {
+        if disabled {
+            theme.palette.text_faint
+        } else {
+            theme.palette.text
+        }
+    }
+
+    /// Refreshes the leading/trailing icon labels' color and font size —
+    /// mirrors `ButtonView::rebuild`'s icon-prop refresh
+    /// (`components/button/view.rs`), since this widget builds those icon
+    /// children directly rather than through the view layer.
+    fn refresh_icon_props(trigger: &mut WidgetMut<'_, ThemedButton>, color: Color, theme: &Theme) {
+        if let Some(mut m) = ThemedButton::icon_mut(trigger) {
+            m.insert_prop(ContentColor::new(color));
+            Label::insert_style(&mut m, StyleProperty::FontSize(theme.density.ui_font_size));
+        }
+        if let Some(mut m) = ThemedButton::trailing_icon_mut(trigger) {
+            m.insert_prop(ContentColor::new(color));
+            Label::insert_style(&mut m, StyleProperty::FontSize(theme.density.ui_font_size));
+        }
+    }
 }
 
 // --- MARK: WIDGETMUT SETTERS
@@ -129,15 +160,22 @@ impl ThemedDropdownButton {
             this.ctx.request_paint_only();
 
             let text_color = Self::text_color_for(theme, this.widget.variant, this.widget.disabled);
+            let icon_color = Self::icon_color_for(theme, this.widget.disabled);
             {
                 let mut overlay_host = this.ctx.get_mut(&mut this.widget.overlay_host);
-                let mut lbl = AnchoredOverlay::primary_mut(&mut overlay_host);
-                lbl.insert_prop(ContentColor::new(text_color));
-                let mut lbl = lbl.downcast::<Label>();
-                Label::insert_style(
-                    &mut lbl,
-                    StyleProperty::FontSize(theme.density.ui_font_size),
-                );
+                let mut primary = AnchoredOverlay::primary_mut(&mut overlay_host);
+                let mut trigger = primary.downcast::<ThemedButton>();
+                ThemedButton::set_theme(&mut trigger, theme);
+                {
+                    let mut child = ThemedButton::child_mut(&mut trigger);
+                    child.insert_prop(ContentColor::new(text_color));
+                    let mut child = child.downcast::<Label>();
+                    Label::insert_style(
+                        &mut child,
+                        StyleProperty::FontSize(theme.density.ui_font_size),
+                    );
+                }
+                Self::refresh_icon_props(&mut trigger, icon_color, theme);
             }
             {
                 let mut overlay_host = this.ctx.get_mut(&mut this.widget.overlay_host);
@@ -153,13 +191,41 @@ impl ThemedDropdownButton {
             this.widget.disabled = disabled;
             this.ctx.set_disabled(disabled);
             this.ctx.request_paint_only();
+
+            let theme = this.widget.theme;
+            let text_color = Self::text_color_for(&theme, this.widget.variant, disabled);
+            let icon_color = Self::icon_color_for(&theme, disabled);
+            let mut overlay_host = this.ctx.get_mut(&mut this.widget.overlay_host);
+            let mut primary = AnchoredOverlay::primary_mut(&mut overlay_host);
+            let mut trigger = primary.downcast::<ThemedButton>();
+            ThemedButton::set_disabled(&mut trigger, disabled);
+            {
+                let mut child = ThemedButton::child_mut(&mut trigger);
+                child.insert_prop(ContentColor::new(text_color));
+            }
+            Self::refresh_icon_props(&mut trigger, icon_color, &theme);
         }
     }
 
     pub fn set_variant(this: &mut WidgetMut<'_, Self>, variant: ButtonVariant) {
-        if this.widget.variant != variant {
+        let prev_variant = this.widget.variant;
+        if prev_variant != variant {
             this.widget.variant = variant;
             this.ctx.request_paint_only();
+
+            let theme = this.widget.theme;
+            let disabled = this.widget.disabled;
+            let mut overlay_host = this.ctx.get_mut(&mut this.widget.overlay_host);
+            let mut primary = AnchoredOverlay::primary_mut(&mut overlay_host);
+            let mut trigger = primary.downcast::<ThemedButton>();
+            ThemedButton::set_variant(&mut trigger, variant);
+            // Link gains/loses teal text; other variants share the default color.
+            if !disabled && (variant == ButtonVariant::Link || prev_variant == ButtonVariant::Link)
+            {
+                let text_color = Self::text_color_for(&theme, variant, disabled);
+                let mut child = ThemedButton::child_mut(&mut trigger);
+                child.insert_prop(ContentColor::new(text_color));
+            }
         }
     }
 
@@ -171,131 +237,28 @@ impl ThemedDropdownButton {
         MenuContent::set_items(&mut menu, items);
     }
 
-    pub fn set_icon(this: &mut WidgetMut<'_, Self>, icon: Option<Arc<BezPath>>) {
+    pub fn set_icon(this: &mut WidgetMut<'_, Self>, icon: Option<IconName>) {
         this.widget.icon = icon;
-        this.ctx.request_layout();
-        this.ctx.request_paint_only();
+        let theme = this.widget.theme;
+        let icon_color = Self::icon_color_for(&theme, this.widget.disabled);
+        let mut overlay_host = this.ctx.get_mut(&mut this.widget.overlay_host);
+        let mut primary = AnchoredOverlay::primary_mut(&mut overlay_host);
+        let mut trigger = primary.downcast::<ThemedButton>();
+        match icon {
+            Some(name) => ThemedButton::attach_icon(
+                &mut trigger,
+                crate::components::icon::icon(name)
+                    .color(icon_color)
+                    .build_widget(&theme),
+            ),
+            None => ThemedButton::detach_icon(&mut trigger),
+        }
     }
 }
 
 // --- MARK: INTERNAL HELPERS
 impl ThemedDropdownButton {
-    fn icon_size(&self) -> f64 {
-        f64::from(self.theme.density.ui_font_size)
-    }
-
-    fn trailing_icon_width(&self) -> f64 {
-        2.0 * f64::from(self.theme.density.button_pad_h) + self.icon_size()
-    }
-
-    fn pad_v(&self) -> f64 {
-        f64::from(self.theme.density.button_pad_v)
-    }
-
-    fn pad_h(&self) -> f64 {
-        f64::from(self.theme.density.button_pad_h)
-    }
-
-    fn resolve_colors(&self, hovered: bool, pressed: bool) -> (Color, Color) {
-        let p = &self.theme.palette;
-        if self.disabled {
-            return (Color::TRANSPARENT, Color::TRANSPARENT);
-        }
-        match self.variant {
-            ButtonVariant::Default => {
-                let bg = if pressed {
-                    p.surface_hi
-                } else if hovered {
-                    p.surface_2
-                } else {
-                    p.surface
-                };
-                (bg, Color::TRANSPARENT)
-            }
-            ButtonVariant::Danger => {
-                let bg = if pressed {
-                    p.coral_deep
-                } else if hovered {
-                    p.coral
-                } else {
-                    p.coral_soft
-                };
-                (bg, Color::TRANSPARENT)
-            }
-            ButtonVariant::Primary => {
-                let bg = if pressed {
-                    p.teal_deep
-                } else if hovered {
-                    p.teal
-                } else {
-                    p.teal_soft
-                };
-                (bg, Color::TRANSPARENT)
-            }
-            ButtonVariant::Warning => {
-                let bg = if pressed {
-                    p.amber_deep
-                } else if hovered {
-                    p.amber
-                } else {
-                    p.amber_soft
-                };
-                (bg, Color::TRANSPARENT)
-            }
-            ButtonVariant::Secondary => {
-                let bg = if pressed {
-                    p.violet_deep
-                } else if hovered {
-                    p.violet
-                } else {
-                    p.violet_soft
-                };
-                (bg, Color::TRANSPARENT)
-            }
-            ButtonVariant::Success => {
-                let bg = if pressed {
-                    p.green_deep
-                } else if hovered {
-                    p.green
-                } else {
-                    p.green_soft
-                };
-                (bg, Color::TRANSPARENT)
-            }
-            ButtonVariant::Info => {
-                let bg = if pressed {
-                    p.blue_deep
-                } else if hovered {
-                    p.blue
-                } else {
-                    p.blue_soft
-                };
-                (bg, Color::TRANSPARENT)
-            }
-            ButtonVariant::Ghost => {
-                let bg = if pressed {
-                    p.surface_hi
-                } else if hovered {
-                    p.surface_2
-                } else {
-                    Color::TRANSPARENT
-                };
-                let border = if hovered { p.border_strong } else { p.border };
-                (bg, border)
-            }
-            ButtonVariant::Link => (Color::TRANSPARENT, Color::TRANSPARENT),
-            ButtonVariant::Text => {
-                let bg = if pressed {
-                    p.surface_hi
-                } else {
-                    Color::TRANSPARENT
-                };
-                (bg, Color::TRANSPARENT)
-            }
-        }
-    }
-
-    fn set_overlay_visible(&mut self, ctx: &mut EventCtx<'_>, visible: bool) {
+    fn set_overlay_visible(&mut self, ctx: &mut ActionCtx<'_>, visible: bool) {
         ctx.mutate_child_later(&mut self.overlay_host, move |mut w| {
             AnchoredOverlay::set_overlay_visible(&mut w, visible);
         });
@@ -303,9 +266,9 @@ impl ThemedDropdownButton {
 
     /// Our anchor rect — the full button's chrome+padding+icon+chevron box —
     /// in window coordinates. `ctx.to_window(Point::ZERO)` is *our* origin
-    /// (not the inner label's), which is what fixes the old `AnchoredOverlay`
+    /// (not the inner button's), which is what fixes the old `AnchoredOverlay`
     /// misalignment: the menu now anchors flush to the whole button.
-    fn anchor_rect_window(ctx: &EventCtx<'_>) -> Rect {
+    fn anchor_rect_window(ctx: &ActionCtx<'_>) -> Rect {
         Rect::from_origin_size(ctx.to_window(Point::ZERO), ctx.border_box_size())
     }
 
@@ -314,7 +277,7 @@ impl ThemedDropdownButton {
     /// created on open, cleared on close (see `clear_from_scope`) — since
     /// the slot is shared, transient infrastructure that may host different
     /// triggers' menus over its lifetime (never "owned" by one button).
-    fn push_into_scope(&mut self, ctx: &mut EventCtx<'_>, scope_id: WidgetId) {
+    fn push_into_scope(&mut self, ctx: &mut ActionCtx<'_>, scope_id: WidgetId) {
         let anchor_rect_window = Self::anchor_rect_window(ctx);
         self.last_anchor_rect_window = Some(anchor_rect_window);
         let items = self.items.clone();
@@ -328,20 +291,25 @@ impl ThemedDropdownButton {
             let local_origin = scope.ctx.to_local(anchor_rect_window.origin());
             let placement = Rect::from_origin_size(local_origin, anchor_rect_window.size());
             let menu = NewWidget::new(MenuContent::new(items, &theme)).erased();
-            OverlayScope::set_overlay(&mut scope, Some(menu), placement, PopoverAnchor::BottomStart);
+            OverlayScope::set_overlay(
+                &mut scope,
+                Some(menu),
+                placement,
+                PopoverAnchor::BottomStart,
+            );
         });
     }
 
     /// Clear our menu from the scope's overlay slot (no-op if some other
     /// trigger has since claimed it — last-writer-wins, see `OverlayScope::set_overlay`).
-    fn clear_from_scope(ctx: &mut EventCtx<'_>, scope_id: WidgetId) {
+    fn clear_from_scope(ctx: &mut ActionCtx<'_>, scope_id: WidgetId) {
         ctx.mutate_later(scope_id, move |mut w| {
             let mut scope = w.downcast::<OverlayScope>();
             OverlayScope::set_overlay(&mut scope, None, Rect::ZERO, PopoverAnchor::BottomStart);
         });
     }
 
-    fn open_dropdown(&mut self, ctx: &mut EventCtx<'_>) {
+    fn open_dropdown(&mut self, ctx: &mut ActionCtx<'_>) {
         self.open = true;
         match self.scope.as_ref().and_then(OverlayScopeHandle::widget_id) {
             Some(scope_id) => self.push_into_scope(ctx, scope_id),
@@ -350,7 +318,7 @@ impl ThemedDropdownButton {
         ctx.request_paint_only();
     }
 
-    fn close_dropdown(&mut self, ctx: &mut EventCtx<'_>) {
+    fn close_dropdown(&mut self, ctx: &mut ActionCtx<'_>) {
         self.open = false;
         match self.scope.as_ref().and_then(OverlayScopeHandle::widget_id) {
             Some(scope_id) => Self::clear_from_scope(ctx, scope_id),
@@ -359,7 +327,7 @@ impl ThemedDropdownButton {
         ctx.request_paint_only();
     }
 
-    fn toggle_dropdown(&mut self, ctx: &mut EventCtx<'_>) {
+    fn toggle_dropdown(&mut self, ctx: &mut ActionCtx<'_>) {
         if self.open {
             self.close_dropdown(ctx);
         } else {
@@ -372,42 +340,11 @@ impl ThemedDropdownButton {
 impl Widget for ThemedDropdownButton {
     type Action = DropdownButtonAction;
 
-    fn on_pointer_event(
-        &mut self,
-        ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &PointerEvent,
-    ) {
-        if self.disabled {
-            return;
-        }
-        // While open, `MenuContent` (now a real descendant — see the removed
-        // `propagates_pointer_interaction` override) handles its own pointer
-        // events, which then bubble up here. `is_hovered` — "the pointer is
-        // directly over *my* border box," not a descendant's — is `false` for
-        // those bubbled events (the menu can legally extend outside our box
-        // via `AnchoredOverlay`'s unclamped placement), so this skips them and
-        // leaves `MenuContent` to handle its own clicks/selection untouched.
-        if self.open && !ctx.is_hovered() {
-            return;
-        }
-        match click::primary_click(ctx, event) {
-            Some(ClickPhase::Down) => {
-                ctx.request_focus();
-                ctx.request_paint_only();
-            }
-            Some(ClickPhase::Up(Some(_))) => {
-                self.toggle_dropdown(ctx);
-                ctx.request_paint_only();
-            }
-            Some(ClickPhase::Up(None)) => ctx.request_paint_only(),
-            None => {}
-        }
-    }
-
-    /// Handles [`MenuItemSelected`] bubbling up from `MenuContent` (nested
-    /// inside `overlay_host`): closes the dropdown and re-emits the selection
-    /// as our own [`DropdownButtonAction::ItemSelected`].
+    /// Routes actions bubbling up from our two children: a `ButtonPress` from
+    /// the wrapped `ThemedButton` trigger (any click on the button surface, or
+    /// Space/Enter while it's focused) toggles the menu; a `MenuItemSelected`
+    /// from `MenuContent` (nested inside `overlay_host`) closes the menu and
+    /// re-emits the selection as our own [`DropdownButtonAction::ItemSelected`].
     fn on_action(
         &mut self,
         ctx: &mut ActionCtx<'_>,
@@ -415,12 +352,25 @@ impl Widget for ThemedDropdownButton {
         action: &ErasedAction,
         _source: WidgetId,
     ) {
+        if action.downcast_ref::<ButtonPress>().is_some() {
+            if !self.disabled {
+                self.toggle_dropdown(ctx);
+            }
+            ctx.set_handled();
+            ctx.request_paint_only();
+            return;
+        }
         if let Some(&MenuItemSelected(index)) = action.downcast_ref::<MenuItemSelected>() {
             self.open = false;
             match self.scope.as_ref().and_then(OverlayScopeHandle::widget_id) {
                 Some(scope_id) => ctx.mutate_later(scope_id, |mut w| {
                     let mut scope = w.downcast::<OverlayScope>();
-                    OverlayScope::set_overlay(&mut scope, None, Rect::ZERO, PopoverAnchor::BottomStart);
+                    OverlayScope::set_overlay(
+                        &mut scope,
+                        None,
+                        Rect::ZERO,
+                        PopoverAnchor::BottomStart,
+                    );
                 }),
                 None => ctx.mutate_child_later(&mut self.overlay_host, |mut w| {
                     AnchoredOverlay::set_overlay_visible(&mut w, false);
@@ -432,38 +382,20 @@ impl Widget for ThemedDropdownButton {
         }
     }
 
-    fn on_text_event(
-        &mut self,
-        ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &masonry::core::TextEvent,
-    ) {
-        use masonry::core::TextEvent;
-        use masonry::core::keyboard::{Key, NamedKey};
-        if self.disabled {
-            return;
-        }
-        if let TextEvent::Keyboard(event) = event
-            && event.state.is_up()
-            && (matches!(&event.key, Key::Character(c) if c == " ")
-                || event.key == Key::Named(NamedKey::Enter))
-        {
-            self.toggle_dropdown(ctx);
-        }
-    }
-
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
             Update::WidgetAdded => {
                 ctx.set_disabled(self.disabled);
             }
-            // A click landing outside our subtree clears our focus — masonry's
-            // standard "click outside to dismiss" signal. This only works
-            // because the menu remains a *descendant*: clicks on the trigger
-            // or inside the menu keep our subtree focused (see
-            // `event.rs::226-235` for the ancestor-chain check), so the menu
-            // only closes for genuine outside clicks.
-            Update::FocusChanged(false) if self.open => {
+            // The wrapped `ThemedButton` is the actual focus target now, so we
+            // react to `ChildFocusChanged` — masonry's "focus entered/left my
+            // subtree" signal for ancestors — rather than `FocusChanged`. A
+            // click landing outside our subtree clears focus from the button,
+            // which is the standard "click outside to dismiss" path; the menu
+            // remains a *descendant* (clicks on the trigger or inside the menu
+            // keep our subtree focused), so this only fires for genuine
+            // outside clicks.
+            Update::ChildFocusChanged(false) if self.open => {
                 self.open = false;
                 match self.scope.as_ref().and_then(OverlayScopeHandle::widget_id) {
                     Some(scope_id) => ctx.mutate_later(scope_id, |mut w| {
@@ -479,12 +411,6 @@ impl Widget for ThemedDropdownButton {
                         AnchoredOverlay::set_overlay_visible(&mut w, false);
                     }),
                 }
-                ctx.request_paint_only();
-            }
-            Update::HoveredChanged(_)
-            | Update::ActiveChanged(_)
-            | Update::DisabledChanged(_)
-            | Update::FocusChanged(_) => {
                 ctx.request_paint_only();
             }
             _ => {}
@@ -510,7 +436,8 @@ impl Widget for ThemedDropdownButton {
         let Some(scope_id) = self.scope.as_ref().and_then(OverlayScopeHandle::widget_id) else {
             return;
         };
-        let anchor_rect_window = Rect::from_origin_size(ctx.to_window(Point::ZERO), ctx.border_box_size());
+        let anchor_rect_window =
+            Rect::from_origin_size(ctx.to_window(Point::ZERO), ctx.border_box_size());
         if self.last_anchor_rect_window == Some(anchor_rect_window) {
             return;
         }
@@ -530,133 +457,38 @@ impl Widget for ThemedDropdownButton {
         ctx.register_child(&mut self.overlay_host);
     }
 
-    fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
-
+    /// Pure transparent forward to `overlay_host` — `AnchoredOverlay` already
+    /// sizes itself to its `primary` (the wrapped `ThemedButton`), so there's
+    /// nothing dropdown-shaped to add here. Mirrors `pointer_inert`'s
+    /// single-child passthrough.
     fn measure(
         &mut self,
         ctx: &mut MeasureCtx<'_>,
         _props: &PropertiesRef<'_>,
         axis: Axis,
-        len_req: LenReq,
+        _len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        let pad_v = self.pad_v();
-        let pad_h = self.pad_h();
-        let (main_pad, cross_pad) = match axis {
-            Axis::Horizontal => (2.0 * pad_h, 2.0 * pad_v),
-            Axis::Vertical => (2.0 * pad_v, 2.0 * pad_h),
-        };
-        let inner_cross = cross_length.map(|c| Length::px((c.get() - cross_pad).max(0.0)));
-        let child_length = ctx.compute_length(
-            &mut self.overlay_host,
-            len_req.into(),
-            LayoutSize::maybe(axis.cross(), inner_cross),
-            axis,
-            inner_cross,
-        );
-
-        let icon_extra = if self.icon.is_some() && axis == Axis::Horizontal {
-            self.icon_size() + ICON_GAP
-        } else {
-            0.0
-        };
-        // Trailing chevron always occupies its fixed slot on the horizontal axis.
-        let chevron_extra = if axis == Axis::Horizontal {
-            self.trailing_icon_width()
-        } else {
-            0.0
-        };
-
-        Length::px(child_length.get() + main_pad + icon_extra + chevron_extra)
+        ctx.redirect_measurement(&mut self.overlay_host, axis, cross_length)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let pad_v = self.pad_v();
-        let pad_h = self.pad_h();
-        let icon_base = if self.icon.is_some() {
-            self.icon_size()
-        } else {
-            0.0
-        };
-        let icon_gap = if self.icon.is_some() { ICON_GAP } else { 0.0 };
-        let trailing_w = self.trailing_icon_width();
-
-        let label_inner = Size::new(
-            (size.width - 2.0 * pad_h - icon_base - icon_gap - trailing_w).max(0.0),
-            (size.height - 2.0 * pad_v).max(0.0),
-        );
-        let label_size = ctx.compute_size(
-            &mut self.overlay_host,
-            SizeDef::fit(label_inner),
-            label_inner.into(),
-        );
-        ctx.run_layout(&mut self.overlay_host, label_size);
-
-        let label_x = pad_h + icon_base + icon_gap;
-        let label_y = pad_v + ((label_inner.height - label_size.height) * 0.5).max(0.0);
-        ctx.place_child(&mut self.overlay_host, Point::new(label_x, label_y));
+        ctx.run_layout(&mut self.overlay_host, size);
+        ctx.place_child(&mut self.overlay_host, Point::ORIGIN);
         ctx.derive_baselines(&self.overlay_host);
     }
 
     fn paint(
         &mut self,
-        ctx: &mut PaintCtx<'_>,
+        _ctx: &mut PaintCtx<'_>,
         _props: &PropertiesRef<'_>,
-        painter: &mut Painter<'_>,
+        _painter: &mut Painter<'_>,
     ) {
-        let size = ctx.border_box_size();
-        let focused = ctx.is_focus_target();
-        let hovered = ctx.has_hovered();
-        let pressed = ctx.has_active() && hovered;
-        let p = &self.theme.palette;
-        let icon_size = self.icon_size();
-        let pad_h = self.pad_h();
-
-        // When the dropdown is open, show the button in its hover state so it's
-        // visually clear that it's active.
-        let (bg, border) = self.resolve_colors(hovered || self.open, pressed);
-
-        let rect = RoundedRect::from_origin_size(Point::ORIGIN, size, CORNER_RADIUS);
-        if bg.components[3] > 0.0 {
-            painter.fill(rect, bg).draw();
-        }
-        if border.components[3] > 0.0 {
-            painter
-                .stroke(rect, &Stroke::new(BORDER_WIDTH), border)
-                .draw();
-        }
-
-        if focused && !self.disabled {
-            let inset = FOCUS_RING_INSET;
-            let focus_rect = RoundedRect::from_origin_size(
-                Point::new(inset, inset),
-                Size::new(
-                    (size.width - 2.0 * inset).max(0.0),
-                    (size.height - 2.0 * inset).max(0.0),
-                ),
-                CORNER_RADIUS - inset,
-            );
-            painter
-                .stroke(focus_rect, &Stroke::new(FOCUS_RING_WIDTH), p.teal)
-                .draw();
-        }
-
-        let icon_color = if self.disabled { p.text_faint } else { p.text };
-
-        if let Some(icon) = &self.icon {
-            let icon_y = (size.height - icon_size) * 0.5;
-            let transform = Affine::translate((pad_h, icon_y)) * Affine::scale(icon_size);
-            painter.fill(transform * icon.as_ref(), icon_color).draw();
-        }
-
-        // Trailing chevron — same placement as ThemedButton's trailing_icon.
-        let caret_x = size.width - pad_h - icon_size;
-        let caret_y = (size.height - icon_size) * 0.5;
-        let transform = Affine::translate((caret_x, caret_y)) * Affine::scale(icon_size);
-        painter
-            .stroke(transform * &**CARET_PATH, &Stroke::new(1.5), icon_color)
-            .draw();
+        // Purely structural — `overlay_host` (and transitively the wrapped
+        // `ThemedButton`) paints itself.
     }
+
+    fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
 
     fn accessibility_role(&self) -> Role {
         Role::Button
@@ -665,7 +497,7 @@ impl Widget for ThemedDropdownButton {
     fn accessibility(
         &mut self,
         _ctx: &mut AccessCtx<'_>,
-        _props: &PropertiesRef<'_>,
+        _props: &masonry::core::PropertiesRef<'_>,
         node: &mut Node,
     ) {
         if !self.disabled {
@@ -676,13 +508,5 @@ impl Widget for ThemedDropdownButton {
 
     fn children_ids(&self) -> ChildrenIds {
         ChildrenIds::from_slice(&[self.overlay_host.id()])
-    }
-
-    fn accepts_focus(&self) -> bool {
-        !self.disabled
-    }
-
-    fn accepts_text_input(&self) -> bool {
-        false
     }
 }

@@ -100,52 +100,6 @@ fn disabled_row(theme: &Theme) -> impl WidgetView<DropdownDemo> + use<> {
     })
 }
 
-/// Wraps a scroll viewport in `overlay_scope`, with an opaque sibling box
-/// placed *after* the dropdown row inside it. Opening the menu and seeing it
-/// paint over that box — rather than behind it — is the unambiguous artifact
-/// for the headline behavior `OverlayScope` exists to deliver: the menu
-/// paints on top of ALL sibling content within its natural container, while
-/// staying clipped to that container's bounds (not escaping to the window).
-fn overlay_scope_demo(theme: &Theme) -> impl WidgetView<DropdownDemo> + use<> {
-    with_source!(theme, {
-        sized_box(overlay_scope(
-            scroll_container(
-                flex_col((
-                    label("Open the menu, then check that it paints over the box below.")
-                        .color(theme.palette.text_muted)
-                        .multiline(true)
-                        .render(theme),
-                    dropdown_button("Actions")
-                        .item("Alpha", |s: &mut DropdownDemo| {
-                            s.last_action = "Scoped Alpha".into();
-                        })
-                        .item("Bravo", |s: &mut DropdownDemo| {
-                            s.last_action = "Scoped Bravo".into();
-                        })
-                        .item("Charlie", |s: &mut DropdownDemo| {
-                            s.last_action = "Scoped Charlie".into();
-                        })
-                        .render(theme),
-                    sized_box(
-                        label("Sibling content — the menu should paint over this")
-                            .color(theme.palette.text)
-                            .multiline(true)
-                            .render(theme),
-                    )
-                    .fixed_height(Length::px(90.0))
-                    .background_color(theme.palette.coral_soft),
-                ))
-                .cross_axis_alignment(CrossAxisAlignment::Start)
-                .gap(Length::px(8.0)),
-            )
-            .scroll_bar_visibility(ScrollBarVisibility::OnActivity)
-            .render(theme),
-        ))
-        .fixed_width(Length::px(280.0))
-        .fixed_height(Length::px(220.0))
-    })
-}
-
 fn build_inner(theme: &Theme, state: &DropdownDemo) -> impl WidgetView<DropdownDemo> + use<> {
     let header = |text: &'static str| {
         label(text)
