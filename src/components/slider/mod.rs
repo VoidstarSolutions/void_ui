@@ -5,9 +5,7 @@ pub mod demo;
 mod view;
 pub mod widget;
 
-pub use view::{
-    RangeSlider, RangeSliderView, Slider, SliderView, range_slider, slider,
-};
+pub use view::{RangeSlider, RangeSliderView, Slider, SliderView, range_slider, slider};
 
 /// The value carried by a slider.
 ///
