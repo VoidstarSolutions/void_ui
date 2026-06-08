@@ -245,3 +245,38 @@ fn push_path(stream: &mut TokenStream, segments: &[&str]) {
         first_ident = false;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::dedent;
+
+    #[test]
+    fn strips_common_leading_whitespace() {
+        let input = "    fn foo() {\n        bar();\n    }";
+        assert_eq!(dedent(input), "fn foo() {\n    bar();\n}");
+    }
+
+    #[test]
+    fn ignores_blank_lines_when_computing_the_minimum_and_empties_them() {
+        let input = "    a\n\n    b";
+        assert_eq!(dedent(input), "a\n\nb");
+    }
+
+    #[test]
+    fn whitespace_only_lines_are_treated_like_blank_lines() {
+        let input = "    a\n   \n    b";
+        assert_eq!(dedent(input), "a\n\nb");
+    }
+
+    #[test]
+    fn already_flush_text_is_unchanged() {
+        let input = "a\nb\nc";
+        assert_eq!(dedent(input), "a\nb\nc");
+    }
+
+    #[test]
+    fn minimum_indent_is_set_by_the_least_indented_line() {
+        let input = "  a\n    b\n c";
+        assert_eq!(dedent(input), "a\n   b\nc");
+    }
+}
