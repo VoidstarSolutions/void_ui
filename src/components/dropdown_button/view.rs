@@ -169,6 +169,9 @@ where
         if self.theme != prev.theme {
             ThemedDropdownButton::set_theme(&mut element, &self.theme);
         }
+        if self.label != prev.label {
+            ThemedDropdownButton::set_label(&mut element, self.label.clone());
+        }
         if self.disabled != prev.disabled {
             ThemedDropdownButton::set_disabled(&mut element, self.disabled);
         }

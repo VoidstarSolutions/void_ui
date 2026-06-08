@@ -54,6 +54,7 @@ pub struct ThemedDropdownButton {
     /// push — used by `compose` to detect "did I move" during scrolling
     /// without busy-looping (see `Widget::compose`).
     last_anchor_rect_window: Option<Rect>,
+    label: ArcStr,
     icon: Option<IconName>,
     items: Vec<ArcStr>,
     variant: ButtonVariant,
@@ -81,7 +82,7 @@ impl ThemedDropdownButton {
         let text_color = Self::text_color_for(theme, variant, disabled);
         let icon_color = Self::icon_color_for(theme, disabled);
 
-        let label = Label::new(label_text)
+        let label = Label::new(label_text.clone())
             .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
             .prepare();
         let mut label = label.erased();
@@ -113,6 +114,7 @@ impl ThemedDropdownButton {
             overlay_host: NewWidget::new(overlay_host).to_pod(),
             scope,
             last_anchor_rect_window: None,
+            label: label_text,
             icon,
             items,
             variant,
@@ -190,6 +192,23 @@ impl ThemedDropdownButton {
                 MenuContent::set_theme(&mut menu, theme);
             }
         }
+    }
+
+    pub fn set_label(this: &mut WidgetMut<'_, Self>, label: ArcStr) {
+        if this.widget.label == label {
+            return;
+        }
+        this.widget.label = label.clone();
+        let theme = this.widget.theme;
+        let text_color = Self::text_color_for(&theme, this.widget.variant, this.widget.disabled);
+        let mut overlay_host = this.ctx.get_mut(&mut this.widget.overlay_host);
+        let mut primary = AnchoredOverlay::primary_mut(&mut overlay_host);
+        let mut trigger = primary.downcast::<ThemedButton>();
+        let mut child = ThemedButton::child_mut(&mut trigger);
+        child.insert_prop(ContentColor::new(text_color));
+        let mut child = child.downcast::<Label>();
+        Label::insert_style(&mut child, StyleProperty::FontSize(theme.density.ui_font_size));
+        Label::set_text(&mut child, label);
     }
 
     pub fn set_disabled(this: &mut WidgetMut<'_, Self>, disabled: bool) {
