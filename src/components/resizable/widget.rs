@@ -952,4 +952,46 @@ mod tests {
         assert!(approx_f32(ratios[0], 100.0 / 300.0));
         assert!(approx_f32(ratios[1], 200.0 / 300.0));
     }
+
+    // --- set_panels ---
+
+    #[test]
+    fn set_panels_clears_dragging_and_hovered_handles() {
+        use masonry::testing::TestHarness;
+
+        let theme = Theme::default();
+        let w = ResizableWidget::new(
+            vec![panel(), panel(), panel()],
+            Axis::Horizontal,
+            vec![0.33, 0.33, 0.34],
+            no_constraints(3),
+            no_constraints(3),
+            &theme,
+        );
+        let mut harness = TestHarness::create(
+            masonry::theme::default_property_set(),
+            masonry::core::NewWidget::new(w),
+        );
+
+        // Simulate a mid-drag state: handle 1 is being dragged, handle 2 is
+        // hovered (only possible with 3 panels / 2 handles).
+        harness.edit_root_widget(|wm| {
+            wm.widget.dragging_handle = Some(1);
+            wm.widget.hovered_handle = Some(2);
+            wm.widget.active_handle = 1;
+        });
+
+        // Shrink to 2 panels while the stale indices are still set.
+        harness.edit_root_widget(|mut wm| {
+            ResizableWidget::set_panels(&mut wm, vec![panel(), panel()]);
+        });
+
+        // Both handles must be cleared; active_handle clamped from 1 to 0
+        // (panels.len() - 2 == 0 for a 2-panel widget).
+        harness.edit_root_widget(|wm| {
+            assert_eq!(wm.widget.dragging_handle, None);
+            assert_eq!(wm.widget.hovered_handle, None);
+            assert_eq!(wm.widget.active_handle, 0);
+        });
+    }
 }

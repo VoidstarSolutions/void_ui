@@ -40,6 +40,7 @@ xilem = { workspace = true }
 xilem_masonry = { workspace = true }
 
 [dev-dependencies]
+masonry = { workspace = true, features = ["testing"] }
 xilem = { workspace = true }
 
 [features]
