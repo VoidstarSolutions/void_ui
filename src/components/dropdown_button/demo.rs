@@ -106,8 +106,6 @@ fn disabled_row(theme: &Theme) -> impl WidgetView<DropdownDemo> + use<> {
 /// for the headline behavior `OverlayScope` exists to deliver: the menu
 /// paints on top of ALL sibling content within its natural container, while
 /// staying clipped to that container's bounds (not escaping to the window).
-/// Compare with `confinement_demo`, which has no scope ancestor and exercises
-/// the `AnchoredOverlay` fallback path instead.
 fn overlay_scope_demo(theme: &Theme) -> impl WidgetView<DropdownDemo> + use<> {
     with_source!(theme, {
         sized_box(overlay_scope(
@@ -184,8 +182,6 @@ fn build_inner(theme: &Theme, state: &DropdownDemo) -> impl WidgetView<DropdownD
             variants_row(theme),
             header("Disabled"),
             disabled_row(theme),
-            header("Overlay scope — paints over container content"),
-            overlay_scope_demo(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(16.0)),
