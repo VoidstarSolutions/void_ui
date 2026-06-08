@@ -9,10 +9,17 @@ use proc_macro::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenSt
 ///
 /// Usage: `with_source!(theme_expr, { /* view body */ })`.
 ///
-/// Expands to a `flex_col((body_view, code_block(source, theme_expr)))`
-/// stacked column with stretched cross-axis alignment, where `source` is
-/// the **original source text** of the body block — including newlines and
-/// indentation — recovered via [`proc_macro::Span::source_text`].
+/// Expands to
+/// `overlay_scope(flex_col((body_view, code_block(source, theme_expr))).cross_axis_alignment(Stretch).gap(8px))`,
+/// where `source` is the **original source text** of the body block —
+/// including newlines and indentation — recovered via
+/// [`proc_macro::Span::source_text`].
+///
+/// The `overlay_scope` wrapper lets overlay-shaped views in `body_view`
+/// (dropdown menus, popovers, …) paint on top of `code_block` — a later flex
+/// sibling that would otherwise occlude them when they overflow `body_view`'s
+/// own footprint — instead of disappearing behind it. See
+/// [`crate::overlay_scope`] for the mechanism.
 ///
 /// Falls back to a stringified token form if the compiler can't provide
 /// source text for the input span (rare; happens with macro-generated
@@ -92,7 +99,10 @@ pub fn with_source(input: TokenStream) -> TokenStream {
     push_punct(&mut block, ';', Spacing::Alone);
 
     // ::xilem::view::flex_col(( __vs_view , ::void_ui::gallery::code_block(__vs_source, <theme>) ))
-    push_path(&mut block, &["", "xilem", "view", "flex_col"]);
+    //     .cross_axis_alignment(::xilem::view::CrossAxisAlignment::Stretch)
+    //     .gap(::xilem::masonry::layout::Length::px(8.0))
+    let mut flex_expr = TokenStream::new();
+    push_path(&mut flex_expr, &["", "xilem", "view", "flex_col"]);
 
     let mut outer_args = TokenStream::new();
     let mut tuple = TokenStream::new();
@@ -111,27 +121,27 @@ pub fn with_source(input: TokenStream) -> TokenStream {
         Delimiter::Parenthesis,
         tuple,
     ))));
-    block.extend(std::iter::once(TokenTree::Group(Group::new(
+    flex_expr.extend(std::iter::once(TokenTree::Group(Group::new(
         Delimiter::Parenthesis,
         outer_args,
     ))));
 
     // .cross_axis_alignment(::xilem::view::CrossAxisAlignment::Stretch)
-    push_punct(&mut block, '.', Spacing::Alone);
-    push_ident(&mut block, "cross_axis_alignment");
+    push_punct(&mut flex_expr, '.', Spacing::Alone);
+    push_ident(&mut flex_expr, "cross_axis_alignment");
     let mut caa_args = TokenStream::new();
     push_path(
         &mut caa_args,
         &["", "xilem", "view", "CrossAxisAlignment", "Stretch"],
     );
-    block.extend(std::iter::once(TokenTree::Group(Group::new(
+    flex_expr.extend(std::iter::once(TokenTree::Group(Group::new(
         Delimiter::Parenthesis,
         caa_args,
     ))));
 
     // .gap(::xilem::masonry::layout::Length::px(8.0))
-    push_punct(&mut block, '.', Spacing::Alone);
-    push_ident(&mut block, "gap");
+    push_punct(&mut flex_expr, '.', Spacing::Alone);
+    push_ident(&mut flex_expr, "gap");
     let mut gap_args = TokenStream::new();
     push_path(
         &mut gap_args,
@@ -145,9 +155,25 @@ pub fn with_source(input: TokenStream) -> TokenStream {
         Delimiter::Parenthesis,
         px_args,
     ))));
-    block.extend(std::iter::once(TokenTree::Group(Group::new(
+    flex_expr.extend(std::iter::once(TokenTree::Group(Group::new(
         Delimiter::Parenthesis,
         gap_args,
+    ))));
+
+    // ::void_ui::overlay_scope( <flex_expr> )
+    //
+    // Registers an `OverlayScope` ancestor so that overlay-shaped descendants
+    // of `__vs_view` (dropdown menus, popovers, …) discover it, paint in a
+    // slot that always comes last — on top of `code_block`, a later flex
+    // sibling that would otherwise occlude an overflowing menu — and stay
+    // clipped to this block's own bounds (which `code_block` already gives
+    // headroom within, so no extra space is reserved). See
+    // `crate::overlay_scope` for the mechanism and `dropdown_button`'s
+    // discovery/fallback for what happens when no scope is present.
+    push_path(&mut block, &["", "void_ui", "overlay_scope"]);
+    block.extend(std::iter::once(TokenTree::Group(Group::new(
+        Delimiter::Parenthesis,
+        flex_expr,
     ))));
 
     let mut out = TokenStream::new();

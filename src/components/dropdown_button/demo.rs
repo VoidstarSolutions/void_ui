@@ -12,6 +12,7 @@ use crate::components::ScrollBarVisibility;
 use crate::components::button::ButtonVariant;
 use crate::components::dropdown_button::dropdown_button;
 use crate::label;
+use crate::overlay_scope::overlay_scope;
 use crate::scroll_container;
 use crate::with_source;
 
@@ -99,50 +100,51 @@ fn disabled_row(theme: &Theme) -> impl WidgetView<DropdownDemo> + use<> {
     })
 }
 
-/// Nests a dropdown — with enough items that its menu is taller than its
-/// host — inside an undersized scroll viewport, to confirm the menu is
-/// clipped at the viewport's edge rather than painting over the rest of the
-/// gallery (the headline behavior of the in-tree `AnchoredOverlay` hosting).
-fn confinement_demo(theme: &Theme) -> impl WidgetView<DropdownDemo> + use<> {
+/// Wraps a scroll viewport in `overlay_scope`, with an opaque sibling box
+/// placed *after* the dropdown row inside it. Opening the menu and seeing it
+/// paint over that box — rather than behind it — is the unambiguous artifact
+/// for the headline behavior `OverlayScope` exists to deliver: the menu
+/// paints on top of ALL sibling content within its natural container, while
+/// staying clipped to that container's bounds (not escaping to the window).
+/// Compare with `confinement_demo`, which has no scope ancestor and exercises
+/// the `AnchoredOverlay` fallback path instead.
+fn overlay_scope_demo(theme: &Theme) -> impl WidgetView<DropdownDemo> + use<> {
     with_source!(theme, {
-        sized_box(
+        sized_box(overlay_scope(
             scroll_container(
                 flex_col((
-                    label("Scroll down, then open the menu — it's clipped by this box.")
+                    label("Open the menu, then check that it paints over the box below.")
                         .color(theme.palette.text_muted)
                         .multiline(true)
                         .render(theme),
                     dropdown_button("Actions")
                         .item("Alpha", |s: &mut DropdownDemo| {
-                            s.last_action = "Alpha".into();
+                            s.last_action = "Scoped Alpha".into();
                         })
                         .item("Bravo", |s: &mut DropdownDemo| {
-                            s.last_action = "Bravo".into();
+                            s.last_action = "Scoped Bravo".into();
                         })
                         .item("Charlie", |s: &mut DropdownDemo| {
-                            s.last_action = "Charlie".into();
-                        })
-                        .item("Delta", |s: &mut DropdownDemo| {
-                            s.last_action = "Delta".into();
-                        })
-                        .item("Echo", |s: &mut DropdownDemo| {
-                            s.last_action = "Echo".into();
-                        })
-                        .item("Foxtrot", |s: &mut DropdownDemo| {
-                            s.last_action = "Foxtrot".into();
+                            s.last_action = "Scoped Charlie".into();
                         })
                         .render(theme),
-                    label("More content below the trigger…")
-                        .color(theme.palette.text_faint)
-                        .render(theme),
+                    sized_box(
+                        label("Sibling content — the menu should paint over this")
+                            .color(theme.palette.text)
+                            .multiline(true)
+                            .render(theme),
+                    )
+                    .fixed_height(Length::px(90.0))
+                    .background_color(theme.palette.coral_soft),
                 ))
                 .cross_axis_alignment(CrossAxisAlignment::Start)
-                .gap(Length::px(120.0)),
+                .gap(Length::px(8.0)),
             )
+            .scroll_bar_visibility(ScrollBarVisibility::OnActivity)
             .render(theme),
-        )
+        ))
         .fixed_width(Length::px(280.0))
-        .fixed_height(Length::px(160.0))
+        .fixed_height(Length::px(220.0))
     })
 }
 
@@ -182,8 +184,8 @@ fn build_inner(theme: &Theme, state: &DropdownDemo) -> impl WidgetView<DropdownD
             variants_row(theme),
             header("Disabled"),
             disabled_row(theme),
-            header("Confined to its container"),
-            confinement_demo(theme),
+            header("Overlay scope — paints over container content"),
+            overlay_scope_demo(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(16.0)),

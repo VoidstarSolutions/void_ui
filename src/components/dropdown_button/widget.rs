@@ -9,12 +9,12 @@ use std::sync::{Arc, LazyLock};
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
-    AccessCtx, ActionCtx, ArcStr, ChildrenIds, ErasedAction, EventCtx, LayoutCtx, MeasureCtx,
-    NewWidget, PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty,
-    Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, ActionCtx, ArcStr, ChildrenIds, ComposeCtx, ErasedAction, EventCtx, LayoutCtx,
+    MeasureCtx, NewWidget, PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx,
+    StyleProperty, Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Affine, Axis, BezPath, Point, RoundedRect, Size, Stroke};
+use masonry::kurbo::{Affine, Axis, BezPath, Point, Rect, RoundedRect, Size, Stroke};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use masonry::peniko::Color;
 use masonry::properties::ContentColor;
@@ -27,6 +27,7 @@ use crate::components::button::ButtonVariant;
 use crate::components::button::widget::CORNER_RADIUS;
 use crate::components::click::{self, ClickPhase};
 use crate::components::popover::PopoverAnchor;
+use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
 const FOCUS_RING_WIDTH: f64 = 1.5;
 const FOCUS_RING_INSET: f64 = 2.0;
@@ -55,6 +56,15 @@ pub enum DropdownButtonAction {
 /// on the button (label area or chevron) toggles the menu layer.
 pub struct ThemedDropdownButton {
     overlay_host: WidgetPod<AnchoredOverlay>,
+    /// Nearest `OverlayScope` ancestor, discovered at `View::build` time via
+    /// the Xilem `Environment` (see `crate::overlay_scope`). When present,
+    /// the menu is pushed into the scope's overlay slot instead of
+    /// `overlay_host` — see `push_into_scope`/`clear_from_scope`.
+    scope: Option<OverlayScopeHandle>,
+    /// Our anchor rect (window coords) as of the last scope-mode placement
+    /// push — used by `compose` to detect "did I move" during scrolling
+    /// without busy-looping (see `Widget::compose`).
+    last_anchor_rect_window: Option<Rect>,
     icon: Option<Arc<BezPath>>,
     items: Vec<ArcStr>,
     variant: ButtonVariant,
@@ -73,6 +83,7 @@ impl ThemedDropdownButton {
         variant: ButtonVariant,
         disabled: bool,
         theme: &Theme,
+        scope: Option<OverlayScopeHandle>,
     ) -> Self {
         let text_color = Self::text_color_for(theme, variant, disabled);
         let mut lbl = Label::new(label_text)
@@ -87,6 +98,8 @@ impl ThemedDropdownButton {
         );
         Self {
             overlay_host: NewWidget::new(overlay_host).to_pod(),
+            scope,
+            last_anchor_rect_window: None,
             icon,
             items,
             variant,
@@ -288,15 +301,61 @@ impl ThemedDropdownButton {
         });
     }
 
+    /// Our anchor rect — the full button's chrome+padding+icon+chevron box —
+    /// in window coordinates. `ctx.to_window(Point::ZERO)` is *our* origin
+    /// (not the inner label's), which is what fixes the old `AnchoredOverlay`
+    /// misalignment: the menu now anchors flush to the whole button.
+    fn anchor_rect_window(ctx: &EventCtx<'_>) -> Rect {
+        Rect::from_origin_size(ctx.to_window(Point::ZERO), ctx.border_box_size())
+    }
+
+    /// Push a freshly built `MenuContent` into the scope's overlay slot,
+    /// anchored to our own box. The menu is ephemeral in scope-mode —
+    /// created on open, cleared on close (see `clear_from_scope`) — since
+    /// the slot is shared, transient infrastructure that may host different
+    /// triggers' menus over its lifetime (never "owned" by one button).
+    fn push_into_scope(&mut self, ctx: &mut EventCtx<'_>, scope_id: WidgetId) {
+        let anchor_rect_window = Self::anchor_rect_window(ctx);
+        self.last_anchor_rect_window = Some(anchor_rect_window);
+        let items = self.items.clone();
+        let theme = self.theme;
+        ctx.request_compose();
+        ctx.mutate_later(scope_id, move |mut w| {
+            let mut scope = w.downcast::<OverlayScope>();
+            // `to_local` is the literal inverse of `window_transform`,
+            // correctly handling the full chain of transforms/scroll/origin
+            // between the scope and this trigger — robust to scrolling.
+            let local_origin = scope.ctx.to_local(anchor_rect_window.origin());
+            let placement = Rect::from_origin_size(local_origin, anchor_rect_window.size());
+            let menu = NewWidget::new(MenuContent::new(items, &theme)).erased();
+            OverlayScope::set_overlay(&mut scope, Some(menu), placement, PopoverAnchor::BottomStart);
+        });
+    }
+
+    /// Clear our menu from the scope's overlay slot (no-op if some other
+    /// trigger has since claimed it — last-writer-wins, see `OverlayScope::set_overlay`).
+    fn clear_from_scope(ctx: &mut EventCtx<'_>, scope_id: WidgetId) {
+        ctx.mutate_later(scope_id, move |mut w| {
+            let mut scope = w.downcast::<OverlayScope>();
+            OverlayScope::set_overlay(&mut scope, None, Rect::ZERO, PopoverAnchor::BottomStart);
+        });
+    }
+
     fn open_dropdown(&mut self, ctx: &mut EventCtx<'_>) {
         self.open = true;
-        self.set_overlay_visible(ctx, true);
+        match self.scope.as_ref().and_then(OverlayScopeHandle::widget_id) {
+            Some(scope_id) => self.push_into_scope(ctx, scope_id),
+            None => self.set_overlay_visible(ctx, true),
+        }
         ctx.request_paint_only();
     }
 
     fn close_dropdown(&mut self, ctx: &mut EventCtx<'_>) {
         self.open = false;
-        self.set_overlay_visible(ctx, false);
+        match self.scope.as_ref().and_then(OverlayScopeHandle::widget_id) {
+            Some(scope_id) => Self::clear_from_scope(ctx, scope_id),
+            None => self.set_overlay_visible(ctx, false),
+        }
         ctx.request_paint_only();
     }
 
@@ -358,9 +417,15 @@ impl Widget for ThemedDropdownButton {
     ) {
         if let Some(&MenuItemSelected(index)) = action.downcast_ref::<MenuItemSelected>() {
             self.open = false;
-            ctx.mutate_child_later(&mut self.overlay_host, |mut w| {
-                AnchoredOverlay::set_overlay_visible(&mut w, false);
-            });
+            match self.scope.as_ref().and_then(OverlayScopeHandle::widget_id) {
+                Some(scope_id) => ctx.mutate_later(scope_id, |mut w| {
+                    let mut scope = w.downcast::<OverlayScope>();
+                    OverlayScope::set_overlay(&mut scope, None, Rect::ZERO, PopoverAnchor::BottomStart);
+                }),
+                None => ctx.mutate_child_later(&mut self.overlay_host, |mut w| {
+                    AnchoredOverlay::set_overlay_visible(&mut w, false);
+                }),
+            }
             ctx.submit_action::<Self::Action>(DropdownButtonAction::ItemSelected(index));
             ctx.set_handled();
             ctx.request_paint_only();
@@ -400,9 +465,20 @@ impl Widget for ThemedDropdownButton {
             // only closes for genuine outside clicks.
             Update::FocusChanged(false) if self.open => {
                 self.open = false;
-                ctx.mutate_child_later(&mut self.overlay_host, |mut w| {
-                    AnchoredOverlay::set_overlay_visible(&mut w, false);
-                });
+                match self.scope.as_ref().and_then(OverlayScopeHandle::widget_id) {
+                    Some(scope_id) => ctx.mutate_later(scope_id, |mut w| {
+                        let mut scope = w.downcast::<OverlayScope>();
+                        OverlayScope::set_overlay(
+                            &mut scope,
+                            None,
+                            Rect::ZERO,
+                            PopoverAnchor::BottomStart,
+                        );
+                    }),
+                    None => ctx.mutate_child_later(&mut self.overlay_host, |mut w| {
+                        AnchoredOverlay::set_overlay_visible(&mut w, false);
+                    }),
+                }
                 ctx.request_paint_only();
             }
             Update::HoveredChanged(_)
@@ -413,6 +489,41 @@ impl Widget for ThemedDropdownButton {
             }
             _ => {}
         }
+    }
+
+    /// Re-anchors a still-open scope-mode menu as we move in window space —
+    /// e.g. while the user scrolls a `ScrollContainer` containing us. The
+    /// menu lives in a structurally separate subtree (the scope's overlay
+    /// slot), so — unlike `AnchoredOverlay`, which tracks for free as a
+    /// rigidly-attached descendant — nothing re-places it automatically.
+    ///
+    /// Self-renews only while we're actually moving: each call compares our
+    /// current window-space anchor rect to the last one we pushed, and only
+    /// re-arms (`mutate_self_later` → `request_compose`) when it changed.
+    /// `ComposeCtx` exposes neither `transform_has_changed` nor
+    /// `request_compose` (both are `MutateCtx`-only), hence the comparison —
+    /// it gives the same "stop cleanly once stable, no busy-loop" behavior.
+    fn compose(&mut self, ctx: &mut ComposeCtx<'_>) {
+        if !self.open {
+            return;
+        }
+        let Some(scope_id) = self.scope.as_ref().and_then(OverlayScopeHandle::widget_id) else {
+            return;
+        };
+        let anchor_rect_window = Rect::from_origin_size(ctx.to_window(Point::ZERO), ctx.border_box_size());
+        if self.last_anchor_rect_window == Some(anchor_rect_window) {
+            return;
+        }
+        self.last_anchor_rect_window = Some(anchor_rect_window);
+        ctx.mutate_later(scope_id, move |mut w| {
+            let mut scope = w.downcast::<OverlayScope>();
+            let local_origin = scope.ctx.to_local(anchor_rect_window.origin());
+            let placement = Rect::from_origin_size(local_origin, anchor_rect_window.size());
+            OverlayScope::set_placement(&mut scope, placement, PopoverAnchor::BottomStart);
+        });
+        ctx.mutate_self_later(|mut w| {
+            w.ctx.request_compose();
+        });
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
@@ -456,17 +567,10 @@ impl Widget for ThemedDropdownButton {
             0.0
         };
 
-        let result = Length::px(child_length.get() + main_pad + icon_extra + chevron_extra);
-        eprintln!(
-            "[DDB measure] axis={axis:?} len_req={len_req:?} cross_length={cross_length:?} child_length={:.2} -> {:.2}",
-            child_length.get(),
-            result.get()
-        );
-        result
+        Length::px(child_length.get() + main_pad + icon_extra + chevron_extra)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        eprintln!("[DDB layout] incoming size={size:?}");
         let pad_v = self.pad_v();
         let pad_h = self.pad_h();
         let icon_base = if self.icon.is_some() {

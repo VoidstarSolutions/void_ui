@@ -17,12 +17,13 @@ use std::sync::Arc;
 
 use masonry::core::ArcStr;
 use masonry::kurbo::BezPath;
-use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
+use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker, ViewPathTracker};
 use xilem::{Pod, ViewCtx};
 
 use super::widget::{DropdownButtonAction, ThemedDropdownButton};
 use crate::Theme;
 use crate::components::button::ButtonVariant;
+use crate::overlay_scope::OverlayScopeHandle;
 
 type ItemCallback<State, Action> = Box<dyn Fn(&mut State) -> Action + Send + Sync>;
 
@@ -134,6 +135,17 @@ where
     type ViewState = ();
 
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
+        // Discover an `OverlayScope` ancestor without `with_context` (which
+        // panics when absent) — this lookup must tolerate "no scope in this
+        // tree" so that `dropdown_button` keeps working at every existing
+        // call site, falling back to its in-tree `AnchoredOverlay`. See
+        // `crate::overlay_scope` for the handle/`Environment` design.
+        let scope = ctx
+            .environment()
+            .get_slot_for_type::<OverlayScopeHandle>()
+            .and_then(|i| ctx.environment().slots[i as usize].item.as_ref())
+            .and_then(|item| item.value.downcast_ref::<OverlayScopeHandle>())
+            .cloned();
         let widget = ThemedDropdownButton::new(
             self.label.clone(),
             self.icon.clone(),
@@ -141,6 +153,7 @@ where
             self.variant,
             self.disabled,
             &self.theme,
+            scope,
         );
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, ())
