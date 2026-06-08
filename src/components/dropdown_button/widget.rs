@@ -539,3 +539,66 @@ impl Widget for ThemedDropdownButton {
         ChildrenIds::from_slice(&[self.overlay_host.id()])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disabled_always_wins_regardless_of_variant() {
+        let theme = Theme::default();
+        for variant in [
+            ButtonVariant::Default,
+            ButtonVariant::Link,
+            ButtonVariant::Primary,
+        ] {
+            assert_eq!(
+                ThemedDropdownButton::text_color_for(&theme, variant, true),
+                theme.palette.text_faint,
+                "{variant:?} should still read as faint while disabled"
+            );
+        }
+        assert_eq!(
+            ThemedDropdownButton::icon_color_for(&theme, true),
+            theme.palette.text_faint
+        );
+    }
+
+    #[test]
+    fn link_variant_reads_in_the_accent_color_when_enabled() {
+        let theme = Theme::default();
+        assert_eq!(
+            ThemedDropdownButton::text_color_for(&theme, ButtonVariant::Link, false),
+            theme.palette.teal
+        );
+    }
+
+    #[test]
+    fn non_link_variants_read_as_plain_text_when_enabled() {
+        let theme = Theme::default();
+        for variant in [
+            ButtonVariant::Default,
+            ButtonVariant::Primary,
+            ButtonVariant::Secondary,
+        ] {
+            assert_eq!(
+                ThemedDropdownButton::text_color_for(&theme, variant, false),
+                theme.palette.text,
+                "{variant:?} should use the plain text color"
+            );
+        }
+    }
+
+    #[test]
+    fn icon_color_ignores_variant_and_only_responds_to_disabled() {
+        let theme = Theme::default();
+        assert_eq!(
+            ThemedDropdownButton::icon_color_for(&theme, false),
+            theme.palette.text
+        );
+        assert_eq!(
+            ThemedDropdownButton::icon_color_for(&theme, true),
+            theme.palette.text_faint
+        );
+    }
+}

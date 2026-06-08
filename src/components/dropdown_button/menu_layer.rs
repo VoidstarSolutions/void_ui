@@ -327,8 +327,16 @@ mod tests {
     #[test]
     fn hit_item_returns_none_outside_all_rects() {
         let menu = menu_with_rects(vec![Rect::new(0.0, 0.0, 100.0, 20.0)]);
-        assert_eq!(menu.hit_item(Point::new(50.0, 50.0)), None, "below the list");
-        assert_eq!(menu.hit_item(Point::new(-10.0, 10.0)), None, "left of the list");
+        assert_eq!(
+            menu.hit_item(Point::new(50.0, 50.0)),
+            None,
+            "below the list"
+        );
+        assert_eq!(
+            menu.hit_item(Point::new(-10.0, 10.0)),
+            None,
+            "left of the list"
+        );
     }
 
     #[test]
@@ -346,7 +354,11 @@ mod tests {
             Rect::new(0.0, 0.0, 100.0, 20.0),
             Rect::new(0.0, 20.0, 100.0, 40.0),
         ]);
-        assert_eq!(menu.hit_item(Point::new(50.0, 0.0)), Some(0), "top edge of rect 0");
+        assert_eq!(
+            menu.hit_item(Point::new(50.0, 0.0)),
+            Some(0),
+            "top edge of rect 0"
+        );
         assert_eq!(
             menu.hit_item(Point::new(50.0, 20.0)),
             Some(1),

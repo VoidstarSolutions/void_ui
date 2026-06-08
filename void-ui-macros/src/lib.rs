@@ -276,7 +276,9 @@ mod tests {
 
     #[test]
     fn minimum_indent_is_set_by_the_least_indented_line() {
+        // The least-indented line (1 space) sets the cut point — lines that
+        // started more indented keep their *relative* extra indentation.
         let input = "  a\n    b\n c";
-        assert_eq!(dedent(input), "a\n   b\nc");
+        assert_eq!(dedent(input), " a\n   b\nc");
     }
 }
