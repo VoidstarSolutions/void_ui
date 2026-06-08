@@ -210,6 +210,8 @@ impl ResizableWidget {
         }
         this.widget.panels = panels.into_iter().map(NewWidget::to_pod).collect();
         this.widget.active_handle = this.widget.active_handle.min(this.widget.panels.len() - 2);
+        this.widget.dragging_handle = None;
+        this.widget.hovered_handle = None;
         this.ctx.children_changed();
         this.ctx.request_layout();
     }
