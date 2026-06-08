@@ -161,6 +161,9 @@ impl ResizableWidget {
     }
 
     pub fn set_ratios(this: &mut WidgetMut<'_, Self>, ratios: Vec<f32>) {
+        if ratios.len() != this.widget.panels.len() {
+            return;
+        }
         if this.widget.ratios != ratios {
             this.widget.ratios = ratios;
             this.ctx.request_layout();
@@ -168,6 +171,9 @@ impl ResizableWidget {
     }
 
     pub fn set_min_sizes(this: &mut WidgetMut<'_, Self>, min_sizes: Vec<Option<f64>>) {
+        if min_sizes.len() != this.widget.panels.len() {
+            return;
+        }
         if this.widget.min_sizes != min_sizes {
             this.widget.min_sizes = min_sizes;
             this.ctx.request_layout();
@@ -175,6 +181,9 @@ impl ResizableWidget {
     }
 
     pub fn set_max_sizes(this: &mut WidgetMut<'_, Self>, max_sizes: Vec<Option<f64>>) {
+        if max_sizes.len() != this.widget.panels.len() {
+            return;
+        }
         if this.widget.max_sizes != max_sizes {
             this.widget.max_sizes = max_sizes;
             this.ctx.request_layout();
