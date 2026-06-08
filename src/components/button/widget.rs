@@ -41,7 +41,6 @@ use crate::components::click::{self, ClickPhase};
 pub(crate) const CORNER_RADIUS: f64 = 5.0;
 /// Border thickness for the active and focus states.
 const BORDER_WIDTH: f64 = 1.0;
-/// Focus-ring stroke width (inset 2px from button edge).
 /// Inset of the focus ring from the button edge.
 const FOCUS_RING_INSET: f64 = 2.0;
 /// Gap between a leading icon and the label.
