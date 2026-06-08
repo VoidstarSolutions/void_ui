@@ -20,6 +20,7 @@
 extern crate self as void_ui;
 
 pub mod anchored_overlay;
+pub mod animated_clip;
 pub mod components;
 pub mod floating;
 pub mod focus_ring;
@@ -32,7 +33,6 @@ pub mod popover_layer;
 pub mod theme;
 
 pub use animated_clip::AnimatedClip;
-pub use anchored_overlay::{AnchoredOverlay, AnchoredOverlayView, anchored_overlay};
 pub use components::{
     Button, ButtonGroup, ButtonVariant, ButtonView, CellAlign, ColumnDef, ColumnWidths, DataGrid,
     FilterState, Icon, IconName, Label, LabelAlignment, MIN_COLUMN_WIDTH, MIN_PANEL_SIZE,

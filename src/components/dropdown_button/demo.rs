@@ -4,7 +4,7 @@ use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::layout::Length;
 use xilem::masonry::widgets::Passthrough;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, flex_col, flex_row, sized_box};
+use xilem::view::{CrossAxisAlignment, flex_col, flex_row};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use crate::Theme;
@@ -12,7 +12,6 @@ use crate::components::ScrollBarVisibility;
 use crate::components::button::ButtonVariant;
 use crate::components::dropdown_button::dropdown_button;
 use crate::label;
-use crate::overlay_scope::overlay_scope;
 use crate::scroll_container;
 use crate::with_source;
 

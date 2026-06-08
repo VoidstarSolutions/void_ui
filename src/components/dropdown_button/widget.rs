@@ -23,8 +23,8 @@ use masonry::properties::ContentColor;
 use masonry::widgets::{ButtonPress, Label};
 
 use super::menu_layer::{MenuContent, MenuItemSelected};
-use crate::AnchoredOverlay;
 use crate::Theme;
+use crate::anchored_overlay::AnchoredOverlay;
 use crate::components::button::ButtonVariant;
 use crate::components::button::widget::ThemedButton;
 use crate::components::icon::IconName;
