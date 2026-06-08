@@ -49,6 +49,7 @@ pub use resizable::{
     MIN_PANEL_SIZE, Resizable, ResizablePanel, ResizablePanels, ResizablePanelsView, ResizableView,
     h_resizable, h_resizable_panels, v_resizable, v_resizable_panels,
 };
+
 pub use scroll_container::{
     ScrollBarVisibility, ScrollContainer, ScrollContainerView, scroll_container,
 };
@@ -56,7 +57,6 @@ pub use separator::{Orientation, Separator, SeparatorStyle, separator};
 pub use sidebar::{
     SidebarItem, SidebarItemView, SidebarPanel, SidebarPanelView, sidebar_item, sidebar_panel,
 };
-pub use resizable::{MIN_PANEL_SIZE, Resizable, ResizableView, h_resizable, v_resizable};
 pub use slider::{RangeSlider, RangeSliderView, Slider, SliderView, range_slider, slider};
 pub use spinner::{Spinner, SpinnerView, SpinnerWidget, spinner};
 pub use toggle::{Toggle, ToggleView, toggle};
