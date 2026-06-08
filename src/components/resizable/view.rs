@@ -222,18 +222,20 @@ where
         if self.theme != prev.theme {
             ResizableWidget::set_theme(&mut element, &self.theme);
         }
+        if self.ratios != prev.ratios {
+            ResizableWidget::set_ratios(&mut element, self.ratios.clone());
+        }
+
+        let min_sizes: Vec<Option<f64>> = self.panels.iter().map(|p| p.min_size).collect();
+        if min_sizes != prev.panels.iter().map(|p| p.min_size).collect::<Vec<_>>() {
+            ResizableWidget::set_min_sizes(&mut element, min_sizes);
+        }
+        let max_sizes: Vec<Option<f64>> = self.panels.iter().map(|p| p.max_size).collect();
+        if max_sizes != prev.panels.iter().map(|p| p.max_size).collect::<Vec<_>>() {
+            ResizableWidget::set_max_sizes(&mut element, max_sizes);
+        }
+
         if self.panels.len() == prev.panels.len() {
-            if self.ratios != prev.ratios {
-                ResizableWidget::set_ratios(&mut element, self.ratios.clone());
-            }
-            let min_sizes: Vec<Option<f64>> = self.panels.iter().map(|p| p.min_size).collect();
-            if min_sizes != prev.panels.iter().map(|p| p.min_size).collect::<Vec<_>>() {
-                ResizableWidget::set_min_sizes(&mut element, min_sizes);
-            }
-            let max_sizes: Vec<Option<f64>> = self.panels.iter().map(|p| p.max_size).collect();
-            if max_sizes != prev.panels.iter().map(|p| p.max_size).collect::<Vec<_>>() {
-                ResizableWidget::set_max_sizes(&mut element, max_sizes);
-            }
             for (i, (panel, prev_panel)) in self.panels.iter().zip(&prev.panels).enumerate() {
                 #[allow(clippy::cast_possible_truncation)]
                 ctx.with_id(ViewId::new(i as u64), |ctx| {
@@ -268,17 +270,6 @@ where
                 new_states.push(state);
             }
             ResizableWidget::set_panels(&mut element, new_widgets);
-            // Panel count changed: apply ratios and constraints unconditionally now
-            // that the widget's panel vec has the new length (no diff needed).
-            ResizableWidget::set_ratios(&mut element, self.ratios.clone());
-            ResizableWidget::set_min_sizes(
-                &mut element,
-                self.panels.iter().map(|p| p.min_size).collect(),
-            );
-            ResizableWidget::set_max_sizes(
-                &mut element,
-                self.panels.iter().map(|p| p.max_size).collect(),
-            );
             *view_state = new_states;
         }
     }
