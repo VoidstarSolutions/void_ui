@@ -103,7 +103,9 @@ impl PopoverHost {
     /// and the content
     /// (`overlay_host_mut → AnchoredOverlay::overlay_mut → downcast::<PopoverSurface> → content_mut`)
     /// through it.
-    pub fn overlay_host_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, AnchoredOverlay> {
+    pub fn overlay_host_mut<'t>(
+        this: &'t mut WidgetMut<'_, Self>,
+    ) -> WidgetMut<'t, AnchoredOverlay> {
         this.ctx.get_mut(&mut this.widget.overlay_host)
     }
 }

@@ -90,7 +90,7 @@ pub enum ComponentKind {
     ScrollContainer,
     Separator,
     Sidebar,
-	
+
     Slider,
     Spinner,
     StockQuotes,
