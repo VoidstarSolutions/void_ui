@@ -16,7 +16,7 @@ mod view;
 pub mod widget;
 
 pub use view::{Popover, PopoverView, popover};
-pub use widget::{PopoverClosed, PopoverHost};
+pub use widget::PopoverHost;
 
 /// Where the popover content appears relative to the trigger widget.
 ///

@@ -29,7 +29,6 @@ pub mod gallery;
 pub mod layout;
 pub mod overlay_scope;
 pub mod pointer_inert;
-pub mod popover_layer;
 pub mod theme;
 
 pub use animated_clip::AnimatedClip;
@@ -82,7 +81,6 @@ pub use gallery::code_block;
 pub use lucide_icons::LUCIDE_FONT_BYTES;
 pub use overlay_scope::{OverlayScope, OverlayScopeHandle, overlay_scope};
 pub use pointer_inert::{PointerInert, PointerInertView, pointer_inert};
-pub use popover_layer::{OnOutsideClick, PopoverLayer};
 pub use theme::{CodePalette, Density, FontStack, Palette, Radii, Theme, ThemeVariant, Typography};
 #[cfg(feature = "gallery")]
 pub use void_ui_macros::with_source;

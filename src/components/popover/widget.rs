@@ -1,48 +1,57 @@
-//! `PopoverHost` — transparent trigger wrapper that opens a `PopoverLayer` on click.
-
-use std::sync::Arc;
+//! `PopoverHost` — transparent trigger wrapper that opens floating content on
+//! click, hosted by an in-tree [`AnchoredOverlay`] — the same fallback
+//! `ThemedDropdownButton` uses when no ancestor [`OverlayScope`] is present.
+//!
+//! Popover content is an arbitrary, *stateful* `WidgetView`-built widget. It
+//! must be built once (in `View::build`/`rebuild`, where `ViewCtx`/`&mut
+//! State` are available) and live for the popover's entire lifetime — it
+//! cannot be torn down and freshly reconstructed from an event-handler
+//! closure the way `ThemedDropdownButton`'s stateless `MenuContent` is for
+//! its scope-push path. That rules out ever pushing it into an ancestor
+//! `OverlayScope` via `mutate_later`: doing so would require capturing a
+//! pre-built `NewWidget<dyn Widget>` in a `Send`-bound closure, and
+//! `Box`/`WidgetPod`/`NewWidget<dyn Widget>` can never be `Send` (`Widget`
+//! has no `Send` supertrait upstream). So `PopoverHost` always hosts content
+//! permanently inside `overlay_host`, toggled visible via
+//! `AnchoredOverlay::set_overlay_visible` — it tracks our movement for free as
+//! a rigidly-attached descendant, and is clipped by whatever ancestor clips
+//! us (no window-bleed).
+//!
+//! The gallery's `with_source!` macro places the live demo *after* its
+//! source-code block in paint order specifically so this in-tree overlay wins
+//! against that later-occluding sibling — see `void-ui-macros`.
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
-    AccessCtx, ChildrenIds, EventCtx, LayerType, LayoutCtx, MeasureCtx, NewWidget, PaintCtx,
-    PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, Update, UpdateCtx, Widget, WidgetId,
-    WidgetMut, WidgetPod,
+    AccessCtx, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
+    PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, Update, UpdateCtx, Widget, WidgetMut,
+    WidgetPod,
 };
-
-/// Action emitted by [`PopoverHost`] when the popover is dismissed.
-///
-/// The [`PopoverView`](super::view::PopoverView) handles this to trigger a
-/// `RequestRebuild` so `pending_content` is refreshed before the next open.
-#[derive(Debug)]
-pub struct PopoverClosed;
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Point, Size};
+use masonry::kurbo::{Axis, Point, RoundedRect, Size, Stroke};
 use masonry::layout::{LenReq, Length};
+use masonry::peniko::Color;
 
 use super::PopoverAnchor;
 use crate::Theme;
+use crate::anchored_overlay::AnchoredOverlay;
 use crate::components::click::{self, ClickPhase};
-use crate::popover_layer::{OnOutsideClick, PopoverLayer};
 
-/// Transparent wrapper around a trigger child that opens a [`PopoverLayer`] on click.
+/// Corner radius of the popover surface's chrome.
+const CORNER_RADIUS: f64 = 5.0;
+/// Border width of the popover surface's chrome.
+const BORDER_WIDTH: f64 = 1.0;
+
+/// Transparent wrapper around a trigger child that opens floating content on
+/// click. See module docs for the hosting strategy.
 ///
-/// Clicking the trigger toggles the popover.  Clicking outside the open
-/// popover closes it via [`PopoverLayer::capture_pointer_event`].  Pressing
-/// Escape while the trigger has focus also closes the popover.
+/// Clicking the trigger toggles the popover. Losing focus (e.g. clicking
+/// outside) or pressing Escape while focused closes it.
 pub struct PopoverHost {
-    trigger: WidgetPod<dyn Widget>,
-    /// Pre-built content widget, consumed when the popover opens.  Replaced
-    /// by the view layer on each rebuild so the next open cycle shows fresh
-    /// content.
-    pending_content: Option<NewWidget<dyn Widget>>,
-    pub(super) open: bool,
-    pub(super) layer_id: Option<WidgetId>,
-    /// Latched at pointer-Down so that the `PopoverLayer`'s `mutate_later`
-    /// (which resets `open = false` between Down and Up) doesn't cause the
-    /// toggle on Up to incorrectly re-open the popover.
-    was_open_at_down: bool,
-    pub(super) anchor: PopoverAnchor,
-    pub(super) theme: Theme,
+    overlay_host: WidgetPod<AnchoredOverlay>,
+    open: bool,
+    anchor: PopoverAnchor,
+    theme: Theme,
 }
 
 // --- MARK: BUILDERS
@@ -54,12 +63,12 @@ impl PopoverHost {
         anchor: PopoverAnchor,
         theme: &Theme,
     ) -> Self {
+        let trigger = trigger.erased();
+        let surface = NewWidget::new(PopoverSurface::new(content.erased(), theme)).erased();
+        let overlay_host = AnchoredOverlay::new(trigger, surface, false, anchor);
         Self {
-            trigger: trigger.erased().to_pod(),
-            pending_content: Some(content.erased()),
+            overlay_host: NewWidget::new(overlay_host).to_pod(),
             open: false,
-            layer_id: None,
-            was_open_at_down: false,
             anchor,
             theme: *theme,
         }
@@ -68,76 +77,40 @@ impl PopoverHost {
 
 // --- MARK: WIDGETMUT SETTERS
 impl PopoverHost {
-    /// Update the theme.  Has no effect on an already-open layer.
+    /// Update the theme, refreshing the permanently-mounted surface's chrome
+    /// colors.
     pub fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
         if this.widget.theme != *theme {
             this.widget.theme = *theme;
+            let mut overlay_host = this.ctx.get_mut(&mut this.widget.overlay_host);
+            let mut overlay = AnchoredOverlay::overlay_mut(&mut overlay_host);
+            let mut surface = overlay.downcast::<PopoverSurface>();
+            PopoverSurface::set_theme(&mut surface, theme);
         }
     }
 
-    /// Replace the pending content widget.  If the popover is currently open
-    /// the new widget is queued and used the next time the popover opens.
-    pub fn set_pending_content(this: &mut WidgetMut<'_, Self>, content: NewWidget<dyn Widget>) {
-        this.widget.pending_content = Some(content);
-    }
-
-    /// Change the anchor without closing the popover.  Takes effect on the
-    /// next open.
+    /// Change the anchor, forwarded immediately to the live `AnchoredOverlay`.
     pub fn set_anchor(this: &mut WidgetMut<'_, Self>, anchor: PopoverAnchor) {
-        this.widget.anchor = anchor;
-    }
-
-    /// Mutable access to the trigger child for the view layer.
-    pub fn trigger_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
-        this.ctx.get_mut(&mut this.widget.trigger)
-    }
-}
-
-// --- MARK: OPEN / CLOSE
-impl PopoverHost {
-    fn open_popover(&mut self, ctx: &mut EventCtx<'_>) {
-        let Some(content) = self.pending_content.take() else {
-            return;
-        };
-        let creator_id = ctx.widget_id();
-        let bb = ctx.border_box();
-        let trigger_size = bb.size();
-        let pos = ctx.to_window(bb.origin());
-        let close_cb: OnOutsideClick = Arc::new(|mut w, layer_id| {
-            let mut w = w.downcast::<PopoverHost>();
-            w.widget.open = false;
-            w.widget.layer_id = None;
-            w.ctx.remove_layer(layer_id);
-            // Notify the view layer so it calls rebuild() and restores pending_content.
-            w.ctx.submit_action::<PopoverClosed>(PopoverClosed);
-        });
-        let layer = NewWidget::new(PopoverLayer::new(
-            content,
-            creator_id,
-            self.theme.palette.surface_hi,
-            self.theme.palette.border_strong,
-            self.anchor,
-            trigger_size,
-            close_cb,
-        ));
-        let layer_id = layer.id();
-        ctx.create_layer(LayerType::Other, layer, pos);
-        self.layer_id = Some(layer_id);
-        self.open = true;
-    }
-
-    fn close_popover(&mut self, ctx: &mut EventCtx<'_>) {
-        if let Some(id) = self.layer_id.take() {
-            ctx.remove_layer(id);
+        if this.widget.anchor != anchor {
+            this.widget.anchor = anchor;
+            let mut overlay_host = this.ctx.get_mut(&mut this.widget.overlay_host);
+            AnchoredOverlay::set_anchor(&mut overlay_host, anchor);
         }
-        self.open = false;
-        ctx.submit_action::<PopoverClosed>(PopoverClosed);
+    }
+
+    /// Mutable access to the `overlay_host` for the view layer, which threads
+    /// both the trigger (`overlay_host_mut → AnchoredOverlay::primary_mut`)
+    /// and the content
+    /// (`overlay_host_mut → AnchoredOverlay::overlay_mut → downcast::<PopoverSurface> → content_mut`)
+    /// through it.
+    pub fn overlay_host_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, AnchoredOverlay> {
+        this.ctx.get_mut(&mut this.widget.overlay_host)
     }
 }
 
 // --- MARK: IMPL WIDGET
 impl Widget for PopoverHost {
-    type Action = PopoverClosed;
+    type Action = NoAction;
 
     fn on_pointer_event(
         &mut self,
@@ -147,17 +120,15 @@ impl Widget for PopoverHost {
     ) {
         match click::primary_click(ctx, event) {
             Some(ClickPhase::Down) => {
-                self.was_open_at_down = self.open;
                 ctx.request_focus();
             }
             Some(ClickPhase::Up(Some(_))) => {
-                if self.was_open_at_down {
-                    if self.open {
-                        self.close_popover(ctx);
-                    }
-                } else {
-                    self.open_popover(ctx);
-                }
+                let open = !self.open;
+                self.open = open;
+                ctx.mutate_child_later(&mut self.overlay_host, move |mut w| {
+                    AnchoredOverlay::set_overlay_visible(&mut w, open);
+                });
+                ctx.request_paint_only();
             }
             _ => {}
         }
@@ -176,20 +147,41 @@ impl Widget for PopoverHost {
             && event.key == Key::Named(NamedKey::Escape)
             && self.open
         {
-            self.close_popover(ctx);
+            self.open = false;
+            ctx.mutate_child_later(&mut self.overlay_host, |mut w| {
+                AnchoredOverlay::set_overlay_visible(&mut w, false);
+            });
+            ctx.request_paint_only();
         }
     }
 
+    /// Reacts to `ChildFocusChanged` — masonry's "focus entered/left my
+    /// subtree" signal for ancestors — rather than `FocusChanged`, since the
+    /// trigger is the actual focus target. A click landing outside our
+    /// subtree clears focus from it, the standard "click outside to dismiss"
+    /// path; the open content remains a permanently-mounted descendant
+    /// (inside `overlay_host`), so this only fires for genuine outside clicks
+    /// — exactly mirrors `ThemedDropdownButton::update`.
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        if matches!(event, Update::WidgetAdded | Update::FocusChanged(_)) {
-            ctx.request_paint_only();
+        match event {
+            Update::WidgetAdded | Update::FocusChanged(_) => {
+                ctx.request_paint_only();
+            }
+            Update::ChildFocusChanged(false) if self.open => {
+                self.open = false;
+                ctx.mutate_child_later(&mut self.overlay_host, |mut w| {
+                    AnchoredOverlay::set_overlay_visible(&mut w, false);
+                });
+                ctx.request_paint_only();
+            }
+            _ => {}
         }
     }
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.trigger);
+        ctx.register_child(&mut self.overlay_host);
     }
 
     fn measure(
@@ -200,13 +192,13 @@ impl Widget for PopoverHost {
         _len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        ctx.redirect_measurement(&mut self.trigger, axis, cross_length)
+        ctx.redirect_measurement(&mut self.overlay_host, axis, cross_length)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        ctx.run_layout(&mut self.trigger, size);
-        ctx.place_child(&mut self.trigger, Point::ORIGIN);
-        ctx.derive_baselines(&self.trigger);
+        ctx.run_layout(&mut self.overlay_host, size);
+        ctx.place_child(&mut self.overlay_host, Point::ORIGIN);
+        ctx.derive_baselines(&self.overlay_host);
     }
 
     fn paint(
@@ -230,7 +222,7 @@ impl Widget for PopoverHost {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.trigger.id()])
+        ChildrenIds::from_slice(&[self.overlay_host.id()])
     }
 
     fn accepts_focus(&self) -> bool {
@@ -239,5 +231,101 @@ impl Widget for PopoverHost {
 
     fn accepts_text_input(&self) -> bool {
         false
+    }
+}
+
+/// Transparent wrapper that paints rounded background/border chrome around
+/// arbitrary popover content. `AnchoredOverlay` is purely structural — it
+/// doesn't paint chrome — so whatever it hosts must paint its own (mirrors
+/// `MenuContent`, which does the same for dropdown menus).
+pub(super) struct PopoverSurface {
+    content: WidgetPod<dyn Widget>,
+    bg: Color,
+    border: Color,
+}
+
+impl PopoverSurface {
+    fn new(content: NewWidget<dyn Widget>, theme: &Theme) -> Self {
+        Self {
+            content: content.to_pod(),
+            bg: theme.palette.surface_hi,
+            border: theme.palette.border_strong,
+        }
+    }
+
+    fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
+        let bg = theme.palette.surface_hi;
+        let border = theme.palette.border_strong;
+        if this.widget.bg != bg || this.widget.border != border {
+            this.widget.bg = bg;
+            this.widget.border = border;
+            this.ctx.request_paint_only();
+        }
+    }
+
+    /// Mutable access to the wrapped content for the view layer.
+    pub(super) fn content_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
+        this.ctx.get_mut(&mut this.widget.content)
+    }
+}
+
+impl Widget for PopoverSurface {
+    type Action = NoAction;
+
+    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
+        ctx.register_child(&mut self.content);
+    }
+
+    fn measure(
+        &mut self,
+        ctx: &mut MeasureCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        axis: Axis,
+        _len_req: LenReq,
+        cross_length: Option<Length>,
+    ) -> Length {
+        ctx.redirect_measurement(&mut self.content, axis, cross_length)
+    }
+
+    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
+        ctx.run_layout(&mut self.content, size);
+        ctx.place_child(&mut self.content, Point::ORIGIN);
+        ctx.derive_baselines(&self.content);
+    }
+
+    fn paint(
+        &mut self,
+        ctx: &mut PaintCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        painter: &mut Painter<'_>,
+    ) {
+        let rrect =
+            RoundedRect::from_origin_size(Point::ORIGIN, ctx.border_box_size(), CORNER_RADIUS);
+        if self.bg.components[3] > 0.0 {
+            painter.fill(rrect, self.bg).draw();
+        }
+        if self.border.components[3] > 0.0 {
+            painter
+                .stroke(rrect, &Stroke::new(BORDER_WIDTH), self.border)
+                .draw();
+        }
+    }
+
+    fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
+
+    fn accessibility_role(&self) -> Role {
+        Role::GenericContainer
+    }
+
+    fn accessibility(
+        &mut self,
+        _ctx: &mut AccessCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        _node: &mut Node,
+    ) {
+    }
+
+    fn children_ids(&self) -> ChildrenIds {
+        ChildrenIds::from_slice(&[self.content.id()])
     }
 }

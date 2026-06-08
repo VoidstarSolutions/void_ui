@@ -19,8 +19,9 @@ use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
 use super::PopoverAnchor;
-use super::widget::{PopoverClosed, PopoverHost};
+use super::widget::{PopoverHost, PopoverSurface};
 use crate::Theme;
+use crate::anchored_overlay::AnchoredOverlay;
 
 /// Builder for a popover.
 ///
@@ -90,9 +91,8 @@ impl<TriggerV, ContentV, State, Action> ViewMarker
 {
 }
 
-/// View state for `PopoverView`.
-///
-/// Holds the child view states needed for `rebuild` and `teardown`.
+/// View state for `PopoverView`: the trigger's and content's child view
+/// states, both permanently mounted inside `PopoverHost`'s `overlay_host`.
 pub struct PopoverViewState<TriggerVS, ContentVS> {
     trigger_vs: TriggerVS,
     content_vs: ContentVS,
@@ -136,17 +136,31 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) {
-        // Always rebuild the trigger — it is in the main widget tree.
-        {
-            let mut trigger = PopoverHost::trigger_mut(&mut element);
-            self.trigger.rebuild(
-                &prev.trigger,
-                &mut view_state.trigger_vs,
-                ctx,
-                trigger.downcast(),
-                app_state,
-            );
-        }
+        let mut overlay_host = PopoverHost::overlay_host_mut(&mut element);
+        let mut primary = AnchoredOverlay::primary_mut(&mut overlay_host);
+        self.trigger.rebuild(
+            &prev.trigger,
+            &mut view_state.trigger_vs,
+            ctx,
+            primary.downcast(),
+            app_state,
+        );
+        drop(primary);
+
+        let mut overlay = AnchoredOverlay::overlay_mut(&mut overlay_host);
+        let mut surface = overlay.downcast::<PopoverSurface>();
+        let mut content = PopoverSurface::content_mut(&mut surface);
+        self.content.rebuild(
+            &prev.content,
+            &mut view_state.content_vs,
+            ctx,
+            content.downcast(),
+            app_state,
+        );
+        drop(content);
+        drop(surface);
+        drop(overlay);
+        drop(overlay_host);
 
         if self.theme != prev.theme {
             PopoverHost::set_theme(&mut element, &self.theme);
@@ -154,17 +168,6 @@ where
         if self.anchor != prev.anchor {
             PopoverHost::set_anchor(&mut element, self.anchor);
         }
-
-        // Build fresh content and queue it as pending.  If the popover is
-        // currently open the host ignores the new pending widget until the
-        // next open cycle; if closed it will use this updated content.
-        //
-        // We rebuild into the old content_vs so the caller's view state stays
-        // consistent, but the resulting widget is passed to the host rather
-        // than placed into the main tree.
-        let (new_content_pod, new_content_vs) = self.content.build(ctx, app_state);
-        view_state.content_vs = new_content_vs;
-        PopoverHost::set_pending_content(&mut element, new_content_pod.new_widget.erased());
     }
 
     fn teardown(
@@ -173,11 +176,20 @@ where
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
     ) {
-        {
-            let mut trigger = PopoverHost::trigger_mut(&mut element);
-            self.trigger
-                .teardown(&mut view_state.trigger_vs, ctx, trigger.downcast());
-        }
+        let mut overlay_host = PopoverHost::overlay_host_mut(&mut element);
+        let mut primary = AnchoredOverlay::primary_mut(&mut overlay_host);
+        self.trigger
+            .teardown(&mut view_state.trigger_vs, ctx, primary.downcast());
+        drop(primary);
+        let mut overlay = AnchoredOverlay::overlay_mut(&mut overlay_host);
+        let mut surface = overlay.downcast::<PopoverSurface>();
+        let mut content = PopoverSurface::content_mut(&mut surface);
+        self.content
+            .teardown(&mut view_state.content_vs, ctx, content.downcast());
+        drop(content);
+        drop(surface);
+        drop(overlay);
+        drop(overlay_host);
         ctx.teardown_action_source(element);
     }
 
@@ -188,18 +200,28 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        // When the popover is dismissed (outside-click or Escape), the widget
-        // submits PopoverClosed.  Returning RequestRebuild causes xilem to call
-        // rebuild(), which calls set_pending_content() so the next open works.
-        if message.take_message::<PopoverClosed>().is_some() {
-            return MessageResult::RequestRebuild;
-        }
-        let mut trigger = PopoverHost::trigger_mut(&mut element);
-        self.trigger.message(
+        let mut overlay_host = PopoverHost::overlay_host_mut(&mut element);
+        let mut primary = AnchoredOverlay::primary_mut(&mut overlay_host);
+        let result = self.trigger.message(
             &mut view_state.trigger_vs,
             message,
-            trigger.downcast(),
+            primary.downcast(),
             app_state,
-        )
+        );
+        drop(primary);
+        match result {
+            MessageResult::Nop => {
+                let mut overlay = AnchoredOverlay::overlay_mut(&mut overlay_host);
+                let mut surface = overlay.downcast::<PopoverSurface>();
+                let mut content = PopoverSurface::content_mut(&mut surface);
+                self.content.message(
+                    &mut view_state.content_vs,
+                    message,
+                    content.downcast(),
+                    app_state,
+                )
+            }
+            other => other,
+        }
     }
 }
