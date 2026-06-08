@@ -448,8 +448,8 @@ impl Widget for ResizableWidget {
                     self.active_handle,
                     new_ratios,
                 ));
-                ctx.set_handled();
             }
+            ctx.set_handled();
             return;
         }
 
