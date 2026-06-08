@@ -733,7 +733,14 @@ mod tests {
     ) -> ResizableWidget {
         let theme = Theme::default();
         let panels = (0..ratios.len()).map(|_| panel()).collect();
-        let mut w = ResizableWidget::new(panels, Axis::Horizontal, ratios, min_sizes, max_sizes, &theme);
+        let mut w = ResizableWidget::new(
+            panels,
+            Axis::Horizontal,
+            ratios,
+            min_sizes,
+            max_sizes,
+            &theme,
+        );
         w.total_extent = total_extent;
         w
     }
@@ -850,7 +857,10 @@ mod tests {
         let ratios = w.ratios_from_pair_extent(300.0, 0, 240.0, 100.0);
         assert!(approx_f32(ratios[0], 100.0 / 300.0));
         assert!(approx_f32(ratios[1], 140.0 / 300.0));
-        assert!(approx_f32(ratios[2], 0.2), "untouched panel keeps its ratio");
+        assert!(
+            approx_f32(ratios[2], 0.2),
+            "untouched panel keeps its ratio"
+        );
     }
 
     #[test]
