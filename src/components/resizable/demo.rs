@@ -5,7 +5,7 @@ use xilem::masonry::layout::Length;
 use xilem::masonry::widgets::Passthrough;
 use xilem::peniko::Color;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, MainAxisAlignment, flex_col, label as xl_label, sized_box};
+use xilem::view::{CrossAxisAlignment, MainAxisAlignment, flex_col, sized_box};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::{h_resizable, v_resizable};
@@ -69,12 +69,16 @@ fn pane(
     bg: Color,
     text_color: Color,
     font_size: f32,
+    theme: &Theme,
 ) -> Box<AnyWidgetView<ResizableDemo>> {
     Box::new(
         sized_box(
-            flex_col((xl_label(text).text_size(font_size).color(text_color),))
-                .cross_axis_alignment(CrossAxisAlignment::Center)
-                .main_axis_alignment(MainAxisAlignment::Center),
+            flex_col((label(text)
+                .text_size(font_size)
+                .color(text_color)
+                .render(theme),))
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .main_axis_alignment(MainAxisAlignment::Center),
         )
         .background_color(bg),
     )
@@ -90,8 +94,8 @@ fn build_inner(theme: &Theme, state: &ResizableDemo) -> impl WidgetView<Resizabl
     let h_example = with_source!(theme, {
         sized_box(
             h_resizable(
-                pane("Left", p.surface, p.text_muted, caption),
-                pane("Right", p.surface, p.text_muted, caption),
+                pane("Left", p.surface, p.text_muted, caption, theme),
+                pane("Right", p.surface, p.text_muted, caption, theme),
                 |s: &mut ResizableDemo, ratio: f32| s.h_ratio = ratio,
             )
             .ratio(state.h_ratio)
@@ -103,8 +107,8 @@ fn build_inner(theme: &Theme, state: &ResizableDemo) -> impl WidgetView<Resizabl
     let v_example = with_source!(theme, {
         sized_box(
             v_resizable(
-                pane("Top", p.surface, p.text_muted, caption),
-                pane("Bottom", p.surface, p.text_muted, caption),
+                pane("Top", p.surface, p.text_muted, caption, theme),
+                pane("Bottom", p.surface, p.text_muted, caption, theme),
                 |s: &mut ResizableDemo, ratio: f32| s.v_ratio = ratio,
             )
             .ratio(state.v_ratio)
@@ -117,10 +121,10 @@ fn build_inner(theme: &Theme, state: &ResizableDemo) -> impl WidgetView<Resizabl
     let nested_example = with_source!(theme, {
         sized_box(
             h_resizable(
-                pane("Left", p.surface, p.text_muted, caption),
+                pane("Left", p.surface, p.text_muted, caption, theme),
                 v_resizable(
-                    pane("Top right", p.surface, p.text_muted, caption),
-                    pane("Bottom right", p.surface, p.text_faint, caption),
+                    pane("Top right", p.surface, p.text_muted, caption, theme),
+                    pane("Bottom right", p.surface, p.text_faint, caption, theme),
                     |s: &mut ResizableDemo, ratio: f32| s.nested_v = ratio,
                 )
                 .ratio(state.nested_v)
@@ -140,17 +144,17 @@ fn build_inner(theme: &Theme, state: &ResizableDemo) -> impl WidgetView<Resizabl
         sized_box(
             h_resizable_panels(
                 vec![
-                    ResizablePanel::new(pane("Left", p.surface, p.text_muted, caption)),
+                    ResizablePanel::new(pane("Left", p.surface, p.text_muted, caption, theme)),
                     ResizablePanel::new(
                         v_resizable(
-                            pane("Top", p.surface, p.text_muted, caption),
-                            pane("Bottom", p.surface, p.text_faint, caption),
+                            pane("Top", p.surface, p.text_muted, caption, theme),
+                            pane("Bottom", p.surface, p.text_faint, caption, theme),
                             |s: &mut ResizableDemo, ratio: f32| s.three_pane_middle_v = ratio,
                         )
                         .ratio(state.three_pane_middle_v)
                         .render(theme),
                     ),
-                    ResizablePanel::new(pane("Right", p.surface, p.text_faint, caption)),
+                    ResizablePanel::new(pane("Right", p.surface, p.text_faint, caption, theme)),
                 ],
                 state.three_pane_ratios.clone(),
                 |s: &mut ResizableDemo, _handle: usize, ratios: Vec<f32>| {
@@ -167,8 +171,14 @@ fn build_inner(theme: &Theme, state: &ResizableDemo) -> impl WidgetView<Resizabl
     let constrained_example = with_source!(theme, {
         sized_box(
             h_resizable(
-                pane("Sidebar (120–280px)", p.surface, p.text_muted, caption),
-                pane("Content", p.surface, p.text_muted, caption),
+                pane(
+                    "Sidebar (120–280px)",
+                    p.surface,
+                    p.text_muted,
+                    caption,
+                    theme,
+                ),
+                pane("Content", p.surface, p.text_muted, caption, theme),
                 |s: &mut ResizableDemo, ratio: f32| s.constrained_ratio = ratio,
             )
             .ratio(state.constrained_ratio)
@@ -184,8 +194,14 @@ fn build_inner(theme: &Theme, state: &ResizableDemo) -> impl WidgetView<Resizabl
     let constrained_second_example = with_source!(theme, {
         sized_box(
             h_resizable(
-                pane("Content", p.surface, p.text_muted, caption),
-                pane("Sidebar (120–280px)", p.surface, p.text_muted, caption),
+                pane("Content", p.surface, p.text_muted, caption, theme),
+                pane(
+                    "Sidebar (120–280px)",
+                    p.surface,
+                    p.text_muted,
+                    caption,
+                    theme,
+                ),
                 |s: &mut ResizableDemo, ratio: f32| s.constrained_second_ratio = ratio,
             )
             .ratio(state.constrained_second_ratio)
