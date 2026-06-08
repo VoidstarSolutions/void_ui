@@ -29,6 +29,9 @@ const CORNER_RADIUS: f64 = 5.0;
 const BORDER_WIDTH: f64 = 1.0;
 /// Inset of the keyboard-highlight ring from its item's bounds.
 const HIGHLIGHT_RING_INSET: f64 = 2.0;
+/// Minimum menu width in logical pixels, ensuring a readable popup even when
+/// all item labels are very short.
+const MIN_MENU_WIDTH: f64 = 80.0;
 
 /// Action emitted when the user selects item `0` (the index) from the menu.
 ///
@@ -234,7 +237,7 @@ impl Widget for MenuContent {
             Axis::Horizontal => {
                 let inner_cross =
                     cross_length.map(|c| Length::px((c.get() - 2.0 * pad_h).max(0.0)));
-                let mut max_w = 80.0f64;
+                let mut max_w = MIN_MENU_WIDTH;
                 for label in &mut self.labels {
                     let w = ctx
                         .compute_length(
