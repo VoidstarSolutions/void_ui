@@ -299,3 +299,58 @@ impl Widget for MenuContent {
         ChildrenIds::from_slice(&ids)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Builds a `MenuContent` and seeds `item_rects` directly, as if a
+    /// layout pass had already run — `hit_item` only reads that field.
+    fn menu_with_rects(rects: Vec<Rect>) -> MenuContent {
+        let theme = Theme::default();
+        let items: Vec<ArcStr> = rects.iter().map(|_| ArcStr::from("item")).collect();
+        let mut menu = MenuContent::new(items, &theme);
+        menu.item_rects = rects;
+        menu
+    }
+
+    #[test]
+    fn hit_item_finds_the_containing_rect() {
+        let menu = menu_with_rects(vec![
+            Rect::new(0.0, 0.0, 100.0, 20.0),
+            Rect::new(0.0, 20.0, 100.0, 40.0),
+        ]);
+        assert_eq!(menu.hit_item(Point::new(50.0, 10.0)), Some(0));
+        assert_eq!(menu.hit_item(Point::new(50.0, 30.0)), Some(1));
+    }
+
+    #[test]
+    fn hit_item_returns_none_outside_all_rects() {
+        let menu = menu_with_rects(vec![Rect::new(0.0, 0.0, 100.0, 20.0)]);
+        assert_eq!(menu.hit_item(Point::new(50.0, 50.0)), None, "below the list");
+        assert_eq!(menu.hit_item(Point::new(-10.0, 10.0)), None, "left of the list");
+    }
+
+    #[test]
+    fn hit_item_on_an_empty_list_is_always_none() {
+        let menu = menu_with_rects(Vec::new());
+        assert_eq!(menu.hit_item(Point::new(0.0, 0.0)), None);
+    }
+
+    #[test]
+    fn hit_item_resolves_a_shared_edge_to_the_rect_that_owns_it() {
+        // `Rect::contains` is half-open ([x0,x1) x [y0,y1)), so a point sitting
+        // exactly on the boundary between two adjacent rects belongs to
+        // whichever one's range includes that edge — never both, never neither.
+        let menu = menu_with_rects(vec![
+            Rect::new(0.0, 0.0, 100.0, 20.0),
+            Rect::new(0.0, 20.0, 100.0, 40.0),
+        ]);
+        assert_eq!(menu.hit_item(Point::new(50.0, 0.0)), Some(0), "top edge of rect 0");
+        assert_eq!(
+            menu.hit_item(Point::new(50.0, 20.0)),
+            Some(1),
+            "shared edge belongs to rect 1, not rect 0"
+        );
+    }
+}
