@@ -42,8 +42,11 @@ use crate::components::click::{self, ClickPhase};
 const CORNER_RADIUS: f64 = 5.0;
 /// Border width of the popover surface's chrome.
 const BORDER_WIDTH: f64 = 1.0;
-/// Gap between the trigger and the popover surface.
-const SURFACE_GAP: Length = Length::const_px(4.0);
+
+/// Gap between the trigger and the popover surface, scaled with density.
+fn surface_gap(theme: &Theme) -> Length {
+    Length::px(f64::from(theme.density.pad) / 3.0)
+}
 
 /// Transparent wrapper around a trigger child that opens floating content on
 /// click. See module docs for the hosting strategy.
@@ -72,7 +75,7 @@ impl PopoverHost {
             .insert(Padding::all(Length::px(f64::from(theme.density.pad))));
         let surface = NewWidget::new(PopoverSurface::new(content.erased(), theme)).erased();
         let overlay_host =
-            AnchoredOverlay::new(trigger, surface, false, anchor).with_gap(SURFACE_GAP);
+            AnchoredOverlay::new(trigger, surface, false, anchor).with_gap(surface_gap(theme));
         Self {
             overlay_host: NewWidget::new(overlay_host).to_pod(),
             open: false,
@@ -90,6 +93,7 @@ impl PopoverHost {
         if this.widget.theme != *theme {
             this.widget.theme = *theme;
             let mut overlay_host = this.ctx.get_mut(&mut this.widget.overlay_host);
+            AnchoredOverlay::set_gap(&mut overlay_host, surface_gap(theme));
             let mut overlay = AnchoredOverlay::overlay_mut(&mut overlay_host);
             let mut surface = overlay.downcast::<PopoverSurface>();
             PopoverSurface::set_theme(&mut surface, theme);

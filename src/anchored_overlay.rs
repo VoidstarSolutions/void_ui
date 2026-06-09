@@ -106,6 +106,16 @@ impl AnchoredOverlay {
         this.ctx.request_layout();
     }
 
+    /// Change the gap between the primary's edge and the overlay. Triggers a
+    /// layout pass when changed.
+    pub fn set_gap(this: &mut WidgetMut<'_, Self>, gap: Length) {
+        if this.widget.gap == gap {
+            return;
+        }
+        this.widget.gap = gap;
+        this.ctx.request_layout();
+    }
+
     /// Mutable access to the primary child for the [`View`] layer.
     pub fn primary_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
         this.ctx.get_mut(&mut this.widget.primary)
