@@ -31,6 +31,7 @@ use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, RoundedRect, Size, Stroke};
 use masonry::layout::{LenReq, Length};
 use masonry::peniko::Color;
+use masonry::properties::Padding;
 
 use super::PopoverAnchor;
 use crate::Theme;
@@ -41,6 +42,8 @@ use crate::components::click::{self, ClickPhase};
 const CORNER_RADIUS: f64 = 5.0;
 /// Border width of the popover surface's chrome.
 const BORDER_WIDTH: f64 = 1.0;
+/// Gap between the trigger and the popover surface.
+const SURFACE_GAP: Length = Length::const_px(4.0);
 
 /// Transparent wrapper around a trigger child that opens floating content on
 /// click. See module docs for the hosting strategy.
@@ -59,13 +62,17 @@ impl PopoverHost {
     #[must_use]
     pub fn new(
         trigger: NewWidget<impl Widget + ?Sized>,
-        content: NewWidget<impl Widget + ?Sized>,
+        mut content: NewWidget<impl Widget + ?Sized>,
         anchor: PopoverAnchor,
         theme: &Theme,
     ) -> Self {
         let trigger = trigger.erased();
+        content
+            .properties
+            .insert(Padding::all(Length::px(f64::from(theme.density.pad))));
         let surface = NewWidget::new(PopoverSurface::new(content.erased(), theme)).erased();
-        let overlay_host = AnchoredOverlay::new(trigger, surface, false, anchor);
+        let overlay_host =
+            AnchoredOverlay::new(trigger, surface, false, anchor).with_gap(SURFACE_GAP);
         Self {
             overlay_host: NewWidget::new(overlay_host).to_pod(),
             open: false,
@@ -244,6 +251,7 @@ pub(super) struct PopoverSurface {
     content: WidgetPod<dyn Widget>,
     bg: Color,
     border: Color,
+    pad: f32,
 }
 
 impl PopoverSurface {
@@ -252,6 +260,7 @@ impl PopoverSurface {
             content: content.to_pod(),
             bg: theme.palette.surface_hi,
             border: theme.palette.border_strong,
+            pad: theme.density.pad,
         }
     }
 
@@ -262,6 +271,11 @@ impl PopoverSurface {
             this.widget.bg = bg;
             this.widget.border = border;
             this.ctx.request_paint_only();
+        }
+        if (this.widget.pad - theme.density.pad).abs() > f32::EPSILON {
+            this.widget.pad = theme.density.pad;
+            let pad = Padding::all(Length::px(f64::from(theme.density.pad)));
+            Self::content_mut(this).insert_prop(pad);
         }
     }
 

@@ -52,6 +52,10 @@ pub struct AnchoredOverlay {
     /// outside-click dismissal) can hit-test against it without duplicating
     /// the anchor-offset math.
     placed_overlay_rect: Rect,
+    /// Extra space between the primary's edge and the overlay, in the
+    /// direction the overlay opens (down for `Bottom*` anchors, up for
+    /// `Top*`). Zero by default; set via [`Self::with_gap`].
+    gap: Length,
 }
 
 impl AnchoredOverlay {
@@ -71,7 +75,16 @@ impl AnchoredOverlay {
             overlay_visible,
             anchor,
             placed_overlay_rect: Rect::ZERO,
+            gap: Length::ZERO,
         }
+    }
+
+    /// Set the gap between the primary's edge and the overlay, in the
+    /// direction the overlay opens.
+    #[must_use]
+    pub fn with_gap(mut self, gap: Length) -> Self {
+        self.gap = gap;
+        self
     }
 
     /// Show or hide the overlay. Triggers a layout pass when changed.
@@ -169,6 +182,14 @@ impl Widget for AnchoredOverlay {
             // legal. The overlay paints/hit-tests outside our border box
             // and is clipped only by a real `set_clip_path` ancestor.
             let offset = self.anchor.child_offset(size, overlay_size);
+            let offset = match self.anchor {
+                PopoverAnchor::BottomStart | PopoverAnchor::BottomCenter | PopoverAnchor::BottomEnd => {
+                    Point::new(offset.x, offset.y + self.gap.get())
+                }
+                PopoverAnchor::TopStart | PopoverAnchor::TopCenter | PopoverAnchor::TopEnd => {
+                    Point::new(offset.x, offset.y - self.gap.get())
+                }
+            };
             ctx.place_child(&mut self.overlay, offset);
             self.placed_overlay_rect = Rect::from_origin_size(offset, overlay_size);
         } else {

@@ -14,6 +14,7 @@ use crate::components::button::button;
 use crate::components::popover::{PopoverAnchor, popover};
 use crate::label;
 use crate::scroll_container;
+use crate::separator;
 use crate::with_source;
 
 #[derive(Debug, Default)]
@@ -44,19 +45,20 @@ fn basic_row(theme: &Theme) -> impl WidgetView<PopoverDemo> + use<> {
     with_source!(theme, {
         popover(
             button(|_: &mut PopoverDemo| {})
-                .label("Show info")
+                .label("Popover")
                 .render(theme),
             flex_col((
-                label("Popover title")
+                label("Hello, this is a Popover.")
                     .color(theme.palette.text)
                     .render(theme),
-                label("This content appears above all other widgets in a floating layer.")
+                separator().render(theme),
+                label("You can put any content here, including text, buttons, forms, and more.")
                     .color(theme.palette.text_muted)
                     .multiline(true)
                     .render(theme),
             ))
             .cross_axis_alignment(CrossAxisAlignment::Start)
-            .gap(Length::px(6.0)),
+            .gap(Length::px(8.0)),
         )
         .render(theme)
     })
