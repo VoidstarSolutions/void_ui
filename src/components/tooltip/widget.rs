@@ -2,11 +2,19 @@
 //! [`Layer`](masonry::core::Layer) after the pointer has been idle over
 //! it for a configurable delay.
 //!
-//! Built on top of masonry's overlay infrastructure: [`EventCtx::create_attached_layer`]
-//! creates a window-level layer anchored to the host, [`masonry::layers::Tooltip`]
-//! is the layer widget itself (it dismisses itself on the next pointer activity
-//! via `Layer::capture_pointer_event`), and the delay is a hand-rolled
+//! Built on top of masonry's overlay infrastructure: [`EventCtx::create_layer`]
+//! creates a window-level layer, [`masonry::layers::Tooltip`] is the layer
+//! widget itself (it dismisses itself on the next pointer activity via
+//! `Layer::capture_pointer_event`), and the delay is a hand-rolled
 //! `Instant`/`Duration` loop driven by `request_anim_frame()`.
+//!
+//! We use `create_layer` rather than `create_attached_layer` because the
+//! latter tracks the layer in an `attached_layers` map keyed by the host
+//! widget. When `TooltipLayer` self-removes via `capture_pointer_event` it
+//! does not clean up that map entry, so a subsequent `create_attached_layer`
+//! call would emit a spurious `RemoveLayer` for the already-gone layer and
+//! panic. Instead we track `layer_id` ourselves and clear it in
+//! `on_pointer_event` (which fires after each `capture_pointer_event`).
 
 use std::time::Duration;
 
@@ -14,7 +22,7 @@ use masonry::accesskit::{Node, Role};
 use masonry::core::{
     AccessCtx, ArcStr, ChildrenIds, EventCtx, LayerType, LayoutCtx, MeasureCtx, NewWidget,
     NoAction, PaintCtx, PointerEvent, PointerUpdate, PropertiesMut, PropertiesRef, RegisterCtx,
-    StyleProperty, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
+    StyleProperty, Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Size, Vec2};
@@ -51,6 +59,10 @@ pub struct TooltipHost {
     delay: Duration,
     last_pointer_move: Option<Instant>,
     last_cursor_pos: Point,
+    /// ID of the currently-live tooltip layer, if any.
+    /// Cleared in `on_pointer_event` so we don't try to create a layer
+    /// while one is already showing.
+    layer_id: Option<WidgetId>,
 }
 
 // --- MARK: BUILDERS
@@ -70,6 +82,7 @@ impl TooltipHost {
             delay,
             last_pointer_move: None,
             last_cursor_pos: Point::ZERO,
+            layer_id: None,
         }
     }
 }
@@ -137,6 +150,10 @@ impl Widget for TooltipHost {
     ) {
         if let PointerEvent::Move(PointerUpdate { current, .. }) = event {
             self.last_cursor_pos = current.logical_point();
+            // The TooltipLayer's capture_pointer_event fires before this handler
+            // and has already queued RemoveLayer. Clear our tracking so the
+            // next anim-frame won't think a layer is still live.
+            self.layer_id = None;
             self.last_pointer_move = Some(Instant::now());
             ctx.request_anim_frame();
         }
@@ -152,31 +169,35 @@ impl Widget for TooltipHost {
             return;
         };
         if Instant::now().duration_since(last) >= self.delay {
-            // Only one tooltip layer per host: `create_attached_layer` keys
-            // by `TypeId::of::<TooltipLayer>()` and auto-replaces the prior.
-            let layer = self.build_layer();
-            let pos = self.last_cursor_pos + CURSOR_OFFSET;
-            ctx.create_attached_layer::<TooltipLayer>(
-                LayerType::Tooltip(self.text.to_string()),
-                layer,
-                pos,
-            );
-            // Disarm the timer so stray anim frames (e.g., requested by a
-            // sibling widget) don't repeatedly re-create the layer. The
-            // next `PointerEvent::Move` — which masonry's `Tooltip` uses
-            // to dismiss itself — re-arms us via `on_pointer_event`.
+            // Guard: on_pointer_event clears layer_id whenever the pointer
+            // moves (which also triggers the layer's self-dismissal), so
+            // this should always be None here. Belt-and-suspenders.
+            if self.layer_id.is_none() {
+                let layer = self.build_layer();
+                let layer_id = layer.id();
+                let pos = self.last_cursor_pos + CURSOR_OFFSET;
+                ctx.create_layer::<TooltipLayer>(
+                    LayerType::Tooltip(self.text.to_string()),
+                    layer,
+                    pos,
+                );
+                self.layer_id = Some(layer_id);
+            }
+            // Disarm the timer. The next PointerEvent::Move re-arms via
+            // on_pointer_event (and clears layer_id so we can show again).
             self.last_pointer_move = None;
         } else {
             ctx.request_anim_frame();
         }
     }
 
-    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        if let Update::HoveredChanged(false) = event {
+    fn update(&mut self, _ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        // `HoveredChanged` fires only on the directly-hovered widget (the label
+        // or button inside us), not on TooltipHost itself. TooltipHost receives
+        // `ChildHoveredChanged` when no descendant is hovered — use that to
+        // disarm the timer so we don't accumulate live timers across siblings.
+        if let Update::ChildHoveredChanged(false) = event {
             self.last_pointer_move = None;
-            if let Some(layer_id) = ctx.get_attached_layer::<TooltipLayer>() {
-                ctx.remove_layer(layer_id);
-            }
         }
     }
 
