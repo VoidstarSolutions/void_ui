@@ -11,8 +11,6 @@
 //! on primary-pointer release inside the widget and on Space/Enter while
 //! focused.
 
-use std::sync::LazyLock;
-
 use masonry::accesskit;
 use masonry::accesskit::{Node, Role};
 use masonry::core::keyboard::{Key, NamedKey};
@@ -22,10 +20,7 @@ use masonry::core::{
     Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{
-    Affine, Arc as KurboArc, Axis, BezPath, Point, RoundedRect, RoundedRectRadii, Shape, Size,
-    Stroke, Vec2,
-};
+use masonry::kurbo::{Axis, Point, RoundedRect, RoundedRectRadii, Size, Stroke};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use masonry::peniko::Color;
 use masonry::widgets::{ButtonPress, Label};
@@ -33,6 +28,7 @@ use masonry::widgets::{ButtonPress, Label};
 use super::ButtonVariant;
 use crate::Theme;
 use crate::components::click::{self, ClickPhase};
+use crate::components::spinner::widget::SpinnerWidget;
 
 /// Corner radius (`border-radius: 5px`).
 ///
@@ -45,23 +41,6 @@ const BORDER_WIDTH: f64 = 1.0;
 const FOCUS_RING_INSET: f64 = 2.0;
 /// Gap between a leading icon and the label.
 const ICON_GAP: f64 = 5.0;
-/// Sweep angle (radians) of the spinner arc — leaves a ~60° gap to suggest rotation.
-const SPINNER_SWEEP: f64 = std::f64::consts::TAU * (300.0 / 360.0);
-
-/// Partial-circle `BezPath` in unit-square (0..1) space used as the loading
-/// spinner icon. Computed once and cached; callers borrow the static value.
-static SPINNER_PATH: LazyLock<BezPath> = LazyLock::new(|| {
-    let arc = KurboArc {
-        center: Point::new(0.5, 0.5),
-        radii: Vec2::new(0.45, 0.45),
-        start_angle: 0.0,
-        sweep_angle: SPINNER_SWEEP,
-        x_rotation: 0.0,
-    };
-    let mut path = BezPath::new();
-    arc.into_path(0.01).iter().for_each(|el| path.push(el));
-    path
-});
 
 /// Themed, interactive button widget.
 ///
@@ -84,8 +63,8 @@ pub struct ThemedButton {
     trailing_icon: Option<WidgetPod<Label>>,
     /// When true, shows a spinner and blocks all interaction.
     loading: bool,
-    /// Animation time in seconds [0, 1), advanced each anim frame while loading.
-    spinner_t: f64,
+    /// Child widget pod for the spinner, present when `loading` is true.
+    spinner: Option<WidgetPod<SpinnerWidget>>,
     /// Explicit accessibility label for icon-only buttons.
     accessibility_label: Option<ArcStr>,
     /// When set, written to the system clipboard whenever the button fires.
@@ -113,7 +92,7 @@ impl ThemedButton {
             icon: None,
             trailing_icon: None,
             loading: false,
-            spinner_t: 0.0,
+            spinner: None,
             accessibility_label: None,
             clipboard_payload: None,
             corners: RoundedRectRadii::from_single_radius(CORNER_RADIUS),
@@ -159,6 +138,15 @@ impl ThemedButton {
     #[must_use]
     pub fn with_loading(mut self, loading: bool) -> Self {
         self.loading = loading;
+        if loading {
+            let icon_size = f64::from(self.theme.density.ui_font_size);
+            self.spinner = Some(WidgetPod::new(SpinnerWidget::new(
+                self.theme.palette.text_muted,
+                icon_size,
+            )));
+        } else {
+            self.spinner = None;
+        }
         self
     }
 
@@ -279,17 +267,29 @@ impl ThemedButton {
             .map(|p| this.ctx.get_mut(p))
     }
 
-    /// Sets the loading state. Requests a repaint on change; kicks off the
-    /// animation loop when transitioning into loading.
+    /// Sets the loading state. Attaches or removes the spinner child pod on change.
     pub fn set_loading(this: &mut WidgetMut<'_, Self>, loading: bool) {
         if this.widget.loading != loading {
             this.widget.loading = loading;
             if loading {
-                this.ctx.request_anim_frame();
+                let icon_size = f64::from(this.widget.theme.density.ui_font_size);
+                let color = this.widget.theme.palette.text_muted;
+                this.widget.spinner = Some(WidgetPod::new(SpinnerWidget::new(color, icon_size)));
+                this.ctx.children_changed();
+            } else if let Some(old) = this.widget.spinner.take() {
+                this.ctx.remove_child(old);
+                this.ctx.children_changed();
             }
             this.ctx.request_layout();
             this.ctx.request_paint_only();
         }
+    }
+
+    /// Returns a mutable reference to the spinner widget, if loading.
+    pub fn spinner_mut<'t>(
+        this: &'t mut WidgetMut<'_, Self>,
+    ) -> Option<WidgetMut<'t, SpinnerWidget>> {
+        this.widget.spinner.as_mut().map(|p| this.ctx.get_mut(p))
     }
 
     /// Updates the accessibility label. Requests an accessibility update on change.
@@ -511,20 +511,6 @@ impl Widget for ThemedButton {
         }
     }
 
-    fn on_anim_frame(
-        &mut self,
-        ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        interval: u64,
-    ) {
-        if self.loading {
-            let interval_ns = u32::try_from(interval).unwrap_or(u32::MAX);
-            self.spinner_t = (self.spinner_t + f64::from(interval_ns) * 1e-9).rem_euclid(1.0);
-            ctx.request_anim_frame();
-            ctx.request_paint_only();
-        }
-    }
-
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
             // Propagate the host-supplied initial `disabled` to masonry on
@@ -534,9 +520,6 @@ impl Widget for ThemedButton {
             // accessibility pass that drives `node.set_disabled()`.
             Update::WidgetAdded => {
                 ctx.set_disabled(self.disabled);
-                if self.loading {
-                    ctx.request_anim_frame();
-                }
             }
             Update::HoveredChanged(_) | Update::DisabledChanged(_) | Update::FocusChanged(_) => {
                 ctx.request_paint_only();
@@ -552,6 +535,9 @@ impl Widget for ThemedButton {
         }
         if let Some(ti) = &mut self.trailing_icon {
             ctx.register_child(ti);
+        }
+        if let Some(s) = &mut self.spinner {
+            ctx.register_child(s);
         }
     }
 
@@ -664,6 +650,11 @@ impl Widget for ThemedButton {
             let icon_x = size.width - pad_h - icon_sz;
             ctx.place_child(ti, Point::new(icon_x, icon_y));
         }
+        if let Some(s) = &mut self.spinner {
+            ctx.run_layout(s, Size::new(icon_sz, icon_sz));
+            let icon_y = (size.height - icon_sz) * 0.5;
+            ctx.place_child(s, Point::new(pad_h, icon_y));
+        }
     }
 
     fn paint(
@@ -676,7 +667,6 @@ impl Widget for ThemedButton {
         let hovered = ctx.is_hovered();
         let pressed = ctx.is_active() && hovered;
         let focused = ctx.is_focus_target();
-        let p = &self.theme.palette;
         let (bg, border) = self.resolve_colors(hovered, pressed);
 
         let rect = RoundedRect::from_origin_size(Point::ORIGIN, size, self.corners);
@@ -706,24 +696,6 @@ impl Widget for ThemedButton {
             );
             crate::focus_ring::paint_focus_ring(painter, focus_rect, &self.theme);
         }
-
-        let icon_size = self.icon_size();
-        let pad_h = f64::from(self.theme.density.button_pad_h);
-
-        // Paint the loading spinner in the leading icon slot. Icon and trailing
-        // icon children are self-painting Label widgets placed during layout.
-        if self.loading {
-            let spinner = &*SPINNER_PATH;
-            let icon_y = (size.height - icon_size) * 0.5;
-            let angle = self.spinner_t * std::f64::consts::TAU;
-            let spin = Affine::translate((0.5, 0.5))
-                * Affine::rotate(angle)
-                * Affine::translate((-0.5, -0.5));
-            let transform = Affine::translate((pad_h, icon_y)) * Affine::scale(icon_size) * spin;
-            painter
-                .stroke(transform * spinner, &Stroke::new(1.5), p.text_muted)
-                .draw();
-        }
     }
 
     fn accessibility_role(&self) -> Role {
@@ -749,21 +721,17 @@ impl Widget for ThemedButton {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        match (&self.icon, &self.trailing_icon) {
-            (None, None) => ChildrenIds::from_slice(&[self.child.id()]),
-            (Some(i), None) => {
-                let ids = [self.child.id(), i.id()];
-                ChildrenIds::from_slice(&ids)
-            }
-            (None, Some(ti)) => {
-                let ids = [self.child.id(), ti.id()];
-                ChildrenIds::from_slice(&ids)
-            }
-            (Some(i), Some(ti)) => {
-                let ids = [self.child.id(), i.id(), ti.id()];
-                ChildrenIds::from_slice(&ids)
-            }
+        let mut ids = vec![self.child.id()];
+        if let Some(i) = &self.icon {
+            ids.push(i.id());
         }
+        if let Some(ti) = &self.trailing_icon {
+            ids.push(ti.id());
+        }
+        if let Some(s) = &self.spinner {
+            ids.push(s.id());
+        }
+        ChildrenIds::from_slice(&ids)
     }
 
     fn propagates_pointer_interaction(&self) -> bool {
