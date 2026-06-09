@@ -420,3 +420,122 @@ impl Widget for ToggleWidget {
         false
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::Theme;
+    use crate::theme::Density;
+
+    use super::ToggleWidget;
+
+    fn widget(theme: &Theme, checked: bool, disabled: bool) -> ToggleWidget {
+        ToggleWidget::new(theme, checked, disabled)
+    }
+
+    // --- sizing ---
+
+    #[test]
+    fn track_height_scales_with_font_size() {
+        let compact = widget(
+            &Theme::dark().with_density(Density::compact()),
+            false,
+            false,
+        );
+        let balanced = widget(
+            &Theme::dark().with_density(Density::balanced()),
+            false,
+            false,
+        );
+        let airy = widget(&Theme::dark().with_density(Density::airy()), false, false);
+        assert!(compact.track_height() < balanced.track_height());
+        assert!(balanced.track_height() < airy.track_height());
+    }
+
+    #[test]
+    fn track_width_is_wider_than_height() {
+        let w = widget(&Theme::dark(), false, false);
+        assert!(w.track_width() > w.track_height());
+    }
+
+    #[test]
+    fn thumb_fits_inside_track() {
+        let w = widget(&Theme::dark(), false, false);
+        assert!(w.thumb_radius() * 2.0 < w.track_height());
+    }
+
+    #[test]
+    fn thumb_radius_is_positive() {
+        for density in [Density::compact(), Density::balanced(), Density::airy()] {
+            let w = widget(&Theme::dark().with_density(density), false, false);
+            assert!(w.thumb_radius() > 0.0);
+        }
+    }
+
+    // --- track fill ---
+
+    #[test]
+    fn checked_track_differs_from_unchecked() {
+        let on = widget(&Theme::dark(), true, false);
+        let off = widget(&Theme::dark(), false, false);
+        assert_ne!(
+            on.resolve_track_fill(false, false),
+            off.resolve_track_fill(false, false)
+        );
+    }
+
+    #[test]
+    fn pressed_checked_track_differs_from_resting() {
+        let w = widget(&Theme::dark(), true, false);
+        assert_ne!(
+            w.resolve_track_fill(false, true),
+            w.resolve_track_fill(false, false)
+        );
+    }
+
+    #[test]
+    fn hovered_unchecked_track_differs_from_resting() {
+        let w = widget(&Theme::dark(), false, false);
+        assert_ne!(
+            w.resolve_track_fill(true, false),
+            w.resolve_track_fill(false, false)
+        );
+    }
+
+    #[test]
+    fn disabled_ignores_hover_and_press() {
+        let w = widget(&Theme::dark(), false, true);
+        assert_eq!(
+            w.resolve_track_fill(false, false),
+            w.resolve_track_fill(true, true)
+        );
+    }
+
+    #[test]
+    fn disabled_checked_track_differs_from_disabled_unchecked() {
+        let on = widget(&Theme::dark(), true, true);
+        let off = widget(&Theme::dark(), false, true);
+        assert_ne!(
+            on.resolve_track_fill(false, false),
+            off.resolve_track_fill(false, false)
+        );
+    }
+
+    // --- thumb color ---
+
+    #[test]
+    fn disabled_thumb_differs_from_enabled() {
+        let enabled = widget(&Theme::dark(), false, false);
+        let disabled = widget(&Theme::dark(), false, true);
+        assert_ne!(
+            enabled.resolve_thumb_color(),
+            disabled.resolve_thumb_color()
+        );
+    }
+
+    #[test]
+    fn enabled_thumb_color_is_same_regardless_of_checked_state() {
+        let on = widget(&Theme::dark(), true, false);
+        let off = widget(&Theme::dark(), false, false);
+        assert_eq!(on.resolve_thumb_color(), off.resolve_thumb_color());
+    }
+}
