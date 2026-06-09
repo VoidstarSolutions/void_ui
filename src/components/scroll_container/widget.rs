@@ -998,13 +998,19 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
                     Axis::Horizontal => self.constrain.horizontal,
                     Axis::Vertical => self.constrain.vertical,
                 });
-                ctx.compute_length(
+                let child_length = ctx.compute_length(
                     &mut self.child,
                     auto_length,
                     context_size,
                     axis,
                     cross_space,
-                )
+                );
+                if axis == Axis::Horizontal && !self.constrain.vertical {
+                    let track = theme::SCROLLBAR_WIDTH + theme::SCROLLBAR_PAD * 2.0;
+                    Length::px(child_length.get() + track)
+                } else {
+                    child_length
+                }
             }
             LenReq::FitContent(space) => space,
         }
