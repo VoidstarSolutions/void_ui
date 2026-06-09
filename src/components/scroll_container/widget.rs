@@ -1158,3 +1158,128 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
         !(self.constrain.horizontal && self.constrain.vertical)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use masonry::kurbo::{Axis, Size};
+
+    use super::{ScrollView, VoidScrollBar, compute_pan_range};
+
+    // --- compute_pan_range ---
+
+    #[test]
+    fn pan_range_no_movement_when_target_inside_viewport() {
+        let result = compute_pan_range(10.0..50.0, 20.0..30.0);
+        assert_eq!(result, 10.0..50.0);
+    }
+
+    #[test]
+    fn pan_range_scrolls_forward_when_target_is_past_viewport_end() {
+        // viewport 0..50, target 40..60 → start = (60-50).max(0) = 10
+        let result = compute_pan_range(0.0..50.0, 40.0..60.0);
+        assert_eq!(result, 10.0..60.0);
+    }
+
+    #[test]
+    fn pan_range_scrolls_back_when_target_is_before_viewport_start() {
+        // viewport 30..80, target 10..20 → start = target.start = 10
+        let result = compute_pan_range(30.0..80.0, 10.0..20.0);
+        assert_eq!(result, 10.0..60.0);
+    }
+
+    #[test]
+    fn pan_range_aligns_to_target_start_when_target_exceeds_viewport_length() {
+        // viewport 0..50, target 10..80 → target.end (80) > viewport.end, so
+        // start = (80-50).max(0) = 30; the full target cannot fit, so we show
+        // as much as possible from the start.
+        let result = compute_pan_range(0.0..50.0, 10.0..80.0);
+        assert_eq!(result, 30.0..80.0);
+    }
+
+    #[test]
+    fn pan_range_preserves_viewport_length() {
+        let vp = 10.0..90.0;
+        let len = vp.end - vp.start;
+        for target in [5.0..15.0, 40.0..60.0, 85.0..120.0] {
+            let result = compute_pan_range(vp.clone(), target);
+            assert!(
+                (result.end - result.start - len).abs() < 1e-10,
+                "viewport length changed: {result:?}"
+            );
+        }
+    }
+
+    // --- ScrollView::scroll_range ---
+
+    #[test]
+    fn scroll_range_is_zero_when_content_fits_viewport() {
+        let range = ScrollView::<VoidScrollBar>::scroll_range(
+            Size::new(200.0, 300.0),
+            Size::new(100.0, 150.0),
+        );
+        assert_eq!(range, Size::ZERO);
+    }
+
+    #[test]
+    fn scroll_range_is_zero_when_content_exactly_fills_viewport() {
+        let range = ScrollView::<VoidScrollBar>::scroll_range(
+            Size::new(200.0, 300.0),
+            Size::new(200.0, 300.0),
+        );
+        assert_eq!(range, Size::ZERO);
+    }
+
+    #[test]
+    fn scroll_range_returns_overflow_when_content_exceeds_viewport() {
+        let range = ScrollView::<VoidScrollBar>::scroll_range(
+            Size::new(100.0, 200.0),
+            Size::new(350.0, 500.0),
+        );
+        assert_eq!(range, Size::new(250.0, 300.0));
+    }
+
+    #[test]
+    fn scroll_range_clamps_independent_axes() {
+        // width fits but height overflows
+        let range = ScrollView::<VoidScrollBar>::scroll_range(
+            Size::new(400.0, 200.0),
+            Size::new(300.0, 500.0),
+        );
+        assert_eq!(range, Size::new(0.0, 300.0));
+    }
+
+    // --- VoidScrollBar ---
+
+    #[test]
+    fn scrollbar_scroll_range_is_content_minus_portal() {
+        let mut bar = VoidScrollBar::new(Axis::Vertical);
+        bar.content_size = 500.0;
+        bar.portal_size = 200.0;
+        assert!((bar.scroll_range() - 300.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn scrollbar_scroll_range_is_zero_when_content_fits() {
+        let mut bar = VoidScrollBar::new(Axis::Vertical);
+        bar.content_size = 100.0;
+        bar.portal_size = 200.0;
+        assert!(bar.scroll_range() < 1e-12);
+    }
+
+    #[test]
+    fn scrollbar_set_cursor_progress_clamps_to_unit_interval() {
+        let mut bar = VoidScrollBar::new(Axis::Horizontal);
+        bar.set_cursor_progress(-0.5);
+        assert!(bar.cursor_progress.abs() < 1e-12);
+        bar.set_cursor_progress(1.5);
+        assert!((bar.cursor_progress - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn scrollbar_set_cursor_progress_returns_true_only_on_change() {
+        let mut bar = VoidScrollBar::new(Axis::Horizontal);
+        assert!(bar.set_cursor_progress(0.5));
+        assert!(!bar.set_cursor_progress(0.5));
+        assert!(bar.set_cursor_progress(0.6));
+    }
+}
