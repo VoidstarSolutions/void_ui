@@ -23,6 +23,7 @@ pub mod data_grid;
 pub mod icon;
 pub mod label;
 pub mod radio;
+pub mod resizable;
 pub mod scroll_container;
 pub mod separator;
 pub mod sidebar;
@@ -44,6 +45,11 @@ pub use data_grid::{
 };
 pub use icon::{Icon, IconName, icon};
 pub use label::{Label, LabelAlignment, label};
+pub use resizable::{
+    MIN_PANEL_SIZE, Resizable, ResizablePanel, ResizablePanels, ResizablePanelsView, ResizableView,
+    h_resizable, h_resizable_panels, v_resizable, v_resizable_panels,
+};
+
 pub use scroll_container::{
     ScrollBarVisibility, ScrollContainer, ScrollContainerView, scroll_container,
 };
@@ -75,6 +81,7 @@ pub enum ComponentKind {
     Icon,
     Label,
     Radio,
+    Resizable,
     ScrollContainer,
     Separator,
     Sidebar,
@@ -100,6 +107,7 @@ impl ComponentKind {
             Self::Icon => "Icon",
             Self::Label => "Label",
             Self::Radio => "Radio",
+            Self::Resizable => "Resizable",
             Self::ScrollContainer => "Scroll Container",
             Self::Separator => "Separator",
             Self::Sidebar => "Sidebar",
@@ -125,6 +133,7 @@ impl ComponentKind {
             Self::Radio,
             Self::DataGrid,
             Self::Icon,
+            Self::Resizable,
             Self::ScrollContainer,
             Self::Separator,
             Self::Sidebar,
