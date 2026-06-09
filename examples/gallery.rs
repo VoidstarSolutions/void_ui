@@ -210,91 +210,22 @@ fn topbar(theme_panel_open: bool, theme: &Theme) -> impl WidgetView<State> + use
 }
 
 fn sidebar_items(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State> + use<> {
+    let items: Vec<Box<AnyWidgetView<State>>> = ComponentKind::all()
+        .iter()
+        .map(|&kind| -> Box<AnyWidgetView<State>> {
+            Box::new(
+                sidebar_item(kind.label(), move |s: &mut State| {
+                    s.focused = kind;
+                })
+                .active(focused == kind)
+                .render(theme),
+            )
+        })
+        .collect();
     scroll_container(
-        flex_col((
-            sidebar_item("Button", |s: &mut State| {
-                s.focused = ComponentKind::Button;
-            })
-            .active(focused == ComponentKind::Button)
-            .render(theme),
-            sidebar_item("Button Group", |s: &mut State| {
-                s.focused = ComponentKind::ButtonGroup;
-            })
-            .active(focused == ComponentKind::ButtonGroup)
-            .render(theme),
-            sidebar_item("Checkbox", |s: &mut State| {
-                s.focused = ComponentKind::Checkbox;
-            })
-            .active(focused == ComponentKind::Checkbox)
-            .render(theme),
-            sidebar_item("Clipboard", |s: &mut State| {
-                s.focused = ComponentKind::Clipboard;
-            })
-            .active(focused == ComponentKind::Clipboard)
-            .render(theme),
-            sidebar_item("Code View", |s: &mut State| {
-                s.focused = ComponentKind::CodeView;
-            })
-            .active(focused == ComponentKind::CodeView)
-            .render(theme),
-            sidebar_item("Collapsible", |s: &mut State| {
-                s.focused = ComponentKind::Collapsible;
-            })
-            .active(focused == ComponentKind::Collapsible)
-            .render(theme),
-            sidebar_item("Data Grid", |s: &mut State| {
-                s.focused = ComponentKind::DataGrid;
-            })
-            .active(focused == ComponentKind::DataGrid)
-            .render(theme),
-            sidebar_item("Icon", |s: &mut State| {
-                s.focused = ComponentKind::Icon;
-            })
-            .active(focused == ComponentKind::Icon)
-            .render(theme),
-            sidebar_item("Label", |s: &mut State| {
-                s.focused = ComponentKind::Label;
-            })
-            .active(focused == ComponentKind::Label)
-            .render(theme),
-            sidebar_item("Stock Quotes", |s: &mut State| {
-                s.focused = ComponentKind::StockQuotes;
-            })
-            .active(focused == ComponentKind::StockQuotes)
-            .render(theme),
-            sidebar_item("Radio", |s: &mut State| {
-                s.focused = ComponentKind::Radio;
-            })
-            .active(focused == ComponentKind::Radio)
-            .render(theme),
-            sidebar_item("Scroll Container", |s: &mut State| {
-                s.focused = ComponentKind::ScrollContainer;
-            })
-            .active(focused == ComponentKind::ScrollContainer)
-            .render(theme),
-            sidebar_item("Separator", |s: &mut State| {
-                s.focused = ComponentKind::Separator;
-            })
-            .active(focused == ComponentKind::Separator)
-            .render(theme),
-            sidebar_item("Sidebar", |s: &mut State| {
-                s.focused = ComponentKind::Sidebar;
-            })
-            .active(focused == ComponentKind::Sidebar)
-            .render(theme),
-            sidebar_item("Slider", |s: &mut State| {
-                s.focused = ComponentKind::Slider;
-            })
-            .active(focused == ComponentKind::Slider)
-            .render(theme),
-            sidebar_item("Tooltip", |s: &mut State| {
-                s.focused = ComponentKind::Tooltip;
-            })
-            .active(focused == ComponentKind::Tooltip)
-            .render(theme),
-        ))
-        .cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .gap(Length::px(2.0)),
+        flex_col(items)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .gap(Length::px(2.0)),
     )
     .constrain_horizontal(true)
     .scroll_bar_visibility(OnActivity)
