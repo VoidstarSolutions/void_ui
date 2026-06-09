@@ -209,19 +209,6 @@ fn topbar(theme_panel_open: bool, theme: &Theme) -> impl WidgetView<State> + use
         .border(theme.palette.border, Length::px(1.0))
 }
 
-fn gallery_sidebar_item(
-    label: &'static str,
-    kind: ComponentKind,
-    focused: ComponentKind,
-    theme: &Theme,
-) -> impl WidgetView<State> + use<> {
-    sidebar_item(label, move |s: &mut State| {
-        s.focused = kind;
-    })
-    .active(focused == kind)
-    .render(theme)
-}
-
 fn sidebar_items(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State> + use<> {
     let items: Vec<Box<AnyWidgetView<State>>> = ComponentKind::all()
         .iter()
