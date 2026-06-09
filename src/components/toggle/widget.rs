@@ -58,7 +58,7 @@ impl ToggleWidget {
 
     /// Attaches a text label child widget.
     #[must_use]
-    pub fn with_label(mut self, label: NewWidget<impl Widget + ?Sized>) -> Self {
+    pub fn with_label(mut self, label: NewWidget<Label>) -> Self {
         self.label = Some(label.erased().to_pod());
         self
     }
@@ -135,7 +135,7 @@ impl ToggleWidget {
     }
 
     /// Attaches a new label child, replacing any existing one.
-    pub fn attach_label(this: &mut WidgetMut<'_, Self>, label: NewWidget<impl Widget + ?Sized>) {
+    pub fn attach_label(this: &mut WidgetMut<'_, Self>, label: NewWidget<Label>) {
         if let Some(old) = this.widget.label.take() {
             this.ctx.remove_child(old);
         }
