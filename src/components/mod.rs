@@ -20,8 +20,10 @@ pub mod clipboard;
 pub mod code_view;
 pub mod collapsible;
 pub mod data_grid;
+pub mod dropdown_button;
 pub mod icon;
 pub mod label;
+pub mod popover;
 pub mod radio;
 pub mod resizable;
 pub mod scroll_container;
@@ -43,13 +45,14 @@ pub use data_grid::{
     SelectionState, SortDirection, SortState, colored_text_column, data_grid, filtered_indices,
     optional_text_column, text_column,
 };
+pub use dropdown_button::{DropdownButton, DropdownButtonView, dropdown_button};
 pub use icon::{Icon, IconName, icon};
 pub use label::{Label, LabelAlignment, label};
+pub use popover::{Popover, PopoverAnchor, PopoverHost, PopoverView, popover};
 pub use resizable::{
     MIN_PANEL_SIZE, Resizable, ResizablePanel, ResizablePanels, ResizablePanelsView, ResizableView,
     h_resizable, h_resizable_panels, v_resizable, v_resizable_panels,
 };
-
 pub use scroll_container::{
     ScrollBarVisibility, ScrollContainer, ScrollContainerView, scroll_container,
 };
@@ -73,6 +76,7 @@ pub use tooltip::{Tooltip, TooltipView, tooltip};
 pub enum ComponentKind {
     Button,
     ButtonGroup,
+    DropdownButton,
     Checkbox,
     Clipboard,
     CodeView,
@@ -80,6 +84,7 @@ pub enum ComponentKind {
     DataGrid,
     Icon,
     Label,
+    Popover,
     Radio,
     Resizable,
     ScrollContainer,
@@ -99,6 +104,7 @@ impl ComponentKind {
         match self {
             Self::Button => "Button",
             Self::ButtonGroup => "Button Group",
+            Self::DropdownButton => "Dropdown Button",
             Self::Checkbox => "Checkbox",
             Self::Clipboard => "Clipboard",
             Self::CodeView => "Code View",
@@ -106,6 +112,7 @@ impl ComponentKind {
             Self::DataGrid => "Data Grid",
             Self::Icon => "Icon",
             Self::Label => "Label",
+            Self::Popover => "Popover",
             Self::Radio => "Radio",
             Self::Resizable => "Resizable",
             Self::ScrollContainer => "Scroll Container",
@@ -129,10 +136,12 @@ impl ComponentKind {
             Self::Clipboard,
             Self::CodeView,
             Self::Collapsible,
-            Self::Label,
-            Self::Radio,
             Self::DataGrid,
+            Self::DropdownButton,
             Self::Icon,
+            Self::Label,
+            Self::Popover,
+            Self::Radio,
             Self::Resizable,
             Self::ScrollContainer,
             Self::Separator,

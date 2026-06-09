@@ -160,6 +160,9 @@ fn main_pane(focused: ComponentKind, theme: &Theme) -> Box<AnyWidgetView<State>>
         }
         ComponentKind::Clipboard => Box::new(void_ui::components::clipboard::demo::panel(theme)),
         ComponentKind::DataGrid => Box::new(void_ui::components::data_grid::demo::panel(theme)),
+        ComponentKind::DropdownButton => {
+            Box::new(void_ui::components::dropdown_button::demo::panel(theme))
+        }
         ComponentKind::Icon => Box::new(void_ui::components::icon::demo::panel(theme)),
         ComponentKind::Label => Box::new(void_ui::components::label::demo::panel(theme)),
 
@@ -177,6 +180,7 @@ fn main_pane(focused: ComponentKind, theme: &Theme) -> Box<AnyWidgetView<State>>
         ),
         ComponentKind::Toggle => Box::new(void_ui::components::toggle::demo::panel(theme)),
         ComponentKind::CodeView => Box::new(void_ui::components::code_view::demo::panel(theme)),
+        ComponentKind::Popover => Box::new(void_ui::components::popover::demo::panel(theme)),
         ComponentKind::Tooltip => Box::new(void_ui::components::tooltip::demo::panel(theme)),
     }
 }
