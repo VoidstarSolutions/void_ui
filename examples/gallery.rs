@@ -124,18 +124,6 @@ fn topbar(theme_panel_open: bool, theme: &Theme) -> impl WidgetView<State> + use
         .border(theme.palette.border, Length::px(1.0))
 }
 
-/// One sidebar entry for `kind`, wired to focus it on click and highlighted
-/// when it's already focused.
-fn sidebar_entry(
-    kind: ComponentKind,
-    focused: ComponentKind,
-    theme: &Theme,
-) -> impl WidgetView<State> + use<> {
-    sidebar_item(kind.label(), move |s: &mut State| s.focused = kind)
-        .active(focused == kind)
-        .render(theme)
-}
-
 fn sidebar_items(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State> + use<> {
     let items: Vec<Box<AnyWidgetView<State>>> = ComponentKind::all()
         .iter()
