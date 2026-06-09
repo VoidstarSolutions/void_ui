@@ -34,26 +34,17 @@ pub mod theme;
 pub use animated_clip::AnimatedClip;
 pub use components::{
     Button, ButtonGroup, ButtonVariant, ButtonView, CellAlign, ColumnDef, ColumnWidths, DataGrid,
-    FilterState, Icon, IconName, Label, LabelAlignment, MIN_COLUMN_WIDTH, MIN_PANEL_SIZE,
-    Orientation, RangeSlider, RangeSliderView, ReadOnlyText, ReadOnlyTextView, Resizable,
+    DropdownButton, DropdownButtonView, FilterState, Icon, IconName, Label, LabelAlignment,
+    MIN_COLUMN_WIDTH, MIN_PANEL_SIZE, Orientation, Popover, PopoverAnchor, PopoverHost,
+    PopoverView, RangeSlider, RangeSliderView, ReadOnlyText, ReadOnlyTextView, Resizable,
     ResizablePanel, ResizablePanels, ResizablePanelsView, ResizableView, RustHighlighter,
     ScrollContainer, ScrollContainerView, SelectionState, Separator, SeparatorStyle, SidebarItem,
     SidebarItemView, SidebarPanel, SidebarPanelView, Slider, SliderView, SortDirection, SortState,
     Spinner, SpinnerView, SpinnerWidget, Tooltip, TooltipView, button, button_group,
-    colored_text_column, data_grid, filtered_indices, h_resizable, h_resizable_panels, icon, label,
-    optional_text_column, range_slider, read_only_text, scroll_container, separator, sidebar_item,
-    sidebar_panel, slider, spinner, text_column, toggle_button_group, tooltip, v_resizable,
-    v_resizable_panels,
-    FilterState, Icon, IconName, Label, LabelAlignment, MIN_COLUMN_WIDTH, Orientation, RangeSlider,
-    DropdownButton, DropdownButtonView, FilterState, Icon, IconName, Label, LabelAlignment,
-    MIN_COLUMN_WIDTH, Orientation, Popover, PopoverAnchor, PopoverHost, PopoverView, RangeSlider,
-    RangeSliderView, ReadOnlyText, ReadOnlyTextView, RustHighlighter, ScrollContainer,
-    ScrollContainerView, SelectionState, Separator, SeparatorStyle, SidebarItem, SidebarItemView,
-    SidebarPanel, SidebarPanelView, Slider, SliderView, SortDirection, SortState, Spinner,
-    SpinnerView, SpinnerWidget, Tooltip, TooltipView, button, button_group, colored_text_column,
-    data_grid, dropdown_button, filtered_indices, icon, label, optional_text_column, popover,
-    range_slider, read_only_text, scroll_container, separator, sidebar_item, sidebar_panel, slider,
-    spinner, text_column, toggle_button_group, tooltip,
+    colored_text_column, data_grid, dropdown_button, filtered_indices, h_resizable,
+    h_resizable_panels, icon, label, optional_text_column, popover, range_slider, read_only_text,
+    scroll_container, separator, sidebar_item, sidebar_panel, slider, spinner, text_column,
+    toggle_button_group, tooltip, v_resizable, v_resizable_panels,
 };
 pub use floating::{FloatingOverlay, FloatingOverlayView, floating, interactive_floating};
 #[cfg(feature = "gallery")]
