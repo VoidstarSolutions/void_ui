@@ -385,7 +385,7 @@ impl<W: Widget + ?Sized> Widget for ContentClip<W> {
         cross_length: Option<Length>,
     ) -> Length {
         let context_size = LayoutSize::maybe(axis.cross(), cross_length);
-        ctx.compute_length(&mut self.child, len_req.into(), context_size, axis, None)
+        ctx.compute_length(&mut self.child, len_req.into(), context_size, axis, cross_length)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
