@@ -1,4 +1,4 @@
-//! Synthetic tick generator + helpers for the data grid gallery panel.
+//! Synthetic tick generator + gallery panel for the data-grid demo.
 //!
 //! The generator is a deterministic random walk seeded at $100 with
 //! ~$0.05 step size. Side and size are pseudo-random. The xorshift
@@ -10,15 +10,19 @@
 //!
 //! - [`Demo`] — state struct (ticks + selection + RNG state).
 //! - [`tick_columns`] — column descriptors for browsing [`DemoTick`]s.
-//!
-//! The gallery wires these into its app state and dispatches to a
-//! locally-defined panel function (see `examples/gallery.rs`).
+//! - [`panel`] — returns the `DataGridDemoPanel` view for the gallery.
 //!
 //! Types here are intentionally self-contained — `void_ui` ships as a
 //! generic component library and must not depend on any
 //! market-data crate.
 
+use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
+use xilem::masonry::layout::Length;
+use xilem::masonry::widgets::Passthrough;
 use xilem::peniko::Color;
+use xilem::style::Style as _;
+use xilem::view::{CrossAxisAlignment, FlexExt as _, FlexSpacer, flex_col, flex_row, sized_box};
+use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::column::{
     CellAlign, ColumnDef, ColumnId, colored_text_column, optional_text_column, text_column,
@@ -888,6 +892,367 @@ pub fn arrange_stock_columns<S: 'static>(layout: &[ColumnId]) -> Vec<ColumnDef<S
         .collect()
 }
 
+/// Stable u64 row-id for a [`StockQuote`], used as the grid's `row_id`.
+///
+/// `symbol` is a `&'static str` literal, so each distinct ticker is a
+/// distinct static object with a unique address — the pointer is therefore
+/// a guaranteed-unique identity (no hash collisions possible).
+#[must_use]
+pub fn stock_row_id(q: &StockQuote) -> u64 {
+    q.symbol.as_ptr() as u64
+}
+
+// ===========================================================================
+// MARK: Gallery panel
+// ===========================================================================
+
+type InnerView = Box<AnyWidgetView<Demo>>;
+type InnerViewState = <InnerView as View<Demo, (), ViewCtx>>::ViewState;
+
+/// Opaque state owned by the data-grid demo panel (internal to the
+/// [`View`] impl; not part of the gallery's app state).
+pub struct DataGridDemoPanelState {
+    demo: Demo,
+    inner_view: InnerView,
+    inner_state: InnerViewState,
+}
+
+/// The data-grid gallery panel, returned by [`panel`].
+pub struct DataGridDemoPanel {
+    theme: Theme,
+}
+
+/// Renders the data-grid demo panel.
+///
+/// The panel owns its own [`Demo`] state (100k initial ticks). The toolbar
+/// lets you add rows, bulk-select, and show/hide/reorder columns. Click a
+/// header to sort; type in a filter input to filter.
+#[must_use]
+pub fn panel(theme: &Theme) -> DataGridDemoPanel {
+    DataGridDemoPanel { theme: *theme }
+}
+
+fn build_inner(theme: &Theme, demo: &Demo) -> impl WidgetView<Demo> + use<> {
+    let dg_visible_len = if demo.view_is_materialized() {
+        demo.visible.len()
+    } else {
+        demo.ticks.len()
+    };
+    let row_count = u64::try_from(dg_visible_len).unwrap_or(u64::MAX);
+    let base_time_ns = demo.ticks.first().map_or(0, |t| t.event_ns);
+    let sort = demo.sort.clone();
+    let filter = demo.filter.clone();
+    let widths = demo.column_widths.clone();
+    let column_layout = demo.column_layout();
+
+    let columns = arrange_columns::<Demo>(&column_layout, base_time_ns);
+    let notional_id = ColumnId::from("Notional");
+    let notional_shown = column_layout.contains(&notional_id);
+    let theme_copy = *theme;
+
+    let toolbar = flex_row((
+        crate::components::button::button(|s: &mut Demo| {
+            s.append_n(100);
+        })
+        .label("Add 100 ticks")
+        .render(theme),
+        crate::components::button::button(|s: &mut Demo| {
+            s.append_n(10_000);
+        })
+        .label("Add 10k ticks")
+        .render(theme),
+        crate::components::button::button(|s: &mut Demo| {
+            s.select_first(50);
+        })
+        .label("Select 0..50")
+        .render(theme),
+        crate::components::button::button(|s: &mut Demo| {
+            s.clear_selection();
+        })
+        .label("Clear selection")
+        .render(theme),
+        FlexSpacer::Flex(1.0),
+        crate::components::button::button(move |s: &mut Demo| {
+            s.toggle_column(&ColumnId::from("Notional"));
+        })
+        .label(if notional_shown {
+            "Hide Notional"
+        } else {
+            "Show Notional"
+        })
+        .render(theme),
+        crate::components::button::button(|s: &mut Demo| {
+            s.move_column_left(&ColumnId::from("Price"));
+        })
+        .label("Price \u{2190}")
+        .render(theme),
+        crate::components::button::button(|s: &mut Demo| {
+            s.reset_columns();
+        })
+        .label("Reset cols")
+        .render(theme),
+        FlexSpacer::Flex(1.0),
+        crate::label(format!("{row_count} rows"))
+            .text_size(theme.typography.size_caption)
+            .color(theme.palette.text_muted)
+            .render(theme),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Center)
+    .gap(Length::px(8.0));
+
+    let grid = super::view::data_grid(columns)
+        .rows(|s: &Demo| {
+            if s.view_is_materialized() {
+                &s.visible[..]
+            } else {
+                &s.ticks[..]
+            }
+        })
+        .row_count(row_count)
+        .row_id(|t: &DemoTick| t.id)
+        .selection(|s: &mut Demo| &mut s.selection)
+        .sort(sort, |s: &mut Demo, col: ColumnId, multi: bool| {
+            s.cycle_sort(col, multi);
+        })
+        .filter(filter, |s: &mut Demo, col: ColumnId, query: String| {
+            s.set_filter(col, query);
+        })
+        .column_widths(widths)
+        .on_column_resize(|s: &mut Demo, col: ColumnId, new_width: f64| {
+            s.resize_column(col, new_width);
+        })
+        .row_height(22.0)
+        .render(&theme_copy);
+
+    flex_col((toolbar, sized_box(grid).flex(1.0)))
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .gap(Length::px(12.0))
+}
+
+// ===========================================================================
+// MARK: Stock-quotes gallery panel
+// ===========================================================================
+
+type StockInnerView = Box<AnyWidgetView<StockDemo>>;
+type StockInnerViewState = <StockInnerView as View<StockDemo, (), ViewCtx>>::ViewState;
+
+/// Opaque state owned by the stock-quotes demo panel.
+pub struct StockQuotesDemoPanelState {
+    demo: StockDemo,
+    inner_view: StockInnerView,
+    inner_state: StockInnerViewState,
+}
+
+/// The stock-quotes gallery panel, returned by [`stock_quotes_panel`].
+pub struct StockQuotesDemoPanel {
+    theme: Theme,
+}
+
+/// Renders the stock-quotes ("value lens") demo panel.
+///
+/// The panel owns its own [`StockDemo`] (static NASDAQ-style snapshot).
+/// Same grid wiring as [`panel`], only the row type and data source differ.
+#[must_use]
+pub fn stock_quotes_panel(theme: &Theme) -> StockQuotesDemoPanel {
+    StockQuotesDemoPanel { theme: *theme }
+}
+
+fn build_stock_inner(theme: &Theme, demo: &StockDemo) -> impl WidgetView<StockDemo> + use<> {
+    let sq_visible_len = if demo.view_is_materialized() {
+        demo.visible.len()
+    } else {
+        demo.quotes.len()
+    };
+    let row_count = u64::try_from(sq_visible_len).unwrap_or(u64::MAX);
+    let sort = demo.sort.clone();
+    let filter = demo.filter.clone();
+    let widths = demo.column_widths.clone();
+    let column_layout = demo.column_layout();
+
+    let columns = arrange_stock_columns::<StockDemo>(&column_layout);
+    let beta_id = ColumnId::from("Beta");
+    let beta_shown = column_layout.contains(&beta_id);
+    let theme_copy = *theme;
+
+    let toolbar = flex_row((
+        crate::label("NASDAQ symbols — static snapshot")
+            .text_size(theme.typography.size_caption)
+            .color(theme.palette.text_muted)
+            .render(theme),
+        FlexSpacer::Flex(1.0),
+        crate::components::button::button(move |s: &mut StockDemo| {
+            s.toggle_column(&ColumnId::from("Beta"));
+        })
+        .label(if beta_shown { "Hide Beta" } else { "Show Beta" })
+        .render(theme),
+        crate::components::button::button(|s: &mut StockDemo| {
+            s.move_column_left(&ColumnId::from("Sector"));
+        })
+        .label("Sector \u{2190}")
+        .render(theme),
+        crate::components::button::button(|s: &mut StockDemo| {
+            s.reset_columns();
+        })
+        .label("Reset cols")
+        .render(theme),
+        FlexSpacer::Flex(1.0),
+        crate::label(format!("{row_count} symbols"))
+            .text_size(theme.typography.size_caption)
+            .color(theme.palette.text_muted)
+            .render(theme),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Center)
+    .gap(Length::px(8.0));
+
+    let grid = super::view::data_grid(columns)
+        .rows(|s: &StockDemo| {
+            if s.view_is_materialized() {
+                &s.visible[..]
+            } else {
+                &s.quotes[..]
+            }
+        })
+        .row_count(row_count)
+        .row_id(stock_row_id)
+        .selection(|s: &mut StockDemo| &mut s.selection)
+        .sort(sort, |s: &mut StockDemo, col: ColumnId, multi: bool| {
+            s.cycle_sort(col, multi);
+        })
+        .filter(filter, |s: &mut StockDemo, col: ColumnId, query: String| {
+            s.set_filter(col, query);
+        })
+        .column_widths(widths)
+        .on_column_resize(|s: &mut StockDemo, col: ColumnId, new_width: f64| {
+            s.resize_column(col, new_width);
+        })
+        .row_height(24.0)
+        .render(&theme_copy);
+
+    flex_col((toolbar, sized_box(grid).flex(1.0)))
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .gap(Length::px(12.0))
+}
+
+impl ViewMarker for StockQuotesDemoPanel {}
+
+impl<S: 'static> View<S, (), ViewCtx> for StockQuotesDemoPanel {
+    type ViewState = StockQuotesDemoPanelState;
+    type Element = Pod<Passthrough>;
+
+    fn build(&self, ctx: &mut ViewCtx, _: &mut S) -> (Self::Element, Self::ViewState) {
+        let mut demo = StockDemo::new();
+        let inner_view: StockInnerView = Box::new(build_stock_inner(&self.theme, &demo));
+        let (element, inner_state) = inner_view.build(ctx, &mut demo);
+        (
+            element,
+            StockQuotesDemoPanelState {
+                demo,
+                inner_view,
+                inner_state,
+            },
+        )
+    }
+
+    fn rebuild(
+        &self,
+        _prev: &Self,
+        vs: &mut StockQuotesDemoPanelState,
+        ctx: &mut ViewCtx,
+        element: Mut<'_, Pod<Passthrough>>,
+        _: &mut S,
+    ) {
+        let new_inner: StockInnerView = Box::new(build_stock_inner(&self.theme, &vs.demo));
+        new_inner.rebuild(
+            &vs.inner_view,
+            &mut vs.inner_state,
+            ctx,
+            element,
+            &mut vs.demo,
+        );
+        vs.inner_view = new_inner;
+    }
+
+    fn teardown(
+        &self,
+        vs: &mut StockQuotesDemoPanelState,
+        ctx: &mut ViewCtx,
+        element: Mut<'_, Pod<Passthrough>>,
+    ) {
+        vs.inner_view.teardown(&mut vs.inner_state, ctx, element);
+    }
+
+    fn message(
+        &self,
+        vs: &mut StockQuotesDemoPanelState,
+        message: &mut MessageCtx,
+        element: Mut<'_, Pod<Passthrough>>,
+        _: &mut S,
+    ) -> MessageResult<()> {
+        vs.inner_view
+            .message(&mut vs.inner_state, message, element, &mut vs.demo)
+    }
+}
+
+impl ViewMarker for DataGridDemoPanel {}
+
+impl<S: 'static> View<S, (), ViewCtx> for DataGridDemoPanel {
+    type ViewState = DataGridDemoPanelState;
+    type Element = Pod<Passthrough>;
+
+    fn build(&self, ctx: &mut ViewCtx, _: &mut S) -> (Self::Element, Self::ViewState) {
+        let mut demo = Demo::with_initial(100_000);
+        let inner_view: InnerView = Box::new(build_inner(&self.theme, &demo));
+        let (element, inner_state) = inner_view.build(ctx, &mut demo);
+        (
+            element,
+            DataGridDemoPanelState {
+                demo,
+                inner_view,
+                inner_state,
+            },
+        )
+    }
+
+    fn rebuild(
+        &self,
+        _prev: &Self,
+        vs: &mut DataGridDemoPanelState,
+        ctx: &mut ViewCtx,
+        element: Mut<'_, Pod<Passthrough>>,
+        _: &mut S,
+    ) {
+        let new_inner: InnerView = Box::new(build_inner(&self.theme, &vs.demo));
+        new_inner.rebuild(
+            &vs.inner_view,
+            &mut vs.inner_state,
+            ctx,
+            element,
+            &mut vs.demo,
+        );
+        vs.inner_view = new_inner;
+    }
+
+    fn teardown(
+        &self,
+        vs: &mut DataGridDemoPanelState,
+        ctx: &mut ViewCtx,
+        element: Mut<'_, Pod<Passthrough>>,
+    ) {
+        vs.inner_view.teardown(&mut vs.inner_state, ctx, element);
+    }
+
+    fn message(
+        &self,
+        vs: &mut DataGridDemoPanelState,
+        message: &mut MessageCtx,
+        element: Mut<'_, Pod<Passthrough>>,
+        _: &mut S,
+    ) -> MessageResult<()> {
+        vs.inner_view
+            .message(&mut vs.inner_state, message, element, &mut vs.demo)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1284,6 +1649,16 @@ mod tests {
         syms.sort_unstable();
         syms.dedup();
         assert_eq!(syms.len(), n, "every symbol is unique (it's the row_id)");
+    }
+
+    #[test]
+    fn stock_row_ids_are_unique() {
+        let quotes = super::stock_quotes();
+        let mut ids: Vec<u64> = quotes.iter().map(super::stock_row_id).collect();
+        let n = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), n, "every stock_row_id is unique");
     }
 
     #[test]
