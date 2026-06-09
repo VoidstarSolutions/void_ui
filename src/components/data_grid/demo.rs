@@ -897,6 +897,7 @@ pub fn arrange_stock_columns<S: 'static>(layout: &[ColumnId]) -> Vec<ColumnDef<S
 /// `symbol` is a `&'static str` literal, so each distinct ticker is a
 /// distinct static object with a unique address — the pointer is therefore
 /// a guaranteed-unique identity (no hash collisions possible).
+#[must_use]
 pub fn stock_row_id(q: &StockQuote) -> u64 {
     q.symbol.as_ptr() as u64
 }
