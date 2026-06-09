@@ -209,6 +209,19 @@ fn topbar(theme_panel_open: bool, theme: &Theme) -> impl WidgetView<State> + use
         .border(theme.palette.border, Length::px(1.0))
 }
 
+fn gallery_sidebar_item(
+    label: &'static str,
+    kind: ComponentKind,
+    focused: ComponentKind,
+    theme: &Theme,
+) -> impl WidgetView<State> + use<> {
+    sidebar_item(label, move |s: &mut State| {
+        s.focused = kind;
+    })
+    .active(focused == kind)
+    .render(theme)
+}
+
 fn sidebar_items(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State> + use<> {
     let items: Vec<Box<AnyWidgetView<State>>> = ComponentKind::all()
         .iter()
@@ -252,7 +265,7 @@ fn main_pane(
         ComponentKind::DataGrid => Box::new(data_grid_panel(theme, dg)),
         ComponentKind::Icon => Box::new(void_ui::components::icon::demo::panel(theme)),
         ComponentKind::Label => Box::new(void_ui::components::label::demo::panel(theme)),
-        ComponentKind::StockQuotes => Box::new(stock_quotes_panel(theme, stock)),
+
         ComponentKind::Radio => Box::new(void_ui::components::radio::demo::panel(theme)),
         ComponentKind::ScrollContainer => {
             Box::new(void_ui::components::scroll_container::demo::panel(theme))
@@ -261,6 +274,7 @@ fn main_pane(
         ComponentKind::Sidebar => Box::new(void_ui::components::sidebar::demo::panel(theme)),
         ComponentKind::Slider => Box::new(void_ui::components::slider::demo::panel(theme)),
         ComponentKind::Spinner => Box::new(void_ui::components::spinner::demo::panel(theme)),
+        ComponentKind::StockQuotes => Box::new(stock_quotes_panel(theme, stock)),
         ComponentKind::Toggle => Box::new(void_ui::components::toggle::demo::panel(theme)),
         ComponentKind::CodeView => Box::new(void_ui::components::code_view::demo::panel(theme)),
         ComponentKind::Tooltip => Box::new(void_ui::components::tooltip::demo::panel(theme)),
