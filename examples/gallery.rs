@@ -154,15 +154,15 @@ fn main_pane(focused: ComponentKind, theme: &Theme) -> Box<AnyWidgetView<State>>
         ComponentKind::ButtonGroup => {
             Box::new(void_ui::components::button_group::demo::panel(theme))
         }
-        ComponentKind::DropdownButton => {
-            Box::new(void_ui::components::dropdown_button::demo::panel(theme))
-        }
         ComponentKind::Checkbox => Box::new(void_ui::components::checkbox::demo::panel(theme)),
         ComponentKind::Collapsible => {
             Box::new(void_ui::components::collapsible::demo::panel(theme))
         }
         ComponentKind::Clipboard => Box::new(void_ui::components::clipboard::demo::panel(theme)),
         ComponentKind::DataGrid => Box::new(void_ui::components::data_grid::demo::panel(theme)),
+        ComponentKind::DropdownButton => {
+            Box::new(void_ui::components::dropdown_button::demo::panel(theme))
+        }
         ComponentKind::Icon => Box::new(void_ui::components::icon::demo::panel(theme)),
         ComponentKind::Label => Box::new(void_ui::components::label::demo::panel(theme)),
 
