@@ -260,6 +260,7 @@ fn main_pane(
         ComponentKind::Separator => Box::new(void_ui::components::separator::demo::panel(theme)),
         ComponentKind::Sidebar => Box::new(void_ui::components::sidebar::demo::panel(theme)),
         ComponentKind::Slider => Box::new(void_ui::components::slider::demo::panel(theme)),
+        ComponentKind::Spinner => Box::new(void_ui::components::spinner::demo::panel(theme)),
         ComponentKind::Toggle => Box::new(void_ui::components::toggle::demo::panel(theme)),
         ComponentKind::CodeView => Box::new(void_ui::components::code_view::demo::panel(theme)),
         ComponentKind::Tooltip => Box::new(void_ui::components::tooltip::demo::panel(theme)),

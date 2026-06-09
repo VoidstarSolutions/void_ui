@@ -27,6 +27,7 @@ pub mod scroll_container;
 pub mod separator;
 pub mod sidebar;
 pub mod slider;
+pub mod spinner;
 pub mod toggle;
 pub mod tooltip;
 
@@ -51,6 +52,7 @@ pub use sidebar::{
     SidebarItem, SidebarItemView, SidebarPanel, SidebarPanelView, sidebar_item, sidebar_panel,
 };
 pub use slider::{RangeSlider, RangeSliderView, Slider, SliderView, range_slider, slider};
+pub use spinner::{Spinner, SpinnerView, SpinnerWidget, spinner};
 pub use toggle::{Toggle, ToggleView, toggle};
 pub use tooltip::{Tooltip, TooltipView, tooltip};
 
@@ -78,6 +80,7 @@ pub enum ComponentKind {
     Separator,
     Sidebar,
     Slider,
+    Spinner,
     Toggle,
     Tooltip,
 }
@@ -102,6 +105,7 @@ impl ComponentKind {
             Self::Separator => "Separator",
             Self::Sidebar => "Sidebar",
             Self::Slider => "Slider",
+            Self::Spinner => "Spinner",
             Self::Toggle => "Toggle",
             Self::Tooltip => "Tooltip",
         }
@@ -126,6 +130,7 @@ impl ComponentKind {
             Self::Separator,
             Self::Sidebar,
             Self::Slider,
+            Self::Spinner,
             Self::Toggle,
             Self::Tooltip,
         ]

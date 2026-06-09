@@ -25,6 +25,7 @@ use xilem::{Pod, ViewCtx};
 use super::ButtonVariant;
 use super::widget::ThemedButton;
 use crate::Theme;
+use crate::components::spinner::widget::SpinnerWidget;
 
 /// Builder for an interactive themed button.
 ///
@@ -256,6 +257,13 @@ where
                 &mut lbl,
                 StyleProperty::FontSize(self.theme.density.ui_font_size),
             );
+        }
+        if self.theme != prev.theme
+            && self.loading
+            && let Some(mut s) = ThemedButton::spinner_mut(&mut element)
+        {
+            SpinnerWidget::set_color(&mut s, self.theme.palette.text_muted);
+            SpinnerWidget::set_size(&mut s, f64::from(self.theme.density.ui_font_size));
         }
         if self.active != prev.active {
             ThemedButton::set_active(&mut element, self.active);
