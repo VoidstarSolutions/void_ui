@@ -1019,6 +1019,178 @@ fn build_inner(theme: &Theme, demo: &Demo) -> impl WidgetView<Demo> + use<> {
         .gap(Length::px(12.0))
 }
 
+// ===========================================================================
+// MARK: Stock-quotes gallery panel
+// ===========================================================================
+
+type StockInnerView = Box<AnyWidgetView<StockDemo>>;
+type StockInnerViewState = <StockInnerView as View<StockDemo, (), ViewCtx>>::ViewState;
+
+/// Opaque state owned by the stock-quotes demo panel.
+pub struct StockQuotesDemoPanelState {
+    demo: StockDemo,
+    inner_view: StockInnerView,
+    inner_state: StockInnerViewState,
+}
+
+/// The stock-quotes gallery panel, returned by [`stock_quotes_panel`].
+pub struct StockQuotesDemoPanel {
+    theme: Theme,
+}
+
+/// Renders the stock-quotes ("value lens") demo panel.
+///
+/// The panel owns its own [`StockDemo`] (static NASDAQ-style snapshot).
+/// Same grid wiring as [`panel`], only the row type and data source differ.
+#[must_use]
+pub fn stock_quotes_panel(theme: &Theme) -> StockQuotesDemoPanel {
+    StockQuotesDemoPanel { theme: *theme }
+}
+
+fn build_stock_inner(theme: &Theme, demo: &StockDemo) -> impl WidgetView<StockDemo> + use<> {
+    let sq_visible_len = if demo.view_is_materialized() {
+        demo.visible.len()
+    } else {
+        demo.quotes.len()
+    };
+    let row_count = u64::try_from(sq_visible_len).unwrap_or(u64::MAX);
+    let sort = demo.sort.clone();
+    let filter = demo.filter.clone();
+    let widths = demo.column_widths.clone();
+    let column_layout = demo.column_layout();
+
+    let columns = arrange_stock_columns::<StockDemo>(&column_layout);
+    let beta_id = ColumnId::from("Beta");
+    let beta_shown = column_layout.contains(&beta_id);
+    let theme_copy = *theme;
+
+    let toolbar = flex_row((
+        crate::label("NASDAQ symbols — static snapshot")
+            .text_size(theme.typography.size_caption)
+            .color(theme.palette.text_muted)
+            .render(theme),
+        FlexSpacer::Flex(1.0),
+        crate::components::button::button(move |s: &mut StockDemo| {
+            s.toggle_column(&ColumnId::from("Beta"));
+        })
+        .label(if beta_shown { "Hide Beta" } else { "Show Beta" })
+        .render(theme),
+        crate::components::button::button(|s: &mut StockDemo| {
+            s.move_column_left(&ColumnId::from("Sector"));
+        })
+        .label("Sector \u{2190}")
+        .render(theme),
+        crate::components::button::button(|s: &mut StockDemo| {
+            s.reset_columns();
+        })
+        .label("Reset cols")
+        .render(theme),
+        FlexSpacer::Flex(1.0),
+        crate::label(format!("{row_count} symbols"))
+            .text_size(theme.typography.size_caption)
+            .color(theme.palette.text_muted)
+            .render(theme),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Center)
+    .gap(Length::px(8.0));
+
+    let grid = super::view::data_grid(columns)
+        .rows(|s: &StockDemo| {
+            if s.view_is_materialized() {
+                &s.visible[..]
+            } else {
+                &s.quotes[..]
+            }
+        })
+        .row_count(row_count)
+        .row_id(|q: &StockQuote| {
+            // FNV-1a of the ticker — a stable u64 id from the &'static str.
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+            for b in q.symbol.as_bytes() {
+                h ^= u64::from(*b);
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+            h
+        })
+        .selection(|s: &mut StockDemo| &mut s.selection)
+        .sort(sort, |s: &mut StockDemo, col: ColumnId, multi: bool| {
+            s.cycle_sort(col, multi);
+        })
+        .filter(filter, |s: &mut StockDemo, col: ColumnId, query: String| {
+            s.set_filter(col, query);
+        })
+        .column_widths(widths)
+        .on_column_resize(|s: &mut StockDemo, col: ColumnId, new_width: f64| {
+            s.resize_column(col, new_width);
+        })
+        .row_height(24.0)
+        .render(&theme_copy);
+
+    flex_col((toolbar, sized_box(grid).flex(1.0)))
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .gap(Length::px(12.0))
+}
+
+impl ViewMarker for StockQuotesDemoPanel {}
+
+impl<S: 'static> View<S, (), ViewCtx> for StockQuotesDemoPanel {
+    type ViewState = StockQuotesDemoPanelState;
+    type Element = Pod<Passthrough>;
+
+    fn build(&self, ctx: &mut ViewCtx, _: &mut S) -> (Self::Element, Self::ViewState) {
+        let mut demo = StockDemo::new();
+        let inner_view: StockInnerView = Box::new(build_stock_inner(&self.theme, &demo));
+        let (element, inner_state) = inner_view.build(ctx, &mut demo);
+        (
+            element,
+            StockQuotesDemoPanelState {
+                demo,
+                inner_view,
+                inner_state,
+            },
+        )
+    }
+
+    fn rebuild(
+        &self,
+        _prev: &Self,
+        vs: &mut StockQuotesDemoPanelState,
+        ctx: &mut ViewCtx,
+        element: Mut<'_, Pod<Passthrough>>,
+        _: &mut S,
+    ) {
+        let new_inner: StockInnerView = Box::new(build_stock_inner(&self.theme, &vs.demo));
+        new_inner.rebuild(
+            &vs.inner_view,
+            &mut vs.inner_state,
+            ctx,
+            element,
+            &mut vs.demo,
+        );
+        vs.inner_view = new_inner;
+    }
+
+    fn teardown(
+        &self,
+        vs: &mut StockQuotesDemoPanelState,
+        ctx: &mut ViewCtx,
+        element: Mut<'_, Pod<Passthrough>>,
+    ) {
+        vs.inner_view.teardown(&mut vs.inner_state, ctx, element);
+    }
+
+    fn message(
+        &self,
+        vs: &mut StockQuotesDemoPanelState,
+        message: &mut MessageCtx,
+        element: Mut<'_, Pod<Passthrough>>,
+        _: &mut S,
+    ) -> MessageResult<()> {
+        vs.inner_view
+            .message(&mut vs.inner_state, message, element, &mut vs.demo)
+    }
+}
+
 impl ViewMarker for DataGridDemoPanel {}
 
 impl<S: 'static> View<S, (), ViewCtx> for DataGridDemoPanel {
