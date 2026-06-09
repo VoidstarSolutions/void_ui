@@ -193,9 +193,9 @@ impl Widget for AnchoredOverlay {
             // and is clipped only by a real `set_clip_path` ancestor.
             let offset = self.anchor.child_offset(size, overlay_size);
             let offset = match self.anchor {
-                PopoverAnchor::BottomStart | PopoverAnchor::BottomCenter | PopoverAnchor::BottomEnd => {
-                    Point::new(offset.x, offset.y + self.gap.get())
-                }
+                PopoverAnchor::BottomStart
+                | PopoverAnchor::BottomCenter
+                | PopoverAnchor::BottomEnd => Point::new(offset.x, offset.y + self.gap.get()),
                 PopoverAnchor::TopStart | PopoverAnchor::TopCenter | PopoverAnchor::TopEnd => {
                     Point::new(offset.x, offset.y - self.gap.get())
                 }
