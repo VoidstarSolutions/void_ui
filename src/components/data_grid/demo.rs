@@ -892,6 +892,15 @@ pub fn arrange_stock_columns<S: 'static>(layout: &[ColumnId]) -> Vec<ColumnDef<S
         .collect()
 }
 
+/// Stable u64 row-id for a [`StockQuote`], used as the grid's `row_id`.
+///
+/// `symbol` is a `&'static str` literal, so each distinct ticker is a
+/// distinct static object with a unique address — the pointer is therefore
+/// a guaranteed-unique identity (no hash collisions possible).
+pub fn stock_row_id(q: &StockQuote) -> u64 {
+    q.symbol.as_ptr() as u64
+}
+
 // ===========================================================================
 // MARK: Gallery panel
 // ===========================================================================
@@ -1103,15 +1112,7 @@ fn build_stock_inner(theme: &Theme, demo: &StockDemo) -> impl WidgetView<StockDe
             }
         })
         .row_count(row_count)
-        .row_id(|q: &StockQuote| {
-            // FNV-1a of the ticker — a stable u64 id from the &'static str.
-            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-            for b in q.symbol.as_bytes() {
-                h ^= u64::from(*b);
-                h = h.wrapping_mul(0x0000_0100_0000_01b3);
-            }
-            h
-        })
+        .row_id(stock_row_id)
         .selection(|s: &mut StockDemo| &mut s.selection)
         .sort(sort, |s: &mut StockDemo, col: ColumnId, multi: bool| {
             s.cycle_sort(col, multi);
@@ -1647,6 +1648,16 @@ mod tests {
         syms.sort_unstable();
         syms.dedup();
         assert_eq!(syms.len(), n, "every symbol is unique (it's the row_id)");
+    }
+
+    #[test]
+    fn stock_row_ids_are_unique() {
+        let quotes = super::stock_quotes();
+        let mut ids: Vec<u64> = quotes.iter().map(super::stock_row_id).collect();
+        let n = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), n, "every stock_row_id is unique");
     }
 
     #[test]
