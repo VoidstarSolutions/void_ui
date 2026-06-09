@@ -27,6 +27,7 @@ pub mod scroll_container;
 pub mod separator;
 pub mod sidebar;
 pub mod slider;
+pub mod toggle;
 pub mod tooltip;
 
 pub use button::{Button, ButtonVariant, ButtonView, button};
@@ -50,6 +51,7 @@ pub use sidebar::{
     SidebarItem, SidebarItemView, SidebarPanel, SidebarPanelView, sidebar_item, sidebar_panel,
 };
 pub use slider::{RangeSlider, RangeSliderView, Slider, SliderView, range_slider, slider};
+pub use toggle::{Toggle, ToggleView, toggle};
 pub use tooltip::{Tooltip, TooltipView, tooltip};
 
 /// One entry per component the gallery exposes.
@@ -76,6 +78,7 @@ pub enum ComponentKind {
     Separator,
     Sidebar,
     Slider,
+    Toggle,
     Tooltip,
 }
 
@@ -99,6 +102,7 @@ impl ComponentKind {
             Self::Separator => "Separator",
             Self::Sidebar => "Sidebar",
             Self::Slider => "Slider",
+            Self::Toggle => "Toggle",
             Self::Tooltip => "Tooltip",
         }
     }
@@ -122,6 +126,7 @@ impl ComponentKind {
             Self::Separator,
             Self::Sidebar,
             Self::Slider,
+            Self::Toggle,
             Self::Tooltip,
         ]
     }
