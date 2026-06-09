@@ -107,10 +107,18 @@ impl ReadOnlyText {
                 .padding(Length::px(f64::from(theme.density.pad)))
                 .alignment(UnitPoint::TOP_RIGHT)
         });
+        // Reserve right-side space equal to the button width so the text
+        // never flows under the clipboard button.
+        let right_inset = if self.copyable {
+            theme.density.ui_font_size + 2.0 * theme.density.button_pad_h
+        } else {
+            0.0
+        };
         let code = ReadOnlyTextView {
             text: self.text,
             highlighter: self.highlighter,
             theme: *theme,
+            right_inset,
             phantom: PhantomData,
         };
         zstack((code, copy_button))
@@ -125,6 +133,7 @@ pub struct ReadOnlyTextView<State> {
     text: String,
     highlighter: Option<Arc<dyn Highlighter>>,
     theme: Theme,
+    right_inset: f32,
     phantom: PhantomData<fn(State)>,
 }
 
@@ -149,6 +158,7 @@ where
             BORDER_WIDTH,
             self.theme.radius.small,
             self.theme.density.pad,
+            self.right_inset,
             self.theme.typography.size_caption,
             self.theme.palette.teal_soft,
         );
@@ -198,6 +208,9 @@ where
             > f32::EPSILON
         {
             CodeViewWidget::set_font_size(&mut element, self.theme.typography.size_caption);
+        }
+        if (self.right_inset - prev.right_inset).abs() > f32::EPSILON {
+            CodeViewWidget::set_right_inset(&mut element, self.right_inset);
         }
     }
 

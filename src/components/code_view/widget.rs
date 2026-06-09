@@ -69,6 +69,9 @@ pub struct CodeViewWidget {
     border_width: f32,
     corner_radius: f32,
     padding: f32,
+    /// Extra space reserved on the right side beyond `padding`, used to avoid
+    /// overlap with overlaid affordances (e.g. the clipboard button).
+    right_inset: f32,
     font_size: f32,
     /// Fill color for selection rectangles painted under the text.
     selection_color: Color,
@@ -115,6 +118,7 @@ impl CodeViewWidget {
         border_width: f32,
         corner_radius: f32,
         padding: f32,
+        right_inset: f32,
         font_size: f32,
         selection_color: Color,
     ) -> Self {
@@ -132,6 +136,7 @@ impl CodeViewWidget {
             border_width,
             corner_radius,
             padding,
+            right_inset,
             font_size,
             selection_color,
             layout: Layout::default(),
@@ -219,6 +224,16 @@ impl CodeViewWidget {
         if (this.widget.font_size - font_size).abs() > f32::EPSILON {
             this.widget.font_size = font_size;
             this.widget.layout_dirty = true;
+            this.ctx.request_layout();
+        }
+    }
+
+    /// Sets extra space reserved on the right side of the text area beyond the
+    /// normal padding. Use this to avoid text overlapping an overlaid affordance
+    /// such as the clipboard button. Requests layout if changed.
+    pub fn set_right_inset(this: &mut WidgetMut<'_, Self>, right_inset: f32) {
+        if (this.widget.right_inset - right_inset).abs() > f32::EPSILON {
+            this.widget.right_inset = right_inset;
             this.ctx.request_layout();
         }
     }
@@ -338,6 +353,10 @@ impl Widget for CodeViewWidget {
         let inline = Axis::Horizontal;
         let pad_each = f64::from(self.padding);
         let pad_main = 2.0 * pad_each;
+        // Total horizontal inset: normal padding on both sides plus any extra
+        // space reserved on the right for overlaid affordances (e.g. the
+        // clipboard button).
+        let h_inset = pad_main + f64::from(self.right_inset);
 
         // Fill the offered width: a code block is a block-level panel that
         // owns its chrome, so the painted background must match the widget
@@ -355,11 +374,11 @@ impl Widget for CodeViewWidget {
             match len_req {
                 LenReq::MinContent => Some(Length::ZERO),
                 LenReq::MaxContent => None,
-                LenReq::FitContent(space) => Some(Length::px((space.get() - pad_main).max(0.0))),
+                LenReq::FitContent(space) => Some(Length::px((space.get() - h_inset).max(0.0))),
             }
         } else {
             // Block axis depends on the cross (inline) length.
-            cross_length.map(|c| Length::px((c.get() - pad_main).max(0.0)))
+            cross_length.map(|c| Length::px((c.get() - h_inset).max(0.0)))
         }
         .map(|v| {
             #[expect(
@@ -388,7 +407,7 @@ impl Widget for CodeViewWidget {
                 clippy::cast_possible_truncation,
                 reason = "parley layout width is f32; truncation of a UI-scale length is acceptable"
             )]
-            let w = (size.width - 2.0 * pad_each).max(0.0) as f32;
+            let w = (size.width - 2.0 * pad_each - f64::from(self.right_inset)).max(0.0) as f32;
             w
         };
 
