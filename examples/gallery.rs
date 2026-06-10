@@ -170,6 +170,9 @@ fn main_pane(focused: ComponentKind, theme: &Theme) -> Box<AnyWidgetView<State>>
             Box::new(void_ui::components::collapsible::demo::panel(theme))
         }
         ComponentKind::Clipboard => Box::new(void_ui::components::clipboard::demo::panel(theme)),
+        ComponentKind::ContextMenu => {
+            Box::new(void_ui::components::context_menu::demo::panel(theme))
+        }
         ComponentKind::DataGrid => Box::new(void_ui::components::data_grid::demo::panel(theme)),
         ComponentKind::DropdownButton => {
             Box::new(void_ui::components::dropdown_button::demo::panel(theme))
