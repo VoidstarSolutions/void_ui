@@ -49,7 +49,7 @@ pub struct OverlayScopeHandle(Arc<OnceLock<WidgetId>>);
 impl Resource for OverlayScopeHandle {}
 
 impl OverlayScopeHandle {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self(Arc::new(OnceLock::new()))
     }
 
