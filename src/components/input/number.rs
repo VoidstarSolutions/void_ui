@@ -199,6 +199,62 @@ fn filter_numeric(input: &str) -> String {
 /// trailing `.0`, so whole results render without a decimal.
 fn adjust(value: &str, delta: f64, min: f64, max: f64) -> String {
     let current = value.trim().parse::<f64>().unwrap_or(0.0);
-    let next = (current + delta).clamp(min, max);
-    format!("{next}")
+    // `f64::clamp` panics if min > max, so normalize a reversed range rather
+    // than trust the caller.
+    let next = (current + delta).clamp(min.min(max), max.max(min));
+    // Strip binary float noise (e.g. 0.1 + 0.2 -> 0.30000000000000004) before
+    // display. Ten decimal places is far finer than any realistic stepper.
+    let cleaned = (next * 1e10).round() / 1e10;
+    format!("{cleaned}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{adjust, filter_numeric};
+
+    const UNBOUNDED: (f64, f64) = (f64::NEG_INFINITY, f64::INFINITY);
+
+    #[test]
+    fn filter_keeps_digits_one_dot_and_leading_minus() {
+        assert_eq!(filter_numeric("12a3"), "123");
+        assert_eq!(filter_numeric("1.2.3"), "1.23");
+        assert_eq!(filter_numeric(".5"), ".5");
+        assert_eq!(filter_numeric("-5"), "-5");
+        assert_eq!(filter_numeric("5-3"), "53");
+        assert_eq!(filter_numeric("$1,250.00"), "1250.00");
+        assert_eq!(filter_numeric("abc"), "");
+    }
+
+    #[test]
+    fn adjust_reads_empty_and_garbage_as_zero() {
+        let (lo, hi) = UNBOUNDED;
+        assert_eq!(adjust("5", 1.0, lo, hi), "6");
+        assert_eq!(adjust("", 1.0, lo, hi), "1");
+        assert_eq!(adjust("garbage", 1.0, lo, hi), "1");
+    }
+
+    #[test]
+    fn adjust_formats_whole_results_without_decimal() {
+        let (lo, hi) = UNBOUNDED;
+        assert_eq!(adjust("9.5", 0.5, lo, hi), "10");
+    }
+
+    #[test]
+    fn adjust_strips_float_noise() {
+        let (lo, hi) = UNBOUNDED;
+        // 0.2 + 0.1 is 0.30000000000000004 in f64; it must display as "0.3".
+        assert_eq!(adjust("0.2", 0.1, lo, hi), "0.3");
+    }
+
+    #[test]
+    fn adjust_clamps_to_range() {
+        assert_eq!(adjust("100", 5.0, 0.0, 100.0), "100");
+        assert_eq!(adjust("0", -5.0, 0.0, 100.0), "0");
+    }
+
+    #[test]
+    fn adjust_tolerates_reversed_range() {
+        // min > max must not panic.
+        assert_eq!(adjust("50", 10.0, 100.0, 0.0), "60");
+    }
 }

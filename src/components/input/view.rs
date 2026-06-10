@@ -174,10 +174,12 @@ where
 
 /// The materialized [`View`] backing the editor core of an [`Input`].
 ///
-/// Built only through [`Input::render`]; not constructed directly by callers.
-/// Carries no chrome of its own — the surrounding `sized_box` does.
+/// Built only through [`Input::render`] / the number input; not constructed
+/// directly by callers, and not part of the public API (both builders return an
+/// opaque `impl WidgetView`). Carries no chrome of its own — the surrounding
+/// `sized_box` does.
 #[must_use = "View values do nothing unless provided to Xilem."]
-pub struct InputView<F, State, Action> {
+pub(crate) struct InputView<F, State, Action> {
     contents: String,
     placeholder: ArcStr,
     disabled: bool,
@@ -316,8 +318,17 @@ where
         &self,
         (): &mut Self::ViewState,
         ctx: &mut ViewCtx,
-        element: Mut<'_, Self::Element>,
+        mut element: Mut<'_, Self::Element>,
     ) {
+        // `build` records two routing sources: the inner TextArea and the
+        // frame. Remove both — tearing down only the frame would leak the
+        // TextArea's entry in the action-source map across mount/unmount.
+        {
+            let mut child = InputFrame::child_mut(&mut element);
+            let mut text_input = child.downcast::<widgets::TextInput>();
+            let text_area = widgets::TextInput::text_mut(&mut text_input);
+            ctx.teardown_action_source(text_area);
+        }
         ctx.teardown_action_source(element);
     }
 

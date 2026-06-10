@@ -16,4 +16,4 @@ mod view;
 pub mod widget;
 
 pub use number::{NumberInput, number_input};
-pub use view::{Input, InputView, input};
+pub use view::{Input, input};
