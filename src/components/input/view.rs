@@ -127,27 +127,20 @@ impl<F> Input<F> {
             .suffix
             .map(|text| label(text).color(theme.palette.text_muted).render(theme));
 
-        let core = InputView {
-            contents: self.contents,
-            placeholder: self.placeholder,
-            disabled: self.disabled,
-            theme: *theme,
-            callback: self.callback,
-            phantom: PhantomData,
-        };
+        let core = InputView::new(
+            self.contents,
+            self.placeholder,
+            self.disabled,
+            theme,
+            self.callback,
+        );
 
         // Editor takes the remaining width; affixes hug the ends.
         let row = flex_row((prefix, core.flex(1.0), suffix))
             .cross_axis_alignment(CrossAxisAlignment::Center)
             .gap(Length::px(f64::from(theme.density.col)));
 
-        // The chrome lives here so it encloses the affixes and the editor as
-        // one field.
-        sized_box(row)
-            .background_color(theme.palette.surface)
-            .border(theme.palette.border, BORDER_WIDTH)
-            .corner_radius(Length::px(f64::from(theme.radius.small)))
-            .padding(field_padding(theme))
+        field_chrome(row, theme)
     }
 }
 
@@ -158,6 +151,25 @@ fn field_padding(theme: &Theme) -> Padding {
         Length::px(f64::from(theme.density.button_pad_v)),
         Length::px(f64::from(theme.density.button_pad_h)),
     )
+}
+
+/// Wrap a field's content row in the themed chrome: background, border, corner
+/// radius, and inner padding. Shared by [`Input`] and the number input so every
+/// flavor of field draws an identical box.
+pub(crate) fn field_chrome<State, Action, V>(
+    content: V,
+    theme: &Theme,
+) -> impl WidgetView<State, Action> + use<State, Action, V>
+where
+    State: 'static,
+    Action: 'static,
+    V: WidgetView<State, Action>,
+{
+    sized_box(content)
+        .background_color(theme.palette.surface)
+        .border(theme.palette.border, BORDER_WIDTH)
+        .corner_radius(Length::px(f64::from(theme.radius.small)))
+        .padding(field_padding(theme))
 }
 
 /// The materialized [`View`] backing the editor core of an [`Input`].
@@ -175,6 +187,25 @@ pub struct InputView<F, State, Action> {
 }
 
 impl<F, State, Action> InputView<F, State, Action> {
+    /// Construct the chrome-less editor core. Used by [`Input`] and the number
+    /// input, which supply their own surrounding affixes/steppers and chrome.
+    pub(crate) fn new(
+        contents: String,
+        placeholder: ArcStr,
+        disabled: bool,
+        theme: &Theme,
+        callback: F,
+    ) -> Self {
+        Self {
+            contents,
+            placeholder,
+            disabled,
+            theme: *theme,
+            callback,
+            phantom: PhantomData,
+        }
+    }
+
     /// Theme the inner `TextArea`: text color, caret, and selection highlight.
     fn area_props(&self) -> PropertySet {
         let mut props = PropertySet::new();

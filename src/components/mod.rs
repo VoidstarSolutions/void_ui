@@ -48,7 +48,7 @@ pub use data_grid::{
 };
 pub use dropdown_button::{DropdownButton, DropdownButtonView, dropdown_button};
 pub use icon::{Icon, IconName, icon};
-pub use input::{Input, InputView, input};
+pub use input::{Input, InputView, NumberInput, input, number_input};
 pub use label::{Label, LabelAlignment, label};
 pub use popover::{Popover, PopoverAnchor, PopoverHost, PopoverView, popover};
 pub use resizable::{

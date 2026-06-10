@@ -9,7 +9,7 @@ use crate::label;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
-use super::input;
+use super::{input, number_input};
 use crate::Theme;
 use crate::components::ScrollBarVisibility;
 use crate::scroll_container;
@@ -25,6 +25,8 @@ struct InputDemo {
     email: String,
     amount: String,
     site: String,
+    quantity: String,
+    price: String,
 }
 
 impl InputDemo {
@@ -34,6 +36,8 @@ impl InputDemo {
             email: String::new(),
             amount: "1250.00".to_owned(),
             site: String::new(),
+            quantity: "5".to_owned(),
+            price: "9.5".to_owned(),
         }
     }
 }
@@ -76,6 +80,34 @@ where
     ))
     .cross_axis_alignment(CrossAxisAlignment::Start)
     .gap(Length::px(4.0))
+}
+
+/// Numeric fields with -/+ steppers. Typing is filtered to digits; the steppers
+/// parse, apply step (clamped), and re-emit.
+fn number_section(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo> + use<> {
+    with_source!(theme, {
+        flex_row((
+            field(
+                theme,
+                "Quantity",
+                number_input(state.quantity.clone(), |s: &mut InputDemo, text| {
+                    s.quantity = text;
+                })
+                .range(0.0, 100.0)
+                .render(theme),
+            ),
+            field(
+                theme,
+                "Price",
+                number_input(state.price.clone(), |s: &mut InputDemo, text| s.price = text)
+                    .prefix("$")
+                    .step(0.5)
+                    .render(theme),
+            ),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .gap(Length::px(16.0))
+    })
 }
 
 fn build_inner(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo> + use<> {
@@ -131,6 +163,8 @@ fn build_inner(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo> +
         .gap(Length::px(16.0))
     });
 
+    let numbers = number_section(theme, state);
+
     // A disabled field does not accept input and paints muted.
     let disabled = with_source!(theme, {
         field(
@@ -168,6 +202,8 @@ fn build_inner(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo> +
             editable,
             header("Prefix & suffix"),
             affixes,
+            header("Number"),
+            numbers,
             header("Disabled"),
             disabled,
         ))

@@ -1,0 +1,204 @@
+//! Number input — a single-line field constrained to numeric text, with
+//! `-`/`+` stepper buttons that adjust the value.
+//!
+//! Built on the same editor core and chrome as [`input`](super::input): the
+//! editor takes a numeric-filtered change callback, and the steppers parse the
+//! current value, apply `step` (clamped to the configured range), and re-emit
+//! the formatted string. Everything stays host-controlled — the field never
+//! mutates its own value; it emits the new string and the host stores it.
+//!
+//! The value is carried as a `String` (the editable source of truth), not an
+//! `f64`, so partial entries like `12.` don't get reformatted mid-typing. Hosts
+//! parse it when they need a number.
+//!
+//! ```ignore
+//! use void_ui::components::input::number_input;
+//! number_input(state.qty.clone(), |s: &mut State, text| s.qty = text)
+//!     .step(1.0)
+//!     .range(0.0, 100.0)
+//!     .render(&theme)
+//! ```
+
+use std::sync::Arc;
+
+use masonry::core::ArcStr;
+use masonry::layout::Length;
+use xilem::WidgetView;
+use xilem::style::Style as _;
+use xilem::view::{CrossAxisAlignment, FlexExt as _, flex_row};
+
+use super::view::{InputView, field_chrome};
+use crate::Theme;
+use crate::components::button::button;
+use crate::label;
+
+/// Builder for a numeric text field with `-`/`+` steppers.
+///
+/// Created with [`number_input`]. Returns a xilem view via [`Self::render`].
+#[must_use = "NumberInput does nothing until rendered with .render(&theme)"]
+pub struct NumberInput<F> {
+    value: String,
+    step: f64,
+    min: f64,
+    max: f64,
+    placeholder: ArcStr,
+    disabled: bool,
+    prefix: Option<ArcStr>,
+    suffix: Option<ArcStr>,
+    on_changed: F,
+}
+
+/// Create a numeric input with the given value and change callback.
+///
+/// `value` is host-controlled. `on_changed` is invoked — with non-numeric
+/// characters stripped — on every edit, and also by the steppers with the
+/// adjusted, formatted value. Defaults: `step` 1.0, unbounded range.
+pub fn number_input<F>(value: impl Into<String>, on_changed: F) -> NumberInput<F> {
+    NumberInput {
+        value: value.into(),
+        step: 1.0,
+        min: f64::NEG_INFINITY,
+        max: f64::INFINITY,
+        placeholder: ArcStr::default(),
+        disabled: false,
+        prefix: None,
+        suffix: None,
+        on_changed,
+    }
+}
+
+impl<F> NumberInput<F> {
+    /// Set the amount the `-`/`+` steppers add or subtract. Defaults to `1.0`.
+    pub fn step(mut self, step: f64) -> Self {
+        self.step = step;
+        self
+    }
+
+    /// Clamp stepper results to `[min, max]`. Typing is not clamped; only the
+    /// steppers respect the range. Defaults to unbounded.
+    pub fn range(mut self, min: f64, max: f64) -> Self {
+        self.min = min;
+        self.max = max;
+        self
+    }
+
+    /// Set the placeholder shown while the field is empty.
+    pub fn placeholder(mut self, placeholder: impl Into<ArcStr>) -> Self {
+        self.placeholder = placeholder.into();
+        self
+    }
+
+    /// Disable the field and its steppers.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    /// Set a leading affix shown inside the border (e.g. `$`).
+    pub fn prefix(mut self, text: impl Into<ArcStr>) -> Self {
+        self.prefix = Some(text.into());
+        self
+    }
+
+    /// Set a trailing affix shown inside the border, before the steppers (e.g.
+    /// a unit).
+    pub fn suffix(mut self, text: impl Into<ArcStr>) -> Self {
+        self.suffix = Some(text.into());
+        self
+    }
+
+    /// Materialize the xilem view at the supplied theme.
+    pub fn render<State, Action>(
+        self,
+        theme: &Theme,
+    ) -> impl WidgetView<State, Action> + use<F, State, Action>
+    where
+        State: 'static,
+        Action: 'static,
+        F: Fn(&mut State, String) -> Action + Send + Sync + 'static,
+    {
+        let NumberInput {
+            value,
+            step,
+            min,
+            max,
+            placeholder,
+            disabled,
+            prefix,
+            suffix,
+            on_changed,
+        } = self;
+
+        // The single host callback is shared between the editor's filtered
+        // change handler and both steppers.
+        let on_changed = Arc::new(on_changed);
+
+        let core = {
+            let on_changed = on_changed.clone();
+            InputView::new(
+                value.clone(),
+                placeholder,
+                disabled,
+                theme,
+                move |state: &mut State, text: String| (*on_changed)(state, filter_numeric(&text)),
+            )
+        };
+
+        let minus = {
+            let on_changed = on_changed.clone();
+            let value = value.clone();
+            button(move |state: &mut State| (*on_changed)(state, adjust(&value, -step, min, max)))
+                .label("\u{2212}")
+                .disabled(disabled)
+                .render(theme)
+        };
+        let plus = {
+            let on_changed = on_changed.clone();
+            let value = value.clone();
+            button(move |state: &mut State| (*on_changed)(state, adjust(&value, step, min, max)))
+                .label("+")
+                .disabled(disabled)
+                .render(theme)
+        };
+
+        let prefix = prefix.map(|text| label(text).color(theme.palette.text_muted).render(theme));
+        let suffix = suffix.map(|text| label(text).color(theme.palette.text_muted).render(theme));
+
+        let steppers = flex_row((minus, plus)).gap(Length::px(4.0));
+
+        let row = flex_row((prefix, core.flex(1.0), suffix, steppers))
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .gap(Length::px(f64::from(theme.density.col)));
+
+        field_chrome(row, theme)
+    }
+}
+
+/// Keep only characters that form a number: digits, a single decimal point, and
+/// a single leading minus. Everything else is dropped.
+fn filter_numeric(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut seen_dot = false;
+    for c in input.chars() {
+        match c {
+            '0'..='9' => out.push(c),
+            '.' if !seen_dot => {
+                seen_dot = true;
+                out.push('.');
+            }
+            // A minus is only meaningful as the leading sign.
+            '-' if out.is_empty() => out.push('-'),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Parse `value` (empty/garbage reads as `0`), apply `delta`, clamp to
+/// `[min, max]`, and format back to the shortest string. Float `Display` omits a
+/// trailing `.0`, so whole results render without a decimal.
+fn adjust(value: &str, delta: f64, min: f64, max: f64) -> String {
+    let current = value.trim().parse::<f64>().unwrap_or(0.0);
+    let next = (current + delta).clamp(min, max);
+    format!("{next}")
+}
