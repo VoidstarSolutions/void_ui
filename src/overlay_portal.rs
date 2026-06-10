@@ -83,11 +83,18 @@ impl<State: 'static, Action: 'static> Resource for OverlayPortal<State, Action> 
 
 impl<State, Action> OverlayPortal<State, Action> {
     #[must_use]
-    #[cfg_attr(not(test), expect(dead_code, reason = "consumed by overlay_scope view in a later commit"))]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "consumed by overlay_scope view in a later commit")
+    )]
     pub(crate) fn new(scope: OverlayScopeHandle) -> Self {
         Self {
             scope,
             inner: Rc::new(RefCell::new(PortalRegistry {
+                // Start at 1, not 0. Portal keys become `ViewId`s inside the
+                // scope's sequence view for message routing. `ViewId::new(0)`
+                // is reserved by xilem for the scope's own content child, so
+                // a portal key of 0 would collide with it and mis-route events.
                 next_key: 1,
                 entries: Vec::new(),
             })),
@@ -102,7 +109,10 @@ impl<State, Action> OverlayPortal<State, Action> {
     }
 
     /// Register a popover's content view; returns its portal key.
-    #[cfg_attr(not(test), expect(dead_code, reason = "consumed by overlay_scope view in a later commit"))]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "consumed by overlay_scope view in a later commit")
+    )]
     pub(crate) fn register(
         &self,
         content: Rc<PortalContentView<State, Action>>,
@@ -120,7 +130,10 @@ impl<State, Action> OverlayPortal<State, Action> {
     }
 
     /// Replace the content/theme for an existing key (no-op if unknown).
-    #[cfg_attr(not(test), expect(dead_code, reason = "consumed by overlay_scope view in a later commit"))]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "consumed by overlay_scope view in a later commit")
+    )]
     pub(crate) fn update(
         &self,
         key: u64,
@@ -135,14 +148,20 @@ impl<State, Action> OverlayPortal<State, Action> {
     }
 
     /// Remove the entry for `key` (no-op if unknown).
-    #[cfg_attr(not(test), expect(dead_code, reason = "consumed by overlay_scope view in a later commit"))]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "consumed by overlay_scope view in a later commit")
+    )]
     pub(crate) fn deregister(&self, key: u64) {
         self.inner.borrow_mut().entries.retain(|e| e.key != key);
     }
 
     /// Snapshot of all entries, in registration order.
     #[must_use]
-    #[cfg_attr(not(test), expect(dead_code, reason = "consumed by overlay_scope view in a later commit"))]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "consumed by overlay_scope view in a later commit")
+    )]
     pub(crate) fn snapshot(&self) -> Vec<PortalEntry<State, Action>> {
         self.inner.borrow().entries.clone()
     }
@@ -228,5 +247,32 @@ mod tests {
         let theme = Theme::default();
         clone.register(content(), &theme);
         assert_eq!(portal.snapshot().len(), 1);
+    }
+
+    #[test]
+    fn keys_are_never_reused_after_deregister() {
+        let portal = OverlayPortal::<(), ()>::new(OverlayScopeHandle::new());
+        let theme = Theme::default();
+        let first = portal.register(content(), &theme);
+        assert_eq!(first, 1);
+        portal.deregister(first);
+        let second = portal.register(content(), &theme);
+        assert_eq!(second, 2, "key must not be recycled after deregister");
+    }
+
+    #[test]
+    fn update_with_unknown_key_is_a_noop() {
+        let portal = OverlayPortal::<(), ()>::new(OverlayScopeHandle::new());
+        let theme = Theme::default();
+        let original = content();
+        portal.register(original.clone(), &theme);
+        // update with a key that was never registered — must not panic
+        portal.update(999, content(), &theme);
+        let snap = portal.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert!(
+            Rc::ptr_eq(&snap[0].content, &original),
+            "existing entry must be unchanged after update with unknown key"
+        );
     }
 }
