@@ -18,6 +18,7 @@
 //! ```
 
 use masonry::core::ArcStr;
+use masonry::peniko::Color;
 use xilem::masonry::layout::Length;
 use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, flex_col, sized_box};
@@ -44,6 +45,8 @@ pub enum GroupBoxVariant {
 #[must_use = "GroupBox does nothing until rendered with .render(&theme)"]
 pub struct GroupBox<V> {
     title: Option<ArcStr>,
+    title_color: Option<Color>,
+    background: Option<Color>,
     variant: GroupBoxVariant,
     child: V,
 }
@@ -54,6 +57,8 @@ pub struct GroupBox<V> {
 pub fn group_box<V>(child: V) -> GroupBox<V> {
     GroupBox {
         title: None,
+        title_color: None,
+        background: None,
         variant: GroupBoxVariant::default(),
         child,
     }
@@ -84,6 +89,23 @@ impl<V> GroupBox<V> {
         self
     }
 
+    /// Override the title's text color. Defaults to `palette.text_muted`.
+    pub fn title_color(mut self, color: Color) -> Self {
+        self.title_color = Some(color);
+        self
+    }
+
+    /// Override the content area's background color.
+    ///
+    /// Applies regardless of [`GroupBoxVariant`]: it fills behind
+    /// [`GroupBoxVariant::Normal`], replaces the default `surface` fill of
+    /// [`GroupBoxVariant::Fill`], and adds a fill behind the border of
+    /// [`GroupBoxVariant::Outline`].
+    pub fn background(mut self, color: Color) -> Self {
+        self.background = Some(color);
+        self
+    }
+
     /// Materialize a view at the supplied theme.
     #[must_use]
     pub fn render<State, Action>(self, theme: &Theme) -> Box<AnyWidgetView<State, Action>>
@@ -95,27 +117,45 @@ impl<V> GroupBox<V> {
         let pad = Length::px(f64::from(theme.density.pad));
         let radius = Length::px(f64::from(theme.radius.small));
 
+        let background = self.background;
         let content: Box<AnyWidgetView<State, Action>> = match self.variant {
-            GroupBoxVariant::Normal => Box::new(sized_box(self.child).padding(pad)),
+            GroupBoxVariant::Normal => match background {
+                Some(c) => Box::new(
+                    sized_box(self.child)
+                        .padding(pad)
+                        .background_color(c)
+                        .corner_radius(radius),
+                ),
+                None => Box::new(sized_box(self.child).padding(pad)),
+            },
             GroupBoxVariant::Fill => Box::new(
                 sized_box(self.child)
                     .padding(pad)
-                    .background_color(theme.palette.surface)
+                    .background_color(background.unwrap_or(theme.palette.surface))
                     .corner_radius(radius),
             ),
-            GroupBoxVariant::Outline => Box::new(
-                sized_box(self.child)
-                    .padding(pad)
-                    .border(theme.palette.border, Length::px(1.0))
-                    .corner_radius(radius),
-            ),
+            GroupBoxVariant::Outline => match background {
+                Some(c) => Box::new(
+                    sized_box(self.child)
+                        .padding(pad)
+                        .background_color(c)
+                        .border(theme.palette.border, Length::px(1.0))
+                        .corner_radius(radius),
+                ),
+                None => Box::new(
+                    sized_box(self.child)
+                        .padding(pad)
+                        .border(theme.palette.border, Length::px(1.0))
+                        .corner_radius(radius),
+                ),
+            },
         };
 
         match self.title {
             Some(title) => {
                 let title_label = label(title)
                     .text_size(theme.typography.size_caption)
-                    .color(theme.palette.text_muted)
+                    .color(self.title_color.unwrap_or(theme.palette.text_muted))
                     .render(theme);
                 Box::new(
                     flex_col((title_label, content))
