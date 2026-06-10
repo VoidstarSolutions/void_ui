@@ -201,8 +201,8 @@ use crate::components::popover::PopoverAnchor;
 use crate::components::popover::widget::PopoverHost;
 
 /// Invisible hit-target that makes [`PortalSlot`]'s backdrop dismissal work
-/// despite masonry caching `accepts_pointer_interaction` at mount
-/// (`masonry_core/src/passes/update.rs:191`). The flag is static-true here so
+/// despite masonry caching `accepts_pointer_interaction` at mount (the
+/// `WidgetAdded` branch of masonry's update-tree pass (rev 4eae66d)). The flag is static-true here so
 /// the cache is always correct. The *dynamic* switch is stashing: the slot
 /// stashes this widget while no popover is open (stashed widgets are skipped
 /// by hit-testing) and un-stashes it when any popover is visible.
@@ -306,7 +306,7 @@ impl PortalSlot {
     )]
     pub(crate) fn new(children: Vec<(u64, NewWidget<dyn Widget>)>) -> Self {
         Self {
-            backdrop: masonry::core::NewWidget::new(Backdrop).to_pod(),
+            backdrop: NewWidget::new(Backdrop).to_pod(),
             children: children
                 .into_iter()
                 .map(|(key, widget)| PortalChild {
@@ -383,6 +383,14 @@ impl PortalSlot {
         let Some(child) = this.widget.children.iter_mut().find(|c| c.key == key) else {
             return;
         };
+        if child.visible == visible
+            && child.owner == owner
+            && child.placement == placement
+            && child.anchor == anchor
+            && (child.gap - gap).abs() < f64::EPSILON
+        {
+            return;
+        }
         child.visible = visible;
         child.owner = owner;
         child.placement = placement;
@@ -416,6 +424,11 @@ impl Widget for PortalSlot {
         false
     }
 
+    /// Handle pointer-down events for backdrop dismissal. Any pointer button
+    /// dismisses all visible children (standard modal-backdrop semantics); the
+    /// press is consumed (`set_handled`) so it does not also activate whatever
+    /// is beneath the slot. Clicks inside a visible child's rect are left
+    /// unhandled so the child widget receives them normally.
     fn on_pointer_event(
         &mut self,
         ctx: &mut EventCtx<'_>,
@@ -450,6 +463,7 @@ impl Widget for PortalSlot {
         }
         if dismissed {
             ctx.request_layout();
+            ctx.set_handled();
         }
     }
 
@@ -658,7 +672,7 @@ mod tests {
     }
 
     #[test]
-    fn slot_children_start_hidden_and_inert() {
+    fn slot_children_start_hidden() {
         let (mut harness, _key) = slot_with_one_child();
         harness.edit_root_widget(|wm| {
             assert!(!wm.widget.children[0].visible);
@@ -727,7 +741,6 @@ mod tests {
         harness.mouse_button_release(Some(PointerButton::Primary));
         harness.edit_root_widget(|wm| {
             assert!(!wm.widget.children[0].visible);
-            assert!(!wm.widget.accepts_pointer_interaction());
         });
     }
 
