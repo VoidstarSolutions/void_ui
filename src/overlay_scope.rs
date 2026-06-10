@@ -17,6 +17,9 @@
 //! [`OverlayScope::set_overlay`]. See [`crate::components::dropdown_button`]
 //! for the reference consumer (which falls back to [`crate::AnchoredOverlay`]
 //! when no scope ancestor exists).
+//!
+//! A permanent [`crate::overlay_portal::PortalSlot`] child is registered last
+//! so that view-level portal content also paints above everything in the scope.
 
 use std::marker::PhantomData;
 use std::sync::{Arc, OnceLock};
@@ -33,6 +36,7 @@ use xilem_masonry::core::{MessageCtx, MessageResult, Mut, Resource, View, ViewMa
 use xilem_masonry::{Pod, ViewCtx, WidgetView};
 
 use crate::components::popover::PopoverAnchor;
+use crate::overlay_portal::PortalSlot;
 
 /// Resource published into the Xilem [`Environment`](xilem_masonry::core::Environment)
 /// by [`overlay_scope`], letting arbitrary descendants discover the scope's
@@ -82,6 +86,7 @@ pub struct OverlayScope {
     handle: OverlayScopeHandle,
     content: WidgetPod<dyn Widget>,
     overlay: Option<WidgetPod<dyn Widget>>,
+    portal_slot: WidgetPod<PortalSlot>,
     placement: Rect,
     anchor: PopoverAnchor,
     /// Overlay's placed rect in local coordinates (set during `layout`,
@@ -90,11 +95,16 @@ pub struct OverlayScope {
 }
 
 impl OverlayScope {
-    fn new(handle: OverlayScopeHandle, content: NewWidget<dyn Widget>) -> Self {
+    pub(crate) fn new(
+        handle: OverlayScopeHandle,
+        content: NewWidget<dyn Widget>,
+        portal_children: Vec<(u64, NewWidget<dyn Widget>)>,
+    ) -> Self {
         Self {
             handle,
             content: content.to_pod(),
             overlay: None,
+            portal_slot: NewWidget::new(PortalSlot::new(portal_children)).to_pod(),
             placement: Rect::ZERO,
             anchor: PopoverAnchor::BottomStart,
             placed_overlay_rect: Rect::ZERO,
@@ -160,6 +170,44 @@ impl OverlayScope {
     pub fn placed_overlay_rect(&self) -> Rect {
         self.placed_overlay_rect
     }
+
+    /// Mutable access to the portal slot for the scope view and tests.
+    pub(crate) fn portal_slot_mut<'t>(
+        this: &'t mut WidgetMut<'_, Self>,
+    ) -> WidgetMut<'t, PortalSlot> {
+        this.ctx.get_mut(&mut this.widget.portal_slot)
+    }
+
+    /// Show/hide a portal child. `anchor_rect_window` is the trigger's box in
+    /// *window* coordinates; converted here with `to_local` exactly like the
+    /// dropdown's scope push (robust to scrolling/transforms between the
+    /// scope and the trigger).
+    pub fn set_portal_visible(
+        this: &mut WidgetMut<'_, Self>,
+        key: u64,
+        visible: bool,
+        owner: Option<WidgetId>,
+        anchor_rect_window: Rect,
+        anchor: PopoverAnchor,
+        gap: f64,
+    ) {
+        let local_origin = this.ctx.to_local(anchor_rect_window.origin());
+        let placement = Rect::from_origin_size(local_origin, anchor_rect_window.size());
+        let mut slot = Self::portal_slot_mut(this);
+        PortalSlot::set_visible(&mut slot, key, visible, owner, placement, anchor, gap);
+    }
+
+    /// Re-anchor a visible portal child as its trigger moves.
+    pub fn set_portal_placement(
+        this: &mut WidgetMut<'_, Self>,
+        key: u64,
+        anchor_rect_window: Rect,
+    ) {
+        let local_origin = this.ctx.to_local(anchor_rect_window.origin());
+        let placement = Rect::from_origin_size(local_origin, anchor_rect_window.size());
+        let mut slot = Self::portal_slot_mut(this);
+        PortalSlot::set_placement(&mut slot, key, placement);
+    }
 }
 
 impl Widget for OverlayScope {
@@ -170,10 +218,13 @@ impl Widget for OverlayScope {
         // the overlay always draws on top of content and everything inside
         // it, including later siblings within the scope. This ordering *is*
         // the entire mechanism; nothing else makes the overlay "win".
+        // The portal_slot is registered last so view-level portal content
+        // also paints above everything in the scope.
         ctx.register_child(&mut self.content);
         if let Some(overlay) = &mut self.overlay {
             ctx.register_child(overlay);
         }
+        ctx.register_child(&mut self.portal_slot);
     }
 
     fn measure(
@@ -223,6 +274,9 @@ impl Widget for OverlayScope {
         } else {
             self.placed_overlay_rect = Rect::ZERO;
         }
+
+        ctx.run_layout(&mut self.portal_slot, size);
+        ctx.place_child(&mut self.portal_slot, Point::ORIGIN);
     }
 
     fn paint(
@@ -261,8 +315,10 @@ impl Widget for OverlayScope {
 
     fn children_ids(&self) -> ChildrenIds {
         match &self.overlay {
-            Some(overlay) => ChildrenIds::from_slice(&[self.content.id(), overlay.id()]),
-            None => ChildrenIds::from_slice(&[self.content.id()]),
+            Some(overlay) => {
+                ChildrenIds::from_slice(&[self.content.id(), overlay.id(), self.portal_slot.id()])
+            }
+            None => ChildrenIds::from_slice(&[self.content.id(), self.portal_slot.id()]),
         }
     }
 }
@@ -318,7 +374,8 @@ where
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let (content, content_state) = self.content.build(ctx, app_state);
-        let widget = OverlayScope::new(self.handle.clone(), content.new_widget.erased());
+        let widget =
+            OverlayScope::new(self.handle.clone(), content.new_widget.erased(), Vec::new());
         (ctx.create_pod(widget), content_state)
     }
 
@@ -360,5 +417,46 @@ where
         let mut content = OverlayScope::content_mut(&mut element);
         self.content
             .message(view_state, message, content.downcast(), app_state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use masonry::core::NewWidget;
+    use masonry::kurbo::Rect;
+    use masonry::testing::TestHarness;
+
+    use super::*;
+
+    #[test]
+    fn set_portal_visible_converts_window_rect_and_shows_the_slot_child() {
+        let key = 3;
+        let content = masonry::widgets::Label::new("content").prepare().erased();
+        let popover = masonry::widgets::Label::new("popover").prepare().erased();
+        let scope = OverlayScope::new(OverlayScopeHandle::new(), content, vec![(key, popover)]);
+        let mut harness = TestHarness::create(
+            masonry::theme::default_property_set(),
+            NewWidget::new(scope),
+        );
+        harness.edit_root_widget(|mut wm| {
+            OverlayScope::set_portal_visible(
+                &mut wm,
+                key,
+                true,
+                None,
+                Rect::new(10.0, 10.0, 110.0, 40.0),
+                PopoverAnchor::BottomStart,
+                4.0,
+            );
+        });
+        // The scope sits at the window origin, so window == local coords and
+        // the slot child must be placed at (10, 44).
+        harness.mouse_move(masonry::kurbo::Point::ZERO);
+        harness.edit_root_widget(|mut wm| {
+            let slot = OverlayScope::portal_slot_mut(&mut wm);
+            let placed = slot.widget.placed_rect(key).expect("child placed");
+            assert!((placed.x0 - 10.0).abs() < 1e-9);
+            assert!((placed.y0 - 44.0).abs() < 1e-9);
+        });
     }
 }

@@ -300,10 +300,6 @@ pub struct PortalSlot {
 
 impl PortalSlot {
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "consumed by overlay_scope view in a later commit")
-    )]
     pub(crate) fn new(children: Vec<(u64, NewWidget<dyn Widget>)>) -> Self {
         Self {
             backdrop: NewWidget::new(Backdrop).to_pod(),
@@ -367,10 +363,6 @@ impl PortalSlot {
     /// Show or hide the child for `key`, with its anchor placement
     /// (scope-local coordinates). Plain data only — safe to call from a
     /// `mutate_later` callback.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "consumed by overlay_scope view in a later commit")
-    )]
     pub(crate) fn set_visible(
         this: &mut WidgetMut<'_, Self>,
         key: u64,
@@ -399,9 +391,21 @@ impl PortalSlot {
         this.ctx.request_layout();
     }
 
+    /// The placed rect for `key`'s child (local coords), valid while visible.
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "consumed by overlay_scope view in a later commit")
+    )]
+    pub(crate) fn placed_rect(&self, key: u64) -> Option<Rect> {
+        self.children
+            .iter()
+            .find(|c| c.key == key && c.visible)
+            .map(|c| c.placed)
+    }
+
     /// Re-anchor a visible child as its trigger moves (scrolling). No-op if
     /// the key is unknown or hidden.
-    #[expect(dead_code, reason = "consumed by overlay_scope view in a later commit")]
     pub(crate) fn set_placement(this: &mut WidgetMut<'_, Self>, key: u64, placement: Rect) {
         let Some(child) = this.widget.children.iter_mut().find(|c| c.key == key) else {
             return;
