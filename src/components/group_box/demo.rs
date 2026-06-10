@@ -86,7 +86,7 @@ fn default_section(theme: &Theme, state: &GroupBoxDemo) -> Box<AnyWidgetView<Gro
     group_box(
         flex_col((
             checkbox(sub_all, |s: &mut GroupBoxDemo| {
-                s.subscriptions[0] = !s.subscriptions[0]
+                s.subscriptions[0] = !s.subscriptions[0];
             })
             .label("All")
             .render(theme),
