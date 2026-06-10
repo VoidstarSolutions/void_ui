@@ -116,6 +116,21 @@ impl PopoverHost {
         }
     }
 
+    /// Sync the host's `open` flag after the portal slot dismissed its
+    /// content (backdrop click). The slot already hid the content; this
+    /// only keeps the trigger's notion of "open" honest so the next click
+    /// re-opens instead of "closing" an already-closed popover.
+    #[expect(
+        dead_code,
+        reason = "consumed by PortalSlot dismiss handler in a later task"
+    )]
+    pub(crate) fn mark_closed(this: &mut WidgetMut<'_, Self>) {
+        if this.widget.open {
+            this.widget.open = false;
+            this.ctx.request_paint_only();
+        }
+    }
+
     /// Mutable access to the `overlay_host` for the view layer, which threads
     /// both the trigger (`overlay_host_mut → AnchoredOverlay::primary_mut`)
     /// and the content
@@ -292,7 +307,7 @@ impl Widget for PopoverHost {
 /// arbitrary popover content. `AnchoredOverlay` is purely structural — it
 /// doesn't paint chrome — so whatever it hosts must paint its own (mirrors
 /// `MenuContent`, which does the same for dropdown menus).
-pub(super) struct PopoverSurface {
+pub(crate) struct PopoverSurface {
     content: WidgetPod<dyn Widget>,
     bg: Color,
     border: Color,
@@ -300,7 +315,7 @@ pub(super) struct PopoverSurface {
 }
 
 impl PopoverSurface {
-    fn new(content: NewWidget<dyn Widget>, theme: &Theme) -> Self {
+    pub(crate) fn new(content: NewWidget<dyn Widget>, theme: &Theme) -> Self {
         Self {
             content: content.to_pod(),
             bg: theme.palette.surface_hi,
@@ -309,7 +324,7 @@ impl PopoverSurface {
         }
     }
 
-    fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
+    pub(crate) fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
         let bg = theme.palette.surface_hi;
         let border = theme.palette.border_strong;
         if this.widget.bg != bg || this.widget.border != border {
@@ -325,7 +340,7 @@ impl PopoverSurface {
     }
 
     /// Mutable access to the wrapped content for the view layer.
-    pub(super) fn content_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
+    pub(crate) fn content_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
         this.ctx.get_mut(&mut this.widget.content)
     }
 }
