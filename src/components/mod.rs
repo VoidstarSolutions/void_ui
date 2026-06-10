@@ -21,6 +21,7 @@ pub mod code_view;
 pub mod collapsible;
 pub mod data_grid;
 pub mod dropdown_button;
+pub mod group_box;
 pub mod icon;
 pub mod input;
 pub mod label;
@@ -48,6 +49,7 @@ pub use data_grid::{
     optional_text_column, text_column,
 };
 pub use dropdown_button::{DropdownButton, DropdownButtonView, dropdown_button};
+pub use group_box::{GroupBox, GroupBoxVariant, group_box};
 pub use icon::{Icon, IconName, icon};
 pub use input::{
     CurrencyFormat, CurrencyInput, Input, MaskedInput, NumberInput, currency_input,
@@ -86,6 +88,7 @@ pub enum ComponentKind {
     DropdownButton,
     Checkbox,
     Clipboard,
+    GroupBox,
     CodeView,
     Collapsible,
     DataGrid,
@@ -117,6 +120,7 @@ impl ComponentKind {
             Self::Checkbox => "Checkbox",
             Self::Clipboard => "Clipboard",
             Self::CodeView => "Code View",
+            Self::GroupBox => "Group Box",
             Self::Collapsible => "Collapsible",
             Self::DataGrid => "Data Grid",
             Self::Icon => "Icon",
@@ -149,6 +153,7 @@ impl ComponentKind {
             Self::Collapsible,
             Self::DataGrid,
             Self::DropdownButton,
+            Self::GroupBox,
             Self::Icon,
             Self::Input,
             Self::Label,
