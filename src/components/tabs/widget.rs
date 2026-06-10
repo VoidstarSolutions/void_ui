@@ -426,3 +426,187 @@ impl Widget for TabsWidget {
         false
     }
 }
+
+// --- MARK: TESTS
+
+#[cfg(test)]
+mod tests {
+    use masonry::testing::TestHarness;
+    use masonry::theme::default_property_set;
+    use masonry::widgets::SizedBox;
+
+    use super::*;
+
+    fn item(width: f64, height: f64) -> NewWidget<dyn Widget> {
+        NewWidget::new(SizedBox::empty().size(Length::px(width), Length::px(height))).erased()
+    }
+
+    fn widget(items: Vec<NewWidget<dyn Widget>>, variant: TabsVariant, selected: usize) -> TabsWidget {
+        TabsWidget::new(items, variant, selected, &Theme::default())
+    }
+
+    fn harness(items: Vec<NewWidget<dyn Widget>>, variant: TabsVariant, selected: usize) -> TestHarness<TabsWidget> {
+        TestHarness::create(
+            default_property_set(),
+            NewWidget::new(widget(items, variant, selected)),
+        )
+    }
+
+    // --- item_at ---
+
+    #[test]
+    fn item_at_returns_index_of_containing_rect() {
+        let mut w = widget(vec![], TabsVariant::Default, 0);
+        w.placed = vec![
+            Rect::from_origin_size(Point::ORIGIN, Size::new(50.0, 20.0)),
+            Rect::from_origin_size(Point::new(50.0, 0.0), Size::new(50.0, 20.0)),
+        ];
+        assert_eq!(w.item_at(Point::new(10.0, 10.0)), Some(0));
+        assert_eq!(w.item_at(Point::new(60.0, 10.0)), Some(1));
+        assert_eq!(w.item_at(Point::new(200.0, 10.0)), None);
+    }
+
+    // --- outer_pad / gap ---
+
+    #[test]
+    fn outer_pad_is_zero_only_for_underline_and_outline() {
+        for variant in [TabsVariant::Underline, TabsVariant::Outline] {
+            let w = widget(vec![], variant, 0);
+            assert_eq!(w.outer_pad(), 0.0, "{variant:?} should have no outer pad");
+        }
+        for variant in [
+            TabsVariant::Default,
+            TabsVariant::Pill,
+            TabsVariant::Segmented,
+            TabsVariant::SegmentedFill,
+        ] {
+            let w = widget(vec![], variant, 0);
+            assert!(
+                w.outer_pad() > 0.0,
+                "{variant:?} should frame the row with an outer pad"
+            );
+        }
+    }
+
+    #[test]
+    fn gap_and_outer_pad_scale_with_density() {
+        let mut theme = Theme::default();
+        theme.density.pad *= 2.0;
+        let scaled = TabsWidget::new(vec![], TabsVariant::Default, 0, &theme);
+        let base = widget(vec![], TabsVariant::Default, 0);
+        assert!(scaled.gap() > base.gap());
+        assert!(scaled.outer_pad() > base.outer_pad());
+    }
+
+    // --- layout ---
+
+    #[test]
+    fn layout_sizes_items_to_natural_width_for_default_variant() {
+        let mut h = harness(vec![item(40.0, 20.0), item(80.0, 20.0)], TabsVariant::Default, 0);
+        let placed = h.edit_root_widget(|wm| wm.widget.placed.clone());
+
+        assert_eq!(placed.len(), 2);
+        assert!(
+            placed[1].width() > placed[0].width(),
+            "wider content should produce a wider item box"
+        );
+        // Items don't overlap and are laid out left-to-right.
+        assert!(placed[0].x1 <= placed[1].x0 + 1e-6);
+    }
+
+    #[test]
+    fn layout_distributes_equal_widths_for_segmented_fill() {
+        let mut h = harness(
+            vec![item(40.0, 20.0), item(80.0, 20.0), item(20.0, 20.0)],
+            TabsVariant::SegmentedFill,
+            0,
+        );
+        let placed = h.edit_root_widget(|wm| wm.widget.placed.clone());
+
+        assert_eq!(placed.len(), 3);
+        let w0 = placed[0].width();
+        for r in &placed[1..] {
+            assert!(
+                (r.width() - w0).abs() < 1e-6,
+                "all segments should share the available width equally"
+            );
+        }
+    }
+
+    // --- pointer interaction ---
+
+    #[test]
+    fn clicking_an_unselected_item_emits_tab_selected() {
+        let mut h = harness(vec![item(40.0, 20.0), item(40.0, 20.0)], TabsVariant::Default, 0);
+        let target = h.edit_root_widget(|wm| wm.widget.placed[1].center());
+
+        h.mouse_move(target);
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+
+        let (action, widget_id) = h.pop_action::<TabSelected>().expect("expected an action");
+        assert_eq!(action.0, 1);
+        assert_eq!(widget_id, h.root_id());
+    }
+
+    #[test]
+    fn clicking_the_selected_item_emits_nothing() {
+        let mut h = harness(vec![item(40.0, 20.0), item(40.0, 20.0)], TabsVariant::Default, 0);
+        let target = h.edit_root_widget(|wm| wm.widget.placed[0].center());
+
+        h.mouse_move(target);
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+
+        assert!(h.pop_action::<TabSelected>().is_none());
+    }
+
+    #[test]
+    fn moving_over_an_item_sets_hovered() {
+        let mut h = harness(vec![item(40.0, 20.0), item(40.0, 20.0)], TabsVariant::Default, 0);
+        let target = h.edit_root_widget(|wm| wm.widget.placed[1].center());
+
+        h.mouse_move(target);
+        let hovered = h.edit_root_widget(|wm| wm.widget.hovered);
+        assert_eq!(hovered, Some(1));
+
+        // Moving outside the row clears hover.
+        h.mouse_move(Point::new(-10.0, -10.0));
+        let hovered = h.edit_root_widget(|wm| wm.widget.hovered);
+        assert_eq!(hovered, None);
+    }
+
+    // --- setters ---
+
+    #[test]
+    fn set_items_resets_interaction_state() {
+        let mut h = harness(vec![item(40.0, 20.0), item(40.0, 20.0)], TabsVariant::Default, 0);
+        let target = h.edit_root_widget(|wm| wm.widget.placed[1].center());
+        h.mouse_move(target);
+        assert_eq!(h.edit_root_widget(|wm| wm.widget.hovered), Some(1));
+
+        h.edit_root_widget(|mut wm| {
+            TabsWidget::set_items(&mut wm, vec![item(40.0, 20.0)]);
+        });
+
+        h.edit_root_widget(|wm| {
+            assert_eq!(wm.widget.hovered, None);
+            assert_eq!(wm.widget.pressed, None);
+            assert!(wm.widget.placed.is_empty());
+            assert_eq!(wm.widget.items.len(), 1);
+        });
+    }
+
+    #[test]
+    fn set_selected_and_set_variant_update_state() {
+        let mut h = harness(vec![item(40.0, 20.0), item(40.0, 20.0)], TabsVariant::Default, 0);
+
+        h.edit_root_widget(|mut wm| {
+            TabsWidget::set_selected(&mut wm, 1);
+            assert_eq!(wm.widget.selected, 1);
+
+            TabsWidget::set_variant(&mut wm, TabsVariant::Pill);
+            assert_eq!(wm.widget.variant, TabsVariant::Pill);
+        });
+    }
+}
