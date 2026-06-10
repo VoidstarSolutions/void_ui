@@ -1,23 +1,25 @@
 //! Xilem view for the themed single-line text input.
 //!
-//! Wraps `masonry::widgets::TextInput` (which itself owns a `TextArea` child
-//! that does the actual text editing — caret, selection, IME) and themes its
-//! chrome from a [`Theme`] snapshot. We build the masonry widget directly
-//! rather than going through xilem's `text_input` view because that view only
-//! exposes the text/caret/selection/placeholder colors: the box chrome
-//! (background, border, corner radius, padding) is gated behind
-//! `UsesProperty`, which `TextInput` does not declare for those properties.
-//! Inserting them on the raw masonry `PropertySet` / `WidgetMut` — as we do
-//! here — bypasses that gate and lets the field match the active theme.
+//! The public [`input`] builder composes three dogfooded views: a themed
+//! [`sized_box`](xilem::view::sized_box) that draws the field chrome (border,
+//! background, corner radius, padding), a [`flex_row`](xilem::view::flex_row)
+//! holding the optional prefix/suffix affixes and the editor, and the
+//! [`InputView`] core. The core builds `masonry::widgets::TextInput` directly
+//! (reusing its `TextArea` child for caret/selection/IME) inside an
+//! [`InputFrame`], which is the masonry seam that adds Esc-to-clear; the
+//! `TextInput`'s own chrome is stripped to transparent so only the surrounding
+//! `sized_box` paints it.
 //!
 //! ```ignore
 //! use void_ui::components::input::input;
-//! input(state.name.clone(), |s: &mut State, text| s.name = text)
-//!     .placeholder("Your name")
+//! input(state.amount.clone(), |s: &mut State, text| s.amount = text)
+//!     .prefix("$")
+//!     .suffix("USD")
+//!     .placeholder("0.00")
 //!     .render(&theme)
 //! ```
 //!
-//! The contents are host-controlled: the widget emits the new string on every
+//! The contents are host-controlled: the field emits the new string on every
 //! edit via the change callback, and the host stores it and passes it back in
 //! on the next render. This mirrors every other interactive void-ui component.
 
@@ -26,21 +28,28 @@ use std::marker::PhantomData;
 use masonry::core::{ArcStr, NewWidget, PropertySet};
 use masonry::layout::Length;
 use masonry::parley::StyleProperty;
+use masonry::peniko::Color;
 use masonry::properties::{
-    Background, BorderColor, BorderWidth, CaretColor, ContentColor, CornerRadius, Padding,
-    PlaceholderColor, SelectionColor,
+    Background, BorderWidth, CaretColor, ContentColor, Padding, PlaceholderColor, SelectionColor,
 };
 use masonry::widgets::{self, TextAction};
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
-use xilem::{Pod, ViewCtx};
+use xilem::style::Style as _;
+use xilem::view::{CrossAxisAlignment, FlexExt as _, flex_row, sized_box};
+use xilem::{Pod, ViewCtx, WidgetView};
 
 use super::widget::{InputCleared, InputFrame};
 use crate::Theme;
+use crate::label;
 
 /// Hairline border around the field. Component-local like every other bordered
 /// widget (tooltip, checkbox, code view); a 1px stroke doesn't scale with
 /// density. Inner padding, by contrast, is read from `Theme.density`.
 const BORDER_WIDTH: Length = Length::const_px(1.0);
+
+/// Fully transparent fill, used to suppress the inner `TextInput`'s default
+/// masonry chrome so only the surrounding `sized_box` paints the field.
+const TRANSPARENT: Color = Color::from_rgba8(0, 0, 0, 0);
 
 /// Builder for a themed single-line text input.
 ///
@@ -50,6 +59,8 @@ pub struct Input<F> {
     contents: String,
     placeholder: ArcStr,
     disabled: bool,
+    prefix: Option<ArcStr>,
+    suffix: Option<ArcStr>,
     callback: F,
 }
 
@@ -64,6 +75,8 @@ pub fn input<F>(contents: impl Into<String>, on_changed: F) -> Input<F> {
         contents: contents.into(),
         placeholder: ArcStr::default(),
         disabled: false,
+        prefix: None,
+        suffix: None,
         callback: on_changed,
     }
 }
@@ -81,27 +94,76 @@ impl<F> Input<F> {
         self
     }
 
+    /// Set a leading affix shown inside the border, before the editor (e.g.
+    /// `$`, `https://`). Decorative and non-interactive.
+    pub fn prefix(mut self, text: impl Into<ArcStr>) -> Self {
+        self.prefix = Some(text.into());
+        self
+    }
+
+    /// Set a trailing affix shown inside the border, after the editor (e.g.
+    /// `USD`, `.00`). Decorative and non-interactive.
+    pub fn suffix(mut self, text: impl Into<ArcStr>) -> Self {
+        self.suffix = Some(text.into());
+        self
+    }
+
     /// Materialize the xilem view at the supplied theme.
-    pub fn render<State, Action>(self, theme: &Theme) -> InputView<F, State, Action>
+    pub fn render<State, Action>(
+        self,
+        theme: &Theme,
+    ) -> impl WidgetView<State, Action> + use<F, State, Action>
     where
         State: 'static,
         Action: 'static,
         F: Fn(&mut State, String) -> Action + Send + Sync + 'static,
     {
-        InputView {
+        // Affixes are muted labels sharing the field background. Absent slots
+        // become `None`, which renders nothing (no stray gap).
+        let prefix = self
+            .prefix
+            .map(|text| label(text).color(theme.palette.text_muted).render(theme));
+        let suffix = self
+            .suffix
+            .map(|text| label(text).color(theme.palette.text_muted).render(theme));
+
+        let core = InputView {
             contents: self.contents,
             placeholder: self.placeholder,
             disabled: self.disabled,
             theme: *theme,
             callback: self.callback,
             phantom: PhantomData,
-        }
+        };
+
+        // Editor takes the remaining width; affixes hug the ends.
+        let row = flex_row((prefix, core.flex(1.0), suffix))
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .gap(Length::px(f64::from(theme.density.col)));
+
+        // The chrome lives here so it encloses the affixes and the editor as
+        // one field.
+        sized_box(row)
+            .background_color(theme.palette.surface)
+            .border(theme.palette.border, BORDER_WIDTH)
+            .corner_radius(Length::px(f64::from(theme.radius.small)))
+            .padding(field_padding(theme))
     }
 }
 
-/// The materialized [`View`] backing an [`Input`].
+/// Inner padding between the field border and its content, from the theme's
+/// button density so the field lines up with buttons of the same theme.
+fn field_padding(theme: &Theme) -> Padding {
+    Padding::from_vh(
+        Length::px(f64::from(theme.density.button_pad_v)),
+        Length::px(f64::from(theme.density.button_pad_h)),
+    )
+}
+
+/// The materialized [`View`] backing the editor core of an [`Input`].
 ///
 /// Built only through [`Input::render`]; not constructed directly by callers.
+/// Carries no chrome of its own — the surrounding `sized_box` does.
 #[must_use = "View values do nothing unless provided to Xilem."]
 pub struct InputView<F, State, Action> {
     contents: String,
@@ -124,15 +186,6 @@ impl<F, State, Action> InputView<F, State, Action> {
             color: self.theme.palette.teal_soft,
         });
         props
-    }
-
-    /// Padding inside the field, derived from the theme's button density so
-    /// the field's height lines up with buttons of the same theme.
-    fn padding(&self) -> Padding {
-        Padding::from_vh(
-            Length::px(f64::from(self.theme.density.button_pad_v)),
-            Length::px(f64::from(self.theme.density.button_pad_h)),
-        )
     }
 }
 
@@ -161,20 +214,15 @@ where
         // TextInput is moved into the frame.
         let area_id = text_input.area_pod().id();
 
-        // Carry the box chrome on the TextInput (the widget that paints it),
-        // then wrap it in the frame that owns Esc-to-clear.
+        // Strip the masonry default chrome (border/background/padding): the
+        // surrounding sized_box paints the field. Keep only the themed
+        // placeholder color and the disabled flag.
         let mut input = NewWidget::new(text_input);
+        input.properties.insert(Background::Color(TRANSPARENT));
         input
             .properties
-            .insert(Background::Color(self.theme.palette.surface));
-        input
-            .properties
-            .insert(BorderColor::new(self.theme.palette.border));
-        input.properties.insert(BorderWidth::all(BORDER_WIDTH));
-        input.properties.insert(CornerRadius {
-            radius: Length::px(f64::from(self.theme.radius.small)),
-        });
-        input.properties.insert(self.padding());
+            .insert(BorderWidth::all(Length::const_px(0.0)));
+        input.properties.insert(Padding::all(Length::const_px(0.0)));
         input
             .properties
             .insert(PlaceholderColor::new(self.theme.palette.text_muted));
@@ -203,13 +251,6 @@ where
         let mut text_input = child.downcast::<widgets::TextInput>();
 
         if theme_changed {
-            text_input.insert_prop(Background::Color(self.theme.palette.surface));
-            text_input.insert_prop(BorderColor::new(self.theme.palette.border));
-            text_input.insert_prop(BorderWidth::all(BORDER_WIDTH));
-            text_input.insert_prop(CornerRadius {
-                radius: Length::px(f64::from(self.theme.radius.small)),
-            });
-            text_input.insert_prop(self.padding());
             text_input.insert_prop(PlaceholderColor::new(self.theme.palette.text_muted));
         }
         if self.placeholder != prev.placeholder {

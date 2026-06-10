@@ -9,9 +9,9 @@
 //! field's contents itself.
 //!
 //! Layout, measurement, and chrome are delegated to the child; the frame paints
-//! nothing of its own. This is also the seam the rest of the input family will
-//! grow into (prefix/suffix slots, steppers): a widget we own, wrapping the
-//! upstream editor.
+//! nothing of its own. Affixes (prefix/suffix) and the field chrome compose
+//! *around* this frame at the view layer; the frame's job is keyboard behavior
+//! the upstream editor lacks.
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::keyboard::{Key, NamedKey};

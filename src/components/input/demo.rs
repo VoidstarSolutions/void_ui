@@ -23,6 +23,8 @@ const FIELD_WIDTH: f64 = 240.0;
 struct InputDemo {
     name: String,
     email: String,
+    amount: String,
+    site: String,
 }
 
 impl InputDemo {
@@ -30,6 +32,8 @@ impl InputDemo {
         Self {
             name: "Ada Lovelace".to_owned(),
             email: String::new(),
+            amount: "1250.00".to_owned(),
+            site: String::new(),
         }
     }
 }
@@ -103,6 +107,30 @@ fn build_inner(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo> +
         .gap(Length::px(16.0))
     });
 
+    // Leading/trailing affixes inside the field border.
+    let affixes = with_source!(theme, {
+        flex_row((
+            field(
+                theme,
+                "Amount",
+                input(state.amount.clone(), |s: &mut InputDemo, text| s.amount = text)
+                    .prefix("$")
+                    .suffix("USD")
+                    .render(theme),
+            ),
+            field(
+                theme,
+                "Website",
+                input(state.site.clone(), |s: &mut InputDemo, text| s.site = text)
+                    .prefix("https://")
+                    .placeholder("example.com")
+                    .render(theme),
+            ),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .gap(Length::px(16.0))
+    });
+
     // A disabled field does not accept input and paints muted.
     let disabled = with_source!(theme, {
         field(
@@ -138,6 +166,8 @@ fn build_inner(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo> +
             separator().render(theme),
             header("Editable"),
             editable,
+            header("Prefix & suffix"),
+            affixes,
             header("Disabled"),
             disabled,
         ))
