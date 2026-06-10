@@ -99,10 +99,12 @@ fn number_section(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo
             field(
                 theme,
                 "Price",
-                number_input(state.price.clone(), |s: &mut InputDemo, text| s.price = text)
-                    .prefix("$")
-                    .step(0.5)
-                    .render(theme),
+                number_input(state.price.clone(), |s: &mut InputDemo, text| {
+                    s.price = text;
+                })
+                .prefix("$")
+                .step(0.5)
+                .render(theme),
             ),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
@@ -130,9 +132,11 @@ fn build_inner(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo> +
             field(
                 theme,
                 "Email",
-                input(state.email.clone(), |s: &mut InputDemo, text| s.email = text)
-                    .placeholder("you@example.com")
-                    .render(theme),
+                input(state.email.clone(), |s: &mut InputDemo, text| {
+                    s.email = text;
+                })
+                .placeholder("you@example.com")
+                .render(theme),
             ),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
@@ -145,10 +149,12 @@ fn build_inner(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo> +
             field(
                 theme,
                 "Amount",
-                input(state.amount.clone(), |s: &mut InputDemo, text| s.amount = text)
-                    .prefix("$")
-                    .suffix("USD")
-                    .render(theme),
+                input(state.amount.clone(), |s: &mut InputDemo, text| {
+                    s.amount = text;
+                })
+                .prefix("$")
+                .suffix("USD")
+                .render(theme),
             ),
             field(
                 theme,
@@ -244,7 +250,13 @@ impl<S: 'static> View<S, (), ViewCtx> for InputDemoPanel {
         _: &mut S,
     ) {
         let new_inner: InnerView = Box::new(build_inner(&self.theme, &vs.input));
-        new_inner.rebuild(&vs.inner_view, &mut vs.inner_state, ctx, element, &mut vs.input);
+        new_inner.rebuild(
+            &vs.inner_view,
+            &mut vs.inner_state,
+            ctx,
+            element,
+            &mut vs.input,
+        );
         vs.inner_view = new_inner;
     }
 
