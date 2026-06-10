@@ -122,7 +122,8 @@ fn build_inner(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo> +
         label(
             "Single-line text field. Contents are host-controlled: the field \
              emits the updated string on every edit and the host stores it and \
-             passes it back in on the next render.",
+             passes it back in on the next render. Press Esc in a focused field \
+             to clear it.",
         )
         .color(theme.palette.text_muted)
         .multiline(true)

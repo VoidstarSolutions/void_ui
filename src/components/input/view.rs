@@ -34,6 +34,7 @@ use masonry::widgets::{self, TextAction};
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx};
 
+use super::widget::{InputCleared, InputFrame};
 use crate::Theme;
 
 /// Hairline border around the field. Component-local like every other bordered
@@ -143,7 +144,7 @@ where
     State: 'static,
     Action: 'static,
 {
-    type Element = Pod<widgets::TextInput>;
+    type Element = Pod<InputFrame>;
     type ViewState = ();
 
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
@@ -156,27 +157,34 @@ where
         .with_placeholder(self.placeholder.clone())
         .with_clip(true);
 
-        // The inner TextArea is the widget that actually emits text actions;
-        // route them so this view's `message` is reached.
-        let id = text_input.area_pod().id();
-        ctx.record_action_source(id);
+        // The inner TextArea emits the text edits; capture its id before the
+        // TextInput is moved into the frame.
+        let area_id = text_input.area_pod().id();
 
-        let mut pod = ctx.create_pod(text_input);
-        pod.new_widget
+        // Carry the box chrome on the TextInput (the widget that paints it),
+        // then wrap it in the frame that owns Esc-to-clear.
+        let mut input = NewWidget::new(text_input);
+        input
             .properties
             .insert(Background::Color(self.theme.palette.surface));
-        pod.new_widget
+        input
             .properties
             .insert(BorderColor::new(self.theme.palette.border));
-        pod.new_widget.properties.insert(BorderWidth::all(BORDER_WIDTH));
-        pod.new_widget.properties.insert(CornerRadius {
+        input.properties.insert(BorderWidth::all(BORDER_WIDTH));
+        input.properties.insert(CornerRadius {
             radius: Length::px(f64::from(self.theme.radius.small)),
         });
-        pod.new_widget.properties.insert(self.padding());
-        pod.new_widget
+        input.properties.insert(self.padding());
+        input
             .properties
             .insert(PlaceholderColor::new(self.theme.palette.text_muted));
-        pod.new_widget.options.disabled = self.disabled;
+        input.options.disabled = self.disabled;
+
+        let pod = ctx.create_pod(InputFrame::new(input));
+        // Route both sources to this view: the frame (Escape -> InputCleared)
+        // and the inner TextArea (edits -> TextAction).
+        ctx.record_action_source(pod.new_widget.id());
+        ctx.record_action_source(area_id);
         (pod, ())
     }
 
@@ -190,24 +198,28 @@ where
     ) {
         let theme_changed = self.theme != prev.theme;
 
+        // The element is the frame; reach the TextInput it hosts.
+        let mut child = InputFrame::child_mut(&mut element);
+        let mut text_input = child.downcast::<widgets::TextInput>();
+
         if theme_changed {
-            element.insert_prop(Background::Color(self.theme.palette.surface));
-            element.insert_prop(BorderColor::new(self.theme.palette.border));
-            element.insert_prop(BorderWidth::all(BORDER_WIDTH));
-            element.insert_prop(CornerRadius {
+            text_input.insert_prop(Background::Color(self.theme.palette.surface));
+            text_input.insert_prop(BorderColor::new(self.theme.palette.border));
+            text_input.insert_prop(BorderWidth::all(BORDER_WIDTH));
+            text_input.insert_prop(CornerRadius {
                 radius: Length::px(f64::from(self.theme.radius.small)),
             });
-            element.insert_prop(self.padding());
-            element.insert_prop(PlaceholderColor::new(self.theme.palette.text_muted));
+            text_input.insert_prop(self.padding());
+            text_input.insert_prop(PlaceholderColor::new(self.theme.palette.text_muted));
         }
         if self.placeholder != prev.placeholder {
-            widgets::TextInput::set_placeholder(&mut element, self.placeholder.clone());
+            widgets::TextInput::set_placeholder(&mut text_input, self.placeholder.clone());
         }
         if self.disabled != prev.disabled {
-            element.ctx.set_disabled(self.disabled);
+            text_input.ctx.set_disabled(self.disabled);
         }
 
-        let mut text_area = widgets::TextInput::text_mut(&mut element);
+        let mut text_area = widgets::TextInput::text_mut(&mut text_input);
         if theme_changed {
             text_area.insert_prop(ContentColor::new(self.theme.palette.text));
             text_area.insert_prop(CaretColor {
@@ -244,14 +256,21 @@ where
         _element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        let Some(action) = message.take_message::<TextAction>() else {
-            tracing::error!(?message, "unexpected message type in InputView::message");
-            return MessageResult::Stale;
-        };
-        match *action {
-            TextAction::Changed(text) => MessageResult::Action((self.callback)(app_state, text)),
-            // Enter-to-submit is wired up in a later chunk; ignore for now.
-            TextAction::Entered(_) => MessageResult::Nop,
+        if let Some(action) = message.take_message::<TextAction>() {
+            return match *action {
+                TextAction::Changed(text) => {
+                    MessageResult::Action((self.callback)(app_state, text))
+                }
+                // Enter-to-submit is wired up in a later chunk; ignore for now.
+                TextAction::Entered(_) => MessageResult::Nop,
+            };
         }
+        // Escape in the focused field clears it: emit an empty-string change so
+        // the host updates its own state.
+        if message.take_message::<InputCleared>().is_some() {
+            return MessageResult::Action((self.callback)(app_state, String::new()));
+        }
+        tracing::error!(?message, "unexpected message type in InputView::message");
+        MessageResult::Stale
     }
 }

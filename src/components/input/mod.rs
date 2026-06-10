@@ -12,5 +12,6 @@
 #[cfg(feature = "gallery")]
 pub mod demo;
 mod view;
+pub mod widget;
 
 pub use view::{Input, InputView, input};
