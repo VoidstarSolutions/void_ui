@@ -9,11 +9,13 @@
 //! currency, masked); those build on this base rather than re-wrapping the
 //! masonry widget themselves.
 
+mod currency;
 #[cfg(feature = "gallery")]
 pub mod demo;
 mod number;
 mod view;
 pub mod widget;
 
+pub use currency::{CurrencyFormat, CurrencyInput, currency_input};
 pub use number::{NumberInput, number_input};
 pub use view::{Input, input};

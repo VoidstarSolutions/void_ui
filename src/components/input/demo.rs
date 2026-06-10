@@ -9,7 +9,7 @@ use crate::label;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
-use super::{input, number_input};
+use super::{CurrencyFormat, currency_input, input, number_input};
 use crate::Theme;
 use crate::components::ScrollBarVisibility;
 use crate::scroll_container;
@@ -27,6 +27,8 @@ struct InputDemo {
     site: String,
     quantity: String,
     price: String,
+    usd: String,
+    eur: String,
 }
 
 impl InputDemo {
@@ -38,6 +40,8 @@ impl InputDemo {
             site: String::new(),
             quantity: "5".to_owned(),
             price: "9.5".to_owned(),
+            usd: "1250000".to_owned(),
+            eur: "1234567.89".to_owned(),
         }
     }
 }
@@ -112,6 +116,40 @@ fn number_section(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo
     })
 }
 
+/// Currency fields: numeric input grouped with a thousands separator and a
+/// currency symbol. Formatting is consumer-injected (US vs EU shown here).
+fn currency_section(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo> + use<> {
+    with_source!(theme, {
+        flex_row((
+            field(
+                theme,
+                "USD",
+                currency_input(state.usd.clone(), |s: &mut InputDemo, text| {
+                    s.usd = text;
+                })
+                .render(theme),
+            ),
+            field(
+                theme,
+                "EUR",
+                currency_input(state.eur.clone(), |s: &mut InputDemo, text| {
+                    s.eur = text;
+                })
+                .format(CurrencyFormat {
+                    symbol: "\u{20ac}".into(),
+                    symbol_suffix: true,
+                    group_separator: '.',
+                    decimal_separator: ',',
+                    decimal_places: 2,
+                })
+                .render(theme),
+            ),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .gap(Length::px(16.0))
+    })
+}
+
 fn build_inner(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo> + use<> {
     let header = |text: &'static str| {
         label(text)
@@ -170,6 +208,7 @@ fn build_inner(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo> +
     });
 
     let numbers = number_section(theme, state);
+    let currency = currency_section(theme, state);
 
     // A disabled field does not accept input and paints muted.
     let disabled = with_source!(theme, {
@@ -210,6 +249,8 @@ fn build_inner(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo> +
             affixes,
             header("Number"),
             numbers,
+            header("Currency"),
+            currency,
             header("Disabled"),
             disabled,
         ))
