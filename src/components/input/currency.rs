@@ -180,10 +180,11 @@ fn group_currency(text: &str, fmt: &CurrencyFormat) -> String {
     }
 
     // Currency has no insignificant leading zeros (no `$007.00`). Collapse
-    // them, but keep a single `0` so a zero amount and values like `0.50` still
-    // read naturally.
+    // them, but keep a single `0` so a zero amount (`000`) and a bare fraction
+    // (`.50` -> `0.50`) still read naturally. An entirely empty value stays
+    // empty so the placeholder can show.
     let significant = int_digits.trim_start_matches('0');
-    let int_part = if significant.is_empty() && !int_digits.is_empty() {
+    let int_part = if significant.is_empty() && (!int_digits.is_empty() || seen_decimal) {
         "0"
     } else {
         significant
@@ -287,6 +288,20 @@ mod tests {
     fn keeps_a_single_zero_for_zero_amounts() {
         assert_eq!(group_currency("000", &us()), "0");
         assert_eq!(group_currency("0.50", &us()), "0.50");
+    }
+
+    #[test]
+    fn normalizes_bare_fraction_with_leading_zero() {
+        assert_eq!(group_currency(".50", &us()), "0.50");
+        assert_eq!(group_currency("-.50", &us()), "-0.50");
+    }
+
+    #[test]
+    fn empty_input_stays_empty() {
+        // Must NOT become "0" — the field needs a true empty state for its
+        // placeholder.
+        assert_eq!(group_currency("", &us()), "");
+        assert_eq!(group_currency("-", &us()), "-");
     }
 
     #[test]
