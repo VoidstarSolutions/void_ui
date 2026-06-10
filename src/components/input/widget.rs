@@ -122,3 +122,58 @@ impl Widget for InputFrame {
         trace_span!("InputFrame", id = id.trace())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use masonry::core::keyboard::{Key, NamedKey};
+    use masonry::core::{NewWidget, TextEvent, WidgetId};
+    use masonry::testing::TestHarness;
+    use masonry::widgets::{TextArea, TextInput};
+
+    use super::{InputCleared, InputFrame};
+
+    /// Builds a harness wrapping a bare `InputFrame` and returns it along with
+    /// the id of the inner `TextArea`, the only focusable widget.
+    fn harness() -> (TestHarness<InputFrame>, WidgetId) {
+        let text_area = TextArea::new_editable("hello");
+        let text_input = TextInput::from_text_area(NewWidget::new(text_area));
+        let area_id = text_input.area_pod().id();
+        let frame = InputFrame::new(NewWidget::new(text_input));
+        (
+            TestHarness::create(masonry::theme::default_property_set(), NewWidget::new(frame)),
+            area_id,
+        )
+    }
+
+    #[test]
+    fn escape_in_focused_field_emits_input_cleared() {
+        let (mut harness, area_id) = harness();
+
+        harness.focus_on(Some(area_id));
+        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Escape)));
+
+        let (action, _) = harness
+            .pop_action::<InputCleared>()
+            .expect("Escape on the focused field should emit InputCleared");
+        assert_eq!(action, InputCleared);
+    }
+
+    #[test]
+    fn escape_without_focus_emits_nothing() {
+        let (mut harness, _area_id) = harness();
+
+        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Escape)));
+
+        assert!(harness.pop_action_erased().is_none());
+    }
+
+    #[test]
+    fn other_keys_emit_nothing() {
+        let (mut harness, area_id) = harness();
+
+        harness.focus_on(Some(area_id));
+        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowLeft)));
+
+        assert!(harness.pop_action_erased().is_none());
+    }
+}
