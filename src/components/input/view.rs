@@ -380,3 +380,118 @@ where
         MessageResult::Stale
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fmt;
+    use std::sync::Arc;
+
+    use masonry::core::ArcStr;
+    use masonry::testing::TestHarness;
+    use masonry::widgets::TextAction;
+    use xilem::ViewCtx;
+    use xilem::core::{
+        DynMessage, Environment, MessageCtx, MessageResult, ProxyError, RawProxy, SendMessage,
+        View, ViewId,
+    };
+
+    use super::super::widget::InputCleared;
+    use super::InputView;
+    use crate::Theme;
+
+    struct NoopProxy;
+    impl fmt::Debug for NoopProxy {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "NoopProxy")
+        }
+    }
+    impl RawProxy for NoopProxy {
+        fn send_message(
+            &self,
+            _path: Arc<[ViewId]>,
+            _message: SendMessage,
+        ) -> Result<(), ProxyError> {
+            Ok(())
+        }
+        fn dyn_debug(&self) -> &dyn fmt::Debug {
+            self
+        }
+    }
+
+    fn build_view_and_state() -> (ViewCtx, String) {
+        let runtime = Arc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap(),
+        );
+        let proxy: Arc<dyn RawProxy> = Arc::new(NoopProxy);
+        (ViewCtx::new(proxy, runtime), "hello".to_string())
+    }
+
+    #[test]
+    fn input_cleared_emits_empty_string_to_callback() {
+        let (mut ctx, mut state) = build_view_and_state();
+        let theme = Theme::default();
+        let view = InputView::new(
+            state.clone(),
+            ArcStr::default(),
+            false,
+            &theme,
+            |state: &mut String, text: String| *state = text,
+        );
+
+        let (pod, mut view_state) = View::<String, (), ViewCtx>::build(&view, &mut ctx, &mut state);
+        let mut harness =
+            TestHarness::create(masonry::theme::default_property_set(), pod.new_widget);
+
+        harness.edit_root_widget(|element| {
+            let mut message =
+                MessageCtx::new(Environment::new(), vec![], DynMessage::new(InputCleared));
+            let result = View::<String, (), ViewCtx>::message(
+                &view,
+                &mut view_state,
+                &mut message,
+                element,
+                &mut state,
+            );
+            assert!(matches!(result, MessageResult::Action(())));
+        });
+
+        assert_eq!(state, "");
+    }
+
+    #[test]
+    fn changed_action_passes_new_text_to_callback() {
+        let (mut ctx, mut state) = build_view_and_state();
+        let theme = Theme::default();
+        let view = InputView::new(
+            state.clone(),
+            ArcStr::default(),
+            false,
+            &theme,
+            |state: &mut String, text: String| *state = text,
+        );
+
+        let (pod, mut view_state) = View::<String, (), ViewCtx>::build(&view, &mut ctx, &mut state);
+        let mut harness =
+            TestHarness::create(masonry::theme::default_property_set(), pod.new_widget);
+
+        harness.edit_root_widget(|element| {
+            let mut message = MessageCtx::new(
+                Environment::new(),
+                vec![],
+                DynMessage::new(TextAction::Changed("world".to_string())),
+            );
+            let result = View::<String, (), ViewCtx>::message(
+                &view,
+                &mut view_state,
+                &mut message,
+                element,
+                &mut state,
+            );
+            assert!(matches!(result, MessageResult::Action(())));
+        });
+
+        assert_eq!(state, "world");
+    }
+}

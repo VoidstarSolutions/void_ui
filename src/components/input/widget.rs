@@ -140,7 +140,10 @@ mod tests {
         let area_id = text_input.area_pod().id();
         let frame = InputFrame::new(NewWidget::new(text_input));
         (
-            TestHarness::create(masonry::theme::default_property_set(), NewWidget::new(frame)),
+            TestHarness::create(
+                masonry::theme::default_property_set(),
+                NewWidget::new(frame),
+            ),
             area_id,
         )
     }
