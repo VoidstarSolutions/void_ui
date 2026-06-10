@@ -120,10 +120,6 @@ impl PopoverHost {
     /// content (backdrop click). The slot already hid the content; this
     /// only keeps the trigger's notion of "open" honest so the next click
     /// re-opens instead of "closing" an already-closed popover.
-    #[expect(
-        dead_code,
-        reason = "consumed by PortalSlot dismiss handler in a later task"
-    )]
     pub(crate) fn mark_closed(this: &mut WidgetMut<'_, Self>) {
         if this.widget.open {
             this.widget.open = false;
