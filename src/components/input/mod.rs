@@ -12,10 +12,12 @@
 mod currency;
 #[cfg(feature = "gallery")]
 pub mod demo;
+mod masked;
 mod number;
 mod view;
 pub mod widget;
 
 pub use currency::{CurrencyFormat, CurrencyInput, currency_input};
+pub use masked::{MaskedInput, format_mask, masked_input};
 pub use number::{NumberInput, number_input};
 pub use view::{Input, input};

@@ -9,7 +9,7 @@ use crate::label;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
-use super::{CurrencyFormat, currency_input, input, number_input};
+use super::{CurrencyFormat, currency_input, input, masked_input, number_input};
 use crate::Theme;
 use crate::components::ScrollBarVisibility;
 use crate::scroll_container;
@@ -29,6 +29,7 @@ struct InputDemo {
     price: String,
     usd: String,
     eur: String,
+    phone: String,
 }
 
 impl InputDemo {
@@ -42,6 +43,7 @@ impl InputDemo {
             price: "9.5".to_owned(),
             usd: "1250000".to_owned(),
             eur: "1234567.89".to_owned(),
+            phone: "1234430989".to_owned(),
         }
     }
 }
@@ -150,17 +152,9 @@ fn currency_section(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDe
     })
 }
 
-fn build_inner(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo> + use<> {
-    let header = |text: &'static str| {
-        label(text)
-            .text_size(theme.typography.size_caption)
-            .letter_spacing(1.2)
-            .color(theme.palette.text_faint)
-            .render(theme)
-    };
-
-    // A prefilled field and an empty field showing its placeholder.
-    let editable = with_source!(theme, {
+/// A prefilled field and an empty field showing its placeholder.
+fn editable_section(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo> + use<> {
+    with_source!(theme, {
         flex_row((
             field(
                 theme,
@@ -179,10 +173,12 @@ fn build_inner(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo> +
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(16.0))
-    });
+    })
+}
 
-    // Leading/trailing affixes inside the field border.
-    let affixes = with_source!(theme, {
+/// Leading/trailing affixes inside the field border.
+fn affix_section(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo> + use<> {
+    with_source!(theme, {
         flex_row((
             field(
                 theme,
@@ -205,10 +201,47 @@ fn build_inner(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo> +
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(16.0))
-    });
+    })
+}
 
+/// A template mask (phone). The field shows the formatted value while the host
+/// stores the raw digits; the readout below shows what `on_changed` emits.
+fn mask_section(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo> + use<> {
+    with_source!(theme, {
+        flex_col((
+            field(
+                theme,
+                "Phone",
+                masked_input(state.phone.clone(), |s: &mut InputDemo, raw| {
+                    s.phone = raw;
+                })
+                .mask("(###)-###-####")
+                .render(theme),
+            ),
+            label(format!("Unmask value: \"{}\"", state.phone))
+                .text_size(theme.typography.size_caption)
+                .color(theme.palette.text_faint)
+                .render(theme),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .gap(Length::px(4.0))
+    })
+}
+
+fn build_inner(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo> + use<> {
+    let header = |text: &'static str| {
+        label(text)
+            .text_size(theme.typography.size_caption)
+            .letter_spacing(1.2)
+            .color(theme.palette.text_faint)
+            .render(theme)
+    };
+
+    let editable = editable_section(theme, state);
+    let affixes = affix_section(theme, state);
     let numbers = number_section(theme, state);
     let currency = currency_section(theme, state);
+    let masks = mask_section(theme, state);
 
     // A disabled field does not accept input and paints muted.
     let disabled = with_source!(theme, {
@@ -251,6 +284,8 @@ fn build_inner(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo> +
             numbers,
             header("Currency"),
             currency,
+            header("Mask"),
+            masks,
             header("Disabled"),
             disabled,
         ))
