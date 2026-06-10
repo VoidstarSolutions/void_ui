@@ -135,9 +135,11 @@ impl<F> Input<F> {
             self.callback,
         );
 
-        // Editor takes the remaining width; affixes hug the ends.
+        // Editor takes the remaining width; affixes hug the ends. Align by text
+        // baseline (not box-center) so an affix's text sits on the same line as
+        // the typed text — the editable area and a Label have different heights.
         let row = flex_row((prefix, core.flex(1.0), suffix))
-            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .cross_axis_alignment(CrossAxisAlignment::FirstBaseline)
             .gap(Length::px(f64::from(theme.density.col)));
 
         field_chrome(row, theme)
@@ -231,7 +233,11 @@ where
     Action: 'static,
 {
     type Element = Pod<InputFrame>;
-    type ViewState = ();
+    /// `true` once the placeholder font-size override has been applied (see
+    /// `rebuild`). masonry builds the placeholder Label at its default size and
+    /// gives no build-time style hook, so we correct it on the first rebuild
+    /// rather than every rebuild.
+    type ViewState = bool;
 
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
         let text_area = widgets::TextArea::new_editable(&self.contents)
@@ -266,13 +272,13 @@ where
         // and the inner TextArea (edits -> TextAction).
         ctx.record_action_source(pod.new_widget.id());
         ctx.record_action_source(area_id);
-        (pod, ())
+        (pod, false)
     }
 
     fn rebuild(
         &self,
         prev: &Self,
-        (): &mut Self::ViewState,
+        placeholder_sized: &mut Self::ViewState,
         _ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
         _app_state: &mut State,
@@ -282,6 +288,23 @@ where
         // The element is the frame; reach the TextInput it hosts.
         let mut child = InputFrame::child_mut(&mut element);
         let mut text_input = child.downcast::<widgets::TextInput>();
+
+        // Match the placeholder's font size to the editor's. masonry builds the
+        // placeholder Label at its default size (15px) while our body text is
+        // 13px, so left alone the placeholder renders a couple of pixels low.
+        // `with_placeholder` exposes no build-time style hook, so we apply the
+        // override on the first rebuild (and on theme changes). It can't live in
+        // `build`; the trade-off is that the very first painted frame uses
+        // masonry's default until this runs. `insert_style` always invalidates,
+        // so we gate it rather than re-asserting it on every keystroke.
+        if !*placeholder_sized || theme_changed {
+            let mut placeholder = widgets::TextInput::placeholder_mut(&mut text_input);
+            widgets::Label::insert_style(
+                &mut placeholder,
+                StyleProperty::FontSize(self.theme.typography.size_body),
+            );
+            *placeholder_sized = true;
+        }
 
         if theme_changed {
             text_input.insert_prop(PlaceholderColor::new(self.theme.palette.text_muted));
@@ -316,7 +339,7 @@ where
 
     fn teardown(
         &self,
-        (): &mut Self::ViewState,
+        _: &mut Self::ViewState,
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
     ) {
@@ -334,7 +357,7 @@ where
 
     fn message(
         &self,
-        (): &mut Self::ViewState,
+        _: &mut Self::ViewState,
         message: &mut MessageCtx,
         _element: Mut<'_, Self::Element>,
         app_state: &mut State,

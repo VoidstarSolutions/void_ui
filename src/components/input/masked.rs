@@ -22,7 +22,7 @@
 
 use masonry::core::ArcStr;
 use xilem::WidgetView;
-use xilem::view::{FlexExt as _, flex_row};
+use xilem::view::{CrossAxisAlignment, FlexExt as _, flex_row};
 
 use super::view::{InputView, field_chrome};
 use crate::Theme;
@@ -106,7 +106,12 @@ impl<F> MaskedInput<F> {
             )
         };
 
-        field_chrome(flex_row((core.flex(1.0),)), theme)
+        // No affixes today, but align by baseline like the other field
+        // builders so a future prefix/suffix stays on the editor's line.
+        field_chrome(
+            flex_row((core.flex(1.0),)).cross_axis_alignment(CrossAxisAlignment::FirstBaseline),
+            theme,
+        )
     }
 }
 

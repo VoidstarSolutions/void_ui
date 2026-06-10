@@ -142,8 +142,9 @@ impl<F> CurrencyInput<F> {
             (Some(symbol), None)
         };
 
+        // Baseline-align so the currency symbol sits on the digits' line.
         let row = flex_row((prefix, core.flex(1.0), suffix))
-            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .cross_axis_alignment(CrossAxisAlignment::FirstBaseline)
             .gap(Length::px(f64::from(theme.density.col)));
 
         field_chrome(row, theme)
