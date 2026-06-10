@@ -236,6 +236,9 @@ impl Widget for TabsWidget {
                         .get();
                     total += content_w + 2.0 * pad_h;
                 }
+                if let masonry::layout::LenReq::FitContent(space) = len_req {
+                    total = total.min(space.get());
+                }
                 Length::px(total)
             }
             Axis::Vertical => {
@@ -313,6 +316,7 @@ impl Widget for TabsWidget {
         let size = ctx.border_box_size();
         let p = &self.theme.palette;
         let radius_small = f64::from(self.theme.radius.small);
+        let radius_large = f64::from(self.theme.radius.large);
 
         match self.variant {
             TabsVariant::Default => {
@@ -363,7 +367,7 @@ impl Widget for TabsWidget {
             }
             TabsVariant::Outline => {
                 for (i, r) in self.placed.iter().enumerate() {
-                    let rrect = RoundedRect::from_rect(*r, radius_small);
+                    let rrect = RoundedRect::from_rect(*r, radius_large);
                     if i == self.selected {
                         painter.fill(rrect, p.surface_hi).draw();
                         painter
@@ -380,7 +384,7 @@ impl Widget for TabsWidget {
                 }
             }
             TabsVariant::Segmented | TabsVariant::SegmentedFill => {
-                let outer = RoundedRect::from_origin_size(Point::ORIGIN, size, radius_small);
+                let outer = RoundedRect::from_origin_size(Point::ORIGIN, size, radius_large);
                 painter
                     .stroke(outer, &Stroke::new(BORDER_WIDTH), p.border)
                     .draw();
@@ -441,35 +445,19 @@ mod tests {
         NewWidget::new(SizedBox::empty().size(Length::px(width), Length::px(height))).erased()
     }
 
-    #[test]
-    fn diagnose_label_overflow() {
-        use masonry::widgets::Label;
-        let theme = Theme::default();
-        let labels = vec!["Account", "Profile", "Documents", "Mail"];
-        let items: Vec<NewWidget<dyn Widget>> = labels
-            .iter()
-            .map(|t| {
-                NewWidget::new(
-                    Label::new(*t).with_style(masonry::parley::StyleProperty::FontSize(
-                        theme.typography.size_body,
-                    )),
-                )
-                .erased()
-            })
-            .collect();
-        let mut h = harness(items, TabsVariant::Default, 3);
-        let placed = h.edit_root_widget(|wm| wm.widget.placed.clone());
-        eprintln!("outer_pad = {}", h.edit_root_widget(|wm| wm.widget.outer_pad()));
-        for (i, r) in placed.iter().enumerate() {
-            eprintln!("item {i} ({}) = {r:?}", labels[i]);
-        }
-    }
-
-    fn widget(items: Vec<NewWidget<dyn Widget>>, variant: TabsVariant, selected: usize) -> TabsWidget {
+    fn widget(
+        items: Vec<NewWidget<dyn Widget>>,
+        variant: TabsVariant,
+        selected: usize,
+    ) -> TabsWidget {
         TabsWidget::new(items, variant, selected, &Theme::default())
     }
 
-    fn harness(items: Vec<NewWidget<dyn Widget>>, variant: TabsVariant, selected: usize) -> TestHarness<TabsWidget> {
+    fn harness(
+        items: Vec<NewWidget<dyn Widget>>,
+        variant: TabsVariant,
+        selected: usize,
+    ) -> TestHarness<TabsWidget> {
         TestHarness::create(
             default_property_set(),
             NewWidget::new(widget(items, variant, selected)),
@@ -526,7 +514,11 @@ mod tests {
 
     #[test]
     fn layout_sizes_items_to_natural_width_for_default_variant() {
-        let mut h = harness(vec![item(40.0, 20.0), item(80.0, 20.0)], TabsVariant::Default, 0);
+        let mut h = harness(
+            vec![item(40.0, 20.0), item(80.0, 20.0)],
+            TabsVariant::Default,
+            0,
+        );
         let placed = h.edit_root_widget(|wm| wm.widget.placed.clone());
 
         assert_eq!(placed.len(), 2);
@@ -561,7 +553,11 @@ mod tests {
 
     #[test]
     fn clicking_an_unselected_item_emits_tab_selected() {
-        let mut h = harness(vec![item(40.0, 20.0), item(40.0, 20.0)], TabsVariant::Default, 0);
+        let mut h = harness(
+            vec![item(40.0, 20.0), item(40.0, 20.0)],
+            TabsVariant::Default,
+            0,
+        );
         let target = h.edit_root_widget(|wm| wm.widget.placed[1].center());
 
         h.mouse_move(target);
@@ -575,7 +571,11 @@ mod tests {
 
     #[test]
     fn clicking_the_selected_item_emits_nothing() {
-        let mut h = harness(vec![item(40.0, 20.0), item(40.0, 20.0)], TabsVariant::Default, 0);
+        let mut h = harness(
+            vec![item(40.0, 20.0), item(40.0, 20.0)],
+            TabsVariant::Default,
+            0,
+        );
         let target = h.edit_root_widget(|wm| wm.widget.placed[0].center());
 
         h.mouse_move(target);
@@ -587,7 +587,11 @@ mod tests {
 
     #[test]
     fn moving_over_an_item_sets_hovered() {
-        let mut h = harness(vec![item(40.0, 20.0), item(40.0, 20.0)], TabsVariant::Default, 0);
+        let mut h = harness(
+            vec![item(40.0, 20.0), item(40.0, 20.0)],
+            TabsVariant::Default,
+            0,
+        );
         let target = h.edit_root_widget(|wm| wm.widget.placed[1].center());
 
         h.mouse_move(target);
@@ -604,7 +608,11 @@ mod tests {
 
     #[test]
     fn set_items_resets_interaction_state() {
-        let mut h = harness(vec![item(40.0, 20.0), item(40.0, 20.0)], TabsVariant::Default, 0);
+        let mut h = harness(
+            vec![item(40.0, 20.0), item(40.0, 20.0)],
+            TabsVariant::Default,
+            0,
+        );
         let target = h.edit_root_widget(|wm| wm.widget.placed[1].center());
         h.mouse_move(target);
         assert_eq!(h.edit_root_widget(|wm| wm.widget.hovered), Some(1));
@@ -623,7 +631,11 @@ mod tests {
 
     #[test]
     fn set_selected_and_set_variant_update_state() {
-        let mut h = harness(vec![item(40.0, 20.0), item(40.0, 20.0)], TabsVariant::Default, 0);
+        let mut h = harness(
+            vec![item(40.0, 20.0), item(40.0, 20.0)],
+            TabsVariant::Default,
+            0,
+        );
 
         h.edit_root_widget(|mut wm| {
             TabsWidget::set_selected(&mut wm, 1);
