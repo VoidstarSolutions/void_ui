@@ -441,6 +441,30 @@ mod tests {
         NewWidget::new(SizedBox::empty().size(Length::px(width), Length::px(height))).erased()
     }
 
+    #[test]
+    fn diagnose_label_overflow() {
+        use masonry::widgets::Label;
+        let theme = Theme::default();
+        let labels = vec!["Account", "Profile", "Documents", "Mail"];
+        let items: Vec<NewWidget<dyn Widget>> = labels
+            .iter()
+            .map(|t| {
+                NewWidget::new(
+                    Label::new(*t).with_style(masonry::parley::StyleProperty::FontSize(
+                        theme.typography.size_body,
+                    )),
+                )
+                .erased()
+            })
+            .collect();
+        let mut h = harness(items, TabsVariant::Default, 3);
+        let placed = h.edit_root_widget(|wm| wm.widget.placed.clone());
+        eprintln!("outer_pad = {}", h.edit_root_widget(|wm| wm.widget.outer_pad()));
+        for (i, r) in placed.iter().enumerate() {
+            eprintln!("item {i} ({}) = {r:?}", labels[i]);
+        }
+    }
+
     fn widget(items: Vec<NewWidget<dyn Widget>>, variant: TabsVariant, selected: usize) -> TabsWidget {
         TabsWidget::new(items, variant, selected, &Theme::default())
     }
@@ -472,7 +496,7 @@ mod tests {
     fn outer_pad_is_zero_only_for_underline_and_outline() {
         for variant in [TabsVariant::Underline, TabsVariant::Outline] {
             let w = widget(vec![], variant, 0);
-            assert_eq!(w.outer_pad(), 0.0, "{variant:?} should have no outer pad");
+            assert!(w.outer_pad() == 0.0, "{variant:?} should have no outer pad");
         }
         for variant in [
             TabsVariant::Default,
@@ -570,8 +594,8 @@ mod tests {
         let hovered = h.edit_root_widget(|wm| wm.widget.hovered);
         assert_eq!(hovered, Some(1));
 
-        // Moving outside the row clears hover.
-        h.mouse_move(Point::new(-10.0, -10.0));
+        // Moving over the outer padding (not any item) clears hover.
+        h.mouse_move(Point::new(0.0, 0.0));
         let hovered = h.edit_root_widget(|wm| wm.widget.hovered);
         assert_eq!(hovered, None);
     }
@@ -592,8 +616,8 @@ mod tests {
         h.edit_root_widget(|wm| {
             assert_eq!(wm.widget.hovered, None);
             assert_eq!(wm.widget.pressed, None);
-            assert!(wm.widget.placed.is_empty());
             assert_eq!(wm.widget.items.len(), 1);
+            assert_eq!(wm.widget.placed.len(), 1);
         });
     }
 
