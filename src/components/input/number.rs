@@ -214,6 +214,101 @@ fn adjust(value: &str, delta: f64, min: f64, max: f64) -> String {
     format!("{cleaned}")
 }
 
+/// Support for [`tests::prefix_does_not_shift_editor_text_vertically`]:
+/// builds a [`TestHarness`] from a `number_input` view and inspects where its
+/// `TextArea` actually paints text.
+#[cfg(test)]
+mod text_area_layout {
+    use std::fmt;
+    use std::sync::Arc;
+
+    use masonry::core::{NewWidget, WidgetRef};
+    use masonry::kurbo::Rect;
+    use masonry::testing::TestHarness;
+    use masonry::widgets::{Flex, TextArea};
+    use xilem::core::{ProxyError, RawProxy, SendMessage, ViewId};
+    use xilem::{ViewCtx, WidgetView};
+
+    pub(super) struct NoopProxy;
+    impl fmt::Debug for NoopProxy {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "NoopProxy")
+        }
+    }
+    impl RawProxy for NoopProxy {
+        fn send_message(
+            &self,
+            _path: Arc<[ViewId]>,
+            _message: SendMessage,
+        ) -> Result<(), ProxyError> {
+            Ok(())
+        }
+        fn dyn_debug(&self) -> &dyn fmt::Debug {
+            self
+        }
+    }
+
+    fn find_text_area(
+        widget: WidgetRef<'_, dyn masonry::core::Widget>,
+    ) -> Option<WidgetRef<'_, TextArea<true>>> {
+        if let Some(area) = widget.downcast::<TextArea<true>>() {
+            return Some(area);
+        }
+        widget.children().into_iter().find_map(find_text_area)
+    }
+
+    /// Returns `(first_ink_row, last_ink_row)` within `rect` (window
+    /// coordinates), relative to `rect.y0`, where "ink" means a pixel
+    /// differing from the background sampled just above the rect.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "rect coordinates are small positive layout pixels"
+    )]
+    fn ink_rows(image: &image::RgbaImage, rect: Rect) -> Option<(u32, u32)> {
+        let x0 = rect.x0.round().max(0.0) as u32;
+        let x1 = (rect.x1.round().max(0.0) as u32).min(image.width());
+        let y0 = rect.y0.round().max(0.0) as u32;
+        let y1 = (rect.y1.round().max(0.0) as u32).min(image.height());
+        let bg = *image.get_pixel(x0 + 1, y0.saturating_sub(2));
+
+        let mut first = None;
+        let mut last = None;
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let px = image.get_pixel(x, y);
+                if *px != bg {
+                    first.get_or_insert(y - y0);
+                    last = Some(y - y0);
+                }
+            }
+        }
+        first.zip(last)
+    }
+
+    /// Builds `view`, finds its `TextArea`, and returns the area's content
+    /// box plus the rows where its text actually paints.
+    pub(super) fn measure_text_area(
+        proxy: &Arc<dyn RawProxy>,
+        runtime: &Arc<tokio::runtime::Runtime>,
+        view: &impl WidgetView<()>,
+    ) -> (Rect, (u32, u32)) {
+        let mut ctx = ViewCtx::new(proxy.clone(), runtime.clone());
+        let mut state = ();
+        let (pod, _) = view.build(&mut ctx, &mut state);
+        let root = Flex::column().with_fixed(pod.new_widget);
+        let mut harness =
+            TestHarness::create(masonry::theme::default_property_set(), NewWidget::new(root));
+        let area = find_text_area(harness.root_widget().as_dyn()).expect("TextArea");
+        let rect = area.ctx().content_box();
+        let origin = area.ctx().window_transform() * rect.origin();
+        let window_rect = Rect::from_origin_size(origin, rect.size());
+        let image = harness.render();
+        let ink = ink_rows(&image, window_rect).expect("text should paint ink");
+        (rect, ink)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{adjust, filter_numeric};
@@ -264,80 +359,20 @@ mod tests {
         assert_eq!(adjust("50", 10.0, 100.0, 0.0), "60");
     }
 
-    /// Diagnostic: render a number input with no affixes vs one with a
-    /// `prefix`, and find where the editor's text glyphs actually paint
-    /// (first non-background row) relative to the `TextArea`'s box, to
-    /// compare vertical centering of the text within the field.
+    /// Renders a number input with no affixes and one with a `prefix`, then
+    /// finds where the editor's text glyphs actually paint (the rows that
+    /// differ from the field background) relative to the `TextArea`'s box.
+    /// A `prefix` must not shift the editor text vertically within its
+    /// field.
     #[test]
-    fn dump_text_area_rects_with_and_without_prefix() {
-        use std::fmt;
+    fn prefix_does_not_shift_editor_text_vertically() {
         use std::sync::Arc;
 
-        use masonry::core::{NewWidget, WidgetRef};
-        use masonry::kurbo::Rect;
-        use masonry::testing::TestHarness;
-        use masonry::widgets::{Flex, TextArea};
-        use xilem::ViewCtx;
-        use xilem::core::{ProxyError, RawProxy, SendMessage, View, ViewId};
+        use xilem::core::RawProxy;
 
         use crate::Theme;
         use crate::components::input::number::number_input;
-
-        struct NoopProxy;
-        impl fmt::Debug for NoopProxy {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(f, "NoopProxy")
-            }
-        }
-        impl RawProxy for NoopProxy {
-            fn send_message(
-                &self,
-                _path: Arc<[ViewId]>,
-                _message: SendMessage,
-            ) -> Result<(), ProxyError> {
-                Ok(())
-            }
-            fn dyn_debug(&self) -> &dyn fmt::Debug {
-                self
-            }
-        }
-
-        fn find_text_area<'a>(
-            widget: WidgetRef<'a, dyn masonry::core::Widget>,
-        ) -> Option<WidgetRef<'a, TextArea<true>>> {
-            if let Some(area) = widget.downcast::<TextArea<true>>() {
-                return Some(area);
-            }
-            widget.children().into_iter().find_map(find_text_area)
-        }
-
-        /// Returns `(first_ink_row, last_ink_row)` within `rect` (window
-        /// coordinates), relative to `rect.y0`, where "ink" means a pixel
-        /// differing from the background sampled just above the rect.
-        fn ink_rows(image: &image::RgbaImage, rect: Rect) -> Option<(i64, i64)> {
-            let x0 = rect.x0.round() as i64;
-            let x1 = rect.x1.round() as i64;
-            let y0 = rect.y0.round() as i64;
-            let y1 = rect.y1.round() as i64;
-            let bg = *image.get_pixel(x0.max(0) as u32 + 1, (y0 - 2).max(0) as u32);
-
-            let mut first = None;
-            let mut last = None;
-            for y in y0..y1 {
-                for x in x0..x1 {
-                    if x < 0 || y < 0 || x >= i64::from(image.width()) || y >= i64::from(image.height())
-                    {
-                        continue;
-                    }
-                    let px = image.get_pixel(x as u32, y as u32);
-                    if *px != bg {
-                        first.get_or_insert(y - y0);
-                        last = Some(y - y0);
-                    }
-                }
-            }
-            first.zip(last)
-        }
+        use crate::components::input::number::text_area_layout::{NoopProxy, measure_text_area};
 
         let runtime = Arc::new(
             tokio::runtime::Builder::new_current_thread()
@@ -348,45 +383,27 @@ mod tests {
         let theme = Theme::default();
 
         // Quantity-like field: no prefix/suffix.
-        let mut ctx = ViewCtx::new(proxy.clone(), runtime.clone());
-        let mut state = ();
-        let view = number_input("5", |_: &mut (), _text| ())
+        let qty_view = number_input("5", |(): &mut (), _text| ())
             .range(0.0, 100.0)
             .render(&theme);
-        let (pod, _) = view.build(&mut ctx, &mut state);
-        let root = Flex::column().with_fixed(pod.new_widget);
-        let mut harness =
-            TestHarness::create(masonry::theme::default_property_set(), NewWidget::new(root));
-        let qty_area = find_text_area(harness.root_widget().as_dyn()).expect("TextArea");
-        let qty_rect = qty_area.ctx().content_box();
-        let qty_origin = qty_area.ctx().window_transform() * qty_rect.origin();
-        let qty_window_rect = Rect::from_origin_size(qty_origin, qty_rect.size());
-        let qty_image = harness.render();
-        let qty_ink = ink_rows(&qty_image, qty_window_rect);
+        let (qty_rect, qty_ink) = measure_text_area(&proxy, &runtime, &qty_view);
 
         // Price-like field: "$" prefix.
-        let mut ctx2 = ViewCtx::new(proxy.clone(), runtime.clone());
-        let mut state2 = ();
-        let view2 = number_input("9.5", |_: &mut (), _text| ())
+        let price_view = number_input("9.5", |(): &mut (), _text| ())
             .prefix("$")
             .step(0.5)
             .render(&theme);
-        let (pod2, _) = view2.build(&mut ctx2, &mut state2);
-        let root2 = Flex::column().with_fixed(pod2.new_widget);
-        let mut harness2 =
-            TestHarness::create(masonry::theme::default_property_set(), NewWidget::new(root2));
-        let price_area = find_text_area(harness2.root_widget().as_dyn()).expect("TextArea");
-        let price_rect = price_area.ctx().content_box();
-        let price_origin = price_area.ctx().window_transform() * price_rect.origin();
-        let price_window_rect = Rect::from_origin_size(price_origin, price_rect.size());
-        let price_image = harness2.render();
-        let price_ink = ink_rows(&price_image, price_window_rect);
+        let (price_rect, price_ink) = measure_text_area(&proxy, &runtime, &price_view);
 
-        panic!(
-            "qty: box_height={:.1} ink_rows={qty_ink:?}\n\
-             price: box_height={:.1} ink_rows={price_ink:?}",
-            qty_rect.height(),
-            price_rect.height(),
+        #[expect(
+            clippy::float_cmp,
+            reason = "both rects come from the same theme/density, so heights should be bit-identical"
+        )]
+        let same_height = qty_rect.height() == price_rect.height();
+        assert!(
+            same_height,
+            "field heights differ: {qty_rect:?} vs {price_rect:?}"
         );
+        assert_eq!(qty_ink, price_ink);
     }
 }
