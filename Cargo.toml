@@ -40,7 +40,9 @@ xilem = { workspace = true }
 xilem_masonry = { workspace = true }
 
 [dev-dependencies]
+image = { version = "0.25", default-features = false }
 masonry = { workspace = true, features = ["testing"] }
+tokio = { version = "1", features = ["rt"] }
 xilem = { workspace = true }
 
 [features]
