@@ -55,7 +55,12 @@ pub struct NotificationDemoState {
 
 impl NotificationDemoState {
     /// Push a new toast onto the stack.
-    pub fn push_toast(&mut self, message: &'static str, variant: AlertVariant, timeout: Option<Duration>) {
+    pub fn push_toast(
+        &mut self,
+        message: &'static str,
+        variant: AlertVariant,
+        timeout: Option<Duration>,
+    ) {
         let id = self.next_id;
         self.next_id += 1;
         self.toasts.push(ToastEntry {
@@ -72,7 +77,10 @@ pub trait NotificationDemoHost: AsMut<NotificationDemoState> + 'static {}
 
 impl<S: AsMut<NotificationDemoState> + 'static> NotificationDemoHost for S {}
 
-fn section_header<S: 'static>(text: &'static str, theme: &Theme) -> impl WidgetView<S, ()> + use<S> {
+fn section_header<S: 'static>(
+    text: &'static str,
+    theme: &Theme,
+) -> impl WidgetView<S, ()> + use<S> {
     label(text)
         .text_size(theme.typography.size_caption)
         .letter_spacing(1.2)

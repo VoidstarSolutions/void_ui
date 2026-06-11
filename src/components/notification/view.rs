@@ -331,6 +331,9 @@ mod tests {
 
     #[test]
     fn default_position_is_top_right() {
-        assert_eq!(NotificationPosition::default(), NotificationPosition::TopRight);
+        assert_eq!(
+            NotificationPosition::default(),
+            NotificationPosition::TopRight
+        );
     }
 }
