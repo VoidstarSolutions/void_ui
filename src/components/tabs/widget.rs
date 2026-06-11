@@ -18,6 +18,7 @@ use masonry::core::{
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, RoundedRect, RoundedRectRadii, Size, Stroke};
 use masonry::layout::{LayoutSize, Length, SizeDef};
+use masonry::peniko::Color;
 
 use super::TabsVariant;
 use crate::Theme;
@@ -33,6 +34,41 @@ const HIGHLIGHT_INSET: f64 = 2.0;
 const UNDERLINE_ACCENT_WIDTH: f64 = 2.0;
 /// Alpha applied to the hover fill for variants with per-item chrome.
 const HOVER_ALPHA: f32 = 0.5;
+
+/// Fills `rect` inset by [`HIGHLIGHT_INSET`] with `fill`, using the corner
+/// radius returned by `radius` for the inset rect.
+fn paint_highlight(
+    painter: &mut Painter<'_>,
+    rect: Rect,
+    radius: impl Fn(Rect) -> RoundedRectRadii,
+    fill: Color,
+) {
+    let inset = rect.inset(-HIGHLIGHT_INSET);
+    let radii = radius(inset);
+    painter.fill(RoundedRect::from_rect(inset, radii), fill).draw();
+}
+
+/// Paints the selected item's highlight, and (if a different item is
+/// hovered) the hover highlight, sharing the same `radius` shape.
+fn paint_selection_highlights(
+    painter: &mut Painter<'_>,
+    placed: &[Rect],
+    selected: usize,
+    hovered: Option<usize>,
+    radius: impl Fn(Rect) -> RoundedRectRadii,
+    selected_fill: Color,
+    hover_fill: Color,
+) {
+    if let Some(sel) = placed.get(selected) {
+        paint_highlight(painter, *sel, &radius, selected_fill);
+    }
+    if let Some(h) = hovered
+        && h != selected
+        && let Some(hr) = placed.get(h)
+    {
+        paint_highlight(painter, *hr, &radius, hover_fill);
+    }
+}
 
 /// Action emitted when the user clicks an unselected tab item.
 #[derive(Debug, Clone, Copy)]
@@ -344,26 +380,15 @@ impl Widget for TabsWidget {
                     RoundedRectRadii::from_single_radius(size.height / 2.0),
                 );
                 painter.fill(outer, p.surface_2).draw();
-                if let Some(sel) = self.placed.get(self.selected) {
-                    let pill = sel.inset(-HIGHLIGHT_INSET);
-                    let radii = RoundedRectRadii::from_single_radius(pill.height() / 2.0);
-                    painter
-                        .fill(RoundedRect::from_rect(pill, radii), p.surface_hi)
-                        .draw();
-                }
-                if let Some(h) = self.hovered
-                    && h != self.selected
-                    && let Some(hr) = self.placed.get(h)
-                {
-                    let pill = hr.inset(-HIGHLIGHT_INSET);
-                    let radii = RoundedRectRadii::from_single_radius(pill.height() / 2.0);
-                    painter
-                        .fill(
-                            RoundedRect::from_rect(pill, radii),
-                            p.surface_hi.with_alpha(HOVER_ALPHA),
-                        )
-                        .draw();
-                }
+                paint_selection_highlights(
+                    painter,
+                    &self.placed,
+                    self.selected,
+                    self.hovered,
+                    |r| RoundedRectRadii::from_single_radius(r.height() / 2.0),
+                    p.surface_hi,
+                    p.surface_hi.with_alpha(HOVER_ALPHA),
+                );
             }
             TabsVariant::Outline => {
                 for (i, r) in self.placed.iter().enumerate() {
@@ -389,23 +414,15 @@ impl Widget for TabsWidget {
                     .stroke(outer, &Stroke::new(BORDER_WIDTH), p.border)
                     .draw();
                 let highlight_radius = (radius_small - HIGHLIGHT_INSET).max(0.0);
-                if let Some(sel) = self.placed.get(self.selected) {
-                    let seg = sel.inset(-HIGHLIGHT_INSET);
-                    let radii = RoundedRectRadii::from_single_radius(highlight_radius);
-                    painter
-                        .fill(RoundedRect::from_rect(seg, radii), p.surface_hi)
-                        .draw();
-                }
-                if let Some(h) = self.hovered
-                    && h != self.selected
-                    && let Some(hr) = self.placed.get(h)
-                {
-                    let seg = hr.inset(-HIGHLIGHT_INSET);
-                    let radii = RoundedRectRadii::from_single_radius(highlight_radius);
-                    painter
-                        .fill(RoundedRect::from_rect(seg, radii), p.surface_2)
-                        .draw();
-                }
+                paint_selection_highlights(
+                    painter,
+                    &self.placed,
+                    self.selected,
+                    self.hovered,
+                    |_| RoundedRectRadii::from_single_radius(highlight_radius),
+                    p.surface_hi,
+                    p.surface_2,
+                );
             }
         }
     }
