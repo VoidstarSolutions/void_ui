@@ -228,11 +228,7 @@ impl<C> Alert<C> {
         });
 
         let row = flex_row((icon_view, content.flex(1.0), close_view))
-            .cross_axis_alignment(if self.banner {
-                CrossAxisAlignment::Center
-            } else {
-                CrossAxisAlignment::Start
-            })
+            .cross_axis_alignment(CrossAxisAlignment::Center)
             .gap(Length::px(f64::from(theme.density.pad) * 0.66));
 
         let (border_color, border_width, corner_radius) = if self.banner {
