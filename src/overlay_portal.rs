@@ -24,7 +24,6 @@ pub type PortalContentView<State, Action> = dyn AnyView<State, Action, ViewCtx, 
 
 /// View state produced by building an [`Rc`]-wrapped [`PortalContentView`].
 /// Named via projection so we don't depend on `xilem_core` internals.
-#[expect(dead_code, reason = "consumed by overlay_scope view in a later commit")]
 pub(crate) type PortalContentViewState<State, Action> =
     <Rc<PortalContentView<State, Action>> as View<State, Action, ViewCtx>>::ViewState;
 
@@ -83,10 +82,6 @@ impl<State: 'static, Action: 'static> Resource for OverlayPortal<State, Action> 
 
 impl<State, Action> OverlayPortal<State, Action> {
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "consumed by overlay_scope view in a later commit")
-    )]
     pub(crate) fn new(scope: OverlayScopeHandle) -> Self {
         Self {
             scope,
@@ -103,7 +98,7 @@ impl<State, Action> OverlayPortal<State, Action> {
 
     /// Handle to the owning scope's widget id, for `mutate_later` pushes.
     #[must_use]
-    #[expect(dead_code, reason = "consumed by overlay_scope view in a later commit")]
+    #[expect(dead_code, reason = "consumed by the popover view in a later commit")]
     pub(crate) fn scope(&self) -> &OverlayScopeHandle {
         &self.scope
     }
@@ -111,7 +106,7 @@ impl<State, Action> OverlayPortal<State, Action> {
     /// Register a popover's content view; returns its portal key.
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "consumed by overlay_scope view in a later commit")
+        expect(dead_code, reason = "consumed by the popover view in a later commit")
     )]
     pub(crate) fn register(
         &self,
@@ -132,7 +127,7 @@ impl<State, Action> OverlayPortal<State, Action> {
     /// Replace the content/theme for an existing key (no-op if unknown).
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "consumed by overlay_scope view in a later commit")
+        expect(dead_code, reason = "consumed by the popover view in a later commit")
     )]
     pub(crate) fn update(
         &self,
@@ -150,7 +145,7 @@ impl<State, Action> OverlayPortal<State, Action> {
     /// Remove the entry for `key` (no-op if unknown).
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "consumed by overlay_scope view in a later commit")
+        expect(dead_code, reason = "consumed by the popover view in a later commit")
     )]
     pub(crate) fn deregister(&self, key: u64) {
         self.inner.borrow_mut().entries.retain(|e| e.key != key);
@@ -158,10 +153,6 @@ impl<State, Action> OverlayPortal<State, Action> {
 
     /// Snapshot of all entries, in registration order.
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "consumed by overlay_scope view in a later commit")
-    )]
     pub(crate) fn snapshot(&self) -> Vec<PortalEntry<State, Action>> {
         self.inner.borrow().entries.clone()
     }
@@ -171,7 +162,6 @@ impl<State, Action> OverlayPortal<State, Action> {
 /// "no scope ancestor" (returns `None`). Mirrors `dropdown_button`'s
 /// `OverlayScopeHandle` lookup — `with_context` panics when absent, so we
 /// read the slot directly.
-#[expect(dead_code, reason = "consumed by overlay_scope view in a later commit")]
 pub(crate) fn portal_from_env<State: 'static, Action: 'static>(
     ctx: &mut ViewCtx,
 ) -> Option<OverlayPortal<State, Action>> {
@@ -321,7 +311,6 @@ impl PortalSlot {
 
     /// Mount a new (hidden) child for `key`. Called from the scope view's
     /// rebuild when a popover registers after initial build.
-    #[expect(dead_code, reason = "consumed by overlay_scope view in a later commit")]
     pub(crate) fn insert(this: &mut WidgetMut<'_, Self>, key: u64, widget: NewWidget<dyn Widget>) {
         this.widget.children.push(PortalChild {
             key,
@@ -337,10 +326,6 @@ impl PortalSlot {
     }
 
     /// Unmount the child for `key` (no-op if unknown).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "consumed by overlay_scope view in a later commit")
-    )]
     pub(crate) fn remove_by_key(this: &mut WidgetMut<'_, Self>, key: u64) {
         if let Some(idx) = this.widget.children.iter().position(|c| c.key == key) {
             let child = this.widget.children.remove(idx);
@@ -351,7 +336,6 @@ impl PortalSlot {
 
     /// Mutable access to the child for `key`, for the scope view's rebuild
     /// threading.
-    #[expect(dead_code, reason = "consumed by overlay_scope view in a later commit")]
     pub(crate) fn child_mut<'t>(
         this: &'t mut WidgetMut<'_, Self>,
         key: u64,
@@ -395,7 +379,7 @@ impl PortalSlot {
     #[must_use]
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "consumed by overlay_scope view in a later commit")
+        expect(dead_code, reason = "test-only accessor for placement assertions")
     )]
     pub(crate) fn placed_rect(&self, key: u64) -> Option<Rect> {
         self.children

@@ -22,6 +22,7 @@
 //! so that view-level portal content also paints above everything in the scope.
 
 use std::marker::PhantomData;
+use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
 use masonry::accesskit::{Node, Role};
@@ -32,11 +33,16 @@ use masonry::core::{
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, Size};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
-use xilem_masonry::core::{MessageCtx, MessageResult, Mut, Resource, View, ViewMarker, provides};
+use masonry::properties::Padding;
+use xilem_masonry::core::{
+    MessageCtx, MessageResult, Mut, Resource, View, ViewId, ViewMarker, ViewPathTracker, provides,
+};
 use xilem_masonry::{Pod, ViewCtx, WidgetView};
 
+use crate::Theme;
 use crate::components::popover::PopoverAnchor;
-use crate::overlay_portal::PortalSlot;
+use crate::components::popover::widget::PopoverSurface;
+use crate::overlay_portal::{OverlayPortal, PortalContentViewState, PortalSlot, portal_from_env};
 
 /// Resource published into the Xilem [`Environment`](xilem_masonry::core::Environment)
 /// by [`overlay_scope`], letting arbitrary descendants discover the scope's
@@ -214,12 +220,12 @@ impl Widget for OverlayScope {
     type Action = NoAction;
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        // Registration order is paint order: content first, overlay last —
-        // the overlay always draws on top of content and everything inside
-        // it, including later siblings within the scope. This ordering *is*
-        // the entire mechanism; nothing else makes the overlay "win".
-        // The portal_slot is registered last so view-level portal content
-        // also paints above everything in the scope.
+        // Registration order is paint order: content first, the legacy
+        // overlay in the middle, the portal slot last — overlays always draw
+        // on top of content and everything inside it (including later
+        // siblings within the scope), and view-level portal content paints
+        // above everything else. This ordering *is* the entire mechanism;
+        // nothing else makes the overlays "win".
         ctx.register_child(&mut self.content);
         if let Some(overlay) = &mut self.overlay {
             ctx.register_child(overlay);
@@ -285,7 +291,7 @@ impl Widget for OverlayScope {
         _props: &PropertiesRef<'_>,
         _painter: &mut Painter<'_>,
     ) {
-        // Purely structural — both children paint themselves.
+        // Purely structural — the (up to three) children paint themselves.
     }
 
     fn update(
@@ -340,20 +346,73 @@ where
 {
     let handle = OverlayScopeHandle::new();
     let resource_handle = handle.clone();
+    let portal_handle = handle.clone();
+    // `provides` build-once semantics: each app pass recreates these closures
+    // when the view value is rebuilt, but xilem only ever invokes them at the
+    // provider's *build* — the value produced then is the one published for
+    // the provider's whole lifetime; later closure results are ignored. The
+    // `OverlayPortal` is therefore constructed *inside* the closure (it holds
+    // an `Rc` registry, and `WidgetView` requires the view value — including
+    // captures — to be `Send + Sync`): exactly one portal is ever created,
+    // with stable identity. The root view must not rely on captures after
+    // build either; it reads the published resource back out of the
+    // Environment in `build` (the inner `provides` has already pushed it by
+    // then) and keeps that clone in its ViewState.
     provides(
         move |_state: &mut State| resource_handle.clone(),
-        OverlayScopeRootView {
-            handle,
-            content,
-            phantom: PhantomData,
-        },
+        provides(
+            move |_state: &mut State| OverlayPortal::<State, Action>::new(portal_handle.clone()),
+            OverlayScopeRootView {
+                handle,
+                content,
+                phantom: PhantomData,
+            },
+        ),
     )
 }
 
-/// The `View` actually wrapped by `provides` in [`overlay_scope`] — builds
-/// the [`OverlayScope`] widget around `content`'s pod, threading
-/// `build`/`rebuild`/`teardown`/`message` through [`OverlayScope::content_mut`]
-/// (single-child analogue of `AnchoredOverlayView`'s two-child threading).
+/// One portal entry currently mounted in the slot, with the view-state xilem
+/// needs to rebuild/teardown it.
+struct MountedEntry<State: 'static, Action: 'static> {
+    key: u64,
+    view: Rc<crate::overlay_portal::PortalContentView<State, Action>>,
+    view_state: PortalContentViewState<State, Action>,
+    theme: Theme,
+}
+
+#[doc(hidden)]
+pub struct OverlayScopeViewState<State: 'static, Action: 'static, ContentVS> {
+    content_state: ContentVS,
+    portal: OverlayPortal<State, Action>,
+    mounted: Vec<MountedEntry<State, Action>>,
+}
+
+/// `ViewId` for the scope's `content` child; portal entries use their key
+/// (keys start at 1, so 0 is never a portal key).
+const CONTENT_VIEW_ID: ViewId = ViewId::new(0);
+
+/// Wrap freshly-built portal content in the popover chrome: density padding
+/// on the content, [`PopoverSurface`] for background/border. Mirrors
+/// `PopoverHost::new`'s in-tree wrapping so portal and fallback popovers
+/// look identical.
+fn wrap_in_surface(
+    pod: Pod<masonry::widgets::Passthrough>,
+    theme: &Theme,
+) -> NewWidget<dyn Widget> {
+    let mut content = pod.new_widget.erased();
+    content
+        .properties
+        .insert(Padding::all(Length::px(f64::from(theme.density.pad))));
+    NewWidget::new(PopoverSurface::new(content, theme)).erased()
+}
+
+/// The `View` actually wrapped by the nested `provides` in [`overlay_scope`].
+/// Two-part job: it builds the [`OverlayScope`] widget around `content`'s pod
+/// (threading `build`/`rebuild`/`teardown`/`message` through
+/// [`OverlayScope::content_mut`]), and it mounts/diffs the content views
+/// registered in the scope's [`OverlayPortal`] as [`PortalSlot`] children —
+/// each under element path `…scope path… / ViewId(key)` so xilem messages
+/// from inside portal-mounted popovers route back correctly.
 #[must_use = "View values do nothing unless provided to Xilem."]
 struct OverlayScopeRootView<V, State, Action> {
     handle: OverlayScopeHandle,
@@ -370,13 +429,43 @@ where
     V: WidgetView<State, Action>,
 {
     type Element = Pod<OverlayScope>;
-    type ViewState = V::ViewState;
+    type ViewState = OverlayScopeViewState<State, Action, V::ViewState>;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        let (content, content_state) = self.content.build(ctx, app_state);
-        let widget =
-            OverlayScope::new(self.handle.clone(), content.new_widget.erased(), Vec::new());
-        (ctx.create_pod(widget), content_state)
+        let (content, content_state) =
+            ctx.with_id(CONTENT_VIEW_ID, |ctx| self.content.build(ctx, app_state));
+
+        let portal = portal_from_env::<State, Action>(ctx)
+            .expect("overlay_scope provides OverlayPortal for its own subtree");
+
+        let mut mounted = Vec::new();
+        let mut slot_children = Vec::new();
+        for entry in portal.snapshot() {
+            let (pod, view_state) = ctx.with_id(ViewId::new(entry.key), |ctx| {
+                entry.content.build(ctx, app_state)
+            });
+            slot_children.push((entry.key, wrap_in_surface(pod, &entry.theme)));
+            mounted.push(MountedEntry {
+                key: entry.key,
+                view: entry.content.clone(),
+                view_state,
+                theme: entry.theme,
+            });
+        }
+
+        let widget = OverlayScope::new(
+            self.handle.clone(),
+            content.new_widget.erased(),
+            slot_children,
+        );
+        (
+            ctx.create_pod(widget),
+            OverlayScopeViewState {
+                content_state,
+                portal,
+                mounted,
+            },
+        )
     }
 
     fn rebuild(
@@ -387,14 +476,84 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) {
-        let mut content = OverlayScope::content_mut(&mut element);
-        self.content.rebuild(
-            &prev.content,
-            view_state,
-            ctx,
-            content.downcast(),
-            app_state,
-        );
+        // 1. Rebuild content first — descendant popovers refresh the registry
+        //    during this call, so the diff below sees current truth.
+        {
+            let mut content = OverlayScope::content_mut(&mut element);
+            ctx.with_id(CONTENT_VIEW_ID, |ctx| {
+                self.content.rebuild(
+                    &prev.content,
+                    &mut view_state.content_state,
+                    ctx,
+                    content.downcast(),
+                    app_state,
+                );
+            });
+        }
+
+        let entries = view_state.portal.snapshot();
+
+        // 2. Unmount entries whose popovers deregistered.
+        let mut idx = 0;
+        while idx < view_state.mounted.len() {
+            let key = view_state.mounted[idx].key;
+            if entries.iter().any(|e| e.key == key) {
+                idx += 1;
+                continue;
+            }
+            let mut gone = view_state.mounted.remove(idx);
+            {
+                let mut slot = OverlayScope::portal_slot_mut(&mut element);
+                if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
+                    let mut surface = child.downcast::<PopoverSurface>();
+                    let mut content = PopoverSurface::content_mut(&mut surface);
+                    ctx.with_id(ViewId::new(key), |ctx| {
+                        gone.view
+                            .teardown(&mut gone.view_state, ctx, content.downcast());
+                    });
+                }
+            }
+            let mut slot = OverlayScope::portal_slot_mut(&mut element);
+            PortalSlot::remove_by_key(&mut slot, key);
+        }
+
+        // 3. Rebuild kept entries, mount new ones.
+        for entry in &entries {
+            if let Some(m) = view_state.mounted.iter_mut().find(|m| m.key == entry.key) {
+                let mut slot = OverlayScope::portal_slot_mut(&mut element);
+                let mut child = PortalSlot::child_mut(&mut slot, entry.key)
+                    .expect("mounted entry must have a slot child");
+                let mut surface = child.downcast::<PopoverSurface>();
+                if m.theme != entry.theme {
+                    PopoverSurface::set_theme(&mut surface, &entry.theme);
+                    m.theme = entry.theme;
+                }
+                let mut content = PopoverSurface::content_mut(&mut surface);
+                ctx.with_id(ViewId::new(entry.key), |ctx| {
+                    entry.content.rebuild(
+                        &m.view,
+                        &mut m.view_state,
+                        ctx,
+                        content.downcast(),
+                        app_state,
+                    );
+                });
+                m.view = entry.content.clone();
+            } else {
+                let (pod, vs_new) = ctx.with_id(ViewId::new(entry.key), |ctx| {
+                    entry.content.build(ctx, app_state)
+                });
+                let surface = wrap_in_surface(pod, &entry.theme);
+                let mut slot = OverlayScope::portal_slot_mut(&mut element);
+                PortalSlot::insert(&mut slot, entry.key, surface);
+                view_state.mounted.push(MountedEntry {
+                    key: entry.key,
+                    view: entry.content.clone(),
+                    view_state: vs_new,
+                    theme: entry.theme,
+                });
+            }
+        }
     }
 
     fn teardown(
@@ -403,8 +562,24 @@ where
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
     ) {
-        let mut content = OverlayScope::content_mut(&mut element);
-        self.content.teardown(view_state, ctx, content.downcast());
+        {
+            let mut content = OverlayScope::content_mut(&mut element);
+            ctx.with_id(CONTENT_VIEW_ID, |ctx| {
+                self.content
+                    .teardown(&mut view_state.content_state, ctx, content.downcast());
+            });
+        }
+        for m in &mut view_state.mounted {
+            let mut slot = OverlayScope::portal_slot_mut(&mut element);
+            if let Some(mut child) = PortalSlot::child_mut(&mut slot, m.key) {
+                let mut surface = child.downcast::<PopoverSurface>();
+                let mut content = PopoverSurface::content_mut(&mut surface);
+                ctx.with_id(ViewId::new(m.key), |ctx| {
+                    m.view.teardown(&mut m.view_state, ctx, content.downcast());
+                });
+            }
+        }
+        view_state.mounted.clear();
     }
 
     fn message(
@@ -414,9 +589,33 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        let mut content = OverlayScope::content_mut(&mut element);
-        self.content
-            .message(view_state, message, content.downcast(), app_state)
+        let Some(first) = message.take_first() else {
+            return MessageResult::Stale;
+        };
+        if first == CONTENT_VIEW_ID {
+            let mut content = OverlayScope::content_mut(&mut element);
+            return self.content.message(
+                &mut view_state.content_state,
+                message,
+                content.downcast(),
+                app_state,
+            );
+        }
+        let Some(m) = view_state
+            .mounted
+            .iter_mut()
+            .find(|m| ViewId::new(m.key) == first)
+        else {
+            return MessageResult::Stale;
+        };
+        let mut slot = OverlayScope::portal_slot_mut(&mut element);
+        let Some(mut child) = PortalSlot::child_mut(&mut slot, m.key) else {
+            return MessageResult::Stale;
+        };
+        let mut surface = child.downcast::<PopoverSurface>();
+        let mut content = PopoverSurface::content_mut(&mut surface);
+        m.view
+            .message(&mut m.view_state, message, content.downcast(), app_state)
     }
 }
 
