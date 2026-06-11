@@ -139,12 +139,8 @@ impl<F> Input<F> {
     {
         // Affixes are muted labels sharing the field background. Absent slots
         // become `None`, which renders nothing (no stray gap).
-        let prefix = self
-            .prefix
-            .map(|text| label(text).color(theme.palette.text_muted).render(theme));
-        let suffix = self
-            .suffix
-            .map(|text| label(text).color(theme.palette.text_muted).render(theme));
+        let prefix = self.prefix.map(|text| affix_label(text, theme));
+        let suffix = self.suffix.map(|text| affix_label(text, theme));
 
         let core = InputView::new(
             self.contents,
@@ -184,6 +180,19 @@ where
         .border(theme.palette.border, BORDER_WIDTH)
         .corner_radius(Length::px(f64::from(theme.radius.small)))
         .padding(field_padding(theme))
+}
+
+/// A muted, non-interactive affix label (prefix/suffix, currency symbol). Shared
+/// so every flavor styles its affixes identically.
+pub(crate) fn affix_label<State, Action>(
+    text: ArcStr,
+    theme: &Theme,
+) -> impl WidgetView<State, Action> + use<State, Action>
+where
+    State: 'static,
+    Action: 'static,
+{
+    label(text).color(theme.palette.text_muted).render(theme)
 }
 
 /// The materialized [`View`] backing the editor core of an [`Input`].

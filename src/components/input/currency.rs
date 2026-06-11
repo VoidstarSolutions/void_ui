@@ -21,9 +21,8 @@
 use masonry::core::ArcStr;
 use xilem::WidgetView;
 
-use super::view::{InputView, affixed_row, field_chrome};
+use super::view::{InputView, affix_label, affixed_row, field_chrome};
 use crate::Theme;
-use crate::label;
 
 /// How a [`currency_input`] formats its value. Defaults to US dollars
 /// (`$1,234.56`); supply your own for other locales.
@@ -119,9 +118,7 @@ impl<F> CurrencyInput<F> {
             on_changed,
         } = self;
 
-        let symbol = label(format.symbol.clone())
-            .color(theme.palette.text_muted)
-            .render(theme);
+        let symbol = affix_label(format.symbol.clone(), theme);
 
         let core = {
             let format = format.clone();

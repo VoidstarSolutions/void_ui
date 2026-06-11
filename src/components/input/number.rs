@@ -27,10 +27,9 @@ use xilem::WidgetView;
 use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, FlexExt as _, flex_row};
 
-use super::view::{InputView, affixed_row, field_chrome};
+use super::view::{InputView, affix_label, affixed_row, field_chrome};
 use crate::Theme;
 use crate::components::button::button;
-use crate::label;
 
 /// Builder for a numeric text field with `-`/`+` steppers.
 ///
@@ -161,8 +160,8 @@ impl<F> NumberInput<F> {
                 .render(theme)
         };
 
-        let prefix = prefix.map(|text| label(text).color(theme.palette.text_muted).render(theme));
-        let suffix = suffix.map(|text| label(text).color(theme.palette.text_muted).render(theme));
+        let prefix = prefix.map(|text| affix_label(text, theme));
+        let suffix = suffix.map(|text| affix_label(text, theme));
 
         let steppers = flex_row((minus, plus)).gap(Length::px(4.0));
 
