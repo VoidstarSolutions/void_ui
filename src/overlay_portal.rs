@@ -725,6 +725,70 @@ mod tests {
         (harness, key)
     }
 
+    /// Minimal interactive leaf recording primary presses — stands in for
+    /// real popover content (buttons, inputs) so the click-through test can
+    /// assert the press was *delivered to the child*, not merely tolerated
+    /// by the slot. A non-interactive child (like a bare label) would make
+    /// the backdrop the hit target even inside the child's rect, exercising
+    /// only the slot's early-return path.
+    struct ClickProbe {
+        downs: usize,
+    }
+
+    impl Widget for ClickProbe {
+        type Action = NoAction;
+
+        fn on_pointer_event(
+            &mut self,
+            _ctx: &mut EventCtx<'_>,
+            _props: &mut PropertiesMut<'_>,
+            event: &PointerEvent,
+        ) {
+            if matches!(event, PointerEvent::Down(_)) {
+                self.downs += 1;
+            }
+        }
+
+        fn register_children(&mut self, _ctx: &mut RegisterCtx<'_>) {}
+
+        fn measure(
+            &mut self,
+            _ctx: &mut MeasureCtx<'_>,
+            _props: &PropertiesRef<'_>,
+            _axis: Axis,
+            _len_req: LenReq,
+            _cross_length: Option<Length>,
+        ) -> Length {
+            Length::px(40.0)
+        }
+
+        fn layout(&mut self, _ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, _size: Size) {}
+
+        fn paint(
+            &mut self,
+            _ctx: &mut PaintCtx<'_>,
+            _props: &PropertiesRef<'_>,
+            _painter: &mut Painter<'_>,
+        ) {
+        }
+
+        fn accessibility_role(&self) -> Role {
+            Role::GenericContainer
+        }
+
+        fn accessibility(
+            &mut self,
+            _ctx: &mut AccessCtx<'_>,
+            _props: &PropertiesRef<'_>,
+            _node: &mut Node,
+        ) {
+        }
+
+        fn children_ids(&self) -> ChildrenIds {
+            ChildrenIds::from_slice(&[])
+        }
+    }
+
     #[test]
     fn slot_children_start_hidden() {
         let (mut harness, _key) = slot_with_one_child();
@@ -800,7 +864,13 @@ mod tests {
 
     #[test]
     fn pointer_down_inside_a_visible_child_does_not_dismiss() {
-        let (mut harness, key) = slot_with_one_child();
+        let key = 7;
+        let probe = NewWidget::new(ClickProbe { downs: 0 }).erased();
+        let slot = PortalSlot::new(vec![(key, probe)]);
+        let mut harness = TestHarness::create(
+            masonry::theme::default_property_set(),
+            masonry::core::NewWidget::new(slot),
+        );
         let placement = Rect::new(10.0, 10.0, 110.0, 40.0);
         harness.edit_root_widget(|mut wm| {
             PortalSlot::set_visible(
@@ -817,8 +887,17 @@ mod tests {
         harness.mouse_move(inside);
         harness.mouse_button_press(Some(PointerButton::Primary));
         harness.mouse_button_release(Some(PointerButton::Primary));
-        harness.edit_root_widget(|wm| {
+        harness.edit_root_widget(|mut wm| {
             assert!(wm.widget.children[0].visible);
+            // The press must have been *delivered to the child*, not merely
+            // tolerated — i.e. the backdrop didn't win the hit-test inside
+            // the child's placed rect.
+            let mut child = PortalSlot::child_mut(&mut wm, key).expect("child exists");
+            let probe = child.downcast::<ClickProbe>();
+            assert_eq!(
+                probe.widget.downs, 1,
+                "the press inside the child's rect must reach the child"
+            );
         });
     }
 
