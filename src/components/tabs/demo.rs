@@ -62,6 +62,10 @@ fn label_items() -> Vec<TabItem> {
         TabItem::label("Profile"),
         TabItem::label("Documents"),
         TabItem::label("Mail"),
+        // Disabled: a tab gated behind a permission or loading state can't
+        // be selected by pointer or keyboard, and is skipped by arrow/Home/End
+        // navigation.
+        TabItem::label("Billing").disabled(true),
     ]
 }
 
@@ -70,6 +74,9 @@ fn icon_items() -> Vec<TabItem> {
         TabItem::label("Appearance").with_icon(IconName::Settings),
         TabItem::label("Settings").with_icon(IconName::User),
         TabItem::label("About").with_icon(IconName::Info),
+        TabItem::label("Admin")
+            .with_icon(IconName::User)
+            .disabled(true),
     ]
 }
 
@@ -80,7 +87,8 @@ fn tab_body(theme: &Theme, selected: usize) -> Box<AnyWidgetView<TabsDemo>> {
         0 => "Manage your account details, password, and connected services.",
         1 => "Update your display name, avatar, and public profile information.",
         2 => "Browse, upload, and organize files shared with your team.",
-        _ => "Configure email notifications and message filtering rules.",
+        3 => "Configure email notifications and message filtering rules.",
+        _ => "Billing is unavailable until your account is verified.",
     };
     Box::new(
         label(text)

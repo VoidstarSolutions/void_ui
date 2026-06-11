@@ -91,13 +91,17 @@ pub struct TabSelected(pub usize);
 fn wrap_items(
     items: Vec<NewWidget<dyn Widget>>,
     names: Vec<Option<ArcStr>>,
+    disabled: &[bool],
     selected: usize,
 ) -> Vec<WidgetPod<TabItemNode>> {
     items
         .into_iter()
         .zip(names)
         .enumerate()
-        .map(|(i, (content, name))| TabItemNode::new(content, name, i == selected).to_pod())
+        .map(|(i, (content, name))| {
+            let item_disabled = disabled.get(i).copied().unwrap_or(false);
+            TabItemNode::new(content, name, i == selected, item_disabled).to_pod()
+        })
         .collect()
 }
 
@@ -111,14 +115,21 @@ pub struct TabItemNode {
     child: WidgetPod<dyn Widget>,
     name: Option<ArcStr>,
     selected: bool,
+    disabled: bool,
 }
 
 impl TabItemNode {
-    fn new(child: NewWidget<dyn Widget>, name: Option<ArcStr>, selected: bool) -> NewWidget<Self> {
+    fn new(
+        child: NewWidget<dyn Widget>,
+        name: Option<ArcStr>,
+        selected: bool,
+        disabled: bool,
+    ) -> NewWidget<Self> {
         NewWidget::new(Self {
             child: child.to_pod(),
             name,
             selected,
+            disabled,
         })
     }
 
@@ -126,6 +137,17 @@ impl TabItemNode {
         if this.widget.selected != selected {
             this.widget.selected = selected;
             this.ctx.request_accessibility_update();
+        }
+    }
+
+    /// Sets the disabled state. Propagates to masonry's system-level
+    /// disabled flag (for event routing + accessibility) and requests a
+    /// repaint.
+    fn set_disabled(this: &mut WidgetMut<'_, Self>, disabled: bool) {
+        if this.widget.disabled != disabled {
+            this.widget.disabled = disabled;
+            this.ctx.set_disabled(disabled);
+            this.ctx.request_paint_only();
         }
     }
 
@@ -140,6 +162,17 @@ impl Widget for TabItemNode {
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
         ctx.register_child(&mut self.child);
+    }
+
+    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        // Propagate the host-supplied initial `disabled` to masonry on
+        // widget add — `new` only sets the widget-internal field, and
+        // without this the first build leaves masonry's `is_disabled()` out
+        // of sync, breaking event routing and the accessibility pass that
+        // drives `node.set_disabled()`.
+        if matches!(event, Update::WidgetAdded) {
+            ctx.set_disabled(self.disabled);
+        }
     }
 
     fn measure(
@@ -191,7 +224,9 @@ impl Widget for TabItemNode {
         if let Some(name) = &self.name {
             node.set_label(name.to_string());
         }
-        node.add_action(accesskit::Action::Focus);
+        if !self.disabled {
+            node.add_action(accesskit::Action::Focus);
+        }
     }
 
     fn children_ids(&self) -> ChildrenIds {
@@ -204,6 +239,8 @@ pub struct TabsWidget {
     items: Vec<WidgetPod<TabItemNode>>,
     /// Each item's placed rect in local coordinates, set during `layout`.
     placed: Vec<Rect>,
+    /// Per-item disabled flag, parallel to `items`/`placed`.
+    disabled: Vec<bool>,
     variant: TabsVariant,
     selected: usize,
     hovered: Option<usize>,
@@ -217,13 +254,15 @@ impl TabsWidget {
     pub fn new(
         items: Vec<NewWidget<dyn Widget>>,
         names: Vec<Option<ArcStr>>,
+        disabled: Vec<bool>,
         variant: TabsVariant,
         selected: usize,
         theme: &Theme,
     ) -> Self {
         Self {
-            items: wrap_items(items, names, selected),
+            items: wrap_items(items, names, &disabled, selected),
             placed: Vec::new(),
+            disabled,
             variant,
             selected,
             hovered: None,
@@ -287,17 +326,43 @@ impl TabsWidget {
         this: &mut WidgetMut<'_, Self>,
         items: Vec<NewWidget<dyn Widget>>,
         names: Vec<Option<ArcStr>>,
+        disabled: Vec<bool>,
     ) {
         for old in std::mem::take(&mut this.widget.items) {
             this.ctx.remove_child(old);
         }
         let selected = this.widget.selected;
-        this.widget.items = wrap_items(items, names, selected);
+        this.widget.items = wrap_items(items, names, &disabled, selected);
+        this.widget.disabled = disabled;
         this.widget.hovered = None;
         this.widget.pressed = None;
         this.widget.placed.clear();
         this.ctx.children_changed();
         this.ctx.request_layout();
+    }
+
+    /// Updates item `index`'s disabled flag in place, e.g. when an item
+    /// becomes available/unavailable without the item *count* changing.
+    pub fn set_item_disabled(this: &mut WidgetMut<'_, Self>, index: usize, disabled: bool) {
+        if this.widget.disabled.get(index) == Some(&disabled) {
+            return;
+        }
+        if let Some(d) = this.widget.disabled.get_mut(index) {
+            *d = disabled;
+        }
+        {
+            let mut node = TabsWidget::item_mut(this, index);
+            TabItemNode::set_disabled(&mut node, disabled);
+        }
+        if disabled {
+            if this.widget.hovered == Some(index) {
+                this.widget.hovered = None;
+            }
+            if this.widget.pressed == Some(index) {
+                this.widget.pressed = None;
+            }
+        }
+        this.ctx.request_paint_only();
     }
 }
 
@@ -328,6 +393,44 @@ impl TabsWidget {
     fn item_at(&self, pos: Point) -> Option<usize> {
         self.placed.iter().position(|r| r.contains(pos))
     }
+
+    fn is_disabled(&self, index: usize) -> bool {
+        self.disabled.get(index).copied().unwrap_or(false)
+    }
+
+    /// The first item index in `0..items.len()` that isn't disabled, or
+    /// `None` if every item is disabled.
+    fn first_enabled(&self) -> Option<usize> {
+        (0..self.items.len()).find(|&i| !self.is_disabled(i))
+    }
+
+    /// The last item index in `0..items.len()` that isn't disabled, or
+    /// `None` if every item is disabled.
+    fn last_enabled(&self) -> Option<usize> {
+        (0..self.items.len()).rev().find(|&i| !self.is_disabled(i))
+    }
+
+    /// The next non-disabled item starting from `from` and stepping by
+    /// `dir` (`1` or `-1`), wrapping around. Returns `from` itself if it's
+    /// the only enabled item, or `None` if every item is disabled.
+    fn next_enabled(&self, from: usize, dir: isize) -> Option<usize> {
+        let n = self.items.len();
+        if n == 0 {
+            return None;
+        }
+        let mut i = from;
+        for _ in 0..n {
+            i = if dir > 0 {
+                (i + 1) % n
+            } else {
+                (i + n - 1) % n
+            };
+            if !self.is_disabled(i) {
+                return Some(i);
+            }
+        }
+        None
+    }
 }
 
 // --- MARK: IMPL WIDGET
@@ -343,7 +446,7 @@ impl Widget for TabsWidget {
         match event {
             PointerEvent::Move(update) => {
                 let pos = ctx.local_position(update.current.position);
-                let hovered = self.item_at(pos);
+                let hovered = self.item_at(pos).filter(|&i| !self.is_disabled(i));
                 if hovered != self.hovered {
                     self.hovered = hovered;
                     ctx.request_paint_only();
@@ -355,7 +458,9 @@ impl Widget for TabsWidget {
                 ..
             }) => {
                 let pos = ctx.local_position(state.position);
-                if let Some(i) = self.item_at(pos) {
+                if let Some(i) = self.item_at(pos)
+                    && !self.is_disabled(i)
+                {
                     self.pressed = Some(i);
                     ctx.request_focus();
                     ctx.capture_pointer();
@@ -400,14 +505,15 @@ impl Widget for TabsWidget {
         if key.state != KeyState::Down || self.items.is_empty() {
             return;
         }
-        let n = self.items.len();
         let new_selected = match key.key {
             Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowUp) => {
-                Some((self.selected + n - 1) % n)
+                self.next_enabled(self.selected, -1)
             }
-            Key::Named(NamedKey::ArrowRight | NamedKey::ArrowDown) => Some((self.selected + 1) % n),
-            Key::Named(NamedKey::Home) => Some(0),
-            Key::Named(NamedKey::End) => Some(n - 1),
+            Key::Named(NamedKey::ArrowRight | NamedKey::ArrowDown) => {
+                self.next_enabled(self.selected, 1)
+            }
+            Key::Named(NamedKey::Home) => self.first_enabled(),
+            Key::Named(NamedKey::End) => self.last_enabled(),
             _ => None,
         };
         if let Some(i) = new_selected {
@@ -674,7 +780,8 @@ mod tests {
         selected: usize,
     ) -> TabsWidget {
         let names = vec![None; items.len()];
-        TabsWidget::new(items, names, variant, selected, &Theme::default())
+        let disabled = vec![false; items.len()];
+        TabsWidget::new(items, names, disabled, variant, selected, &Theme::default())
     }
 
     fn harness(
@@ -686,6 +793,23 @@ mod tests {
             default_property_set(),
             NewWidget::new(widget(items, variant, selected)),
         )
+    }
+
+    fn harness_with_disabled(
+        items: Vec<NewWidget<dyn Widget>>,
+        disabled: Vec<bool>,
+        selected: usize,
+    ) -> TestHarness<TabsWidget> {
+        let names = vec![None; items.len()];
+        let widget = TabsWidget::new(
+            items,
+            names,
+            disabled,
+            TabsVariant::Default,
+            selected,
+            &Theme::default(),
+        );
+        TestHarness::create(default_property_set(), NewWidget::new(widget))
     }
 
     // --- item_at ---
@@ -728,7 +852,7 @@ mod tests {
     fn gap_and_outer_pad_scale_with_density() {
         let mut theme = Theme::default();
         theme.density.pad *= 2.0;
-        let scaled = TabsWidget::new(vec![], vec![], TabsVariant::Default, 0, &theme);
+        let scaled = TabsWidget::new(vec![], vec![], vec![], TabsVariant::Default, 0, &theme);
         let base = widget(vec![], TabsVariant::Default, 0);
         assert!(scaled.gap() > base.gap());
         assert!(scaled.outer_pad() > base.outer_pad());
@@ -810,6 +934,35 @@ mod tests {
     }
 
     #[test]
+    fn clicking_a_disabled_item_emits_nothing() {
+        let mut h = harness_with_disabled(
+            vec![item(40.0, 20.0), item(40.0, 20.0)],
+            vec![false, true],
+            0,
+        );
+        let target = h.edit_root_widget(|wm| wm.widget.placed[1].center());
+
+        h.mouse_move(target);
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+
+        assert!(h.pop_action::<TabSelected>().is_none());
+    }
+
+    #[test]
+    fn moving_over_a_disabled_item_does_not_set_hovered() {
+        let mut h = harness_with_disabled(
+            vec![item(40.0, 20.0), item(40.0, 20.0)],
+            vec![false, true],
+            0,
+        );
+        let target = h.edit_root_widget(|wm| wm.widget.placed[1].center());
+
+        h.mouse_move(target);
+        assert_eq!(h.edit_root_widget(|wm| wm.widget.hovered), None);
+    }
+
+    #[test]
     fn moving_over_an_item_sets_hovered() {
         let mut h = harness(
             vec![item(40.0, 20.0), item(40.0, 20.0)],
@@ -842,7 +995,7 @@ mod tests {
         assert_eq!(h.edit_root_widget(|wm| wm.widget.hovered), Some(1));
 
         h.edit_root_widget(|mut wm| {
-            TabsWidget::set_items(&mut wm, vec![item(40.0, 20.0)], vec![None]);
+            TabsWidget::set_items(&mut wm, vec![item(40.0, 20.0)], vec![None], vec![false]);
         });
 
         h.edit_root_widget(|wm| {
@@ -881,6 +1034,7 @@ mod tests {
             NewWidget::new(TabsWidget::new(
                 items,
                 names,
+                vec![false, false],
                 TabsVariant::Default,
                 1,
                 &Theme::default(),
@@ -974,6 +1128,90 @@ mod tests {
 
         h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowRight)));
 
+        assert!(h.pop_action::<TabSelected>().is_none());
+    }
+
+    #[test]
+    fn arrow_keys_skip_disabled_items() {
+        let mut h = harness_with_disabled(
+            vec![item(40.0, 20.0), item(40.0, 20.0), item(40.0, 20.0)],
+            vec![false, true, false],
+            0,
+        );
+        h.focus_on(Some(h.root_id()));
+
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowRight)));
+        let (action, _) = h.pop_action::<TabSelected>().expect("expected an action");
+        assert_eq!(
+            action.0, 2,
+            "ArrowRight should skip the disabled middle item"
+        );
+
+        h.edit_root_widget(|mut wm| TabsWidget::set_selected(&mut wm, 0));
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowLeft)));
+        let (action, _) = h.pop_action::<TabSelected>().expect("expected an action");
+        assert_eq!(
+            action.0, 2,
+            "ArrowLeft should wrap and skip the disabled middle item"
+        );
+    }
+
+    #[test]
+    fn home_and_end_skip_disabled_edges() {
+        let mut h = harness_with_disabled(
+            vec![
+                item(40.0, 20.0),
+                item(40.0, 20.0),
+                item(40.0, 20.0),
+                item(40.0, 20.0),
+            ],
+            vec![true, false, false, true],
+            2,
+        );
+        h.focus_on(Some(h.root_id()));
+
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Home)));
+        let (action, _) = h.pop_action::<TabSelected>().expect("expected an action");
+        assert_eq!(
+            action.0, 1,
+            "Home should land on the first enabled item, not index 0"
+        );
+
+        h.edit_root_widget(|mut wm| TabsWidget::set_selected(&mut wm, 1));
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::End)));
+        let (action, _) = h.pop_action::<TabSelected>().expect("expected an action");
+        assert_eq!(
+            action.0, 2,
+            "End should land on the last enabled item, not the last index"
+        );
+    }
+
+    // --- disabled ---
+
+    #[test]
+    fn set_item_disabled_updates_node_and_clears_interaction_state() {
+        let mut h = harness(
+            vec![item(40.0, 20.0), item(40.0, 20.0)],
+            TabsVariant::Default,
+            0,
+        );
+        let target = h.edit_root_widget(|wm| wm.widget.placed[1].center());
+        h.mouse_move(target);
+        assert_eq!(h.edit_root_widget(|wm| wm.widget.hovered), Some(1));
+
+        h.edit_root_widget(|mut wm| {
+            TabsWidget::set_item_disabled(&mut wm, 1, true);
+        });
+
+        h.edit_root_widget(|wm| {
+            assert!(wm.widget.disabled[1]);
+            assert_eq!(wm.widget.hovered, None);
+        });
+
+        // Once disabled, clicking the item emits nothing.
+        h.mouse_move(target);
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
         assert!(h.pop_action::<TabSelected>().is_none());
     }
 }

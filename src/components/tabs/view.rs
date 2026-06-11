@@ -40,6 +40,7 @@ pub struct TabItem {
     label: Option<ArcStr>,
     icon: Option<IconName>,
     aria_label: Option<ArcStr>,
+    disabled: bool,
 }
 
 impl TabItem {
@@ -50,6 +51,7 @@ impl TabItem {
             label: Some(label.into()),
             icon: None,
             aria_label: None,
+            disabled: false,
         }
     }
 
@@ -60,6 +62,7 @@ impl TabItem {
             label: None,
             icon: Some(icon),
             aria_label: None,
+            disabled: false,
         }
     }
 
@@ -90,6 +93,16 @@ impl TabItem {
     /// otherwise the visible label, otherwise `None`.
     fn accessible_name(&self) -> Option<ArcStr> {
         self.aria_label.clone().or_else(|| self.label.clone())
+    }
+
+    /// Marks this item as disabled: it can't be selected by pointer or
+    /// keyboard, is skipped by arrow/Home/End navigation, and is rendered
+    /// with muted text. Useful for tabs gated behind a permission or
+    /// loading state.
+    #[must_use]
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
     }
 }
 
@@ -193,11 +206,17 @@ pub struct TabsView<F, State, Action> {
 
 impl<F, State, Action> TabsView<F, State, Action> {
     fn item_color(&self, index: usize) -> Color {
-        if index == self.selected {
+        if self.items[index].disabled {
+            self.theme.palette.text_faint
+        } else if index == self.selected {
             self.theme.palette.text
         } else {
             self.theme.palette.text_muted
         }
+    }
+
+    fn disabled_flags(&self) -> Vec<bool> {
+        self.items.iter().map(|item| item.disabled).collect()
     }
 }
 
@@ -223,7 +242,14 @@ where
             states.push(state);
         }
         let names = self.items.iter().map(TabItem::accessible_name).collect();
-        let widget = TabsWidget::new(new_widgets, names, self.variant, self.selected, &self.theme);
+        let widget = TabsWidget::new(
+            new_widgets,
+            names,
+            self.disabled_flags(),
+            self.variant,
+            self.selected,
+            &self.theme,
+        );
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, states)
     }
@@ -248,6 +274,9 @@ where
 
         if self.items.len() == prev.items.len() {
             for (i, (item, prev_item)) in self.items.iter().zip(&prev.items).enumerate() {
+                if item.disabled != prev_item.disabled {
+                    TabsWidget::set_item_disabled(&mut element, i, item.disabled);
+                }
                 let view = item_content::<State, Action>(item, self.item_color(i), &self.theme);
                 let prev_view =
                     item_content::<State, Action>(prev_item, prev.item_color(i), &prev.theme);
@@ -286,7 +315,7 @@ where
                 new_states.push(state);
             }
             let names = self.items.iter().map(TabItem::accessible_name).collect();
-            TabsWidget::set_items(&mut element, new_widgets, names);
+            TabsWidget::set_items(&mut element, new_widgets, names, self.disabled_flags());
             *view_state = new_states;
         }
     }
