@@ -10,23 +10,16 @@ use proc_macro::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenSt
 /// Usage: `with_source!(theme_expr, { /* view body */ })`.
 ///
 /// Expands to
-/// `overlay_scope(overlap_column(body_view, code_block(source, theme_expr)).gap(8px))`,
+/// `overlap_column(body_view, code_block(source, theme_expr)).gap(8px)`,
 /// where `source` is the **original source text** of the body block —
 /// including newlines and indentation — recovered via
 /// [`proc_macro::Span::source_text`].
 ///
-/// Two distinct, complementary mechanisms stack in that expansion:
-///
-/// - `overlap_column` keeps `body_view` visually on top of `code_block`
-///   (same stacking as the old `flex_col`) while *painting* `body_view` —
-///   and any overflow from its subtree, e.g. an open `Popover` hosted in an
-///   in-tree `AnchoredOverlay` — on top of `code_block`, a later visual
-///   sibling that would otherwise occlude it once it overflows its own
-///   footprint. See [`crate::layout::overlap_column`] for the mechanism.
-/// - `overlay_scope` gives overlay-shaped descendants of `body_view` that
-///   use the scope-push path (e.g. dropdown menus) a discoverable,
-///   always-on-top, always-clipped slot to push their popups into. See
-///   [`crate::overlay_scope`] for the mechanism.
+/// `overlap_column` keeps `body_view` visually on top of `code_block`
+/// while *painting* `body_view` (and any in-tree overlay overflow) after
+/// it. Always-on-top behavior for popovers/dropdowns is provided by the
+/// demo panel's own `overlay_scope` wrapper (panel altitude, so popups can
+/// escape individual demo blocks), not by this macro.
 ///
 /// Falls back to a stringified token form if the compiler can't provide
 /// source text for the input span (rare; happens with macro-generated
@@ -159,24 +152,7 @@ pub fn with_source(input: TokenStream) -> TokenStream {
         gap_args,
     ))));
 
-    // ::void_ui::overlay_scope( <overlap_expr> )
-    //
-    // Registers an `OverlayScope` ancestor so that overlay-shaped
-    // descendants of `__vs_view` that use the scope-push path (dropdown
-    // menus) discover it, paint in a slot that always comes last, and stay
-    // clipped to this block's own bounds. This is a *separate* mechanism
-    // from `overlap_column` above — `overlap_column` fixes paint order
-    // between `__vs_view` and `code_block` (its flex-sibling occlusion
-    // problem), while `overlay_scope` gives in-scope descendants a
-    // shared always-on-top slot for popups they push explicitly. The two
-    // stack here because both are needed by different demos. See
-    // `crate::overlay_scope` for the mechanism and `dropdown_button`'s
-    // discovery/fallback for what happens when no scope is present.
-    push_path(&mut block, &["", "void_ui", "overlay_scope"]);
-    block.extend(std::iter::once(TokenTree::Group(Group::new(
-        Delimiter::Parenthesis,
-        overlap_expr,
-    ))));
+    block.extend(overlap_expr);
 
     let mut out = TokenStream::new();
     out.extend(std::iter::once(TokenTree::Group(Group::new(
