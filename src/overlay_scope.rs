@@ -22,7 +22,6 @@
 //! so that view-level portal content also paints above everything in the scope.
 
 use std::marker::PhantomData;
-use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
 use masonry::accesskit::{Node, Role};
@@ -42,7 +41,9 @@ use xilem_masonry::{Pod, ViewCtx, WidgetView};
 use crate::Theme;
 use crate::components::popover::PopoverAnchor;
 use crate::components::popover::widget::PopoverSurface;
-use crate::overlay_portal::{OverlayPortal, PortalContentViewState, PortalSlot, portal_from_env};
+use crate::overlay_portal::{
+    OverlayPortal, PortalContentView, PortalContentViewState, PortalSlot, portal_from_env,
+};
 
 /// Resource published into the Xilem [`Environment`](xilem_masonry::core::Environment)
 /// by [`overlay_scope`], letting arbitrary descendants discover the scope's
@@ -375,7 +376,7 @@ where
 /// needs to rebuild/teardown it.
 struct MountedEntry<State: 'static, Action: 'static> {
     key: u64,
-    view: Rc<crate::overlay_portal::PortalContentView<State, Action>>,
+    view: Arc<PortalContentView<State, Action>>,
     view_state: PortalContentViewState<State, Action>,
     theme: Theme,
 }
@@ -438,19 +439,39 @@ where
         let portal = portal_from_env::<State, Action>(ctx)
             .expect("overlay_scope provides OverlayPortal for its own subtree");
 
+        // Mount registered entries, iterating to a fixpoint: building an
+        // entry can itself register nested popovers (a popover inside another
+        // popover's content), which mutate the registry mid-loop, so each
+        // iteration re-snapshots and processes only keys not yet seen this
+        // pass. Keys are monotonically allocated, so the loop terminates.
+        // Removal can't happen during build (nothing is mounted yet), so no
+        // removal arm is needed here — unlike `rebuild`.
         let mut mounted = Vec::new();
         let mut slot_children = Vec::new();
-        for entry in portal.snapshot() {
-            let (pod, view_state) = ctx.with_id(ViewId::new(entry.key), |ctx| {
-                entry.content.build(ctx, app_state)
-            });
-            slot_children.push((entry.key, wrap_in_surface(pod, &entry.theme)));
-            mounted.push(MountedEntry {
-                key: entry.key,
-                view: entry.content.clone(),
-                view_state,
-                theme: entry.theme,
-            });
+        let mut processed: Vec<u64> = Vec::new();
+        loop {
+            let entries = portal.snapshot();
+            let mut progressed = false;
+            for entry in &entries {
+                if processed.contains(&entry.key) {
+                    continue;
+                }
+                processed.push(entry.key);
+                progressed = true;
+                let (pod, view_state) = ctx.with_id(ViewId::new(entry.key), |ctx| {
+                    entry.content.build(ctx, app_state)
+                });
+                slot_children.push((entry.key, wrap_in_surface(pod, &entry.theme)));
+                mounted.push(MountedEntry {
+                    key: entry.key,
+                    view: entry.content.clone(),
+                    view_state,
+                    theme: entry.theme,
+                });
+            }
+            if !progressed {
+                break;
+            }
         }
 
         let widget = OverlayScope::new(
@@ -477,7 +498,9 @@ where
         app_state: &mut State,
     ) {
         // 1. Rebuild content first — descendant popovers refresh the registry
-        //    during this call, so the diff below sees current truth.
+        //    during this call; the fixpoint diff below then converges on
+        //    whatever the registry says, including registrations that happen
+        //    mid-diff while entries themselves rebuild.
         {
             let mut content = OverlayScope::content_mut(&mut element);
             ctx.with_id(CONTENT_VIEW_ID, |ctx| {
@@ -491,20 +514,34 @@ where
             });
         }
 
-        let entries = view_state.portal.snapshot();
+        // 2./3. Diff the registry against mounted entries, iterating to a
+        // fixpoint: building/rebuilding an entry can itself register or remove
+        // nested popovers (a popover inside another popover's content), which
+        // mutate the registry mid-diff. Each iteration processes only keys not
+        // yet seen this pass, and keys are monotonically allocated, so the loop
+        // terminates. Entries are processed in registration (= key) order, which
+        // guarantees an owner's `update()` always lands before its entry is
+        // processed within the same pass.
+        let mut processed: Vec<u64> = Vec::new();
+        loop {
+            let entries = view_state.portal.snapshot();
 
-        // 2. Unmount entries whose popovers deregistered.
-        let mut idx = 0;
-        while idx < view_state.mounted.len() {
-            let key = view_state.mounted[idx].key;
-            if entries.iter().any(|e| e.key == key) {
-                idx += 1;
-                continue;
-            }
-            let mut gone = view_state.mounted.remove(idx);
-            {
-                let mut slot = OverlayScope::portal_slot_mut(&mut element);
-                if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
+            // Unmount entries whose popovers deregistered (including nested
+            // deregistrations discovered on later iterations — without this, a
+            // nested popover removed while open would linger painted until the
+            // next app-state change).
+            let mut idx = 0;
+            while idx < view_state.mounted.len() {
+                let key = view_state.mounted[idx].key;
+                if entries.iter().any(|e| e.key == key) {
+                    idx += 1;
+                    continue;
+                }
+                let mut gone = view_state.mounted.remove(idx);
+                {
+                    let mut slot = OverlayScope::portal_slot_mut(&mut element);
+                    let mut child = PortalSlot::child_mut(&mut slot, key)
+                        .expect("mounted entry must have a slot child");
                     let mut surface = child.downcast::<PopoverSurface>();
                     let mut content = PopoverSurface::content_mut(&mut surface);
                     ctx.with_id(ViewId::new(key), |ctx| {
@@ -512,46 +549,57 @@ where
                             .teardown(&mut gone.view_state, ctx, content.downcast());
                     });
                 }
+                let mut slot = OverlayScope::portal_slot_mut(&mut element);
+                PortalSlot::remove_by_key(&mut slot, key);
             }
-            let mut slot = OverlayScope::portal_slot_mut(&mut element);
-            PortalSlot::remove_by_key(&mut slot, key);
-        }
 
-        // 3. Rebuild kept entries, mount new ones.
-        for entry in &entries {
-            if let Some(m) = view_state.mounted.iter_mut().find(|m| m.key == entry.key) {
-                let mut slot = OverlayScope::portal_slot_mut(&mut element);
-                let mut child = PortalSlot::child_mut(&mut slot, entry.key)
-                    .expect("mounted entry must have a slot child");
-                let mut surface = child.downcast::<PopoverSurface>();
-                if m.theme != entry.theme {
-                    PopoverSurface::set_theme(&mut surface, &entry.theme);
-                    m.theme = entry.theme;
+            // Rebuild kept entries, mount new ones — only keys not yet
+            // processed this pass.
+            let mut progressed = false;
+            for entry in &entries {
+                if processed.contains(&entry.key) {
+                    continue;
                 }
-                let mut content = PopoverSurface::content_mut(&mut surface);
-                ctx.with_id(ViewId::new(entry.key), |ctx| {
-                    entry.content.rebuild(
-                        &m.view,
-                        &mut m.view_state,
-                        ctx,
-                        content.downcast(),
-                        app_state,
-                    );
-                });
-                m.view = entry.content.clone();
-            } else {
-                let (pod, vs_new) = ctx.with_id(ViewId::new(entry.key), |ctx| {
-                    entry.content.build(ctx, app_state)
-                });
-                let surface = wrap_in_surface(pod, &entry.theme);
-                let mut slot = OverlayScope::portal_slot_mut(&mut element);
-                PortalSlot::insert(&mut slot, entry.key, surface);
-                view_state.mounted.push(MountedEntry {
-                    key: entry.key,
-                    view: entry.content.clone(),
-                    view_state: vs_new,
-                    theme: entry.theme,
-                });
+                processed.push(entry.key);
+                progressed = true;
+                if let Some(m) = view_state.mounted.iter_mut().find(|m| m.key == entry.key) {
+                    let mut slot = OverlayScope::portal_slot_mut(&mut element);
+                    let mut child = PortalSlot::child_mut(&mut slot, entry.key)
+                        .expect("mounted entry must have a slot child");
+                    let mut surface = child.downcast::<PopoverSurface>();
+                    if m.theme != entry.theme {
+                        PopoverSurface::set_theme(&mut surface, &entry.theme);
+                        m.theme = entry.theme;
+                    }
+                    let mut content = PopoverSurface::content_mut(&mut surface);
+                    ctx.with_id(ViewId::new(entry.key), |ctx| {
+                        entry.content.rebuild(
+                            &m.view,
+                            &mut m.view_state,
+                            ctx,
+                            content.downcast(),
+                            app_state,
+                        );
+                    });
+                    m.view = entry.content.clone();
+                } else {
+                    let (pod, vs_new) = ctx.with_id(ViewId::new(entry.key), |ctx| {
+                        entry.content.build(ctx, app_state)
+                    });
+                    let surface = wrap_in_surface(pod, &entry.theme);
+                    let mut slot = OverlayScope::portal_slot_mut(&mut element);
+                    PortalSlot::insert(&mut slot, entry.key, surface);
+                    view_state.mounted.push(MountedEntry {
+                        key: entry.key,
+                        view: entry.content.clone(),
+                        view_state: vs_new,
+                        theme: entry.theme,
+                    });
+                }
+            }
+
+            if !progressed {
+                break;
             }
         }
     }
@@ -571,6 +619,9 @@ where
         }
         for m in &mut view_state.mounted {
             let mut slot = OverlayScope::portal_slot_mut(&mut element);
+            // Tolerant `if let` (not `expect`): the whole widget tree is being
+            // dropped wholesale here, so a missing slot child is not an
+            // invariant violation worth panicking over.
             if let Some(mut child) = PortalSlot::child_mut(&mut slot, m.key) {
                 let mut surface = child.downcast::<PopoverSurface>();
                 let mut content = PopoverSurface::content_mut(&mut surface);
@@ -589,9 +640,9 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        let Some(first) = message.take_first() else {
-            return MessageResult::Stale;
-        };
+        let first = message
+            .take_first()
+            .expect("OverlayScopeRootView received a message with an empty path");
         if first == CONTENT_VIEW_ID {
             let mut content = OverlayScope::content_mut(&mut element);
             return self.content.message(

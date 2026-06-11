@@ -6,6 +6,7 @@
 use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use masonry::widgets::Passthrough;
 use xilem_masonry::core::{AnyView, Resource, View, ViewPathTracker};
@@ -14,23 +15,35 @@ use xilem_masonry::{Pod, ViewCtx};
 use crate::Theme;
 use crate::overlay_scope::OverlayScopeHandle;
 
-/// Erased popover-content view stored in the portal registry.
+/// Erased popover-content view stored in the portal registry. Equivalent to
+/// [`xilem_masonry::AnyWidgetView`].
 ///
-/// Deliberately *not* [`xilem::AnyWidgetView`], which carries `+ Send + Sync`
-/// — the portal is same-thread by construction (registry, scope view, and
-/// content all live on the UI thread), and imposing `Send + Sync` on popover
-/// content would be a gratuitous API break versus the in-tree fallback.
-pub type PortalContentView<State, Action> = dyn AnyView<State, Action, ViewCtx, Pod<Passthrough>>;
+/// The `+ Send + Sync` bounds are about view *values*, not threading of the
+/// portal itself: `WidgetView` declares `Send + Sync` as a supertrait on view
+/// values, and the upcoming `PopoverView` carries the erased content as a
+/// struct field while itself implementing `WidgetView` — so the erased type
+/// must be `Send + Sync` for `PopoverView` to satisfy its own supertrait.
+/// This costs users nothing: every concrete `WidgetView` already satisfies
+/// the bounds by supertrait.
+///
+/// The *registry*, by contrast ([`OverlayPortal`]'s `Rc<RefCell<…>>`), stays
+/// deliberately non-`Send`: Environment resources and `ViewState` carry no
+/// such bounds, and the registry lives its whole life on the UI thread. That
+/// split — `Send + Sync` view values, single-threaded resources — is exactly
+/// why [`crate::overlay_scope::overlay_scope`] constructs the portal *inside*
+/// its `provides` closure rather than capturing one.
+pub type PortalContentView<State, Action> =
+    dyn AnyView<State, Action, ViewCtx, Pod<Passthrough>> + Send + Sync;
 
-/// View state produced by building an [`Rc`]-wrapped [`PortalContentView`].
+/// View state produced by building an [`Arc`]-wrapped [`PortalContentView`].
 /// Named via projection so we don't depend on `xilem_core` internals.
 pub(crate) type PortalContentViewState<State, Action> =
-    <Rc<PortalContentView<State, Action>> as View<State, Action, ViewCtx>>::ViewState;
+    <Arc<PortalContentView<State, Action>> as View<State, Action, ViewCtx>>::ViewState;
 
 /// One registered popover's content, as the scope's view sees it.
 pub(crate) struct PortalEntry<State, Action> {
     pub(crate) key: u64,
-    pub(crate) content: Rc<PortalContentView<State, Action>>,
+    pub(crate) content: Arc<PortalContentView<State, Action>>,
     pub(crate) theme: Theme,
 }
 
@@ -110,7 +123,7 @@ impl<State, Action> OverlayPortal<State, Action> {
     )]
     pub(crate) fn register(
         &self,
-        content: Rc<PortalContentView<State, Action>>,
+        content: Arc<PortalContentView<State, Action>>,
         theme: &Theme,
     ) -> u64 {
         let mut reg = self.inner.borrow_mut();
@@ -132,7 +145,7 @@ impl<State, Action> OverlayPortal<State, Action> {
     pub(crate) fn update(
         &self,
         key: u64,
-        content: Rc<PortalContentView<State, Action>>,
+        content: Arc<PortalContentView<State, Action>>,
         theme: &Theme,
     ) {
         let mut reg = self.inner.borrow_mut();
@@ -546,15 +559,15 @@ impl Widget for PortalSlot {
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
+    use std::sync::Arc;
 
     use super::*;
     use crate::Theme;
     use crate::overlay_scope::OverlayScopeHandle;
 
-    fn content() -> Rc<PortalContentView<(), ()>> {
+    fn content() -> Arc<PortalContentView<(), ()>> {
         let theme = Theme::default();
-        Rc::new(crate::label("portal content").render(&theme))
+        Arc::new(crate::label("portal content").render(&theme))
     }
 
     #[test]
@@ -586,7 +599,7 @@ mod tests {
         portal.update(key, replacement.clone(), &theme);
         let snap = portal.snapshot();
         assert_eq!(snap.len(), 1);
-        assert!(Rc::ptr_eq(&snap[0].content, &replacement));
+        assert!(Arc::ptr_eq(&snap[0].content, &replacement));
     }
 
     #[test]
@@ -630,7 +643,7 @@ mod tests {
         let snap = portal.snapshot();
         assert_eq!(snap.len(), 1);
         assert!(
-            Rc::ptr_eq(&snap[0].content, &original),
+            Arc::ptr_eq(&snap[0].content, &original),
             "existing entry must be unchanged after update with unknown key"
         );
     }
