@@ -146,7 +146,7 @@ impl<V> GroupBox<V> {
                 Box::new(
                     flex_col((title_label, content))
                         .cross_axis_alignment(CrossAxisAlignment::Stretch)
-                        .gap(Length::px(8.0)),
+                        .gap(Length::px(f64::from(theme.density.pad) / 2.0)),
                 )
             }
             None => content,
