@@ -2,6 +2,58 @@
 //! `popover` (and future overlay components) mount arbitrary stateful
 //! content views into the nearest [`crate::overlay_scope`]'s always-on-top
 //! slot, with full xilem rebuild/message semantics.
+//!
+//! # The full flow
+//!
+//! 1. **Publish.** [`crate::overlay_scope::overlay_scope`] constructs an
+//!    [`OverlayPortal<State, Action>`] inside its `provides` closure and
+//!    publishes it into the xilem `Environment`. `provides` build-once
+//!    semantics give the registry stable identity for the scope's lifetime.
+//! 2. **Register.** `popover()`'s view ([`crate::components::popover`]) finds
+//!    the portal via [`portal_from_env`] at `View::build`, registers its
+//!    `Arc`-erased content view ([`PortalContentView`]) and gets back a key;
+//!    on rebuild it refreshes the entry, on teardown it deregisters.
+//! 3. **Mount.** The scope's own view (`OverlayScopeRootView` in
+//!    `overlay_scope.rs`) diffs the registry on every build/rebuild and
+//!    mounts each entry — wrapped in `PopoverSurface` chrome — as a real view
+//!    child of the scope inside [`PortalSlot`]. The diff iterates to a
+//!    fixpoint because building/rebuilding/tearing-down an entry can itself
+//!    register or deregister *nested* popovers mid-diff. Content is a genuine
+//!    view child (element path `…scope… / ViewId(key)`), so rebuilds, theme
+//!    swaps, and button callbacks inside popover content all work.
+//! 4. **Show/hide/place.** Open state never flows through the registry:
+//!    `PopoverHost` pushes visibility and anchor placement to the slot as
+//!    *plain data* via `ctx.mutate_later(scope_id, …)`
+//!    ([`crate::overlay_scope::OverlayScope::set_portal_visible`] /
+//!    `set_portal_placement`), re-anchoring from `compose` while the trigger
+//!    scrolls.
+//! 5. **Dismiss.** While any child is visible the slot un-stashes an
+//!    invisible [`Backdrop`] child covering the scope; a pointer-down outside
+//!    every visible child hides them all and notifies each owning
+//!    `PopoverHost` via `mutate_later` → `PopoverHost::mark_closed` (safely
+//!    skipped by masonry if the owner was removed in the interim).
+//!
+//! # Known v1 limitations (intentional)
+//!
+//! - **Outside-scope clicks don't dismiss.** The backdrop only covers the
+//!   scope's bounds; clicks beyond them never reach it. Escape on the focused
+//!   trigger and clicks anywhere inside the scope do dismiss.
+//! - **Backdrop suppresses hover/clicks under the scope while open.** The
+//!   first click outside an open popover dismisses it and is consumed —
+//!   standard modal-backdrop behavior, but it also eats hover until then.
+//! - **A11y placement.** Portal content appears in the accessibility tree
+//!   under the scope's slot, not under its trigger.
+//! - **Environment context loss.** Portal content builds/rebuilds as a view
+//!   child of the *scope*, so a `provides` published *between* the scope and
+//!   the popover call site is not visible inside portal-mounted content
+//!   (`with_context` there panics or binds to a value above the scope).
+//!   React portals preserve context; this design structurally cannot.
+//!
+//! Masonry's window-level `Layer` system (`LayerStack`, `create_layer`,
+//! `Layer::capture_pointer_event`) solves the first three at the platform
+//! level but has no xilem integration yet; this portal is the userspace
+//! stand-in until it does. See
+//! `docs/notes/2026-06-10-xilem-overlay-learnings.md`.
 
 use std::cell::RefCell;
 use std::fmt;

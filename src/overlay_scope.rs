@@ -1,25 +1,39 @@
 //! `OverlayScope` widget + `overlay_scope` xilem view: a container that hosts
-//! arbitrary `content` plus a discoverable, always-on-top, always-clipped
-//! "overlay slot" that deeply-nested descendants can push popups into.
+//! arbitrary `content` plus *two* discoverable, always-on-top, always-clipped
+//! overlay slots that deeply-nested descendants can put popups into:
 //!
-//! Masonry's paint pass is strict depth-first by `children_ids()`
-//! registration order, and `set_clip_path` wraps a widget's own paint *and*
-//! all its children's recursive paint. `OverlayScope` exploits both facts:
-//! it registers `content` first and the overlay slot last (so the slot
-//! always paints on top of `content` and everything inside it — including
-//! later in-scope siblings), and clips both to its own border box (so the
-//! overlay never escapes the container, unlike a window-level `Layer`).
+//! - **The legacy widget-push slot** ([`OverlayScope::set_overlay`]): holds at
+//!   most one pre-built `NewWidget<dyn Widget>`, pushed from a descendant via
+//!   `ctx.mutate_later(scope_id, ...)`. Because `mutate_later` closures must
+//!   be `Send` (and widgets aren't), the pushed widget has to be *built inside
+//!   the closure from plain data* — which limits this path to stateless
+//!   content with no xilem view identity (no rebuilds, no message routing).
+//!   [`crate::components::dropdown_button`] is the reference consumer.
+//! - **The portal slot** ([`crate::overlay_portal::PortalSlot`]): a permanent
+//!   child whose content is mounted by the scope's *own view* from the
+//!   [`crate::overlay_portal::OverlayPortal`] Environment resource that
+//!   `overlay_scope` publishes. Descendants (e.g. `popover`) register erased
+//!   content *views* into the portal; the scope's view builds them as real
+//!   view children, so arbitrary stateful content keeps full xilem semantics
+//!   (rebuilds, theme swaps, button callbacks). See [`crate::overlay_portal`]
+//!   for the full flow.
+//!
+//! Masonry's paint pass is strict depth-first by `children_ids()` registration
+//! order, and `set_clip_path` wraps a widget's own paint *and* all its
+//! children's recursive paint. `OverlayScope` exploits both facts: children
+//! register in the order `content`, legacy overlay, portal slot — so both
+//! slots always paint on top of `content` and everything inside it (including
+//! later in-scope siblings), with portal content topmost — and everything is
+//! clipped to the scope's own border box (so overlays never escape the
+//! container, unlike a window-level masonry `Layer`). That registration order
+//! *is* the entire z-mechanism; nothing else makes the overlays "win".
 //!
 //! Descendants discover the nearest `OverlayScope` ancestor (if any) via the
-//! Xilem `Environment` — [`OverlayScopeHandle`] is published with `provides`
-//! and read with [`xilem_masonry::core::Environment::get_slot_for_type`] —
-//! and push popup content into it with `ctx.mutate_later(scope_id, ...)` plus
-//! [`OverlayScope::set_overlay`]. See [`crate::components::dropdown_button`]
-//! for the reference consumer (which falls back to [`crate::AnchoredOverlay`]
-//! when no scope ancestor exists).
-//!
-//! A permanent [`crate::overlay_portal::PortalSlot`] child is registered last
-//! so that view-level portal content also paints above everything in the scope.
+//! Xilem `Environment` — [`OverlayScopeHandle`] (for `mutate_later` targeting)
+//! and [`crate::overlay_portal::OverlayPortal`] (the portal registry) are both
+//! published with `provides` and read with
+//! [`xilem_masonry::core::Environment::get_slot_for_type`]. Consumers fall
+//! back to [`crate::AnchoredOverlay`] when no scope ancestor exists.
 
 use std::marker::PhantomData;
 use std::sync::{Arc, OnceLock};

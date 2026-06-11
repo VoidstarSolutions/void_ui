@@ -49,7 +49,12 @@ Theme primitives live in `src/theme/`: `Palette` (colors), `Typography` (font st
 
 ### Overlay primitive
 
-Anything overlay-shaped (popover, dropdown, menu, tooltip, dialog, toast) is meant to share a single primitive — currently `floating::FloatingOverlay` (`src/floating.rs`) with `floating()` and `interactive_floating()` builders. Build new overlay-flavored components on top of this rather than reimplementing positioning/dismissal.
+Anything overlay-shaped (popover, dropdown, menu, tooltip, dialog, toast) builds on two pieces:
+
+- `floating::FloatingOverlay` (`src/floating.rs`) for cursor-anchored, pointer-inert chrome positioned inside a pre-sized container.
+- `overlay_scope` (`src/overlay_scope.rs`) + `overlay_portal` (`src/overlay_portal.rs`) for popups that must paint above everything inside a region: the scope publishes a typed `OverlayPortal<State, Action>` Environment resource; components register erased content views into it; the scope's view mounts them in an always-last-painted, scope-clipped `PortalSlot`. Open/close/placement are plain-data widget mutations (`mutate_later`). `popover` uses this when a scope ancestor exists (falling back to in-tree `AnchoredOverlay` otherwise); `dropdown_button` still uses the scope's legacy stateless push slot. Host apps should wrap their root (or each independent region) in `overlay_scope`.
+
+Build new overlay-flavored components on these rather than reimplementing positioning/dismissal. Masonry's window-level `Layer` system is the intended long-term replacement once xilem grows view-layer integration for it.
 
 ### Linebender dep tracking
 
