@@ -31,6 +31,10 @@ use crate::Theme;
 const SLOT: char = '#';
 
 /// Builder for a masked (template) text field. Created with [`masked_input`].
+///
+/// Unlike [`Input`](super::Input) and [`NumberInput`](super::NumberInput), this
+/// exposes no `prefix`/`suffix`: the mask template defines the field's full
+/// visible structure, so the affix slot is intentionally unused.
 #[must_use = "MaskedInput does nothing until rendered with .render(&theme)"]
 pub struct MaskedInput<F> {
     raw: String,

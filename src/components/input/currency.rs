@@ -57,6 +57,10 @@ impl Default for CurrencyFormat {
 }
 
 /// Builder for a currency text field. Created with [`currency_input`].
+///
+/// Unlike [`Input`](super::Input) and [`NumberInput`](super::NumberInput), this
+/// exposes no `prefix`/`suffix`: the affix slot is reserved for the currency
+/// symbol, whose side is chosen by [`CurrencyFormat::symbol_suffix`].
 #[must_use = "CurrencyInput does nothing until rendered with .render(&theme)"]
 pub struct CurrencyInput<F> {
     value: String,
