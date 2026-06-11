@@ -117,38 +117,30 @@ impl<V> GroupBox<V> {
         let pad = Length::px(f64::from(theme.density.pad));
         let radius = Length::px(f64::from(theme.radius.small));
 
-        let background = self.background;
-        let content: Box<AnyWidgetView<State, Action>> = match self.variant {
-            GroupBoxVariant::Normal => match background {
-                Some(c) => Box::new(
-                    sized_box(self.child)
-                        .padding(pad)
-                        .background_color(c)
-                        .corner_radius(radius),
-                ),
-                None => Box::new(sized_box(self.child).padding(pad)),
-            },
-            GroupBoxVariant::Fill => Box::new(
+        let (background, border) =
+            resolve_style(self.variant, self.background, theme.palette.surface);
+
+        let content: Box<AnyWidgetView<State, Action>> = match (background, border) {
+            (Some(c), true) => Box::new(
                 sized_box(self.child)
                     .padding(pad)
-                    .background_color(background.unwrap_or(theme.palette.surface))
+                    .background_color(c)
+                    .border(theme.palette.border, Length::px(1.0))
                     .corner_radius(radius),
             ),
-            GroupBoxVariant::Outline => match background {
-                Some(c) => Box::new(
-                    sized_box(self.child)
-                        .padding(pad)
-                        .background_color(c)
-                        .border(theme.palette.border, Length::px(1.0))
-                        .corner_radius(radius),
-                ),
-                None => Box::new(
-                    sized_box(self.child)
-                        .padding(pad)
-                        .border(theme.palette.border, Length::px(1.0))
-                        .corner_radius(radius),
-                ),
-            },
+            (Some(c), false) => Box::new(
+                sized_box(self.child)
+                    .padding(pad)
+                    .background_color(c)
+                    .corner_radius(radius),
+            ),
+            (None, true) => Box::new(
+                sized_box(self.child)
+                    .padding(pad)
+                    .border(theme.palette.border, Length::px(1.0))
+                    .corner_radius(radius),
+            ),
+            (None, false) => Box::new(sized_box(self.child).padding(pad)),
         };
 
         match self.title {
@@ -165,5 +157,77 @@ impl<V> GroupBox<V> {
             }
             None => content,
         }
+    }
+}
+
+/// Resolve the content area's background fill and whether it gets a border,
+/// given the variant and an optional explicit background override.
+fn resolve_style(
+    variant: GroupBoxVariant,
+    background: Option<Color>,
+    surface: Color,
+) -> (Option<Color>, bool) {
+    let background = match (variant, background) {
+        (GroupBoxVariant::Fill, None) => Some(surface),
+        (_, Some(c)) => Some(c),
+        _ => None,
+    };
+    let border = matches!(variant, GroupBoxVariant::Outline);
+    (background, border)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SURFACE: Color = Color::from_rgb8(0x10, 0x20, 0x30);
+    const CUSTOM: Color = Color::from_rgb8(0xAA, 0xBB, 0xCC);
+
+    #[test]
+    fn normal_without_background_has_no_fill_or_border() {
+        assert_eq!(
+            resolve_style(GroupBoxVariant::Normal, None, SURFACE),
+            (None, false)
+        );
+    }
+
+    #[test]
+    fn normal_with_background_fills_without_border() {
+        assert_eq!(
+            resolve_style(GroupBoxVariant::Normal, Some(CUSTOM), SURFACE),
+            (Some(CUSTOM), false)
+        );
+    }
+
+    #[test]
+    fn fill_without_background_uses_theme_surface() {
+        assert_eq!(
+            resolve_style(GroupBoxVariant::Fill, None, SURFACE),
+            (Some(SURFACE), false)
+        );
+    }
+
+    #[test]
+    fn fill_with_background_overrides_theme_surface() {
+        assert_eq!(
+            resolve_style(GroupBoxVariant::Fill, Some(CUSTOM), SURFACE),
+            (Some(CUSTOM), false)
+        );
+    }
+
+    #[test]
+    fn outline_without_background_has_border_and_no_fill() {
+        assert_eq!(
+            resolve_style(GroupBoxVariant::Outline, None, SURFACE),
+            (None, true)
+        );
+    }
+
+    #[test]
+    fn outline_with_background_fills_and_borders() {
+        assert_eq!(
+            resolve_style(GroupBoxVariant::Outline, Some(CUSTOM), SURFACE),
+            (Some(CUSTOM), true)
+        );
     }
 }
