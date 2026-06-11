@@ -11,6 +11,7 @@ use crate::components::ScrollBarVisibility;
 use crate::components::button::ButtonVariant;
 use crate::components::dropdown_button::dropdown_button;
 use crate::label;
+use crate::overlay_scope::overlay_scope;
 use crate::scroll_container;
 use crate::with_source;
 use crate::{Theme, separator};
@@ -127,7 +128,7 @@ fn build_inner(theme: &Theme, state: &DropdownDemo) -> impl WidgetView<DropdownD
         .color(theme.palette.text_muted)
         .render(theme);
 
-    scroll_container(
+    let inner = scroll_container(
         flex_col((
             title_block,
             separator().render(theme),
@@ -142,7 +143,8 @@ fn build_inner(theme: &Theme, state: &DropdownDemo) -> impl WidgetView<DropdownD
     )
     .constrain_horizontal(true)
     .scroll_bar_visibility(ScrollBarVisibility::OnActivity)
-    .render(theme)
+    .render(theme);
+    overlay_scope(inner)
 }
 
 impl ViewMarker for DropdownDemoPanel {}
