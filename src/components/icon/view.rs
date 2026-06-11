@@ -80,6 +80,7 @@ impl Icon {
             ))))
             .text_size(size)
             .color(color)
+            .line_height(1.0)
             .render(theme)
     }
 }

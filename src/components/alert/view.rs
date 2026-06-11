@@ -201,7 +201,7 @@ impl<C> Alert<C> {
         let title_view = (!self.banner)
             .then_some(self.title)
             .flatten()
-            .map(|title| label(title).color(fg).render(theme));
+            .map(|title| label(title).color(fg).line_height(1.0).render(theme));
 
         let message_color = if self.variant == AlertVariant::Default {
             theme.palette.text
@@ -211,6 +211,7 @@ impl<C> Alert<C> {
         let message_view = label(self.message)
             .color(message_color)
             .multiline(true)
+            .line_height(1.0)
             .render(theme);
 
         let content = flex_col((title_view, message_view))
