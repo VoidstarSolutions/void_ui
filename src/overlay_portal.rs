@@ -111,16 +111,11 @@ impl<State, Action> OverlayPortal<State, Action> {
 
     /// Handle to the owning scope's widget id, for `mutate_later` pushes.
     #[must_use]
-    #[expect(dead_code, reason = "consumed by the popover view in a later commit")]
     pub(crate) fn scope(&self) -> &OverlayScopeHandle {
         &self.scope
     }
 
     /// Register a popover's content view; returns its portal key.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "consumed by the popover view in a later commit")
-    )]
     pub(crate) fn register(
         &self,
         content: Arc<PortalContentView<State, Action>>,
@@ -138,10 +133,6 @@ impl<State, Action> OverlayPortal<State, Action> {
     }
 
     /// Replace the content/theme for an existing key (no-op if unknown).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "consumed by the popover view in a later commit")
-    )]
     pub(crate) fn update(
         &self,
         key: u64,
@@ -156,10 +147,6 @@ impl<State, Action> OverlayPortal<State, Action> {
     }
 
     /// Remove the entry for `key` (no-op if unknown).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "consumed by the popover view in a later commit")
-    )]
     pub(crate) fn deregister(&self, key: u64) {
         self.inner.borrow_mut().entries.retain(|e| e.key != key);
     }
