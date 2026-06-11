@@ -66,6 +66,13 @@ impl TabItem {
         self.icon = Some(icon);
         self
     }
+
+    /// Add a label to an icon item.
+    #[must_use]
+    pub fn with_label(mut self, label: impl Into<ArcStr>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
 }
 
 /// Builds the icon/label content for one item, colored for its
