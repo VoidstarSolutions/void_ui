@@ -15,7 +15,7 @@ pub mod demo;
 mod masked;
 mod number;
 mod view;
-pub mod widget;
+mod widget;
 
 pub use currency::{CurrencyFormat, CurrencyInput, currency_input};
 pub use masked::{MaskedInput, format_mask, masked_input};
