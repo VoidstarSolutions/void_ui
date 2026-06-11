@@ -93,7 +93,7 @@ fn default_section(theme: &Theme, state: &GroupBoxDemo) -> Box<AnyWidgetView<Gro
             checkbox(sub_news, |s: &mut GroupBoxDemo| {
                 s.subscriptions[1] = !s.subscriptions[1];
             })
-            .label("News Letter")
+            .label("Newsletter")
             .render(theme),
             checkbox(sub_activity, |s: &mut GroupBoxDemo| {
                 s.subscriptions[2] = !s.subscriptions[2];
