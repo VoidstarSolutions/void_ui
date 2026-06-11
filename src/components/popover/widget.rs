@@ -415,22 +415,22 @@ impl Widget for PopoverHost {
             // stashed descendant), so only portal mode needs the push.
             Update::StashedChanged(true) if self.open => {
                 self.open = false;
-                if let Hosting::Portal { scope, key, .. } = &self.hosting {
-                    if let Some(scope_id) = scope.widget_id() {
-                        let key = *key;
-                        ctx.mutate_later(scope_id, move |mut w| {
-                            let mut scope = w.downcast::<OverlayScope>();
-                            OverlayScope::set_portal_visible(
-                                &mut scope,
-                                key,
-                                false,
-                                None,
-                                Rect::ZERO,
-                                PopoverAnchor::BottomStart,
-                                0.0,
-                            );
-                        });
-                    }
+                if let Hosting::Portal { scope, key, .. } = &self.hosting
+                    && let Some(scope_id) = scope.widget_id()
+                {
+                    let key = *key;
+                    ctx.mutate_later(scope_id, move |mut w| {
+                        let mut scope = w.downcast::<OverlayScope>();
+                        OverlayScope::set_portal_visible(
+                            &mut scope,
+                            key,
+                            false,
+                            None,
+                            Rect::ZERO,
+                            PopoverAnchor::BottomStart,
+                            0.0,
+                        );
+                    });
                 }
                 ctx.request_paint_only();
             }
