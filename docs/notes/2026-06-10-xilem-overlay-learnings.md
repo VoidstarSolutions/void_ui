@@ -148,9 +148,12 @@ keep an open popup glued to its scrolling trigger via the same idiom:
 compare the current window-space rect against the last pushed one in
 `compose`, push the new placement if it moved, and re-arm via
 `mutate_self_later(|w| w.ctx.request_compose())`. This relies on a fragile
-contract: masonry runs a widget's `compose` only when requested
-(`masonry_core/src/passes/compose.rs:28`), and the layout pass re-arms it
-(`masonry_core/src/passes/layout.rs:366-371`). It is, in effect, a
+contract: masonry runs a widget's `compose` when its transform changed *or*
+compose was requested (`masonry_core/src/passes/compose.rs:28`,
+`transformed || needs_compose`) — but a scrolled trigger's own transform
+change doesn't propagate a fresh placement to the structurally-separate
+slot, so the widget must keep re-requesting; the layout pass also re-arms
+it (`masonry_core/src/passes/layout.rs:366-371`). It is, in effect, a
 frame-by-frame polling loop that first-class *anchored* layers
 (`create_attached_layer` + framework-maintained positioning) would
 eliminate.

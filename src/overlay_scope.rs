@@ -94,15 +94,17 @@ impl OverlayScopeHandle {
     }
 }
 
-/// Masonry widget that hosts a footprint-dictating `content` child plus an
-/// optional, always-last-painted, always-clipped overlay popup.
+/// Masonry widget that hosts a footprint-dictating `content` child plus two
+/// always-clipped overlay slots: an optional legacy widget-push popup and a
+/// permanent [`PortalSlot`] (registered last, so it paints above both).
 ///
 /// `content` alone determines the container's measured size — pushing or
-/// clearing the overlay never reflows surrounding layout (mirrors
-/// [`crate::AnchoredOverlay::measure`]). The overlay, when present, is
+/// clearing either slot never reflows surrounding layout (mirrors
+/// [`crate::AnchoredOverlay::measure`]). The legacy overlay, when present, is
 /// anchored relative to a caller-supplied `placement` rect (in this widget's
 /// own local coordinates — see [`Self::set_overlay`]) using the same
-/// unclamped `PopoverAnchor::child_offset` math as `AnchoredOverlay`.
+/// unclamped `PopoverAnchor::child_offset` math as `AnchoredOverlay`; portal
+/// children carry per-key placements (see [`Self::set_portal_visible`]).
 pub struct OverlayScope {
     handle: OverlayScopeHandle,
     content: WidgetPod<dyn Widget>,
