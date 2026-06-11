@@ -458,18 +458,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::fmt;
-    use std::sync::Arc;
-
     use masonry::core::ArcStr;
     use masonry::testing::TestHarness;
     use masonry::widgets::TextAction;
     use xilem::ViewCtx;
-    use xilem::core::{
-        DynMessage, Environment, MessageCtx, MessageResult, ProxyError, RawProxy, SendMessage,
-        View, ViewId,
-    };
+    use xilem::core::{DynMessage, Environment, MessageCtx, MessageResult, View};
 
+    use super::super::test_support;
     use super::super::widget::InputCleared;
     use super::{InputView, byte_pos_after_n_digits, caret_after_edit};
     use crate::Theme;
@@ -493,33 +488,12 @@ mod tests {
         assert_eq!(byte_pos_after_n_digits("12,934", 9), 6);
     }
 
-    struct NoopProxy;
-    impl fmt::Debug for NoopProxy {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write!(f, "NoopProxy")
-        }
-    }
-    impl RawProxy for NoopProxy {
-        fn send_message(
-            &self,
-            _path: Arc<[ViewId]>,
-            _message: SendMessage,
-        ) -> Result<(), ProxyError> {
-            Ok(())
-        }
-        fn dyn_debug(&self) -> &dyn fmt::Debug {
-            self
-        }
-    }
-
     fn build_view_and_state() -> (ViewCtx, String) {
-        let runtime = Arc::new(
-            tokio::runtime::Builder::new_current_thread()
-                .build()
-                .unwrap(),
+        let ctx = ViewCtx::new(
+            test_support::noop_proxy(),
+            test_support::current_thread_runtime(),
         );
-        let proxy: Arc<dyn RawProxy> = Arc::new(NoopProxy);
-        (ViewCtx::new(proxy, runtime), "hello".to_string())
+        (ctx, "hello".to_string())
     }
 
     #[test]

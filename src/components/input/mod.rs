@@ -14,6 +14,8 @@ mod currency;
 pub mod demo;
 mod masked;
 mod number;
+#[cfg(test)]
+mod test_support;
 mod view;
 mod widget;
 

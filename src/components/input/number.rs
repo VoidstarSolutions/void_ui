@@ -216,34 +216,14 @@ fn adjust(value: &str, delta: f64, min: f64, max: f64) -> String {
 /// `TextArea` actually paints text.
 #[cfg(test)]
 mod text_area_layout {
-    use std::fmt;
     use std::sync::Arc;
 
     use masonry::core::{NewWidget, WidgetRef};
     use masonry::kurbo::Rect;
     use masonry::testing::TestHarness;
     use masonry::widgets::{Flex, TextArea};
-    use xilem::core::{ProxyError, RawProxy, SendMessage, ViewId};
+    use xilem::core::RawProxy;
     use xilem::{ViewCtx, WidgetView};
-
-    pub(super) struct NoopProxy;
-    impl fmt::Debug for NoopProxy {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write!(f, "NoopProxy")
-        }
-    }
-    impl RawProxy for NoopProxy {
-        fn send_message(
-            &self,
-            _path: Arc<[ViewId]>,
-            _message: SendMessage,
-        ) -> Result<(), ProxyError> {
-            Ok(())
-        }
-        fn dyn_debug(&self) -> &dyn fmt::Debug {
-            self
-        }
-    }
 
     fn find_text_area(
         widget: WidgetRef<'_, dyn masonry::core::Widget>,
@@ -363,20 +343,13 @@ mod tests {
     /// field.
     #[test]
     fn prefix_does_not_shift_editor_text_vertically() {
-        use std::sync::Arc;
-
-        use xilem::core::RawProxy;
-
         use crate::Theme;
         use crate::components::input::number::number_input;
-        use crate::components::input::number::text_area_layout::{NoopProxy, measure_text_area};
+        use crate::components::input::number::text_area_layout::measure_text_area;
+        use crate::components::input::test_support;
 
-        let runtime = Arc::new(
-            tokio::runtime::Builder::new_current_thread()
-                .build()
-                .unwrap(),
-        );
-        let proxy: Arc<dyn RawProxy> = Arc::new(NoopProxy);
+        let runtime = test_support::current_thread_runtime();
+        let proxy = test_support::noop_proxy();
         let theme = Theme::default();
 
         // Quantity-like field: no prefix/suffix.
