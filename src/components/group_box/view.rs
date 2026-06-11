@@ -114,27 +114,18 @@ impl<V> GroupBox<V> {
         let (background, border) =
             resolve_style(self.variant, self.background, theme.palette.surface);
 
-        let content: Box<AnyWidgetView<State, Action>> = match (background, border) {
-            (Some(c), true) => Box::new(
-                sized_box(self.child)
-                    .padding(pad)
-                    .background_color(c)
-                    .border(theme.palette.border, Length::px(1.0))
-                    .corner_radius(radius),
-            ),
-            (Some(c), false) => Box::new(
-                sized_box(self.child)
-                    .padding(pad)
-                    .background_color(c)
-                    .corner_radius(radius),
-            ),
-            (None, true) => Box::new(
-                sized_box(self.child)
-                    .padding(pad)
-                    .border(theme.palette.border, Length::px(1.0))
-                    .corner_radius(radius),
-            ),
-            (None, false) => Box::new(sized_box(self.child).padding(pad)),
+        // Background and corner radius are applied unconditionally: a
+        // transparent fill and a radius with nothing to clip are both
+        // visual no-ops, so the only branch left is the border.
+        let base = sized_box(self.child)
+            .padding(pad)
+            .background_color(background.unwrap_or(Color::TRANSPARENT))
+            .corner_radius(radius);
+
+        let content: Box<AnyWidgetView<State, Action>> = if border {
+            Box::new(base.border(theme.palette.border, Length::px(1.0)))
+        } else {
+            Box::new(base)
         };
 
         match self.title {
