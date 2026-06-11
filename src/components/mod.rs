@@ -27,6 +27,7 @@ pub mod icon;
 pub mod input;
 pub mod label;
 pub mod list;
+pub mod notification;
 pub mod popover;
 pub mod radio;
 pub mod resizable;
@@ -60,6 +61,10 @@ pub use input::{
 };
 pub use label::{Label, LabelAlignment, label};
 pub use list::{List, list};
+pub use notification::{
+    DEFAULT_TIMEOUT, DismissCallback, Notification, NotificationPosition, NotificationView,
+    notification, notification_stack,
+};
 pub use popover::{Popover, PopoverAnchor, PopoverHost, PopoverView, popover};
 pub use resizable::{
     MIN_PANEL_SIZE, Resizable, ResizablePanel, ResizablePanels, ResizablePanelsView, ResizableView,
@@ -102,6 +107,7 @@ pub enum ComponentKind {
     Input,
     Label,
     List,
+    Notification,
     Popover,
     Radio,
     Resizable,
@@ -135,6 +141,7 @@ impl ComponentKind {
             Self::Input => "Input",
             Self::Label => "Label",
             Self::List => "List",
+            Self::Notification => "Notification",
             Self::Popover => "Popover",
             Self::Radio => "Radio",
             Self::Resizable => "Resizable",
@@ -168,6 +175,7 @@ impl ComponentKind {
             Self::Input,
             Self::Label,
             Self::List,
+            Self::Notification,
             Self::Popover,
             Self::Radio,
             Self::Resizable,

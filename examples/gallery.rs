@@ -164,6 +164,10 @@ fn main_pane(focused: ComponentKind, theme: &Theme) -> Box<AnyWidgetView<State>>
         ComponentKind::Input => Box::new(void_ui::components::input::demo::panel(theme)),
         ComponentKind::Label => Box::new(void_ui::components::label::demo::panel(theme)),
         ComponentKind::List => Box::new(void_ui::components::list::demo::panel(theme)),
+        ComponentKind::Notification => {
+            Box::new(void_ui::components::notification::demo::panel(theme))
+        }
+
         ComponentKind::Radio => Box::new(void_ui::components::radio::demo::panel(theme)),
         ComponentKind::ScrollContainer => {
             Box::new(void_ui::components::scroll_container::demo::panel(theme))
