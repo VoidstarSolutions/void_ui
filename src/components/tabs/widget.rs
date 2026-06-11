@@ -247,6 +247,8 @@ impl TabsWidget {
                 let mut node = this.ctx.get_mut(item);
                 TabItemNode::set_selected(&mut node, true);
             }
+            this.widget.hovered = None;
+            this.widget.pressed = None;
             this.ctx.request_paint_only();
         }
     }
@@ -254,6 +256,8 @@ impl TabsWidget {
     pub fn set_variant(this: &mut WidgetMut<'_, Self>, variant: TabsVariant) {
         if this.widget.variant != variant {
             this.widget.variant = variant;
+            this.widget.hovered = None;
+            this.widget.pressed = None;
             this.ctx.request_layout();
             this.ctx.request_paint_only();
         }
