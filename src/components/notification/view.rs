@@ -256,10 +256,11 @@ where
 }
 
 /// One of the 6 viewport corners a notification stack can be anchored to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum NotificationPosition {
     TopLeft,
     TopCenter,
+    #[default]
     TopRight,
     BottomLeft,
     BottomCenter,
@@ -294,4 +295,42 @@ pub fn notification_stack<State: 'static, Action: 'static>(
     flex_col(items)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .gap(Length::px(f64::from(theme.density.pad) * 0.5))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NotificationPosition, UnitPoint};
+
+    #[test]
+    fn position_maps_to_matching_unit_point_corner() {
+        assert_eq!(
+            UnitPoint::from(NotificationPosition::TopLeft),
+            UnitPoint::TOP_LEFT
+        );
+        assert_eq!(
+            UnitPoint::from(NotificationPosition::TopCenter),
+            UnitPoint::TOP
+        );
+        assert_eq!(
+            UnitPoint::from(NotificationPosition::TopRight),
+            UnitPoint::TOP_RIGHT
+        );
+        assert_eq!(
+            UnitPoint::from(NotificationPosition::BottomLeft),
+            UnitPoint::BOTTOM_LEFT
+        );
+        assert_eq!(
+            UnitPoint::from(NotificationPosition::BottomCenter),
+            UnitPoint::BOTTOM
+        );
+        assert_eq!(
+            UnitPoint::from(NotificationPosition::BottomRight),
+            UnitPoint::BOTTOM_RIGHT
+        );
+    }
+
+    #[test]
+    fn default_position_is_top_right() {
+        assert_eq!(NotificationPosition::default(), NotificationPosition::TopRight);
+    }
 }

@@ -1,12 +1,21 @@
 //! Notification demo panel used by the void-ui gallery.
+//!
+//! Toasts are meant to float over the entire app, not just this panel, so
+//! the toast list and corner position live in the host application's state
+//! rather than being owned locally (contrast with most other demo panels —
+//! see `project_xilem_local_state` in memory). The host's state must
+//! implement [`AsMut<NotificationDemoState>`]; `examples/gallery.rs` stores
+//! a [`NotificationDemoState`] and renders [`overlay`] in a `zstack` around
+//! its whole window. This panel renders only the trigger buttons and
+//! position picker.
 
 use std::time::Duration;
 
-use masonry::layout::{Length, UnitPoint};
+use masonry::layout::Length;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::widgets::Passthrough;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, ZStackExt as _, flex_col, flex_row, sized_box, zstack};
+use xilem::view::{CrossAxisAlignment, flex_col, flex_row, sized_box};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::{DEFAULT_TIMEOUT, NotificationPosition, notification, notification_stack};
@@ -24,31 +33,29 @@ const POSITIONS: [(NotificationPosition, &str); 6] = [
     (NotificationPosition::BottomRight, "Bottom Right"),
 ];
 
+/// A single active toast, identified by `id` so its `on_close` can remove it.
 #[derive(Debug, Clone)]
-struct ToastEntry {
-    id: u64,
-    message: String,
-    variant: AlertVariant,
-    timeout: Option<Duration>,
+pub struct ToastEntry {
+    pub id: u64,
+    pub message: String,
+    pub variant: AlertVariant,
+    pub timeout: Option<Duration>,
 }
 
-#[derive(Debug, Clone)]
-struct NotificationDemo {
-    toasts: Vec<ToastEntry>,
-    next_id: u64,
-    position: NotificationPosition,
+/// Toast list + corner position for the notification demo.
+///
+/// Owned by the host application's state (e.g. `examples/gallery.rs`'s
+/// `State`) so [`overlay`] can render toasts over the whole window.
+#[derive(Debug, Clone, Default)]
+pub struct NotificationDemoState {
+    pub toasts: Vec<ToastEntry>,
+    pub next_id: u64,
+    pub position: NotificationPosition,
 }
 
-impl NotificationDemo {
-    fn new() -> Self {
-        Self {
-            toasts: Vec::new(),
-            next_id: 0,
-            position: NotificationPosition::TopRight,
-        }
-    }
-
-    fn push_toast(&mut self, message: &'static str, variant: AlertVariant, timeout: Option<Duration>) {
+impl NotificationDemoState {
+    /// Push a new toast onto the stack.
+    pub fn push_toast(&mut self, message: &'static str, variant: AlertVariant, timeout: Option<Duration>) {
         let id = self.next_id;
         self.next_id += 1;
         self.toasts.push(ToastEntry {
@@ -60,7 +67,12 @@ impl NotificationDemo {
     }
 }
 
-fn section_header(text: &'static str, theme: &Theme) -> impl WidgetView<NotificationDemo> + use<> {
+/// Implemented by host state types that embed a [`NotificationDemoState`].
+pub trait NotificationDemoHost: AsMut<NotificationDemoState> + 'static {}
+
+impl<S: AsMut<NotificationDemoState> + 'static> NotificationDemoHost for S {}
+
+fn section_header<S: 'static>(text: &'static str, theme: &Theme) -> impl WidgetView<S, ()> + use<S> {
     label(text)
         .text_size(theme.typography.size_caption)
         .letter_spacing(1.2)
@@ -68,89 +80,87 @@ fn section_header(text: &'static str, theme: &Theme) -> impl WidgetView<Notifica
         .render(theme)
 }
 
-fn position_row(
+fn position_row<S: NotificationDemoHost>(
     theme: &Theme,
-    state: &NotificationDemo,
-) -> impl WidgetView<NotificationDemo> + use<> {
-    let buttons: Vec<Box<AnyWidgetView<NotificationDemo>>> = POSITIONS
+    demo: &NotificationDemoState,
+) -> impl WidgetView<S, ()> + use<S> {
+    let buttons: Vec<Box<AnyWidgetView<S, ()>>> = POSITIONS
         .iter()
-        .map(
-            |&(position, name)| -> Box<AnyWidgetView<NotificationDemo>> {
-                Box::new(
-                    button(move |s: &mut NotificationDemo| s.position = position)
-                        .label(name)
-                        .active(state.position == position)
-                        .render(theme),
-                )
-            },
-        )
+        .map(|&(position, name)| -> Box<AnyWidgetView<S, ()>> {
+            Box::new(
+                button(move |s: &mut S| s.as_mut().position = position)
+                    .label(name)
+                    .active(demo.position == position)
+                    .render(theme),
+            )
+        })
         .collect();
     flex_row(buttons)
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(6.0))
 }
 
-fn trigger_button(
+fn trigger_button<S: NotificationDemoHost>(
     theme: &Theme,
     label_text: &'static str,
     message: &'static str,
     variant: AlertVariant,
     timeout: Option<Duration>,
-) -> impl WidgetView<NotificationDemo> + use<> {
-    button(move |s: &mut NotificationDemo| s.push_toast(message, variant, timeout))
+) -> impl WidgetView<S, ()> + use<S> {
+    button(move |s: &mut S| s.as_mut().push_toast(message, variant, timeout))
         .label(label_text)
         .render(theme)
 }
 
-fn triggers_row(theme: &Theme) -> impl WidgetView<NotificationDemo> + use<> {
-    let dismiss_all = button(|s: &mut NotificationDemo| s.toasts.clear())
+fn triggers_row<S: NotificationDemoHost>(theme: &Theme) -> impl WidgetView<S, ()> + use<S> {
+    let dismiss_all = button(|s: &mut S| s.as_mut().toasts.clear())
         .label("Dismiss All")
         .render(theme);
 
     flex_wrap((
-        trigger_button(
+        trigger_button::<S>(
             theme,
             "Show Notification",
             "This is a notification.",
             AlertVariant::Default,
             Some(DEFAULT_TIMEOUT),
         ),
-        trigger_button(
+        trigger_button::<S>(
             theme,
             "Info",
             "You have been saved successfully.",
             AlertVariant::Info,
             Some(DEFAULT_TIMEOUT),
         ),
-        trigger_button(
+        trigger_button::<S>(
             theme,
             "Success",
             "Your changes have been saved.",
             AlertVariant::Success,
             Some(DEFAULT_TIMEOUT),
         ),
-        trigger_button(
+        trigger_button::<S>(
             theme,
             "Warning",
             "This action cannot be undone.",
             AlertVariant::Warning,
             Some(DEFAULT_TIMEOUT),
         ),
-        trigger_button(
+        trigger_button::<S>(
             theme,
             "Error",
             "There was a problem with your request.",
             AlertVariant::Error,
             Some(DEFAULT_TIMEOUT),
         ),
-        trigger_button(
+        trigger_button::<S>(
             theme,
             "Custom timeout (2s)",
             "This toast auto-dismisses after 2 seconds.",
             AlertVariant::Info,
             Some(Duration::from_secs(2)),
         ),
-        trigger_button(
+        trigger_button::<S>(
             theme,
             "No timeout",
             "This toast stays until dismissed manually.",
@@ -162,61 +172,30 @@ fn triggers_row(theme: &Theme) -> impl WidgetView<NotificationDemo> + use<> {
     .gap(8.0)
 }
 
-fn live_demo_section(
+fn live_demo_section<S: NotificationDemoHost>(
     theme: &Theme,
-    state: &NotificationDemo,
-) -> impl WidgetView<NotificationDemo> + use<> {
-    let controls = flex_col((position_row(theme, state), triggers_row(theme)))
-        .cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .gap(Length::px(8.0));
-
-    let placeholder = sized_box(label("Demo area").render(theme))
-        .fixed_height(Length::px(320.0))
-        .padding(Length::px(16.0))
-        .background_color(theme.palette.surface_2)
-        .border(theme.palette.border, Length::px(1.0))
-        .corner_radius(Length::px(f64::from(theme.radius.small)));
-
-    let items: Vec<Box<AnyWidgetView<NotificationDemo>>> = state
-        .toasts
-        .iter()
-        .map(|toast| -> Box<AnyWidgetView<NotificationDemo>> {
-            let id = toast.id;
-            let mut n = notification(toast.message.clone()).variant(toast.variant);
-            n = match toast.timeout {
-                Some(timeout) => n.timeout(timeout),
-                None => n.no_timeout(),
-            };
-            Box::new(
-                n.on_close(move |s: &mut NotificationDemo| s.toasts.retain(|t| t.id != id))
-                    .render(theme),
-            )
-        })
-        .collect();
-
-    let overlay = sized_box(notification_stack(theme, items))
-        .fixed_width(Length::px(280.0))
-        .padding(Length::px(8.0))
-        .alignment(UnitPoint::from(state.position));
-
-    let demo_area = zstack((placeholder, overlay));
-
+    demo: &NotificationDemoState,
+) -> impl WidgetView<S, ()> + use<S> {
     with_source!(theme, {
-        flex_col((controls, demo_area))
+        flex_col((position_row::<S>(theme, demo), triggers_row::<S>(theme)))
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
             .gap(Length::px(8.0))
     })
 }
 
-fn build_inner(theme: &Theme, state: &NotificationDemo) -> impl WidgetView<NotificationDemo> + use<> {
+fn build_inner<S: NotificationDemoHost>(
+    theme: &Theme,
+    demo: &NotificationDemoState,
+) -> impl WidgetView<S, ()> + use<S> {
     let title_block = flex_col((
         label("Notification")
             .text_size(theme.typography.size_title)
             .color(theme.palette.text)
             .render(theme),
         label(
-            "Toast card built on Alert, with a close button and an optional auto-dismiss timeout. \
-             Buttons below trigger toasts anchored to the chosen corner.",
+            "Toast card built on Alert, with a close button and an optional auto-dismiss \
+             timeout. Buttons below trigger toasts that float over the whole window, \
+             anchored to the chosen corner.",
         )
         .color(theme.palette.text_muted)
         .multiline(true)
@@ -228,8 +207,8 @@ fn build_inner(theme: &Theme, state: &NotificationDemo) -> impl WidgetView<Notif
     scroll_container(
         flex_col((
             title_block,
-            section_header("Live demo", theme),
-            live_demo_section(theme, state),
+            section_header::<S>("Live demo", theme),
+            live_demo_section::<S>(theme, demo),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .gap(Length::px(16.0)),
@@ -239,8 +218,42 @@ fn build_inner(theme: &Theme, state: &NotificationDemo) -> impl WidgetView<Notif
     .render(theme)
 }
 
-type InnerView = Box<AnyWidgetView<NotificationDemo>>;
-type InnerViewState = <InnerView as View<NotificationDemo, (), ViewCtx>>::ViewState;
+/// Render the active toast stack.
+///
+/// Wrap the result in `.alignment(UnitPoint::from(demo.position))` (see
+/// [`NotificationPosition`]'s [`UnitPoint`] conversion) and place it in a
+/// `zstack` around the host application's whole window (see
+/// `examples/gallery.rs`) so toasts float over everything, not just the
+/// notification demo panel.
+#[must_use]
+pub fn overlay<S: NotificationDemoHost>(
+    theme: &Theme,
+    demo: &NotificationDemoState,
+) -> impl WidgetView<S, ()> + use<S> {
+    let items: Vec<Box<AnyWidgetView<S, ()>>> = demo
+        .toasts
+        .iter()
+        .map(|toast| -> Box<AnyWidgetView<S, ()>> {
+            let id = toast.id;
+            let mut n = notification(toast.message.clone()).variant(toast.variant);
+            n = match toast.timeout {
+                Some(timeout) => n.timeout(timeout),
+                None => n.no_timeout(),
+            };
+            Box::new(
+                n.on_close(move |s: &mut S| s.as_mut().toasts.retain(|t| t.id != id))
+                    .render(theme),
+            )
+        })
+        .collect();
+
+    sized_box(notification_stack(theme, items))
+        .fixed_width(Length::px(280.0))
+        .padding(Length::px(8.0))
+}
+
+type InnerView<S> = Box<AnyWidgetView<S, ()>>;
+type InnerViewState<S> = <InnerView<S> as View<S, (), ViewCtx>>::ViewState;
 
 /// Opaque state owned by the notification demo panel.
 pub struct NotificationDemoPanel {
@@ -248,16 +261,15 @@ pub struct NotificationDemoPanel {
 }
 
 #[doc(hidden)]
-pub struct NotificationDemoPanelState {
-    demo: NotificationDemo,
-    inner_view: InnerView,
-    inner_state: InnerViewState,
+pub struct NotificationDemoPanelState<S: NotificationDemoHost> {
+    inner_view: InnerView<S>,
+    inner_state: InnerViewState<S>,
 }
 
-/// Renders the Notification demo panel.
+/// Renders the Notification demo panel (trigger buttons + position picker).
 ///
-/// The returned view owns the live-stack toast list internally; callers do
-/// not need to store or lens into any notification state.
+/// `S` must implement [`AsMut<NotificationDemoState>`]; pair this with
+/// [`overlay`] rendered around the host application's whole window.
 #[must_use]
 pub fn panel(theme: &Theme) -> NotificationDemoPanel {
     NotificationDemoPanel { theme: *theme }
@@ -265,18 +277,17 @@ pub fn panel(theme: &Theme) -> NotificationDemoPanel {
 
 impl ViewMarker for NotificationDemoPanel {}
 
-impl<S: 'static> View<S, (), ViewCtx> for NotificationDemoPanel {
-    type ViewState = NotificationDemoPanelState;
+impl<S: NotificationDemoHost> View<S, (), ViewCtx> for NotificationDemoPanel {
+    type ViewState = NotificationDemoPanelState<S>;
     type Element = Pod<Passthrough>;
 
-    fn build(&self, ctx: &mut ViewCtx, _: &mut S) -> (Self::Element, Self::ViewState) {
-        let mut demo = NotificationDemo::new();
-        let inner_view: InnerView = Box::new(build_inner(&self.theme, &demo));
-        let (element, inner_state) = inner_view.build(ctx, &mut demo);
+    fn build(&self, ctx: &mut ViewCtx, app_state: &mut S) -> (Self::Element, Self::ViewState) {
+        let demo = app_state.as_mut().clone();
+        let inner_view: InnerView<S> = Box::new(build_inner::<S>(&self.theme, &demo));
+        let (element, inner_state) = inner_view.build(ctx, app_state);
         (
             element,
             NotificationDemoPanelState {
-                demo,
                 inner_view,
                 inner_state,
             },
@@ -286,25 +297,20 @@ impl<S: 'static> View<S, (), ViewCtx> for NotificationDemoPanel {
     fn rebuild(
         &self,
         _prev: &Self,
-        vs: &mut NotificationDemoPanelState,
+        vs: &mut NotificationDemoPanelState<S>,
         ctx: &mut ViewCtx,
         element: Mut<'_, Pod<Passthrough>>,
-        _: &mut S,
+        app_state: &mut S,
     ) {
-        let new_inner: InnerView = Box::new(build_inner(&self.theme, &vs.demo));
-        new_inner.rebuild(
-            &vs.inner_view,
-            &mut vs.inner_state,
-            ctx,
-            element,
-            &mut vs.demo,
-        );
+        let demo = app_state.as_mut().clone();
+        let new_inner: InnerView<S> = Box::new(build_inner::<S>(&self.theme, &demo));
+        new_inner.rebuild(&vs.inner_view, &mut vs.inner_state, ctx, element, app_state);
         vs.inner_view = new_inner;
     }
 
     fn teardown(
         &self,
-        vs: &mut NotificationDemoPanelState,
+        vs: &mut NotificationDemoPanelState<S>,
         ctx: &mut ViewCtx,
         element: Mut<'_, Pod<Passthrough>>,
     ) {
@@ -313,12 +319,62 @@ impl<S: 'static> View<S, (), ViewCtx> for NotificationDemoPanel {
 
     fn message(
         &self,
-        vs: &mut NotificationDemoPanelState,
+        vs: &mut NotificationDemoPanelState<S>,
         message: &mut MessageCtx,
         element: Mut<'_, Pod<Passthrough>>,
-        _: &mut S,
+        app_state: &mut S,
     ) -> MessageResult<()> {
         vs.inner_view
-            .message(&mut vs.inner_state, message, element, &mut vs.demo)
+            .message(&mut vs.inner_state, message, element, app_state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AlertVariant, DEFAULT_TIMEOUT, NotificationDemoState, NotificationPosition};
+
+    #[test]
+    fn default_state_is_empty_with_top_right_position() {
+        let state = NotificationDemoState::default();
+        assert!(state.toasts.is_empty());
+        assert_eq!(state.next_id, 0);
+        assert_eq!(state.position, NotificationPosition::TopRight);
+    }
+
+    #[test]
+    fn push_toast_appends_with_incrementing_ids() {
+        let mut state = NotificationDemoState::default();
+
+        state.push_toast("first", AlertVariant::Info, Some(DEFAULT_TIMEOUT));
+        state.push_toast("second", AlertVariant::Error, None);
+
+        assert_eq!(state.toasts.len(), 2);
+
+        assert_eq!(state.toasts[0].id, 0);
+        assert_eq!(state.toasts[0].message, "first");
+        assert_eq!(state.toasts[0].variant, AlertVariant::Info);
+        assert_eq!(state.toasts[0].timeout, Some(DEFAULT_TIMEOUT));
+
+        assert_eq!(state.toasts[1].id, 1);
+        assert_eq!(state.toasts[1].message, "second");
+        assert_eq!(state.toasts[1].variant, AlertVariant::Error);
+        assert_eq!(state.toasts[1].timeout, None);
+
+        assert_eq!(state.next_id, 2);
+    }
+
+    #[test]
+    fn dismiss_all_clears_toasts_without_resetting_id_counter() {
+        let mut state = NotificationDemoState::default();
+        state.push_toast("first", AlertVariant::Info, Some(DEFAULT_TIMEOUT));
+        state.push_toast("second", AlertVariant::Info, Some(DEFAULT_TIMEOUT));
+
+        state.toasts.clear();
+
+        assert!(state.toasts.is_empty());
+        assert_eq!(state.next_id, 2);
+
+        state.push_toast("third", AlertVariant::Info, Some(DEFAULT_TIMEOUT));
+        assert_eq!(state.toasts[0].id, 2);
     }
 }

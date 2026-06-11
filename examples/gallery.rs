@@ -8,12 +8,13 @@
 //! the current palette, text samples, and density numbers.
 
 use void_ui::components::ScrollBarVisibility::OnActivity;
-use xilem::masonry::layout::Length;
+use void_ui::components::notification::demo::NotificationDemoState;
+use xilem::masonry::layout::{Length, UnitPoint};
 use xilem::peniko::Color;
 use xilem::style::Style as _;
 use xilem::view::{
-    CrossAxisAlignment, FlexExt as _, FlexSpacer, MainAxisAlignment, flex_col, flex_row, portal,
-    sized_box,
+    CrossAxisAlignment, FlexExt as _, FlexSpacer, MainAxisAlignment, ZStackExt as _, flex_col,
+    flex_row, portal, sized_box, zstack,
 };
 use xilem::winit::error::EventLoopError;
 use xilem::{AnyWidgetView, EventLoop, WidgetView, WindowOptions, Xilem};
@@ -28,6 +29,7 @@ struct State {
     focused: ComponentKind,
     theme_panel_open: bool,
     sidebar_collapsed: bool,
+    notification_demo: NotificationDemoState,
 }
 
 impl State {
@@ -37,7 +39,14 @@ impl State {
             focused: ComponentKind::Button,
             theme_panel_open: false,
             sidebar_collapsed: false,
+            notification_demo: NotificationDemoState::default(),
         }
+    }
+}
+
+impl AsMut<NotificationDemoState> for State {
+    fn as_mut(&mut self) -> &mut NotificationDemoState {
+        &mut self.notification_demo
     }
 }
 
@@ -46,6 +55,7 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
     let focused = state.focused;
     let theme_panel_open = state.theme_panel_open;
     let sidebar_collapsed = state.sidebar_collapsed;
+    let notification_demo = state.notification_demo.clone();
 
     let workspace = workspace_row(focused, theme_panel_open, sidebar_collapsed, &theme);
 
@@ -53,7 +63,12 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .main_axis_alignment(MainAxisAlignment::Start);
 
-    sized_box(outer).background_color(theme.palette.bg_deep)
+    let content = sized_box(outer).background_color(theme.palette.bg_deep);
+    let toast_overlay =
+        void_ui::components::notification::demo::overlay::<State>(&theme, &notification_demo)
+            .alignment(UnitPoint::from(notification_demo.position));
+
+    zstack((content, toast_overlay))
 }
 
 fn workspace_row(
