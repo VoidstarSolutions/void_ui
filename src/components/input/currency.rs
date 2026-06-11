@@ -36,7 +36,9 @@ pub struct CurrencyFormat {
     pub group_separator: char,
     /// Decimal separator, e.g. `.` (US) or `,` (EU).
     pub decimal_separator: char,
-    /// Maximum digits kept after the decimal separator. `0` disables decimals.
+    /// Maximum digits kept after the decimal separator. `0` disables decimals:
+    /// a typed separator and everything after it is dropped (¥-style, so
+    /// `12.34` -> `12`) rather than folded into the integer part.
     pub decimal_places: usize,
 }
 
@@ -338,5 +340,11 @@ mod tests {
         let mut fmt = us();
         fmt.decimal_places = 0;
         assert_eq!(format_currency("1234.56", &fmt), "1,234");
+        // A typed separator and the digits after it are dropped, not folded into
+        // the integer (so "12.34" is 12, never 1234).
+        assert_eq!(format_currency("12.34", &fmt), "12");
+        assert_eq!(format_currency("12.", &fmt), "12");
+        // A lone fractional entry has no integer part to keep, so it's empty.
+        assert_eq!(format_currency(".5", &fmt), "");
     }
 }

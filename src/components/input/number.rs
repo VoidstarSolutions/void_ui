@@ -73,8 +73,12 @@ impl<F> NumberInput<F> {
         self
     }
 
-    /// Clamp stepper results to `[min, max]`. Typing is not clamped; only the
-    /// steppers respect the range. Defaults to unbounded.
+    /// Clamp **stepper** results to `[min, max]`. Typing is intentionally left
+    /// unclamped: clamping each keystroke is hostile — with a `[10, 100]` range,
+    /// typing "50" would catch on the leading "5" and snap to "10", so the value
+    /// could never be entered. The host validates the final value at its own
+    /// commit point; only the steppers enforce the range here. Defaults to
+    /// unbounded.
     pub fn range(mut self, min: f64, max: f64) -> Self {
         self.min = min;
         self.max = max;
@@ -136,6 +140,8 @@ impl<F> NumberInput<F> {
 
         let core = {
             let on_changed = on_changed.clone();
+            // Typed text is only numeric-filtered, never range-clamped (see
+            // `range`): clamping mid-keystroke would make many values untypeable.
             InputView::new(
                 value.clone(),
                 placeholder,
