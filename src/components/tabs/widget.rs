@@ -6,22 +6,29 @@
 //! [`TabSelected`] directly rather than registering per-item action sources
 //! (mirrors [`crate::components::resizable::widget::ResizableWidget`]).
 //!
-//! Keyboard navigation and an overflow "..." menu for [`TabsVariant::Default`]
-//! are known follow-ups, not implemented here.
+//! Each item's content is wrapped in [`TabItemNode`], which exposes it to
+//! accessibility as `Role::Tab` with `selected` state and an accessible
+//! name. The row itself is a single focus stop ([`Role::TabList`]); arrow
+//! keys, Home, and End move and immediately activate the selection.
+//!
+//! An overflow "..." menu for [`TabsVariant::Default`] is a known follow-up,
+//! not implemented here.
 
-use masonry::accesskit::{Node, Role};
+use masonry::accesskit::{self, Node, Orientation, Role};
+use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
-    AccessCtx, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, PaintCtx, PointerButton,
-    PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, Widget, WidgetMut,
-    WidgetPod,
+    AccessCtx, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
+    PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx,
+    TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, RoundedRect, RoundedRectRadii, Size, Stroke};
-use masonry::layout::{LayoutSize, Length, SizeDef};
+use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use masonry::peniko::Color;
 
 use super::TabsVariant;
 use crate::Theme;
+use crate::focus_ring::paint_focus_ring;
 
 /// Border/underline stroke width.
 const BORDER_WIDTH: f64 = 1.0;
@@ -34,6 +41,8 @@ const HIGHLIGHT_INSET: f64 = 2.0;
 const UNDERLINE_ACCENT_WIDTH: f64 = 2.0;
 /// Alpha applied to the hover fill for variants with per-item chrome.
 const HOVER_ALPHA: f32 = 0.5;
+/// Outset of the keyboard focus ring from the selected item's placed rect.
+const FOCUS_RING_OUTSET: f64 = 2.0;
 
 /// Fills `rect` inset by [`HIGHLIGHT_INSET`] with `fill`, using the corner
 /// radius returned by `radius` for the inset rect.
@@ -74,9 +83,112 @@ fn paint_selection_highlights(
 #[derive(Debug, Clone, Copy)]
 pub struct TabSelected(pub usize);
 
+/// Builds the `(content, name)` pairs handed to [`TabsWidget::new`] /
+/// [`TabsWidget::set_items`] — `name` becomes the [`TabItemNode`]'s
+/// accessible name.
+fn wrap_items(
+    items: Vec<NewWidget<dyn Widget>>,
+    names: Vec<Option<ArcStr>>,
+    selected: usize,
+) -> Vec<WidgetPod<TabItemNode>> {
+    items
+        .into_iter()
+        .zip(names)
+        .enumerate()
+        .map(|(i, (content, name))| TabItemNode::new(content, name, i == selected).to_pod())
+        .collect()
+}
+
+/// Wraps one tab's content for accessibility.
+///
+/// `Role::Tab`, unlike `Role::Button`, doesn't compute its accessible name
+/// from descendant text — this wrapper sets it explicitly from the
+/// [`super::view::TabItem`]'s label or `aria_label`. Layout is pure
+/// pass-through: this widget is always exactly its child's size.
+pub struct TabItemNode {
+    child: WidgetPod<dyn Widget>,
+    name: Option<ArcStr>,
+    selected: bool,
+}
+
+impl TabItemNode {
+    fn new(child: NewWidget<dyn Widget>, name: Option<ArcStr>, selected: bool) -> NewWidget<Self> {
+        NewWidget::new(Self {
+            child: child.to_pod(),
+            name,
+            selected,
+        })
+    }
+
+    fn set_selected(this: &mut WidgetMut<'_, Self>, selected: bool) {
+        if this.widget.selected != selected {
+            this.widget.selected = selected;
+            this.ctx.request_accessibility_update();
+        }
+    }
+
+    /// Mutable access to the wrapped content widget for the view layer.
+    pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
+        this.ctx.get_mut(&mut this.widget.child)
+    }
+}
+
+impl Widget for TabItemNode {
+    type Action = NoAction;
+
+    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
+        ctx.register_child(&mut self.child);
+    }
+
+    fn measure(
+        &mut self,
+        ctx: &mut MeasureCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        axis: Axis,
+        len_req: LenReq,
+        cross_length: Option<Length>,
+    ) -> Length {
+        let cross_axis = match axis {
+            Axis::Horizontal => Axis::Vertical,
+            Axis::Vertical => Axis::Horizontal,
+        };
+        ctx.compute_length(
+            &mut self.child,
+            len_req.into(),
+            LayoutSize::maybe(cross_axis, cross_length),
+            axis,
+            cross_length,
+        )
+    }
+
+    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
+        ctx.run_layout(&mut self.child, size);
+        ctx.place_child(&mut self.child, Point::ORIGIN);
+        ctx.derive_baselines(&self.child);
+    }
+
+    fn paint(&mut self, _ctx: &mut PaintCtx<'_>, _props: &PropertiesRef<'_>, _painter: &mut Painter<'_>) {}
+
+    fn accessibility_role(&self) -> Role {
+        Role::Tab
+    }
+
+    fn accessibility(&mut self, _ctx: &mut AccessCtx<'_>, _props: &PropertiesRef<'_>, node: &mut Node) {
+        node.set_selected(self.selected);
+        if let Some(name) = &self.name {
+            node.set_label(name.to_string());
+        }
+        node.add_action(accesskit::Action::Focus);
+    }
+
+    fn children_ids(&self) -> ChildrenIds {
+        ChildrenIds::from_slice(&[self.child.id()])
+    }
+}
+
 /// Masonry widget backing [`super::view::TabsView`].
 pub struct TabsWidget {
-    items: Vec<WidgetPod<dyn Widget>>,
+    items: Vec<WidgetPod<TabItemNode>>,
     /// Each item's placed rect in local coordinates, set during `layout`.
     placed: Vec<Rect>,
     variant: TabsVariant,
@@ -91,12 +203,13 @@ impl TabsWidget {
     #[must_use]
     pub fn new(
         items: Vec<NewWidget<dyn Widget>>,
+        names: Vec<Option<ArcStr>>,
         variant: TabsVariant,
         selected: usize,
         theme: &Theme,
     ) -> Self {
         Self {
-            items: items.into_iter().map(NewWidget::to_pod).collect(),
+            items: wrap_items(items, names, selected),
             placed: Vec::new(),
             variant,
             selected,
@@ -111,7 +224,16 @@ impl TabsWidget {
 impl TabsWidget {
     pub fn set_selected(this: &mut WidgetMut<'_, Self>, selected: usize) {
         if this.widget.selected != selected {
+            let old = this.widget.selected;
             this.widget.selected = selected;
+            if let Some(item) = this.widget.items.get_mut(old) {
+                let mut node = this.ctx.get_mut(item);
+                TabItemNode::set_selected(&mut node, false);
+            }
+            if let Some(item) = this.widget.items.get_mut(selected) {
+                let mut node = this.ctx.get_mut(item);
+                TabItemNode::set_selected(&mut node, true);
+            }
             this.ctx.request_paint_only();
         }
     }
@@ -132,20 +254,25 @@ impl TabsWidget {
         }
     }
 
-    /// Mutable access to item `index`'s content for the view layer.
-    pub fn item_mut<'t>(
-        this: &'t mut WidgetMut<'_, Self>,
-        index: usize,
-    ) -> WidgetMut<'t, dyn Widget> {
+    /// Mutable access to item `index`'s [`TabItemNode`] wrapper.
+    ///
+    /// Two-step access for the view layer: call [`TabItemNode::child_mut`]
+    /// on the result to reach the content widget itself.
+    pub fn item_mut<'t>(this: &'t mut WidgetMut<'_, Self>, index: usize) -> WidgetMut<'t, TabItemNode> {
         this.ctx.get_mut(&mut this.widget.items[index])
     }
 
     /// Replaces the entire item set, e.g. when the item *count* changes.
-    pub fn set_items(this: &mut WidgetMut<'_, Self>, items: Vec<NewWidget<dyn Widget>>) {
+    pub fn set_items(
+        this: &mut WidgetMut<'_, Self>,
+        items: Vec<NewWidget<dyn Widget>>,
+        names: Vec<Option<ArcStr>>,
+    ) {
         for old in std::mem::take(&mut this.widget.items) {
             this.ctx.remove_child(old);
         }
-        this.widget.items = items.into_iter().map(NewWidget::to_pod).collect();
+        let selected = this.widget.selected;
+        this.widget.items = wrap_items(items, names, selected);
         this.widget.hovered = None;
         this.widget.pressed = None;
         this.widget.placed.clear();
@@ -210,6 +337,7 @@ impl Widget for TabsWidget {
                 let pos = ctx.local_position(state.position);
                 if let Some(i) = self.item_at(pos) {
                     self.pressed = Some(i);
+                    ctx.request_focus();
                     ctx.capture_pointer();
                     ctx.request_paint_only();
                 }
@@ -233,6 +361,44 @@ impl Widget for TabsWidget {
                 ctx.request_paint_only();
             }
             _ => {}
+        }
+    }
+
+    /// Left/Up move to the previous tab, Right/Down to the next (wrapping),
+    /// and Home/End jump to the first/last tab — each immediately submitting
+    /// [`TabSelected`] for the new index (single tab stop, automatic
+    /// activation, mirroring native browser tab strips).
+    fn on_text_event(
+        &mut self,
+        ctx: &mut EventCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        event: &TextEvent,
+    ) {
+        let TextEvent::Keyboard(key) = event else {
+            return;
+        };
+        if key.state != KeyState::Down || self.items.is_empty() {
+            return;
+        }
+        let n = self.items.len();
+        let new_selected = match key.key {
+            Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowUp) => Some((self.selected + n - 1) % n),
+            Key::Named(NamedKey::ArrowRight | NamedKey::ArrowDown) => Some((self.selected + 1) % n),
+            Key::Named(NamedKey::Home) => Some(0),
+            Key::Named(NamedKey::End) => Some(n - 1),
+            _ => None,
+        };
+        if let Some(i) = new_selected {
+            ctx.set_handled();
+            if i != self.selected {
+                ctx.submit_action::<Self::Action>(TabSelected(i));
+            }
+        }
+    }
+
+    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        if matches!(event, Update::FocusChanged(_)) {
+            ctx.request_paint_only();
         }
     }
 
@@ -425,18 +591,27 @@ impl Widget for TabsWidget {
                 );
             }
         }
+
+        if ctx.is_focus_target()
+            && let Some(sel) = self.placed.get(self.selected)
+        {
+            // Inset (not outset): items can sit flush against the widget's
+            // own bounds (e.g. `Underline`/`Outline`, which have no outer
+            // padding), so an outward ring would be clipped.
+            let ring_rect = RoundedRect::from_rect(sel.inset(-FOCUS_RING_OUTSET), radius_small);
+            paint_focus_ring(painter, ring_rect, &self.theme);
+        }
     }
 
     fn accessibility_role(&self) -> Role {
         Role::TabList
     }
 
-    fn accessibility(
-        &mut self,
-        _ctx: &mut AccessCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _node: &mut Node,
-    ) {
+    fn accessibility(&mut self, _ctx: &mut AccessCtx<'_>, _props: &PropertiesRef<'_>, node: &mut Node) {
+        node.set_orientation(Orientation::Horizontal);
+        if !self.items.is_empty() {
+            node.add_action(accesskit::Action::Focus);
+        }
     }
 
     fn children_ids(&self) -> ChildrenIds {
@@ -445,6 +620,10 @@ impl Widget for TabsWidget {
 
     fn propagates_pointer_interaction(&self) -> bool {
         false
+    }
+
+    fn accepts_focus(&self) -> bool {
+        true
     }
 }
 
@@ -467,7 +646,8 @@ mod tests {
         variant: TabsVariant,
         selected: usize,
     ) -> TabsWidget {
-        TabsWidget::new(items, variant, selected, &Theme::default())
+        let names = vec![None; items.len()];
+        TabsWidget::new(items, names, variant, selected, &Theme::default())
     }
 
     fn harness(
@@ -521,7 +701,7 @@ mod tests {
     fn gap_and_outer_pad_scale_with_density() {
         let mut theme = Theme::default();
         theme.density.pad *= 2.0;
-        let scaled = TabsWidget::new(vec![], TabsVariant::Default, 0, &theme);
+        let scaled = TabsWidget::new(vec![], vec![], TabsVariant::Default, 0, &theme);
         let base = widget(vec![], TabsVariant::Default, 0);
         assert!(scaled.gap() > base.gap());
         assert!(scaled.outer_pad() > base.outer_pad());
@@ -635,7 +815,7 @@ mod tests {
         assert_eq!(h.edit_root_widget(|wm| wm.widget.hovered), Some(1));
 
         h.edit_root_widget(|mut wm| {
-            TabsWidget::set_items(&mut wm, vec![item(40.0, 20.0)]);
+            TabsWidget::set_items(&mut wm, vec![item(40.0, 20.0)], vec![None]);
         });
 
         h.edit_root_widget(|wm| {

@@ -27,7 +27,7 @@ use xilem::view::{CrossAxisAlignment, flex_row};
 use xilem::{AnyWidgetView, Pod, ViewCtx};
 
 use super::TabsVariant;
-use super::widget::{TabSelected, TabsWidget};
+use super::widget::{TabItemNode, TabSelected, TabsWidget};
 use crate::Theme;
 use crate::components::icon::{IconName, icon};
 use crate::label;
@@ -39,6 +39,7 @@ use crate::label;
 pub struct TabItem {
     label: Option<ArcStr>,
     icon: Option<IconName>,
+    aria_label: Option<ArcStr>,
 }
 
 impl TabItem {
@@ -48,6 +49,7 @@ impl TabItem {
         Self {
             label: Some(label.into()),
             icon: None,
+            aria_label: None,
         }
     }
 
@@ -57,6 +59,7 @@ impl TabItem {
         Self {
             label: None,
             icon: Some(icon),
+            aria_label: None,
         }
     }
 
@@ -72,6 +75,21 @@ impl TabItem {
     pub fn with_label(mut self, label: impl Into<ArcStr>) -> Self {
         self.label = Some(label.into());
         self
+    }
+
+    /// Sets the accessible name announced by screen readers, overriding the
+    /// visible label. Required for [`Self::icon`]-only items, which have no
+    /// visible text to derive a name from.
+    #[must_use]
+    pub fn aria_label(mut self, label: impl Into<ArcStr>) -> Self {
+        self.aria_label = Some(label.into());
+        self
+    }
+
+    /// The accessible name for this item: [`Self::aria_label`] if set,
+    /// otherwise the visible label, otherwise `None`.
+    fn accessible_name(&self) -> Option<ArcStr> {
+        self.aria_label.clone().or_else(|| self.label.clone())
     }
 }
 
@@ -204,7 +222,8 @@ where
             new_widgets.push(pod.new_widget.erased());
             states.push(state);
         }
-        let widget = TabsWidget::new(new_widgets, self.variant, self.selected, &self.theme);
+        let names = self.items.iter().map(TabItem::accessible_name).collect();
+        let widget = TabsWidget::new(new_widgets, names, self.variant, self.selected, &self.theme);
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, states)
     }
@@ -234,7 +253,8 @@ where
                     item_content::<State, Action>(prev_item, prev.item_color(i), &prev.theme);
                 #[allow(clippy::cast_possible_truncation)]
                 ctx.with_id(ViewId::new(i as u64), |ctx| {
-                    let mut child = TabsWidget::item_mut(&mut element, i);
+                    let mut node = TabsWidget::item_mut(&mut element, i);
+                    let mut child = TabItemNode::child_mut(&mut node);
                     view.rebuild(
                         &prev_view,
                         &mut view_state[i],
@@ -250,7 +270,8 @@ where
                     item_content::<State, Action>(prev_item, prev.item_color(i), &prev.theme);
                 #[allow(clippy::cast_possible_truncation)]
                 ctx.with_id(ViewId::new(i as u64), |ctx| {
-                    let mut child = TabsWidget::item_mut(&mut element, i);
+                    let mut node = TabsWidget::item_mut(&mut element, i);
+                    let mut child = TabItemNode::child_mut(&mut node);
                     prev_view.teardown(&mut view_state[i], ctx, child.downcast());
                 });
             }
@@ -264,7 +285,8 @@ where
                 new_widgets.push(pod.new_widget.erased());
                 new_states.push(state);
             }
-            TabsWidget::set_items(&mut element, new_widgets);
+            let names = self.items.iter().map(TabItem::accessible_name).collect();
+            TabsWidget::set_items(&mut element, new_widgets, names);
             *view_state = new_states;
         }
     }
@@ -279,7 +301,8 @@ where
             let view = item_content::<State, Action>(item, self.item_color(i), &self.theme);
             #[allow(clippy::cast_possible_truncation)]
             ctx.with_id(ViewId::new(i as u64), |ctx| {
-                let mut child = TabsWidget::item_mut(&mut element, i);
+                let mut node = TabsWidget::item_mut(&mut element, i);
+                let mut child = TabItemNode::child_mut(&mut node);
                 view.teardown(&mut view_state[i], ctx, child.downcast());
             });
         }
@@ -303,7 +326,8 @@ where
         let index = usize::try_from(id.routing_id()).unwrap_or(usize::MAX);
         if let Some(item) = self.items.get(index) {
             let view = item_content::<State, Action>(item, self.item_color(index), &self.theme);
-            let mut child = TabsWidget::item_mut(&mut element, index);
+            let mut node = TabsWidget::item_mut(&mut element, index);
+            let mut child = TabItemNode::child_mut(&mut node);
             view.message(&mut view_state[index], message, child.downcast(), app_state)
         } else {
             MessageResult::Stale
