@@ -195,6 +195,46 @@ where
     label(text).color(theme.palette.text_muted).render(theme)
 }
 
+/// Infer where the caret sits in `current` after the single contiguous edit that
+/// turned `prev` into it: the end of an insertion, or the point of a deletion.
+/// (We can't read the real caret from masonry, so we reconstruct it.) Returns a
+/// char index.
+fn caret_after_edit(prev: &str, current: &str) -> usize {
+    let prev: Vec<char> = prev.chars().collect();
+    let curr: Vec<char> = current.chars().collect();
+    let mut prefix = 0;
+    while prefix < prev.len() && prefix < curr.len() && prev[prefix] == curr[prefix] {
+        prefix += 1;
+    }
+    let mut suffix = 0;
+    while suffix < prev.len() - prefix
+        && suffix < curr.len() - prefix
+        && prev[prev.len() - 1 - suffix] == curr[curr.len() - 1 - suffix]
+    {
+        suffix += 1;
+    }
+    curr.len() - suffix
+}
+
+/// Byte offset in `text` just past its `n`-th digit (or the end if there are
+/// fewer than `n`). The digit count is the stable anchor across reformatting:
+/// grouping separators and mask literals move, but the digits keep their order.
+fn byte_pos_after_n_digits(text: &str, n: usize) -> usize {
+    if n == 0 {
+        return 0;
+    }
+    let mut seen = 0;
+    for (i, ch) in text.char_indices() {
+        if ch.is_ascii_digit() {
+            seen += 1;
+            if seen == n {
+                return i + ch.len_utf8();
+            }
+        }
+    }
+    text.len()
+}
+
 /// The materialized [`View`] backing the editor core of an [`Input`].
 ///
 /// Built only through [`Input::render`] / the number input; not constructed
@@ -351,10 +391,24 @@ where
                 StyleProperty::FontSize(self.theme.typography.size_body),
             );
         }
-        // Compare against the widget's own text rather than `prev.contents` so
-        // that the in-flight edit (which produced this rebuild) is not undone.
-        if text_area.widget.text() != &self.contents {
+        // Reformatting fields (currency/mask) rebuild `contents` into a
+        // different string than the user's just-typed text, so the text must be
+        // replaced — but `reset_text` slams the caret to the end, breaking
+        // mid-string editing. masonry exposes no caret *getter*, so we infer the
+        // edit position by diffing the previous display against the current
+        // text, anchor it by digit offset (separators move, digits don't), and
+        // restore it with `select_byte_range` after the reset.
+        let current = text_area.widget.text().to_string();
+        if current != self.contents {
+            let caret = caret_after_edit(&prev.contents, &current);
+            let digits_before = current
+                .chars()
+                .take(caret)
+                .filter(char::is_ascii_digit)
+                .count();
             widgets::TextArea::reset_text(&mut text_area, &self.contents);
+            let pos = byte_pos_after_n_digits(&self.contents, digits_before);
+            widgets::TextArea::select_byte_range(&mut text_area, pos, pos);
         }
     }
 
@@ -417,8 +471,27 @@ mod tests {
     };
 
     use super::super::widget::InputCleared;
-    use super::InputView;
+    use super::{InputView, byte_pos_after_n_digits, caret_after_edit};
     use crate::Theme;
+
+    #[test]
+    fn caret_after_insert_delete_append() {
+        // insert "9" into "1,2|34" -> "1,2934": caret after the inserted 9.
+        assert_eq!(caret_after_edit("1,234", "1,2934"), 4);
+        // append at the end -> caret at the end.
+        assert_eq!(caret_after_edit("1,234", "1,2345"), 6);
+        // backspace "1,23|4" -> "1,24": caret at the deletion point.
+        assert_eq!(caret_after_edit("1,234", "1,24"), 3);
+    }
+
+    #[test]
+    fn digit_anchor_survives_regrouping() {
+        // 3 digits before the caret -> just past the 3rd digit in the new text.
+        assert_eq!(byte_pos_after_n_digits("12,934", 3), 4);
+        assert_eq!(byte_pos_after_n_digits("12,934", 0), 0);
+        // Fewer digits than asked -> clamp to the end.
+        assert_eq!(byte_pos_after_n_digits("12,934", 9), 6);
+    }
 
     struct NoopProxy;
     impl fmt::Debug for NoopProxy {
