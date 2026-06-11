@@ -149,16 +149,27 @@ pub fn format_mask(raw: &str, mask: &str) -> String {
     out
 }
 
-/// Recover the raw digits from field text, capped at the number of `#` slots in
-/// `mask`. A mask without slots imposes no cap.
+/// Recover the raw digits from field text. The mask's literal characters —
+/// including literal *digits* like the `1` in `+1 (###)…` — are stripped as a
+/// greedy in-order subsequence so they aren't counted as input; the remaining
+/// digits are then capped at the number of `#` slots. A mask without slots
+/// imposes no structure and returns every digit.
 fn extract_digits(text: &str, mask: &str) -> String {
-    let digits = text.chars().filter(char::is_ascii_digit);
-    let capacity = mask.chars().filter(|&c| c == SLOT).count();
-    if capacity == 0 {
-        digits.collect()
-    } else {
-        digits.take(capacity).collect()
+    let slots = mask.chars().filter(|&c| c == SLOT).count();
+    if slots == 0 {
+        return text.chars().filter(char::is_ascii_digit).collect();
     }
+    let mut literals = mask.chars().filter(|&c| c != SLOT).peekable();
+    let mut raw = String::new();
+    for t in text.chars() {
+        if literals.peek() == Some(&t) {
+            // A structural literal (consume it from both the mask and the text).
+            literals.next();
+        } else if t.is_ascii_digit() {
+            raw.push(t);
+        }
+    }
+    raw.chars().take(slots).collect()
 }
 
 #[cfg(test)]
@@ -200,5 +211,19 @@ mod tests {
     fn extract_caps_at_capacity() {
         assert_eq!(extract_digits("12344309890000", PHONE), "1234430989");
         assert_eq!(extract_digits("12a3", ""), "123");
+    }
+
+    #[test]
+    fn literal_digits_in_mask_are_not_counted() {
+        // A country-code prefix has a literal `1` that must not be read as input.
+        const INTL: &str = "+1 (###) ###-####";
+        assert_eq!(extract_digits("+1 (123) 443-0989", INTL), "1234430989");
+        // Round-trips: formatting then extracting recovers the raw digits.
+        assert_eq!(
+            extract_digits(&format_mask("1234430989", INTL), INTL),
+            "1234430989"
+        );
+        // A digit typed just past a literal (not yet reformatted) is still kept.
+        assert_eq!(extract_digits("+1 (1234", INTL), "1234");
     }
 }
