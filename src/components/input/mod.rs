@@ -17,7 +17,7 @@ mod number;
 mod view;
 mod widget;
 
-pub use currency::{CurrencyFormat, CurrencyInput, currency_input};
+pub use currency::{CurrencyFormat, CurrencyInput, currency_input, format_currency};
 pub use masked::{MaskedInput, format_mask, masked_input};
 pub use number::{NumberInput, number_input};
 pub use view::{Input, input};

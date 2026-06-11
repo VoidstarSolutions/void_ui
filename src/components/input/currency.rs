@@ -125,12 +125,12 @@ impl<F> CurrencyInput<F> {
         let core = {
             let format = format.clone();
             InputView::new(
-                group_currency(&value, &format),
+                format_currency(&value, &format),
                 placeholder,
                 disabled,
                 theme,
                 move |state: &mut State, text: String| {
-                    (on_changed)(state, group_currency(&text, &format))
+                    (on_changed)(state, format_currency(&text, &format))
                 },
             )
         };
@@ -151,17 +151,22 @@ impl<F> CurrencyInput<F> {
     }
 }
 
-/// Re-filter `text` to numerals and regroup it per `fmt`: strip everything that
-/// isn't a digit, a leading `-`, or the decimal separator (existing group
-/// separators included, so the result re-groups cleanly), then insert group
-/// separators into the integer part and cap the fraction at `decimal_places`.
-fn group_currency(text: &str, fmt: &CurrencyFormat) -> String {
+/// Format a raw currency `value` into its grouped display string per `fmt`:
+/// strip everything that isn't a digit, a leading `-`, or the decimal separator
+/// (any existing group separators included, so it re-groups cleanly), then
+/// insert group separators into the integer part and cap the fraction at
+/// `decimal_places`. The currency analogue of [`format_mask`](super::format_mask)
+/// — call it to render a host-stored value read-only elsewhere (e.g. a summary).
+///
+/// `format_currency("1250000", &CurrencyFormat::default())` -> `"1,250,000"`.
+#[must_use]
+pub fn format_currency(value: &str, fmt: &CurrencyFormat) -> String {
     let mut negative = false;
     let mut int_digits = String::new();
     let mut frac_digits = String::new();
     let mut seen_decimal = false;
 
-    for c in text.chars() {
+    for c in value.chars() {
         if c.is_ascii_digit() {
             if seen_decimal {
                 if frac_digits.len() < fmt.decimal_places {
@@ -223,7 +228,7 @@ fn group_integer(digits: &str, separator: char) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{CurrencyFormat, group_currency};
+    use super::{CurrencyFormat, format_currency};
     use masonry::core::ArcStr;
 
     fn us() -> CurrencyFormat {
@@ -242,73 +247,73 @@ mod tests {
 
     #[test]
     fn groups_thousands() {
-        assert_eq!(group_currency("1234567", &us()), "1,234,567");
-        assert_eq!(group_currency("1234.5", &us()), "1,234.5");
-        assert_eq!(group_currency("999", &us()), "999");
+        assert_eq!(format_currency("1234567", &us()), "1,234,567");
+        assert_eq!(format_currency("1234.5", &us()), "1,234.5");
+        assert_eq!(format_currency("999", &us()), "999");
     }
 
     #[test]
     fn strips_existing_separators_and_regroups() {
-        assert_eq!(group_currency("1,234,567", &us()), "1,234,567");
-        assert_eq!(group_currency("12,34", &us()), "1,234");
+        assert_eq!(format_currency("1,234,567", &us()), "1,234,567");
+        assert_eq!(format_currency("12,34", &us()), "1,234");
     }
 
     #[test]
     fn filters_non_numeric() {
-        assert_eq!(group_currency("a1b2c3", &us()), "123");
-        assert_eq!(group_currency("", &us()), "");
+        assert_eq!(format_currency("a1b2c3", &us()), "123");
+        assert_eq!(format_currency("", &us()), "");
     }
 
     #[test]
     fn caps_fraction_at_decimal_places() {
-        assert_eq!(group_currency("1.239", &us()), "1.23");
+        assert_eq!(format_currency("1.239", &us()), "1.23");
     }
 
     #[test]
     fn handles_leading_minus_only() {
-        assert_eq!(group_currency("-1234.5", &us()), "-1,234.5");
-        assert_eq!(group_currency("12-34", &us()), "1,234");
+        assert_eq!(format_currency("-1234.5", &us()), "-1,234.5");
+        assert_eq!(format_currency("12-34", &us()), "1,234");
     }
 
     #[test]
     fn honors_european_separators() {
-        assert_eq!(group_currency("1234567,89", &eu()), "1.234.567,89");
+        assert_eq!(format_currency("1234567,89", &eu()), "1.234.567,89");
     }
 
     #[test]
     fn strips_insignificant_leading_zeros() {
-        assert_eq!(group_currency("007", &us()), "7");
-        assert_eq!(group_currency("00012345", &us()), "12,345");
-        assert_eq!(group_currency("012.50", &us()), "12.50");
+        assert_eq!(format_currency("007", &us()), "7");
+        assert_eq!(format_currency("00012345", &us()), "12,345");
+        assert_eq!(format_currency("012.50", &us()), "12.50");
         // Internal and trailing zeros are significant and kept.
-        assert_eq!(group_currency("100", &us()), "100");
-        assert_eq!(group_currency("1020", &us()), "1,020");
+        assert_eq!(format_currency("100", &us()), "100");
+        assert_eq!(format_currency("1020", &us()), "1,020");
     }
 
     #[test]
     fn keeps_a_single_zero_for_zero_amounts() {
-        assert_eq!(group_currency("000", &us()), "0");
-        assert_eq!(group_currency("0.50", &us()), "0.50");
+        assert_eq!(format_currency("000", &us()), "0");
+        assert_eq!(format_currency("0.50", &us()), "0.50");
     }
 
     #[test]
     fn normalizes_bare_fraction_with_leading_zero() {
-        assert_eq!(group_currency(".50", &us()), "0.50");
-        assert_eq!(group_currency("-.50", &us()), "-0.50");
+        assert_eq!(format_currency(".50", &us()), "0.50");
+        assert_eq!(format_currency("-.50", &us()), "-0.50");
     }
 
     #[test]
     fn empty_input_stays_empty() {
         // Must NOT become "0" — the field needs a true empty state for its
         // placeholder.
-        assert_eq!(group_currency("", &us()), "");
-        assert_eq!(group_currency("-", &us()), "-");
+        assert_eq!(format_currency("", &us()), "");
+        assert_eq!(format_currency("-", &us()), "-");
     }
 
     #[test]
     fn zero_decimal_places_drops_fraction() {
         let mut fmt = us();
         fmt.decimal_places = 0;
-        assert_eq!(group_currency("1234.56", &fmt), "1,234");
+        assert_eq!(format_currency("1234.56", &fmt), "1,234");
     }
 }

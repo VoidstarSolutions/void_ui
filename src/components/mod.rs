@@ -49,8 +49,8 @@ pub use data_grid::{
 pub use dropdown_button::{DropdownButton, DropdownButtonView, dropdown_button};
 pub use icon::{Icon, IconName, icon};
 pub use input::{
-    CurrencyFormat, CurrencyInput, Input, MaskedInput, NumberInput, currency_input, format_mask,
-    input, masked_input, number_input,
+    CurrencyFormat, CurrencyInput, Input, MaskedInput, NumberInput, currency_input,
+    format_currency, format_mask, input, masked_input, number_input,
 };
 pub use label::{Label, LabelAlignment, label};
 pub use popover::{Popover, PopoverAnchor, PopoverHost, PopoverView, popover};
