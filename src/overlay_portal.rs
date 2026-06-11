@@ -169,6 +169,20 @@ impl<State, Action> OverlayPortal<State, Action> {
     pub(crate) fn snapshot(&self) -> Vec<PortalEntry<State, Action>> {
         self.inner.borrow().entries.clone()
     }
+
+    /// The current entry for `key`, if registered. Unlike [`Self::snapshot`]
+    /// this reads the live registry — used by the scope's diff to pick up
+    /// updates that landed mid-pass (an owner rebuilding before its nested
+    /// entry is processed).
+    #[must_use]
+    pub(crate) fn entry(&self, key: u64) -> Option<PortalEntry<State, Action>> {
+        self.inner
+            .borrow()
+            .entries
+            .iter()
+            .find(|e| e.key == key)
+            .cloned()
+    }
 }
 
 /// Read the nearest scope's portal from the xilem Environment, tolerating

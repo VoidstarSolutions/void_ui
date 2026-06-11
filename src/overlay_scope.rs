@@ -458,6 +458,14 @@ where
                 }
                 processed.push(entry.key);
                 progressed = true;
+                // Re-fetch at processing time: an earlier entry's build this
+                // pass may have `update()`d this key after the snapshot was
+                // taken.
+                let Some(entry) = portal.entry(entry.key) else {
+                    // Registered and deregistered within this build pass —
+                    // nothing to mount.
+                    continue;
+                };
                 let (pod, view_state) = ctx.with_id(ViewId::new(entry.key), |ctx| {
                     entry.content.build(ctx, app_state)
                 });
@@ -515,21 +523,29 @@ where
         }
 
         // 2./3. Diff the registry against mounted entries, iterating to a
-        // fixpoint: building/rebuilding an entry can itself register or remove
-        // nested popovers (a popover inside another popover's content), which
-        // mutate the registry mid-diff. Each iteration processes only keys not
-        // yet seen this pass, and keys are monotonically allocated, so the loop
-        // terminates. Entries are processed in registration (= key) order, which
-        // guarantees an owner's `update()` always lands before its entry is
-        // processed within the same pass.
+        // fixpoint: building/rebuilding/tearing-down an entry can itself
+        // register or remove nested popovers (a popover inside another
+        // popover's content), which mutate the registry mid-diff. Both arms
+        // count as progress, and both are bounded — removals strictly shrink
+        // `mounted`, while the kept/new arm processes each key at most once
+        // per rebuild and keys are monotonically allocated — so the loop
+        // terminates. Entries are processed in registration (= key) order and
+        // re-fetched from the live registry at processing time, which together
+        // guarantee an owner's `update()` this pass is observed when its
+        // (later-keyed) entry is processed — the pass-start snapshot alone
+        // would be stale.
         let mut processed: Vec<u64> = Vec::new();
         loop {
             let entries = view_state.portal.snapshot();
+            let mut progressed = false;
 
             // Unmount entries whose popovers deregistered (including nested
             // deregistrations discovered on later iterations — without this, a
             // nested popover removed while open would linger painted until the
-            // next app-state change).
+            // next app-state change). Teardown can itself deregister nested
+            // entries (after this pass's snapshot), so unmounting counts as
+            // progress — otherwise a cascade of removals could stall before
+            // fully unmounting.
             let mut idx = 0;
             while idx < view_state.mounted.len() {
                 let key = view_state.mounted[idx].key;
@@ -538,6 +554,7 @@ where
                     continue;
                 }
                 let mut gone = view_state.mounted.remove(idx);
+                progressed = true;
                 {
                     let mut slot = OverlayScope::portal_slot_mut(&mut element);
                     let mut child = PortalSlot::child_mut(&mut slot, key)
@@ -554,14 +571,23 @@ where
             }
 
             // Rebuild kept entries, mount new ones — only keys not yet
-            // processed this pass.
-            let mut progressed = false;
+            // processed this pass. The snapshot supplies only the ORDER and
+            // the key set; each entry's content/theme is re-fetched live.
             for entry in &entries {
                 if processed.contains(&entry.key) {
                     continue;
                 }
                 processed.push(entry.key);
                 progressed = true;
+                // Re-fetch at processing time: an earlier entry's rebuild this
+                // pass may have `update()`d this key after the snapshot was
+                // taken.
+                let Some(entry) = view_state.portal.entry(entry.key) else {
+                    // Deregistered since the snapshot — the removal arm of the
+                    // next iteration unmounts it (`progressed` is already true,
+                    // so that iteration runs).
+                    continue;
+                };
                 if let Some(m) = view_state.mounted.iter_mut().find(|m| m.key == entry.key) {
                     let mut slot = OverlayScope::portal_slot_mut(&mut element);
                     let mut child = PortalSlot::child_mut(&mut slot, entry.key)
