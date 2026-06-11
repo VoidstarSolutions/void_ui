@@ -128,8 +128,10 @@ impl<F> NumberInput<F> {
             on_changed,
         } = self;
 
-        // The single host callback is shared between the editor's filtered
-        // change handler and both steppers.
+        // One non-`Clone` host callback has to be owned by three independent
+        // `'static` closures — the editor's filtered handler and both steppers —
+        // so it's shared through an `Arc`. Each of the first two consumers clones
+        // a handle; the last (the `+` stepper) moves the original.
         let on_changed = Arc::new(on_changed);
 
         let core = {
@@ -151,14 +153,11 @@ impl<F> NumberInput<F> {
                 .disabled(disabled)
                 .render(theme)
         };
-        let plus = {
-            let on_changed = on_changed.clone();
-            let value = value.clone();
+        let plus =
             button(move |state: &mut State| (*on_changed)(state, adjust(&value, step, min, max)))
                 .label("+")
                 .disabled(disabled)
-                .render(theme)
-        };
+                .render(theme);
 
         let prefix = prefix.map(|text| affix_label(text, theme));
         let suffix = suffix.map(|text| affix_label(text, theme));
