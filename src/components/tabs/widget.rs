@@ -54,7 +54,9 @@ fn paint_highlight(
 ) {
     let inset = rect.inset(-HIGHLIGHT_INSET);
     let radii = radius(inset);
-    painter.fill(RoundedRect::from_rect(inset, radii), fill).draw();
+    painter
+        .fill(RoundedRect::from_rect(inset, radii), fill)
+        .draw();
 }
 
 /// Paints the selected item's highlight, and (if a different item is
@@ -167,13 +169,24 @@ impl Widget for TabItemNode {
         ctx.derive_baselines(&self.child);
     }
 
-    fn paint(&mut self, _ctx: &mut PaintCtx<'_>, _props: &PropertiesRef<'_>, _painter: &mut Painter<'_>) {}
+    fn paint(
+        &mut self,
+        _ctx: &mut PaintCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        _painter: &mut Painter<'_>,
+    ) {
+    }
 
     fn accessibility_role(&self) -> Role {
         Role::Tab
     }
 
-    fn accessibility(&mut self, _ctx: &mut AccessCtx<'_>, _props: &PropertiesRef<'_>, node: &mut Node) {
+    fn accessibility(
+        &mut self,
+        _ctx: &mut AccessCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        node: &mut Node,
+    ) {
         node.set_selected(self.selected);
         if let Some(name) = &self.name {
             node.set_label(name.to_string());
@@ -258,7 +271,10 @@ impl TabsWidget {
     ///
     /// Two-step access for the view layer: call [`TabItemNode::child_mut`]
     /// on the result to reach the content widget itself.
-    pub fn item_mut<'t>(this: &'t mut WidgetMut<'_, Self>, index: usize) -> WidgetMut<'t, TabItemNode> {
+    pub fn item_mut<'t>(
+        this: &'t mut WidgetMut<'_, Self>,
+        index: usize,
+    ) -> WidgetMut<'t, TabItemNode> {
         this.ctx.get_mut(&mut this.widget.items[index])
     }
 
@@ -382,7 +398,9 @@ impl Widget for TabsWidget {
         }
         let n = self.items.len();
         let new_selected = match key.key {
-            Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowUp) => Some((self.selected + n - 1) % n),
+            Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowUp) => {
+                Some((self.selected + n - 1) % n)
+            }
             Key::Named(NamedKey::ArrowRight | NamedKey::ArrowDown) => Some((self.selected + 1) % n),
             Key::Named(NamedKey::Home) => Some(0),
             Key::Named(NamedKey::End) => Some(n - 1),
@@ -607,7 +625,12 @@ impl Widget for TabsWidget {
         Role::TabList
     }
 
-    fn accessibility(&mut self, _ctx: &mut AccessCtx<'_>, _props: &PropertiesRef<'_>, node: &mut Node) {
+    fn accessibility(
+        &mut self,
+        _ctx: &mut AccessCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        node: &mut Node,
+    ) {
         node.set_orientation(Orientation::Horizontal);
         if !self.items.is_empty() {
             node.add_action(accesskit::Action::Focus);
@@ -841,5 +864,112 @@ mod tests {
             TabsWidget::set_variant(&mut wm, TabsVariant::Pill);
             assert_eq!(wm.widget.variant, TabsVariant::Pill);
         });
+    }
+
+    // --- accessibility ---
+
+    #[test]
+    fn new_sets_item_node_name_and_selected_from_args() {
+        let items = vec![item(40.0, 20.0), item(40.0, 20.0)];
+        let names = vec![Some(ArcStr::from("Account")), None];
+        let mut h = TestHarness::create(
+            default_property_set(),
+            NewWidget::new(TabsWidget::new(
+                items,
+                names,
+                TabsVariant::Default,
+                1,
+                &Theme::default(),
+            )),
+        );
+
+        h.edit_root_widget(|mut wm| {
+            let item0 = TabsWidget::item_mut(&mut wm, 0);
+            assert_eq!(item0.widget.name.as_deref(), Some("Account"));
+            assert!(!item0.widget.selected);
+        });
+        h.edit_root_widget(|mut wm| {
+            let item1 = TabsWidget::item_mut(&mut wm, 1);
+            assert_eq!(item1.widget.name, None);
+            assert!(item1.widget.selected);
+        });
+    }
+
+    #[test]
+    fn set_selected_updates_item_node_selected_flags() {
+        let mut h = harness(
+            vec![item(40.0, 20.0), item(40.0, 20.0)],
+            TabsVariant::Default,
+            0,
+        );
+
+        h.edit_root_widget(|mut wm| {
+            TabsWidget::set_selected(&mut wm, 1);
+
+            assert!(!TabsWidget::item_mut(&mut wm, 0).widget.selected);
+            assert!(TabsWidget::item_mut(&mut wm, 1).widget.selected);
+        });
+    }
+
+    // --- keyboard navigation ---
+
+    #[test]
+    fn arrow_keys_move_selection_and_wrap_when_focused() {
+        let mut h = harness(
+            vec![item(40.0, 20.0), item(40.0, 20.0), item(40.0, 20.0)],
+            TabsVariant::Default,
+            0,
+        );
+        h.focus_on(Some(h.root_id()));
+
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowRight)));
+        let (action, widget_id) = h.pop_action::<TabSelected>().expect("expected an action");
+        assert_eq!(action.0, 1);
+        assert_eq!(widget_id, h.root_id());
+
+        h.edit_root_widget(|mut wm| TabsWidget::set_selected(&mut wm, 2));
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowRight)));
+        let (action, _) = h.pop_action::<TabSelected>().expect("expected an action");
+        assert_eq!(
+            action.0, 0,
+            "ArrowRight should wrap from the last to the first item"
+        );
+
+        h.edit_root_widget(|mut wm| TabsWidget::set_selected(&mut wm, 0));
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowLeft)));
+        let (action, _) = h.pop_action::<TabSelected>().expect("expected an action");
+        assert_eq!(
+            action.0, 2,
+            "ArrowLeft should wrap from the first to the last item"
+        );
+    }
+
+    #[test]
+    fn home_and_end_jump_to_first_and_last_item() {
+        let mut h = harness(
+            vec![item(40.0, 20.0), item(40.0, 20.0), item(40.0, 20.0)],
+            TabsVariant::Default,
+            1,
+        );
+        h.focus_on(Some(h.root_id()));
+
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::End)));
+        let (action, _) = h.pop_action::<TabSelected>().expect("expected an action");
+        assert_eq!(action.0, 2);
+
+        h.edit_root_widget(|mut wm| TabsWidget::set_selected(&mut wm, 1));
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Home)));
+        let (action, _) = h.pop_action::<TabSelected>().expect("expected an action");
+        assert_eq!(action.0, 0);
+    }
+
+    #[test]
+    fn arrow_key_emits_nothing_with_a_single_item() {
+        let mut h = harness(vec![item(40.0, 20.0)], TabsVariant::Default, 0);
+        h.focus_on(Some(h.root_id()));
+
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowRight)));
+
+        assert!(h.pop_action::<TabSelected>().is_none());
     }
 }
