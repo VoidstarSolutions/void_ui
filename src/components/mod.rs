@@ -68,7 +68,7 @@ pub use sidebar::{
 };
 pub use slider::{RangeSlider, RangeSliderView, Slider, SliderView, range_slider, slider};
 pub use spinner::{Spinner, SpinnerView, SpinnerWidget, spinner};
-pub use tabs::{TabItem, Tabs, TabsVariant, TabsView, TabsWidget, tabs};
+pub use tabs::{TabItem, Tabs, TabsVariant, TabsView, tabs};
 pub use toggle::{Toggle, ToggleView, toggle};
 pub use tooltip::{Tooltip, TooltipView, tooltip};
 

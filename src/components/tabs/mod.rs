@@ -1,6 +1,6 @@
 //! Tabs component (issue #34).
 //!
-//! One masonry widget ([`TabsWidget`]) backs six visual styles, selected via
+//! One masonry widget ([`widget::TabsWidget`]) backs six visual styles, selected via
 //! [`TabsVariant`]. Selection is host-managed, mirroring
 //! [`crate::components::radio`]: pass `selected: usize` and an `on_select`
 //! callback that updates the host's own state.
@@ -23,7 +23,6 @@ pub mod view;
 pub mod widget;
 
 pub use view::{TabItem, Tabs, TabsView, tabs};
-pub use widget::TabsWidget;
 
 /// Visual style applied to a [`Tabs`] row — controls how the widget paints
 /// its chrome (background, selection indicator, per-item borders).
