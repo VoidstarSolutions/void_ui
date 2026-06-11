@@ -14,6 +14,7 @@ mod currency;
 pub mod demo;
 mod masked;
 mod number;
+mod numeric;
 #[cfg(test)]
 mod test_support;
 mod view;

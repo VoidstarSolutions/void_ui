@@ -21,6 +21,7 @@
 use masonry::core::ArcStr;
 use xilem::WidgetView;
 
+use super::numeric::{NumberParts, scan_number};
 use super::view::{InputView, affix_label, affixed_row, field_chrome};
 use crate::Theme;
 
@@ -156,29 +157,14 @@ impl<F> CurrencyInput<F> {
 /// `format_currency("1250000", &CurrencyFormat::default())` -> `"1,250,000"`.
 #[must_use]
 pub fn format_currency(value: &str, fmt: &CurrencyFormat) -> String {
-    let mut negative = false;
-    let mut int_digits = String::new();
-    let mut frac_digits = String::new();
-    let mut seen_decimal = false;
-
-    for c in value.chars() {
-        if c.is_ascii_digit() {
-            if seen_decimal {
-                if frac_digits.len() < fmt.decimal_places {
-                    frac_digits.push(c);
-                }
-            } else {
-                int_digits.push(c);
-            }
-        } else if c == fmt.decimal_separator && !seen_decimal {
-            // Stop integer accumulation even when decimals are disabled, so the
-            // fractional digits are dropped rather than folded into the integer.
-            seen_decimal = true;
-        } else if c == '-' && int_digits.is_empty() && !seen_decimal && !negative {
-            negative = true;
-        }
-        // Anything else (group separators, stray characters) is ignored.
-    }
+    // Shared scan kernel: split into sign/integer/fraction, honoring this
+    // locale's decimal separator and capping the fraction at `decimal_places`.
+    let NumberParts {
+        negative,
+        int_digits,
+        frac_digits,
+        saw_decimal,
+    } = scan_number(value, fmt.decimal_separator, Some(fmt.decimal_places));
 
     // No digits typed (a lone `-`, `.`, or `-.`): keep it minimal so the
     // placeholder still shows, rather than manufacturing `0.` for a stray
@@ -208,7 +194,7 @@ pub fn format_currency(value: &str, fmt: &CurrencyFormat) -> String {
         out.push('-');
     }
     out.push_str(&group_integer(int_part, fmt.group_separator));
-    if seen_decimal && fmt.decimal_places > 0 {
+    if saw_decimal && fmt.decimal_places > 0 {
         out.push(fmt.decimal_separator);
         out.push_str(&frac_digits);
     }
@@ -333,6 +319,34 @@ mod tests {
         assert_eq!(format_currency("-000", &us()), "0");
         // A genuinely non-zero negative keeps its sign.
         assert_eq!(format_currency("-0.50", &us()), "-0.50");
+    }
+
+    #[test]
+    fn format_currency_is_idempotent() {
+        // The grouped display is a fixed point: re-formatting an already
+        // formatted value must reproduce it exactly, so re-rendering host state
+        // never drifts and the shared scan kernel keeps round-tripping its own
+        // separators (group vs decimal) correctly across locales.
+        for fmt in [us(), eu()] {
+            for input in [
+                "1234567",
+                "1234.5",
+                "-0.50",
+                ".50",
+                "007",
+                "1,234,567",
+                "0.00",
+                "-0",
+                "12.",
+            ] {
+                let once = format_currency(input, &fmt);
+                assert_eq!(
+                    format_currency(&once, &fmt),
+                    once,
+                    "not idempotent for {input:?}"
+                );
+            }
+        }
     }
 
     #[test]

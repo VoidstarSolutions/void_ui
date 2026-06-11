@@ -27,6 +27,7 @@ use xilem::WidgetView;
 use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, FlexExt as _, flex_row};
 
+use super::numeric::scan_number;
 use super::view::{InputView, affix_label, affixed_row, field_chrome};
 use crate::Theme;
 use crate::components::button::button;
@@ -184,20 +185,22 @@ impl<F> NumberInput<F> {
 
 /// Keep only characters that form a number: digits, a single decimal point, and
 /// a single leading minus. Everything else is dropped.
+///
+/// Reassembles the scanned parts verbatim — no leading-zero collapsing or
+/// regrouping — so a partially typed value like `12.` or `.5` survives editing
+/// unchanged (unlike the currency formatter, which reformats).
 fn filter_numeric(input: &str) -> String {
+    // Locale-agnostic: the number field always uses `.` and never caps the
+    // fraction.
+    let parts = scan_number(input, '.', None);
     let mut out = String::with_capacity(input.len());
-    let mut seen_dot = false;
-    for c in input.chars() {
-        match c {
-            '0'..='9' => out.push(c),
-            '.' if !seen_dot => {
-                seen_dot = true;
-                out.push('.');
-            }
-            // A minus is only meaningful as the leading sign.
-            '-' if out.is_empty() => out.push('-'),
-            _ => {}
-        }
+    if parts.negative {
+        out.push('-');
+    }
+    out.push_str(&parts.int_digits);
+    if parts.saw_decimal {
+        out.push('.');
+        out.push_str(&parts.frac_digits);
     }
     out
 }
@@ -306,6 +309,30 @@ mod tests {
         assert_eq!(filter_numeric("5-3"), "53");
         assert_eq!(filter_numeric("$1,250.00"), "1250.00");
         assert_eq!(filter_numeric("abc"), "");
+    }
+
+    #[test]
+    fn filter_numeric_is_idempotent() {
+        // Re-filtering already-filtered text must be a no-op. This is the
+        // property that keeps a mid-edit value from drifting as the host stores
+        // it and passes it back, and it guards the shared scan kernel against a
+        // change that would reformat (rather than merely filter) typed text.
+        for input in [
+            "12a3",
+            "1.2.3",
+            "-.5",
+            "--5",
+            ".-5",
+            "$1,250.00",
+            "12.",
+            ".",
+            "-",
+            "abc",
+            "0.000",
+        ] {
+            let once = filter_numeric(input);
+            assert_eq!(filter_numeric(&once), once, "not idempotent for {input:?}");
+        }
     }
 
     #[test]
