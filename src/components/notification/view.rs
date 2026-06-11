@@ -242,8 +242,11 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        if message.take_message::<NotificationTimeout>().is_some() {
-            MessageResult::Action(self.on_close.call(app_state))
+        if message.remaining_path().is_empty() {
+            match message.take_message::<NotificationTimeout>() {
+                Some(_) => MessageResult::Action(self.on_close.call(app_state)),
+                None => MessageResult::Stale,
+            }
         } else {
             let mut child = NotificationHost::child_mut(&mut element);
             self.content
