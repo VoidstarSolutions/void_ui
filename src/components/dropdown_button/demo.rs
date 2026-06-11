@@ -7,13 +7,13 @@ use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, flex_col, flex_row};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
-use crate::Theme;
 use crate::components::ScrollBarVisibility;
 use crate::components::button::ButtonVariant;
 use crate::components::dropdown_button::dropdown_button;
 use crate::label;
 use crate::scroll_container;
 use crate::with_source;
+use crate::{Theme, separator};
 
 #[derive(Debug, Default)]
 struct DropdownDemo {
@@ -130,6 +130,7 @@ fn build_inner(theme: &Theme, state: &DropdownDemo) -> impl WidgetView<DropdownD
     scroll_container(
         flex_col((
             title_block,
+            separator().render(theme),
             status,
             header("Variants"),
             variants_row(theme),

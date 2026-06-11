@@ -32,6 +32,7 @@ pub mod separator;
 pub mod sidebar;
 pub mod slider;
 pub mod spinner;
+pub mod tabs;
 pub mod toggle;
 pub mod tooltip;
 
@@ -67,6 +68,7 @@ pub use sidebar::{
 };
 pub use slider::{RangeSlider, RangeSliderView, Slider, SliderView, range_slider, slider};
 pub use spinner::{Spinner, SpinnerView, SpinnerWidget, spinner};
+pub use tabs::{TabItem, Tabs, TabsVariant, TabsView, tabs};
 pub use toggle::{Toggle, ToggleView, toggle};
 pub use tooltip::{Tooltip, TooltipView, tooltip};
 
@@ -99,6 +101,7 @@ pub enum ComponentKind {
     Slider,
     Spinner,
     StockQuotes,
+    Tabs,
     Toggle,
     Tooltip,
 }
@@ -128,6 +131,7 @@ impl ComponentKind {
             Self::Slider => "Slider",
             Self::Spinner => "Spinner",
             Self::StockQuotes => "Stock Quotes",
+            Self::Tabs => "Tabs",
             Self::Toggle => "Toggle",
             Self::Tooltip => "Tooltip",
         }
@@ -157,6 +161,7 @@ impl ComponentKind {
             Self::Slider,
             Self::Spinner,
             Self::StockQuotes,
+            Self::Tabs,
             Self::Toggle,
             Self::Tooltip,
         ]

@@ -179,6 +179,7 @@ fn main_pane(focused: ComponentKind, theme: &Theme) -> Box<AnyWidgetView<State>>
         ComponentKind::StockQuotes => Box::new(
             void_ui::components::data_grid::demo::stock_quotes_panel(theme),
         ),
+        ComponentKind::Tabs => Box::new(void_ui::components::tabs::demo::panel(theme)),
         ComponentKind::Toggle => Box::new(void_ui::components::toggle::demo::panel(theme)),
         ComponentKind::CodeView => Box::new(void_ui::components::code_view::demo::panel(theme)),
         ComponentKind::Popover => Box::new(void_ui::components::popover::demo::panel(theme)),
