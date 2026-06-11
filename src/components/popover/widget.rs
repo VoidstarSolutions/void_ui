@@ -15,6 +15,12 @@
 //! - **In-tree** (fallback, no scope): content permanently mounted in an
 //!   [`AnchoredOverlay`] below the trigger, toggled via
 //!   `set_overlay_visible`; paints above earlier-painted siblings only.
+//!
+//! **Dismissal asymmetry:** in-tree popovers also close when focus leaves the
+//! trigger subtree (Tab away), because the content is a descendant and
+//! `ChildFocusChanged(false)` fires reliably. Portal popovers close only via
+//! backdrop click, Escape, or trigger toggle — the content is not a
+//! descendant, so Tab-away focus loss does not reach the host.
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
@@ -272,6 +278,8 @@ impl PopoverHost {
                 last_anchor_rect_window,
                 ..
             } => {
+                // Unreachable in practice: the OnceLock fills at the scope's
+                // `WidgetAdded`, before any descendant event can fire.
                 let Some(scope_id) = scope.widget_id() else {
                     return;
                 };
@@ -398,6 +406,33 @@ impl Widget for PopoverHost {
                     });
                     ctx.request_paint_only();
                 }
+            }
+            // A trigger stashed mid-open (e.g. a tab/panel container hiding us
+            // without tearing us down) can no longer be clicked to dismiss its
+            // popover, and in portal mode the slot child would stay visible while
+            // we stop painting. Close eagerly — mirrors `ThemedDropdownButton`'s
+            // disabled-mid-open close. In-tree mode self-heals (the overlay is a
+            // stashed descendant), so only portal mode needs the push.
+            Update::StashedChanged(true) if self.open => {
+                self.open = false;
+                if let Hosting::Portal { scope, key, .. } = &self.hosting {
+                    if let Some(scope_id) = scope.widget_id() {
+                        let key = *key;
+                        ctx.mutate_later(scope_id, move |mut w| {
+                            let mut scope = w.downcast::<OverlayScope>();
+                            OverlayScope::set_portal_visible(
+                                &mut scope,
+                                key,
+                                false,
+                                None,
+                                Rect::ZERO,
+                                PopoverAnchor::BottomStart,
+                                0.0,
+                            );
+                        });
+                    }
+                }
+                ctx.request_paint_only();
             }
             _ => {}
         }

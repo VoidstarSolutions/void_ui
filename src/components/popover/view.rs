@@ -121,6 +121,7 @@ enum ContentBinding<State: 'static, Action: 'static> {
 
 /// View state for `PopoverView`: the trigger's child view state plus the
 /// content binding (see [`ContentBinding`]).
+#[doc(hidden)]
 pub struct PopoverViewState<TriggerVS, State: 'static, Action: 'static> {
     trigger_vs: TriggerVS,
     binding: ContentBinding<State, Action>,
