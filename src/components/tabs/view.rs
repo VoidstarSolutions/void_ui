@@ -118,7 +118,12 @@ fn item_content<State: 'static, Action: 'static>(
         children.push(Box::new(icon(name).color(color).render(theme)));
     }
     if let Some(text) = &item.label {
-        children.push(Box::new(label(text.clone()).color(color).render(theme)));
+        children.push(Box::new(
+            label(text.clone())
+                .color(color)
+                .line_height(1.0)
+                .render(theme),
+        ));
     }
     Box::new(
         flex_row(children)
