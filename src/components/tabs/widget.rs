@@ -605,18 +605,43 @@ impl Widget for TabsWidget {
         }
         let item_height = max_content_h + 2.0 * pad_v;
 
-        let item_widths: Vec<f64> = if matches!(self.variant, TabsVariant::SegmentedFill) && n > 0 {
-            #[allow(clippy::cast_precision_loss)]
-            let n_f = n as f64;
-            let avail = (size.width - 2.0 * outer - gap * (n_f - 1.0)).max(0.0);
-            let w = avail / n_f;
-            vec![w; n]
-        } else {
-            content_sizes
-                .iter()
-                .map(|cs| cs.width + 2.0 * pad_h)
-                .collect()
-        };
+        #[allow(clippy::cast_precision_loss)]
+        let n_f = n as f64;
+        let gap_total = if n > 0 { gap * (n_f - 1.0) } else { 0.0 };
+        let available_for_items = (size.width - 2.0 * outer - gap_total).max(0.0);
+
+        let mut item_widths: Vec<f64> =
+            if matches!(self.variant, TabsVariant::SegmentedFill) && n > 0 {
+                vec![available_for_items / n_f; n]
+            } else {
+                content_sizes
+                    .iter()
+                    .map(|cs| cs.width + 2.0 * pad_h)
+                    .collect()
+            };
+
+        // `measure`'s `FitContent` arm can report a row width below the
+        // items' natural total (clamped to the space the parent offered).
+        // When that happens, shrink every item proportionally so the row
+        // stays within `size.width` instead of overflowing it. Each item's
+        // content is then laid out at its shrunk width too, so it's
+        // truncated/compressed by its own widget rather than spilling past
+        // its placed rect.
+        let mut shrunk = false;
+        if !matches!(self.variant, TabsVariant::SegmentedFill) {
+            let natural_total: f64 = item_widths.iter().sum();
+            if natural_total > available_for_items {
+                let scale = if natural_total > 0.0 {
+                    available_for_items / natural_total
+                } else {
+                    1.0
+                };
+                for w in &mut item_widths {
+                    *w *= scale;
+                }
+                shrunk = true;
+            }
+        }
 
         self.placed.clear();
         let item_y = outer;
@@ -627,7 +652,13 @@ impl Widget for TabsWidget {
                 Rect::from_origin_size(Point::new(x, item_y), Size::new(w, item_height));
             self.placed.push(item_rect);
 
-            let cs = content_sizes[i];
+            let natural_cs = content_sizes[i];
+            let cs = if shrunk {
+                let max_content_w = (w - 2.0 * pad_h).max(0.0);
+                Size::new(natural_cs.width.min(max_content_w), natural_cs.height)
+            } else {
+                natural_cs
+            };
             ctx.run_layout(item, cs);
             let cx = x + (w - cs.width) * 0.5;
             let cy = item_y + (item_height - cs.height) * 0.5;
