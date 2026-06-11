@@ -34,17 +34,18 @@ pub mod theme;
 pub use animated_clip::AnimatedClip;
 pub use components::{
     Button, ButtonGroup, ButtonVariant, ButtonView, CellAlign, ColumnDef, ColumnWidths, DataGrid,
-    DropdownButton, DropdownButtonView, FilterState, Icon, IconName, Label, LabelAlignment,
-    MIN_COLUMN_WIDTH, MIN_PANEL_SIZE, Orientation, Popover, PopoverAnchor, PopoverHost,
-    PopoverView, RangeSlider, RangeSliderView, ReadOnlyText, ReadOnlyTextView, Resizable,
-    ResizablePanel, ResizablePanels, ResizablePanelsView, ResizableView, RustHighlighter,
-    ScrollContainer, ScrollContainerView, SelectionState, Separator, SeparatorStyle, SidebarItem,
-    SidebarItemView, SidebarPanel, SidebarPanelView, Slider, SliderView, SortDirection, SortState,
-    Spinner, SpinnerView, SpinnerWidget, Tooltip, TooltipView, button, button_group,
-    colored_text_column, data_grid, dropdown_button, filtered_indices, h_resizable,
-    h_resizable_panels, icon, label, optional_text_column, popover, range_slider, read_only_text,
-    scroll_container, separator, sidebar_item, sidebar_panel, slider, spinner, text_column,
-    toggle_button_group, tooltip, v_resizable, v_resizable_panels,
+    DropdownButton, DropdownButtonView, FilterState, GroupBox, Icon, IconName, Label,
+    LabelAlignment, MIN_COLUMN_WIDTH, MIN_PANEL_SIZE, NoTitle, Orientation, Popover, PopoverAnchor,
+    PopoverHost, PopoverView, RangeSlider, RangeSliderView, ReadOnlyText, ReadOnlyTextView,
+    Resizable, ResizablePanel, ResizablePanels, ResizablePanelsView, ResizableView,
+    RustHighlighter, ScrollContainer, ScrollContainerView, SelectionState, Separator,
+    SeparatorStyle, SidebarItem, SidebarItemView, SidebarPanel, SidebarPanelView, Slider,
+    SliderView, SortDirection, SortState, Spinner, SpinnerView, SpinnerWidget, TitleState, Tooltip,
+    TooltipView, WithTitle, button, button_group, colored_text_column, data_grid, dropdown_button,
+    filtered_indices, group_box, h_resizable, h_resizable_panels, icon, label,
+    optional_text_column, popover, range_slider, read_only_text, scroll_container, separator,
+    sidebar_item, sidebar_panel, slider, spinner, text_column, toggle_button_group, tooltip,
+    v_resizable, v_resizable_panels,
 };
 pub use floating::{FloatingOverlay, FloatingOverlayView, floating, interactive_floating};
 #[cfg(feature = "gallery")]
