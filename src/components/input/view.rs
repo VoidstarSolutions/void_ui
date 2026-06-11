@@ -35,12 +35,31 @@ use masonry::properties::{
 use masonry::widgets::{self, TextAction};
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, FlexExt as _, flex_row, sized_box};
+use xilem::view::sized_box;
 use xilem::{Pod, ViewCtx, WidgetView};
 
 use super::widget::{InputCleared, InputFrame};
 use crate::Theme;
 use crate::label;
+
+/// Compose a field's baseline-aligned content row — prefix affix, the
+/// flex-growing editor, then suffix affix — with the theme's column gap. Each
+/// slot is a flex child: `Some(view)` / `None` for an optional affix, or `()`
+/// for none (masked).
+///
+/// A macro rather than a `fn`: xilem's generic flex bounds make a generic helper
+/// impractical (`Flex<Seq>: Style` needs a concrete sequence), so this expands
+/// at each call site — keeping the baseline-alignment decision in one place.
+macro_rules! affixed_row {
+    ($prefix:expr, $core:expr, $suffix:expr, $theme:expr $(,)?) => {{
+        use ::xilem::style::Style as _;
+        use ::xilem::view::FlexExt as _;
+        ::xilem::view::flex_row(($prefix, $core.flex(1.0), $suffix))
+            .cross_axis_alignment(::xilem::view::CrossAxisAlignment::FirstBaseline)
+            .gap(::masonry::layout::Length::px(f64::from($theme.density.col)))
+    }};
+}
+pub(crate) use affixed_row;
 
 /// Hairline border around the field. Component-local like every other bordered
 /// widget (tooltip, checkbox, code view); a 1px stroke doesn't scale with
@@ -135,14 +154,7 @@ impl<F> Input<F> {
             self.callback,
         );
 
-        // Editor takes the remaining width; affixes hug the ends. Align by text
-        // baseline (not box-center) so an affix's text sits on the same line as
-        // the typed text — the editable area and a Label have different heights.
-        let row = flex_row((prefix, core.flex(1.0), suffix))
-            .cross_axis_alignment(CrossAxisAlignment::FirstBaseline)
-            .gap(Length::px(f64::from(theme.density.col)));
-
-        field_chrome(row, theme)
+        field_chrome(affixed_row!(prefix, core, suffix, theme), theme)
     }
 }
 

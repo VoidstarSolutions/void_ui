@@ -22,9 +22,8 @@
 
 use masonry::core::ArcStr;
 use xilem::WidgetView;
-use xilem::view::{CrossAxisAlignment, FlexExt as _, flex_row};
 
-use super::view::{InputView, field_chrome};
+use super::view::{InputView, affixed_row, field_chrome};
 use crate::Theme;
 
 /// The digit-slot token in a mask; every other character is a literal.
@@ -110,12 +109,9 @@ impl<F> MaskedInput<F> {
             )
         };
 
-        // No affixes today, but align by baseline like the other field
-        // builders so a future prefix/suffix stays on the editor's line.
-        field_chrome(
-            flex_row((core.flex(1.0),)).cross_axis_alignment(CrossAxisAlignment::FirstBaseline),
-            theme,
-        )
+        // No affixes — the mask template defines the structure; `()` fills the
+        // affix slots so masked shares the one baseline-aligned row helper.
+        field_chrome(affixed_row!((), core, (), theme), theme)
     }
 }
 

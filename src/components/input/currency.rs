@@ -19,12 +19,9 @@
 //! ```
 
 use masonry::core::ArcStr;
-use masonry::layout::Length;
 use xilem::WidgetView;
-use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, FlexExt as _, flex_row};
 
-use super::view::{InputView, field_chrome};
+use super::view::{InputView, affixed_row, field_chrome};
 use crate::Theme;
 use crate::label;
 
@@ -146,12 +143,7 @@ impl<F> CurrencyInput<F> {
             (Some(symbol), None)
         };
 
-        // Baseline-align so the currency symbol sits on the digits' line.
-        let row = flex_row((prefix, core.flex(1.0), suffix))
-            .cross_axis_alignment(CrossAxisAlignment::FirstBaseline)
-            .gap(Length::px(f64::from(theme.density.col)));
-
-        field_chrome(row, theme)
+        field_chrome(affixed_row!(prefix, core, suffix, theme), theme)
     }
 }
 

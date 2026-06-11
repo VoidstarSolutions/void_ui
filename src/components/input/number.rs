@@ -27,7 +27,7 @@ use xilem::WidgetView;
 use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, FlexExt as _, flex_row};
 
-use super::view::{InputView, field_chrome};
+use super::view::{InputView, affixed_row, field_chrome};
 use crate::Theme;
 use crate::components::button::button;
 use crate::label;
@@ -166,12 +166,10 @@ impl<F> NumberInput<F> {
 
         let steppers = flex_row((minus, plus)).gap(Length::px(4.0));
 
-        // Text affixes + editor align on a shared baseline; the stepper buttons
-        // then center against that text block (a button has no clean text
-        // baseline to sit on).
-        let text = flex_row((prefix, core.flex(1.0), suffix))
-            .cross_axis_alignment(CrossAxisAlignment::FirstBaseline)
-            .gap(Length::px(f64::from(theme.density.col)));
+        // Text affixes + editor share a baseline (affixed_row!); the stepper
+        // buttons then center against that text block (a button has no clean
+        // text baseline to sit on).
+        let text = affixed_row!(prefix, core, suffix, theme);
         let row = flex_row((text.flex(1.0), steppers))
             .cross_axis_alignment(CrossAxisAlignment::Center)
             .gap(Length::px(f64::from(theme.density.col)));
