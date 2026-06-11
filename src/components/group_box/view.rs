@@ -29,7 +29,7 @@ use crate::label;
 
 /// Visual treatment of the content area.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum GroupBoxVariant {
+enum GroupBoxVariant {
     /// No background or border — just spacing around the content.
     #[default]
     Normal,
@@ -53,7 +53,7 @@ pub struct GroupBox<V> {
 
 /// Wrap `child` in a group box.
 ///
-/// Defaults to [`GroupBoxVariant::Normal`] with no title.
+/// Defaults to no background/border and no title.
 pub fn group_box<V>(child: V) -> GroupBox<V> {
     GroupBox {
         title: None,
@@ -71,19 +71,13 @@ impl<V> GroupBox<V> {
         self
     }
 
-    /// Set the visual treatment of the content area.
-    pub fn variant(mut self, variant: GroupBoxVariant) -> Self {
-        self.variant = variant;
-        self
-    }
-
-    /// Shorthand for `.variant(GroupBoxVariant::Fill)`.
+    /// Use a solid `surface` background with rounded corners.
     pub fn fill(mut self) -> Self {
         self.variant = GroupBoxVariant::Fill;
         self
     }
 
-    /// Shorthand for `.variant(GroupBoxVariant::Outline)`.
+    /// Use a bordered outline with rounded corners.
     pub fn outline(mut self) -> Self {
         self.variant = GroupBoxVariant::Outline;
         self
@@ -97,10 +91,10 @@ impl<V> GroupBox<V> {
 
     /// Override the content area's background color.
     ///
-    /// Applies regardless of [`GroupBoxVariant`]: it fills behind
-    /// [`GroupBoxVariant::Normal`], replaces the default `surface` fill of
-    /// [`GroupBoxVariant::Fill`], and adds a fill behind the border of
-    /// [`GroupBoxVariant::Outline`].
+    /// Applies regardless of variant: it fills behind the default
+    /// (no-background) variant, replaces the default `surface` fill set by
+    /// [`Self::fill`], and adds a fill behind the border drawn by
+    /// [`Self::outline`].
     pub fn background(mut self, color: Color) -> Self {
         self.background = Some(color);
         self

@@ -34,7 +34,7 @@ pub mod theme;
 pub use animated_clip::AnimatedClip;
 pub use components::{
     Button, ButtonGroup, ButtonVariant, ButtonView, CellAlign, ColumnDef, ColumnWidths, DataGrid,
-    DropdownButton, DropdownButtonView, FilterState, GroupBox, GroupBoxVariant, Icon, IconName,
+    DropdownButton, DropdownButtonView, FilterState, GroupBox, Icon, IconName,
     Label, LabelAlignment, MIN_COLUMN_WIDTH, MIN_PANEL_SIZE, Orientation, Popover, PopoverAnchor,
     PopoverHost, PopoverView, RangeSlider, RangeSliderView, ReadOnlyText, ReadOnlyTextView,
     Resizable, ResizablePanel, ResizablePanels, ResizablePanelsView, ResizableView,
