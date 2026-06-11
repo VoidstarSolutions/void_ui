@@ -21,11 +21,11 @@
 //! ```
 
 use masonry::core::ArcStr;
+use xilem::WidgetView;
 use xilem::masonry::layout::Length;
 use xilem::peniko::Color;
 use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, FlexExt as _, flex_col, flex_row, sized_box};
-use xilem::WidgetView;
 
 use crate::theme::Palette;
 use crate::{ButtonVariant, IconName, Theme, button, icon, label};
@@ -180,7 +180,10 @@ impl<C> Alert<C> {
 
     /// Materialize the xilem view at the supplied theme.
     #[must_use = "View values do nothing unless provided to Xilem."]
-    pub fn render<State, Action>(self, theme: &Theme) -> impl WidgetView<State, Action> + use<C, State, Action>
+    pub fn render<State, Action>(
+        self,
+        theme: &Theme,
+    ) -> impl WidgetView<State, Action> + use<C, State, Action>
     where
         State: 'static,
         Action: 'static,
@@ -247,5 +250,67 @@ impl<C> Alert<C> {
             .background_color(bg)
             .border(border_color, border_width)
             .corner_radius(corner_radius)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AlertVariant, IconName};
+    use crate::Theme;
+
+    /// [`IconName`] (= `lucide_icons::Icon`) doesn't implement `PartialEq`,
+    /// but does convert to a unique `char`, so compare icons via that.
+    fn icon_char(icon: Option<IconName>) -> Option<char> {
+        icon.map(char::from)
+    }
+
+    #[test]
+    fn default_variant_uses_text_surface_border_and_no_icon() {
+        let theme = Theme::dark();
+        let p = &theme.palette;
+        assert_eq!(
+            AlertVariant::Default.colors(p),
+            (p.text, p.surface, p.border)
+        );
+        assert_eq!(icon_char(AlertVariant::Default.default_icon()), None);
+    }
+
+    #[test]
+    fn typed_variants_use_their_accent_color_and_default_icon() {
+        for theme in [Theme::dark(), Theme::light()] {
+            let p = &theme.palette;
+            assert_eq!(AlertVariant::Info.colors(p), (p.blue, p.blue_soft, p.blue));
+            assert_eq!(
+                icon_char(AlertVariant::Info.default_icon()),
+                icon_char(Some(IconName::Info))
+            );
+
+            assert_eq!(
+                AlertVariant::Success.colors(p),
+                (p.green, p.green_soft, p.green)
+            );
+            assert_eq!(
+                icon_char(AlertVariant::Success.default_icon()),
+                icon_char(Some(IconName::CheckCircle))
+            );
+
+            assert_eq!(
+                AlertVariant::Warning.colors(p),
+                (p.amber, p.amber_soft, p.amber)
+            );
+            assert_eq!(
+                icon_char(AlertVariant::Warning.default_icon()),
+                icon_char(Some(IconName::AlertTriangle))
+            );
+
+            assert_eq!(
+                AlertVariant::Error.colors(p),
+                (p.coral, p.coral_soft, p.coral)
+            );
+            assert_eq!(
+                icon_char(AlertVariant::Error.default_icon()),
+                icon_char(Some(IconName::CircleX))
+            );
+        }
     }
 }
