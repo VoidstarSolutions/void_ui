@@ -178,19 +178,31 @@ pub fn format_currency(value: &str, fmt: &CurrencyFormat) -> String {
         // Anything else (group separators, stray characters) is ignored.
     }
 
-    // Currency has no insignificant leading zeros (no `$007.00`). Collapse
-    // them, but keep a single `0` so a zero amount (`000`) and a bare fraction
-    // (`.50` -> `0.50`) still read naturally. An entirely empty value stays
-    // empty so the placeholder can show.
+    // No digits typed (a lone `-`, `.`, or `-.`): keep it minimal so the
+    // placeholder still shows, rather than manufacturing `0.` for a stray
+    // decimal key.
+    if int_digits.is_empty() && frac_digits.is_empty() {
+        return if negative {
+            "-".to_owned()
+        } else {
+            String::new()
+        };
+    }
+
+    // Currency has no insignificant leading zeros (no `$007.00`). Collapse them,
+    // keeping a single `0` so a zero amount (`000`) and a bare fraction
+    // (`.50` -> `0.50`) still read naturally.
     let significant = int_digits.trim_start_matches('0');
-    let int_part = if significant.is_empty() && (!int_digits.is_empty() || seen_decimal) {
+    let int_part = if significant.is_empty() {
         "0"
     } else {
         significant
     };
 
     let mut out = String::new();
-    if negative {
+    // A leading `-` is only meaningful with a non-zero magnitude — no `-0`.
+    let is_zero = int_part == "0" && frac_digits.chars().all(|c| c == '0');
+    if negative && !is_zero {
         out.push('-');
     }
     out.push_str(&group_integer(int_part, fmt.group_separator));
@@ -301,6 +313,24 @@ mod tests {
         // placeholder.
         assert_eq!(format_currency("", &us()), "");
         assert_eq!(format_currency("-", &us()), "-");
+    }
+
+    #[test]
+    fn lone_decimal_point_stays_minimal() {
+        // A stray "." (or "-.") carries no digits, so it must not manufacture
+        // "0." and suppress the placeholder.
+        assert_eq!(format_currency(".", &us()), "");
+        assert_eq!(format_currency("-.", &us()), "-");
+    }
+
+    #[test]
+    fn drops_meaningless_negative_zero() {
+        // "negative zero" is meaningless — drop the sign when the magnitude is 0.
+        assert_eq!(format_currency("-0", &us()), "0");
+        assert_eq!(format_currency("-0.00", &us()), "0.00");
+        assert_eq!(format_currency("-000", &us()), "0");
+        // A genuinely non-zero negative keeps its sign.
+        assert_eq!(format_currency("-0.50", &us()), "-0.50");
     }
 
     #[test]
