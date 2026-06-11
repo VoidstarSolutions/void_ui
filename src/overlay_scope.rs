@@ -40,8 +40,9 @@ use std::sync::{Arc, OnceLock};
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
-    AccessCtx, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx, PropertiesRef,
-    RegisterCtx, Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
+    PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, Update, UpdateCtx,
+    Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, Size};
@@ -235,6 +236,38 @@ impl OverlayScope {
 
 impl Widget for OverlayScope {
     type Action = NoAction;
+
+    /// Outside-press dismissal for portal popovers (light dismiss with
+    /// pass-through). The scope is an ancestor of everything inside it —
+    /// content, triggers, and the portal slot — so every pointer-down inside
+    /// the scope bubbles through here, no occluding backdrop required:
+    /// scroll, hover, and clicks all reach the content beneath an open
+    /// popover normally (the open popover re-anchors via
+    /// `PopoverHost::compose` while its trigger scrolls). The press is not
+    /// consumed; whether it dismisses is the slot's call
+    /// (`PortalSlot::dismiss_outside` — deferred via `mutate_child_later`
+    /// because the per-child visibility/placement state lives in the slot,
+    /// out of reach of an `EventCtx`).
+    ///
+    /// Known leak: a descendant that `set_handled`s the *down* half of a
+    /// press stops it bubbling here, leaving the popover open for that
+    /// press. No `void_ui` or common masonry widget does (they consume Ups
+    /// and Scrolls), and the failure mode is benign.
+    fn on_pointer_event(
+        &mut self,
+        ctx: &mut EventCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        event: &PointerEvent,
+    ) {
+        let PointerEvent::Down(PointerButtonEvent { state, .. }) = event else {
+            return;
+        };
+        // Slot-local == scope-local: the slot is placed at the scope origin.
+        let pos = ctx.local_position(state.position);
+        ctx.mutate_child_later(&mut self.portal_slot, move |mut slot| {
+            PortalSlot::dismiss_outside(&mut slot, pos);
+        });
+    }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
         // Registration order is paint order: content first, the legacy
@@ -714,11 +747,168 @@ where
 
 #[cfg(test)]
 mod tests {
-    use masonry::core::NewWidget;
-    use masonry::kurbo::Rect;
+    use masonry::core::{EventCtx, NewWidget, PointerButton, PointerEvent, PropertiesMut};
+    use masonry::kurbo::{Rect, Vec2};
     use masonry::testing::TestHarness;
 
     use super::*;
+
+    /// Scope content standing in for "the app under the popover": records
+    /// every pointer Down and Scroll delivered to it, so tests can assert
+    /// that input reaches the content beneath an open popover instead of
+    /// being swallowed by the overlay machinery.
+    #[derive(Default)]
+    struct EventProbe {
+        downs: usize,
+        scrolls: usize,
+    }
+
+    impl Widget for EventProbe {
+        type Action = NoAction;
+
+        fn on_pointer_event(
+            &mut self,
+            _ctx: &mut EventCtx<'_>,
+            _props: &mut PropertiesMut<'_>,
+            event: &PointerEvent,
+        ) {
+            match event {
+                PointerEvent::Down(_) => self.downs += 1,
+                PointerEvent::Scroll(_) => self.scrolls += 1,
+                _ => {}
+            }
+        }
+
+        fn register_children(&mut self, _ctx: &mut RegisterCtx<'_>) {}
+
+        fn measure(
+            &mut self,
+            _ctx: &mut MeasureCtx<'_>,
+            _props: &PropertiesRef<'_>,
+            _axis: Axis,
+            _len_req: LenReq,
+            _cross_length: Option<Length>,
+        ) -> Length {
+            Length::px(400.0)
+        }
+
+        fn layout(&mut self, _ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, _size: Size) {}
+
+        fn paint(
+            &mut self,
+            _ctx: &mut PaintCtx<'_>,
+            _props: &PropertiesRef<'_>,
+            _painter: &mut Painter<'_>,
+        ) {
+        }
+
+        fn accessibility_role(&self) -> Role {
+            Role::GenericContainer
+        }
+
+        fn accessibility(
+            &mut self,
+            _ctx: &mut AccessCtx<'_>,
+            _props: &PropertiesRef<'_>,
+            _node: &mut Node,
+        ) {
+        }
+
+        fn children_ids(&self) -> ChildrenIds {
+            ChildrenIds::from_slice(&[])
+        }
+    }
+
+    /// A scope whose content is an [`EventProbe`] and whose portal slot holds
+    /// one child, already made visible with its trigger anchored at
+    /// (10,10)-(110,40). The popover content itself ends up placed just below
+    /// that rect; everything else in the 400x400 window is "outside".
+    fn probe_scope_with_open_popover() -> (TestHarness<OverlayScope>, u64) {
+        let key = 3;
+        let content = NewWidget::new(EventProbe::default()).erased();
+        let popover = masonry::widgets::Label::new("popover").prepare().erased();
+        let scope = OverlayScope::new(OverlayScopeHandle::new(), content, vec![(key, popover)]);
+        let mut harness = TestHarness::create(
+            masonry::theme::default_property_set(),
+            NewWidget::new(scope),
+        );
+        harness.edit_root_widget(|mut wm| {
+            OverlayScope::set_portal_visible(
+                &mut wm,
+                key,
+                true,
+                None,
+                Rect::new(10.0, 10.0, 110.0, 40.0),
+                PopoverAnchor::BottomStart,
+                4.0,
+            );
+        });
+        (harness, key)
+    }
+
+    #[test]
+    fn scroll_outside_an_open_popover_reaches_content_beneath() {
+        let (mut harness, key) = probe_scope_with_open_popover();
+        harness.mouse_move(masonry::kurbo::Point::new(390.0, 390.0));
+        harness.mouse_wheel(Vec2::new(0.0, -10.0));
+        harness.edit_root_widget(|mut wm| {
+            let mut content = OverlayScope::content_mut(&mut wm);
+            let probe = content.downcast::<EventProbe>();
+            assert_eq!(
+                probe.widget.scrolls, 1,
+                "a scroll outside the open popover must reach the content beneath"
+            );
+        });
+        harness.edit_root_widget(|mut wm| {
+            let slot = OverlayScope::portal_slot_mut(&mut wm);
+            assert!(
+                slot.widget.placed_rect(key).is_some(),
+                "scrolling must not dismiss the popover (it re-anchors via compose instead)"
+            );
+        });
+    }
+
+    #[test]
+    fn pointer_down_outside_an_open_popover_dismisses_and_passes_through() {
+        let (mut harness, key) = probe_scope_with_open_popover();
+        harness.mouse_move(masonry::kurbo::Point::new(390.0, 390.0));
+        harness.mouse_button_press(Some(PointerButton::Primary));
+        harness.mouse_button_release(Some(PointerButton::Primary));
+        harness.edit_root_widget(|mut wm| {
+            let slot = OverlayScope::portal_slot_mut(&mut wm);
+            assert!(
+                slot.widget.placed_rect(key).is_none(),
+                "a pointer down outside the popover must dismiss it"
+            );
+        });
+        harness.edit_root_widget(|mut wm| {
+            let mut content = OverlayScope::content_mut(&mut wm);
+            let probe = content.downcast::<EventProbe>();
+            assert_eq!(
+                probe.widget.downs, 1,
+                "the dismissing pointer down must also reach the content beneath"
+            );
+        });
+    }
+
+    #[test]
+    fn pointer_down_on_the_trigger_rect_does_not_dismiss() {
+        // The trigger's own click handler toggles the popover on Up; if the
+        // scope also dismissed on the Down half, the toggle would re-open it
+        // (close-then-reopen). Downs inside the trigger's anchor rect are
+        // therefore the trigger's business, not the scope's.
+        let (mut harness, key) = probe_scope_with_open_popover();
+        harness.mouse_move(masonry::kurbo::Point::new(50.0, 20.0));
+        harness.mouse_button_press(Some(PointerButton::Primary));
+        harness.mouse_button_release(Some(PointerButton::Primary));
+        harness.edit_root_widget(|mut wm| {
+            let slot = OverlayScope::portal_slot_mut(&mut wm);
+            assert!(
+                slot.widget.placed_rect(key).is_some(),
+                "a down on the trigger rect is the trigger's to handle, not an outside-press dismiss"
+            );
+        });
+    }
 
     #[test]
     fn set_portal_visible_converts_window_rect_and_shows_the_slot_child() {

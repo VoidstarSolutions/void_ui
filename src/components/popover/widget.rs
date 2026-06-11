@@ -8,10 +8,12 @@
 //!   (of the scope), so rebuilds, theme swaps, and button callbacks all work;
 //!   this host only pushes open/placement as plain data via `mutate_later`
 //!   (the `Send` bound on `mutate_later` closures is irrelevant to data).
-//!   Dismissal is the slot's backdrop (click anywhere in the scope outside
-//!   the popover) plus Escape on the focused trigger — *not*
-//!   `ChildFocusChanged`, since the content is not our descendant in this
-//!   mode and clicking it would otherwise close the popover.
+//!   Dismissal is the scope's outside-press observation (a pointer-down
+//!   anywhere in the scope outside the popover and its trigger — see
+//!   `PortalSlot::dismiss_outside`) plus Escape on the focused trigger —
+//!   *not* `ChildFocusChanged`, since the content is
+//!   not our descendant in this mode and clicking it would otherwise close
+//!   the popover.
 //! - **In-tree** (fallback, no scope): content permanently mounted in an
 //!   [`AnchoredOverlay`] below the trigger, toggled via
 //!   `set_overlay_visible`; paints above earlier-painted siblings only.
@@ -19,7 +21,7 @@
 //! **Dismissal asymmetry:** in-tree popovers also close when focus leaves the
 //! trigger subtree (Tab away), because the content is a descendant and
 //! `ChildFocusChanged(false)` fires reliably. Portal popovers close only via
-//! backdrop click, Escape, or trigger toggle — the content is not a
+//! outside press, Escape, or trigger toggle — the content is not a
 //! descendant, so Tab-away focus loss does not reach the host.
 
 use masonry::accesskit::{Node, Role};
@@ -77,7 +79,7 @@ enum Hosting {
 ///
 /// Clicking the trigger toggles the popover. Pressing Escape while focused
 /// closes it; so does clicking outside (via focus loss in-tree, via the
-/// portal slot's backdrop in portal mode).
+/// scope's outside-press dismissal in portal mode).
 pub struct PopoverHost {
     hosting: Hosting,
     open: bool,
@@ -214,7 +216,7 @@ impl PopoverHost {
     }
 
     /// Sync the host's `open` flag after the portal slot dismissed its
-    /// content (backdrop click). The slot already hid the content; this
+    /// content (outside press). The slot already hid the content; this
     /// only keeps the trigger's notion of "open" honest so the next click
     /// re-opens instead of "closing" an already-closed popover.
     pub(crate) fn mark_closed(this: &mut WidgetMut<'_, Self>) {
@@ -392,7 +394,7 @@ impl Widget for PopoverHost {
     /// outside clicks — exactly mirrors `ThemedDropdownButton::update`. In
     /// portal mode the content lives in the scope's slot, *not* under us, so
     /// clicking it would clear our child-focus and wrongly close the popover;
-    /// the slot's backdrop handles outside-click dismissal instead.
+    /// the scope's outside-press dismissal handles it instead.
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
             Update::WidgetAdded | Update::FocusChanged(_) => {
@@ -761,18 +763,15 @@ mod tests {
 
     use super::*;
 
-    /// End-to-end portal wiring at the widget layer, assembled the way the
-    /// view layer does it: an `OverlayScope` whose content holds a
-    /// portal-mode `PopoverHost` (sharing the scope's handle + key) and whose
-    /// slot holds the surface-wrapped content. Exercises the full
-    /// owner-notification loop — trigger click → `mutate_later(scope)` →
-    /// `set_portal_visible`, then backdrop click → `mutate_later(owner)` →
-    /// downcast to `PopoverHost` → `mark_closed` — which would only fail at
-    /// runtime (wrong-type downcast panics) if the wiring regressed.
-    #[test]
-    fn portal_open_and_backdrop_close_roundtrip() {
+    /// Builds the standard portal-wiring fixture: an `OverlayScope` whose
+    /// content is a portal-mode `PopoverHost` (sharing the scope's handle +
+    /// key) pinned to a 100x40 box at the scope's top-left, and whose slot
+    /// holds the surface-wrapped content. The constrained trigger leaves real
+    /// "outside" area in the 400x400 window for dismissal tests.
+    fn portal_scope_with_host(key: u64) -> TestHarness<OverlayScope> {
+        use masonry::layout::AsUnit;
+
         let theme = Theme::default();
-        let key = 1;
         let handle = OverlayScopeHandle::new();
 
         let trigger = masonry::widgets::Label::new("trigger").prepare().erased();
@@ -783,24 +782,58 @@ mod tests {
             handle.clone(),
             key,
         ));
+        let sized = masonry::widgets::SizedBox::new(host.erased())
+            .width(100.0.px())
+            .height(40.0.px())
+            .prepare();
+        let content = masonry::widgets::Align::new(
+            masonry::layout::UnitPoint::TOP_LEFT,
+            sized.erased(),
+        )
+        .prepare()
+        .erased();
 
-        let content = masonry::widgets::Label::new("popover body")
+        let popover_body = masonry::widgets::Label::new("popover body")
             .prepare()
             .erased();
-        let surface = NewWidget::new(PopoverSurface::new(content, &theme)).erased();
+        let surface = NewWidget::new(PopoverSurface::new(popover_body, &theme)).erased();
 
         // The handle's `OnceLock` fills at the scope's `WidgetAdded`, so
         // `scope.widget_id()` resolves for every event after harness creation.
-        let scope = OverlayScope::new(handle, host.erased(), vec![(key, surface)]);
-        let mut harness = TestHarness::create(
+        let scope = OverlayScope::new(handle, content, vec![(key, surface)]);
+        TestHarness::create(
             masonry::theme::default_property_set(),
             NewWidget::new(scope),
-        );
+        )
+    }
 
-        // Click the trigger (the host fills the scope, so any point works
-        // while the popover is closed): toggles `open` and pushes visibility
-        // into the scope's portal slot via `mutate_later`.
-        harness.mouse_move(Point::new(200.0, 200.0));
+    fn host_open(harness: &mut TestHarness<OverlayScope>) -> bool {
+        harness.edit_root_widget(|mut wm| {
+            let mut content = OverlayScope::content_mut(&mut wm);
+            let mut sized = content.downcast::<masonry::widgets::Align>();
+            let mut sized = masonry::widgets::Align::child_mut(&mut sized);
+            let mut host = sized.downcast::<masonry::widgets::SizedBox>();
+            let mut host = masonry::widgets::SizedBox::child_mut(&mut host)
+                .expect("sized box has the host child");
+            host.downcast::<PopoverHost>().widget.open
+        })
+    }
+
+    /// End-to-end portal wiring at the widget layer, assembled the way the
+    /// view layer does it. Exercises the full owner-notification loop —
+    /// trigger click → `mutate_later(scope)` → `set_portal_visible`, then an
+    /// outside press → scope `on_pointer_event` → `dismiss_outside` →
+    /// `mutate_later(owner)` → downcast to `PopoverHost` → `mark_closed` —
+    /// which would only fail at runtime (wrong-type downcast panics) if the
+    /// wiring regressed.
+    #[test]
+    fn portal_open_and_outside_press_close_roundtrip() {
+        let key = 1;
+        let mut harness = portal_scope_with_host(key);
+
+        // Click the trigger (pinned to (0,0)-(100,40)): toggles `open` and
+        // pushes visibility into the scope's portal slot via `mutate_later`.
+        harness.mouse_move(Point::new(50.0, 20.0));
         harness.mouse_button_press(Some(PointerButton::Primary));
         harness.mouse_button_release(Some(PointerButton::Primary));
 
@@ -811,17 +844,12 @@ mod tests {
                 "slot child must be visible and placed after the trigger click"
             );
         });
-        harness.edit_root_widget(|mut wm| {
-            let mut content = OverlayScope::content_mut(&mut wm);
-            let host = content.downcast::<PopoverHost>();
-            assert!(host.widget.open, "host must consider itself open");
-        });
+        assert!(host_open(&mut harness), "host must consider itself open");
 
-        // Click "outside" the popover: the anchor rect is the host's full
-        // box (the whole scope here, BottomStart), so the placed content sits
-        // below the window — every in-window point is outside it. The press
-        // lands on the now-unstashed backdrop, which dismisses the slot child
-        // and notifies the owner (`mutate_later` → `mark_closed`).
+        // Press well outside both the trigger box and the popover content
+        // (placed just below the trigger): the press bubbles to the scope,
+        // which dismisses the slot child and notifies the owner
+        // (`mutate_later` → `mark_closed`).
         harness.mouse_move(Point::new(390.0, 390.0));
         harness.mouse_button_press(Some(PointerButton::Primary));
         harness.mouse_button_release(Some(PointerButton::Primary));
@@ -830,15 +858,38 @@ mod tests {
             let slot = OverlayScope::portal_slot_mut(&mut wm);
             assert!(
                 slot.widget.placed_rect(key).is_none(),
-                "slot child must be hidden after a backdrop click"
+                "slot child must be hidden after an outside press"
             );
         });
+        assert!(
+            !host_open(&mut harness),
+            "outside-press dismissal must sync the host's open flag via mark_closed"
+        );
+    }
+
+    /// Clicking the trigger of an *open* popover must simply close it. The
+    /// scope's outside-press dismissal deliberately skips downs inside the
+    /// trigger's anchor rect — if it didn't, the dismissal (on Down) and the
+    /// trigger's own toggle (on Up) would fight: close-then-reopen, leaving
+    /// the popover stuck open.
+    #[test]
+    fn clicking_the_trigger_of_an_open_popover_closes_it() {
+        let key = 1;
+        let mut harness = portal_scope_with_host(key);
+
+        harness.mouse_move(Point::new(50.0, 20.0));
+        harness.mouse_button_press(Some(PointerButton::Primary));
+        harness.mouse_button_release(Some(PointerButton::Primary));
+        assert!(host_open(&mut harness), "first click opens");
+
+        harness.mouse_button_press(Some(PointerButton::Primary));
+        harness.mouse_button_release(Some(PointerButton::Primary));
+        assert!(!host_open(&mut harness), "second click must toggle closed");
         harness.edit_root_widget(|mut wm| {
-            let mut content = OverlayScope::content_mut(&mut wm);
-            let host = content.downcast::<PopoverHost>();
+            let slot = OverlayScope::portal_slot_mut(&mut wm);
             assert!(
-                !host.widget.open,
-                "backdrop dismissal must sync the host's open flag via mark_closed"
+                slot.widget.placed_rect(key).is_none(),
+                "slot child must be hidden after the toggle"
             );
         });
     }

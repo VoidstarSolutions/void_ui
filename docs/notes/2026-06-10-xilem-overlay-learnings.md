@@ -120,11 +120,17 @@ ONCE, right after delivering `Update::WidgetAdded` in the update-tree pass
 (`masonry_core/src/passes/update.rs:191-194`). Dynamic returns are silently
 ignored afterwards. Our first `PortalSlot` returned
 `self.children.iter().any(|c| c.visible)` from
-`accepts_pointer_interaction` and the dismiss test failed; the fix is an
-explicit invisible `Backdrop` child (`src/overlay_portal.rs`) whose
-`accepts_pointer_interaction` is statically `true` and whose *stashing* is
-the dynamic hit-test switch (stashed widgets are skipped by hit-testing,
-§1).
+`accepts_pointer_interaction` and the dismiss test failed. The v1 fix was an
+explicit invisible `Backdrop` child whose `accepts_pointer_interaction` was
+statically `true` and whose *stashing* was the dynamic hit-test switch
+(stashed widgets are skipped by hit-testing, §1). The backdrop has since
+been removed entirely — it occluded the whole scope while open, eating
+scroll/hover/clicks for everything beneath. Dismissal now observes
+pointer-downs *bubbling* through `OverlayScope::on_pointer_event` (the scope
+is an ancestor of everything inside it, so no occluding hit-target is
+needed and the caching pitfall doesn't arise), deferring the decision to
+`PortalSlot::dismiss_outside` via `mutate_child_later`. The caching lesson
+stands for any widget that wants a *dynamic* hit-test area.
 
 ### 3.6 A keyed portal diff must iterate to a fixpoint
 
@@ -163,7 +169,7 @@ eliminate.
 The mutate pass drops callbacks whose target has been removed
 (`masonry_core/src/passes/mutate.rs:69-78`, "Skip callbacks whose target was
 removed since they were emitted"). This is load-bearing for any
-cross-subtree owner-notification protocol: the `PortalSlot` backdrop
+cross-subtree owner-notification protocol: `PortalSlot::dismiss_outside`
 dismisses by `mutate_later(owner, … PopoverHost::mark_closed …)`, and if the
 owning popover was torn down in the same frame nothing explodes. Worth
 guaranteeing (and documenting) upstream, because every userspace portal will
@@ -184,8 +190,10 @@ primitive for it:
    `…scope path… / ViewId(key)`.
 3. **Surface wrapping** — `wrap_in_surface` mirrors `PopoverHost::new`'s
    chrome so portal and in-tree popovers look identical.
-4. **Backdrop dismissal child** — the stash-switched `Backdrop` widget
-   (§3.5) plus outside-click logic in `PortalSlot::on_pointer_event`.
+4. **Outside-press dismissal** — `OverlayScope::on_pointer_event` observes
+   every pointer-down bubbling through the scope and defers to
+   `PortalSlot::dismiss_outside` (light dismiss with pass-through; see
+   §3.5 for the occluding-backdrop design this replaced).
 5. **Compose re-anchoring** — the polling idiom of §3.7, duplicated in two
    widgets.
 6. **Stash-while-open cleanup** — `PopoverHost` handles
@@ -194,7 +202,7 @@ primitive for it:
    scrolled into a stashed region), since the content wouldn't be stashed
    with it.
 7. **Fixpoint diffing** — §3.6.
-8. **Owner-notification protocol** — backdrop → `mutate_later` →
+8. **Owner-notification protocol** — `dismiss_outside` → `mutate_later` →
    `PopoverHost::mark_closed`, relying on §3.8.
 
 ## 5. v1 limitations that platform layers would fix
@@ -202,11 +210,15 @@ primitive for it:
 All intentional in the userspace version; all fall out for free with real
 layers:
 
-- **Outside-scope dismissal.** Our backdrop only covers the scope's bounds;
-  clicks beyond them don't dismiss. `Layer::capture_pointer_event` sees
-  every pointer event window-wide.
-- **Backdrop hover suppression.** While open, the backdrop eats hover/clicks
-  for everything under the scope. A layer doesn't need a backdrop at all.
+- **Outside-scope dismissal.** Dismissal observes pointer-downs bubbling
+  through the scope; clicks beyond its bounds never pass through it and
+  don't dismiss. `Layer::capture_pointer_event` sees every pointer event
+  window-wide.
+- **Down-consuming descendants block dismissal.** A widget that
+  `set_handled`s the *down* half of a press stops it bubbling to the scope,
+  leaving the popover open for that press (none of ours do — they consume
+  ups and scrolls). `Layer::capture_pointer_event` runs before hit-testing,
+  so it can't be shadowed.
 - **A11y placement.** Portal content lands in the accessibility tree under
   the scope's slot, not its trigger. Layers have their own roots.
 - **Window-edge overflow.** Portal content is clipped to the scope

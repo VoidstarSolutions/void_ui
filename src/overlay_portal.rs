@@ -27,20 +27,28 @@
 //!    ([`crate::overlay_scope::OverlayScope::set_portal_visible`] /
 //!    `set_portal_placement`), re-anchoring from `compose` while the trigger
 //!    scrolls.
-//! 5. **Dismiss.** While any child is visible the slot un-stashes an
-//!    invisible [`Backdrop`] child covering the scope; a pointer-down outside
-//!    every visible child hides them all and notifies each owning
-//!    `PopoverHost` via `mutate_later` → `PopoverHost::mark_closed` (safely
-//!    skipped by masonry if the owner was removed in the interim).
+//! 5. **Dismiss.** Light dismiss with pass-through, no backdrop. The scope
+//!    is an ancestor of everything inside it, so every pointer-down inside
+//!    the scope bubbles through `OverlayScope::on_pointer_event`, which asks
+//!    the slot (`PortalSlot::dismiss_outside`) to hide all visible children
+//!    unless the press landed inside one's content or its trigger rect. The
+//!    press is not consumed — it also acts on whatever was under it, and
+//!    because nothing occludes the scope while a popover is open, scroll and
+//!    hover keep working underneath (the open popover re-anchors via
+//!    `PopoverHost::compose`). Owners are notified via `mutate_later` →
+//!    `PopoverHost::mark_closed` (safely skipped by masonry if the owner was
+//!    removed in the interim).
 //!
 //! # Known v1 limitations (intentional)
 //!
-//! - **Outside-scope clicks don't dismiss.** The backdrop only covers the
-//!   scope's bounds; clicks beyond them never reach it. Escape on the focused
-//!   trigger and clicks anywhere inside the scope do dismiss.
-//! - **Backdrop suppresses hover/clicks under the scope while open.** The
-//!   first click outside an open popover dismisses it and is consumed —
-//!   standard modal-backdrop behavior, but it also eats hover until then.
+//! - **Outside-scope clicks don't dismiss.** Dismissal observes pointer-downs
+//!   bubbling through the scope; clicks beyond its bounds never pass through
+//!   it. Escape on the focused trigger and clicks anywhere inside the scope
+//!   do dismiss.
+//! - **A descendant consuming pointer-downs blocks dismissal.** A widget that
+//!   `set_handled`s the *down* half of a press stops it bubbling to the
+//!   scope, leaving the popover open for that press. No `void_ui` or common
+//!   masonry widget does (they consume ups and scrolls).
 //! - **A11y placement.** Portal content appears in the accessibility tree
 //!   under the scope's slot, not under its trigger.
 //! - **Environment context loss.** Portal content builds/rebuilds as a view
@@ -51,9 +59,9 @@
 //!
 //! Masonry's window-level `Layer` system (`LayerStack`, `create_layer`,
 //! `Layer::capture_pointer_event`) solves the first three at the platform
-//! level but has no xilem integration yet; this portal is the userspace
-//! stand-in until it does. See
-//! `docs/notes/2026-06-10-xilem-overlay-learnings.md`.
+//! level (layers see every pointer event before hit-testing) but has no
+//! xilem integration yet; this portal is the userspace stand-in until it
+//! does. See `docs/notes/2026-06-10-xilem-overlay-learnings.md`.
 
 use std::cell::RefCell;
 use std::fmt;
@@ -245,9 +253,8 @@ pub(crate) fn portal_from_env<State: 'static, Action: 'static>(
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
-    AccessCtx, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
-    PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, Widget, WidgetId,
-    WidgetMut, WidgetPod,
+    AccessCtx, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx, PropertiesRef,
+    RegisterCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, Size};
@@ -256,75 +263,12 @@ use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use crate::components::popover::PopoverAnchor;
 use crate::components::popover::widget::PopoverHost;
 
-/// Invisible hit-target that makes [`PortalSlot`]'s backdrop dismissal work
-/// despite masonry caching `accepts_pointer_interaction` at mount (the
-/// `WidgetAdded` branch of masonry's update-tree pass (rev 4eae66d)). The flag is static-true here so
-/// the cache is always correct. The *dynamic* switch is stashing: the slot
-/// stashes this widget while no popover is open (stashed widgets are skipped
-/// by hit-testing) and un-stashes it when any popover is visible.
-struct Backdrop;
-
-impl Widget for Backdrop {
-    type Action = NoAction;
-
-    fn accepts_pointer_interaction(&self) -> bool {
-        true
-    }
-
-    fn on_pointer_event(
-        &mut self,
-        _ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &PointerEvent,
-    ) {
-    }
-
-    fn register_children(&mut self, _ctx: &mut RegisterCtx<'_>) {}
-
-    fn measure(
-        &mut self,
-        _ctx: &mut MeasureCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _axis: Axis,
-        _len_req: LenReq,
-        _cross_length: Option<Length>,
-    ) -> Length {
-        Length::ZERO
-    }
-
-    fn layout(&mut self, _ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, _size: Size) {}
-
-    fn paint(
-        &mut self,
-        _ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
-    ) {
-    }
-
-    fn accessibility_role(&self) -> Role {
-        Role::GenericContainer
-    }
-
-    fn accessibility(
-        &mut self,
-        _ctx: &mut AccessCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _node: &mut Node,
-    ) {
-    }
-
-    fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[])
-    }
-}
-
 /// One permanently-mounted popover surface inside the slot.
 struct PortalChild {
     key: u64,
     widget: WidgetPod<dyn Widget>,
-    /// `PopoverHost` to sync (via [`PopoverHost::mark_closed`]) when the
-    /// backdrop dismisses this child. `None` in tests / ownerless pushes.
+    /// `PopoverHost` to sync (via [`PopoverHost::mark_closed`]) when an
+    /// outside press dismisses this child. `None` in tests / ownerless pushes.
     owner: Option<WidgetId>,
     visible: bool,
     /// Trigger's anchor rect in the *scope's* local coordinates.
@@ -342,15 +286,14 @@ struct PortalChild {
 /// placement are plain-data widget mutations pushed by `PopoverHost` via
 /// `mutate_later`.
 ///
-/// Backdrop dismissal works via a private [`Backdrop`] child whose
-/// `accepts_pointer_interaction` is a static `true` (cache-safe). The slot
-/// stashes the backdrop while no popover is open and un-stashes it when any
-/// is visible. Stashed widgets are skipped by masonry's hit-testing, so the
-/// dynamic on/off behaviour is controlled entirely by stash state — not by
-/// the cached interaction flag. When a click lands on the backdrop it bubbles
-/// up to `PortalSlot::on_pointer_event`, where the dismissal logic runs.
+/// The slot never occludes anything: only the visible popover children are
+/// hit targets, so scroll, hover, and clicks everywhere else reach the
+/// content beneath as if no popover were open. Outside-press dismissal is
+/// driven by `OverlayScope` — an ancestor of *everything* in the scope, so
+/// every pointer-down inside the scope bubbles through it — which calls
+/// [`Self::dismiss_outside`] with the press position (light dismiss with
+/// pass-through: the press also acts on whatever was under it).
 pub struct PortalSlot {
-    backdrop: WidgetPod<Backdrop>,
     children: Vec<PortalChild>,
 }
 
@@ -358,7 +301,6 @@ impl PortalSlot {
     #[must_use]
     pub(crate) fn new(children: Vec<(u64, NewWidget<dyn Widget>)>) -> Self {
         Self {
-            backdrop: NewWidget::new(Backdrop).to_pod(),
             children: children
                 .into_iter()
                 .map(|(key, widget)| PortalChild {
@@ -466,63 +408,62 @@ impl PortalSlot {
         child.placement = placement;
         this.ctx.request_layout();
     }
-}
 
-impl Widget for PortalSlot {
-    type Action = NoAction;
-
-    fn accepts_pointer_interaction(&self) -> bool {
-        // The slot is a pure container; it must not be a hit target itself.
-        // Backdrop dismissal is handled by the `Backdrop` child, which has a
-        // static `true` here (cache-safe) and is stashed when no popover is open.
-        false
-    }
-
-    /// Handle pointer-down events for backdrop dismissal. Any pointer button
-    /// dismisses all visible children (standard modal-backdrop semantics); the
-    /// press is consumed (`set_handled`) so it does not also activate whatever
-    /// is beneath the slot. Clicks inside a visible child's rect are left
-    /// unhandled so the child widget receives them normally.
-    fn on_pointer_event(
-        &mut self,
-        ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &PointerEvent,
-    ) {
-        let PointerEvent::Down(PointerButtonEvent { state, .. }) = event else {
-            return;
-        };
-        let pos = ctx.local_position(state.position);
-        if self
+    /// Dismiss every visible child unless `pos` (slot-local — identical to
+    /// scope-local, the slot sits at the scope's origin) is inside a visible
+    /// child's content rect or its trigger's anchor rect. Called by
+    /// `OverlayScope` for every pointer-down that bubbles up from inside the
+    /// scope (light dismiss). The press is *not* consumed — it also acts on
+    /// whatever was under it.
+    ///
+    /// Presses inside a visible child's content are the content's business;
+    /// presses inside its trigger rect are the trigger's (its own click
+    /// handler toggles on Up — dismissing on the Down half too would make
+    /// the toggle re-open a popover the dismissal just closed). Owners of
+    /// dismissed children are notified via `mutate_later` →
+    /// [`PopoverHost::mark_closed`] (safely skipped by masonry if the owner
+    /// was removed in the interim).
+    pub(crate) fn dismiss_outside(this: &mut WidgetMut<'_, Self>, pos: Point) {
+        if this
+            .widget
             .children
             .iter()
-            .any(|c| c.visible && c.placed.contains(pos))
+            .any(|c| c.visible && (c.placed.contains(pos) || c.placement.contains(pos)))
         {
-            // The click is for (or bubbling from) open content — leave it be.
             return;
         }
         let mut dismissed = false;
-        for child in &mut self.children {
+        for child in &mut this.widget.children {
             if !child.visible {
                 continue;
             }
             child.visible = false;
             dismissed = true;
             if let Some(owner) = child.owner {
-                ctx.mutate_later(owner, |mut w| {
+                this.ctx.mutate_later(owner, |mut w| {
                     let mut host = w.downcast::<PopoverHost>();
                     PopoverHost::mark_closed(&mut host);
                 });
             }
         }
         if dismissed {
-            ctx.request_layout();
-            ctx.set_handled();
+            this.ctx.request_layout();
         }
+    }
+}
+
+impl Widget for PortalSlot {
+    type Action = NoAction;
+
+    fn accepts_pointer_interaction(&self) -> bool {
+        // The slot is a pure container laid out to cover the whole scope; it
+        // must never be a hit target itself or it would swallow every pointer
+        // event meant for the content beneath. Only its visible children
+        // (the open popovers) participate in hit-testing.
+        false
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.backdrop);
         for child in &mut self.children {
             ctx.register_child(&mut child.widget);
         }
@@ -542,17 +483,6 @@ impl Widget for PortalSlot {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let any_visible = self.children.iter().any(|c| c.visible);
-        if any_visible {
-            ctx.set_stashed(&mut self.backdrop, false);
-            // Size the backdrop to the full slot area so it covers everything
-            // and acts as a dismiss target anywhere outside the content children.
-            ctx.run_layout(&mut self.backdrop, size);
-            ctx.place_child(&mut self.backdrop, Point::ORIGIN);
-        } else {
-            ctx.set_stashed(&mut self.backdrop, true);
-        }
-
         for child in &mut self.children {
             if child.visible {
                 ctx.set_stashed(&mut child.widget, false);
@@ -587,8 +517,7 @@ impl Widget for PortalSlot {
         _props: &PropertiesRef<'_>,
         _painter: &mut Painter<'_>,
     ) {
-        // Purely structural; children paint themselves. The backdrop is
-        // intentionally invisible.
+        // Purely structural; children paint themselves.
     }
 
     fn accessibility_role(&self) -> Role {
@@ -604,8 +533,7 @@ impl Widget for PortalSlot {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        let mut ids = vec![self.backdrop.id()];
-        ids.extend(self.children.iter().map(|c| c.widget.id()));
+        let ids: Vec<_> = self.children.iter().map(|c| c.widget.id()).collect();
         ChildrenIds::from_slice(&ids)
     }
 }
@@ -703,7 +631,7 @@ mod tests {
 
     // --- PortalSlot tests ---
 
-    use masonry::core::PointerButton;
+    use masonry::core::{EventCtx, PointerButton, PointerEvent, PropertiesMut};
     use masonry::kurbo::{Point, Rect};
     use masonry::testing::TestHarness;
 
@@ -728,9 +656,7 @@ mod tests {
     /// Minimal interactive leaf recording primary presses — stands in for
     /// real popover content (buttons, inputs) so the click-through test can
     /// assert the press was *delivered to the child*, not merely tolerated
-    /// by the slot. A non-interactive child (like a bare label) would make
-    /// the backdrop the hit target even inside the child's rect, exercising
-    /// only the slot's early-return path.
+    /// by the slot.
     struct ClickProbe {
         downs: usize,
     }
@@ -794,9 +720,6 @@ mod tests {
         let (mut harness, _key) = slot_with_one_child();
         harness.edit_root_widget(|wm| {
             assert!(!wm.widget.children[0].visible);
-            // The slot itself is a pure container (no accepts_pointer_interaction
-            // override). Interaction is gated by stashing the Backdrop child;
-            // confirmed via the dismiss/pass-through behavioural tests.
         });
     }
 
@@ -816,8 +739,6 @@ mod tests {
             );
         });
         harness.edit_root_widget(|wm| {
-            // Backdrop is un-stashed when a child is visible; the dismiss test
-            // confirms the pointer event actually fires.
             let placed = wm.widget.children[0].placed;
             // BottomStart: x flush with placement left, y = placement bottom + gap.
             assert!((placed.x0 - 10.0).abs() < 1e-9);
@@ -827,8 +748,9 @@ mod tests {
 
     #[test]
     fn clicks_pass_through_when_no_popover_is_open() {
-        // With no child ever made visible the backdrop should be stashed, so
-        // pointer events are never delivered to the slot and nothing panics.
+        // With every child hidden (stashed) and the slot itself refusing
+        // pointer interaction, nothing in the slot is a hit target — pointer
+        // events fall through to whatever is beneath and nothing panics.
         let (mut harness, _key) = slot_with_one_child();
         harness.mouse_move(Point::new(390.0, 390.0));
         harness.mouse_button_press(Some(PointerButton::Primary));
@@ -839,7 +761,7 @@ mod tests {
     }
 
     #[test]
-    fn pointer_down_outside_visible_children_dismisses_them() {
+    fn dismiss_outside_hides_visible_children() {
         let (mut harness, key) = slot_with_one_child();
         let placement = Rect::new(10.0, 10.0, 110.0, 40.0);
         harness.edit_root_widget(|mut wm| {
@@ -853,12 +775,44 @@ mod tests {
                 0.0,
             );
         });
-        // Click far away from the placed content.
-        harness.mouse_move(Point::new(390.0, 390.0));
-        harness.mouse_button_press(Some(PointerButton::Primary));
-        harness.mouse_button_release(Some(PointerButton::Primary));
+        // A press far away from both the placed content and the trigger rect.
+        harness.edit_root_widget(|mut wm| {
+            PortalSlot::dismiss_outside(&mut wm, Point::new(390.0, 390.0));
+        });
         harness.edit_root_widget(|wm| {
             assert!(!wm.widget.children[0].visible);
+        });
+    }
+
+    #[test]
+    fn dismiss_outside_keeps_children_for_presses_on_content_or_trigger() {
+        let (mut harness, key) = slot_with_one_child();
+        let placement = Rect::new(10.0, 10.0, 110.0, 40.0);
+        harness.edit_root_widget(|mut wm| {
+            PortalSlot::set_visible(
+                &mut wm,
+                key,
+                true,
+                None,
+                placement,
+                PopoverAnchor::BottomStart,
+                0.0,
+            );
+        });
+        let inside_content = harness.edit_root_widget(|wm| wm.widget.children[0].placed.center());
+        harness.edit_root_widget(|mut wm| {
+            PortalSlot::dismiss_outside(&mut wm, inside_content);
+            assert!(
+                wm.widget.children[0].visible,
+                "a press inside the popover content must not dismiss it"
+            );
+            // Inside the trigger's anchor rect: the trigger's own click
+            // handler owns the toggle; dismissing here too would re-open.
+            PortalSlot::dismiss_outside(&mut wm, placement.center());
+            assert!(
+                wm.widget.children[0].visible,
+                "a press on the trigger rect must not dismiss (the trigger toggles on Up)"
+            );
         });
     }
 
@@ -889,9 +843,8 @@ mod tests {
         harness.mouse_button_release(Some(PointerButton::Primary));
         harness.edit_root_widget(|mut wm| {
             assert!(wm.widget.children[0].visible);
-            // The press must have been *delivered to the child*, not merely
-            // tolerated — i.e. the backdrop didn't win the hit-test inside
-            // the child's placed rect.
+            // The press must have been *delivered to the child* — i.e. the
+            // visible child wins the hit-test inside its placed rect.
             let mut child = PortalSlot::child_mut(&mut wm, key).expect("child exists");
             let probe = child.downcast::<ClickProbe>();
             assert_eq!(
