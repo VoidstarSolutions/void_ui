@@ -24,7 +24,7 @@ use masonry::core::ArcStr;
 use xilem::masonry::layout::Length;
 use xilem::peniko::Color;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, flex_col, flex_row, sized_box};
+use xilem::view::{CrossAxisAlignment, FlexExt as _, flex_col, flex_row, sized_box};
 use xilem::WidgetView;
 
 use crate::theme::Palette;
@@ -219,11 +219,12 @@ impl<C> Alert<C> {
             button(move |state: &mut State| on_close.call(state))
                 .icon(IconName::X)
                 .variant(ButtonVariant::Text)
+                .tint(fg)
                 .accessible_name("Dismiss")
                 .render(theme)
         });
 
-        let row = flex_row((icon_view, content, close_view))
+        let row = flex_row((icon_view, content.flex(1.0), close_view))
             .cross_axis_alignment(if self.banner {
                 CrossAxisAlignment::Center
             } else {
