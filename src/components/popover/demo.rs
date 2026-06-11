@@ -159,6 +159,7 @@ fn build_inner(theme: &Theme) -> impl WidgetView<PopoverDemo> + use<> {
     scroll_container(
         flex_col((
             title_block,
+            separator().render(theme),
             header("Basic"),
             basic_row(theme),
             header("Anchor Variants"),

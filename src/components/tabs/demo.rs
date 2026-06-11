@@ -8,12 +8,12 @@ use xilem::view::{CrossAxisAlignment, flex_col};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::{TabItem, TabsVariant, tabs};
-use crate::Theme;
 use crate::components::IconName;
 use crate::components::ScrollBarVisibility;
 use crate::label;
 use crate::scroll_container;
 use crate::with_source;
+use crate::{Theme, separator};
 
 // --- MARK: LOCAL STATE
 
@@ -170,6 +170,7 @@ fn build_inner(theme: &Theme, state: &TabsDemo) -> impl WidgetView<TabsDemo> + u
     scroll_container(
         flex_col((
             title_block,
+            separator().render(theme),
             header("Default"),
             default_tabs,
             header("Underline"),
