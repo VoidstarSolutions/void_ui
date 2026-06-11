@@ -32,7 +32,5 @@
 //! sample children.
 
 pub mod flex_wrap;
-pub mod overlap_column;
 
 pub use flex_wrap::{FlexWrap, flex_wrap};
-pub use overlap_column::{OverlapColumn, overlap_column};

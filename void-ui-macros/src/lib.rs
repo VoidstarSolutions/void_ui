@@ -10,16 +10,10 @@ use proc_macro::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenSt
 /// Usage: `with_source!(theme_expr, { /* view body */ })`.
 ///
 /// Expands to
-/// `overlap_column(body_view, code_block(source, theme_expr)).gap(8px)`,
+/// `flex_col((body_view, code_block(source, theme_expr))).cross_axis_alignment(Stretch).gap(8px)`,
 /// where `source` is the **original source text** of the body block —
 /// including newlines and indentation — recovered via
 /// [`proc_macro::Span::source_text`].
-///
-/// `overlap_column` keeps `body_view` visually on top of `code_block`
-/// while *painting* `body_view` (and any in-tree overlay overflow) after
-/// it. Always-on-top behavior for popovers/dropdowns is provided by the
-/// demo panel's own `overlay_scope` wrapper (panel altitude, so popups can
-/// escape individual demo blocks), not by this macro.
 ///
 /// Falls back to a stringified token form if the compiler can't provide
 /// source text for the input span (rare; happens with macro-generated
@@ -98,42 +92,50 @@ pub fn with_source(input: TokenStream) -> TokenStream {
     block.extend(std::iter::once(TokenTree::Literal(source_literal)));
     push_punct(&mut block, ';', Spacing::Alone);
 
-    // ::void_ui::layout::overlap_column( __vs_view , ::void_ui::gallery::code_block(__vs_source, <theme>) )
+    // ::xilem::view::flex_col(( __vs_view , ::void_ui::gallery::code_block(__vs_source, <theme>) ))
+    //     .cross_axis_alignment(::xilem::view::CrossAxisAlignment::Stretch)
     //     .gap(::xilem::masonry::layout::Length::px(8.0))
-    //
-    // `overlap_column` keeps the *visual* stacking (`__vs_view` on top,
-    // `code_block` below — unchanged from the old `flex_col`) while
-    // reversing *paint* order: `__vs_view` (and any `AnchoredOverlay`-hosted
-    // overflow inside it, e.g. an open popover or dropdown menu) paints on
-    // top of `code_block`, a later visual sibling that would otherwise
-    // occlude it once it overflows its own footprint. See
-    // `crate::layout::overlap_column` for the mechanism.
-    let mut overlap_expr = TokenStream::new();
-    push_path(
-        &mut overlap_expr,
-        &["", "void_ui", "layout", "overlap_column"],
-    );
+    let mut flex_expr = TokenStream::new();
+    push_path(&mut flex_expr, &["", "xilem", "view", "flex_col"]);
 
-    let mut call_args = TokenStream::new();
-    push_ident(&mut call_args, "__vs_view");
-    push_punct(&mut call_args, ',', Spacing::Alone);
-    push_path(&mut call_args, &["", "void_ui", "gallery", "code_block"]);
+    let mut outer_args = TokenStream::new();
+    let mut tuple = TokenStream::new();
+    push_ident(&mut tuple, "__vs_view");
+    push_punct(&mut tuple, ',', Spacing::Alone);
+    push_path(&mut tuple, &["", "void_ui", "gallery", "code_block"]);
     let mut cb_args = TokenStream::new();
     push_ident(&mut cb_args, "__vs_source");
     push_punct(&mut cb_args, ',', Spacing::Alone);
     cb_args.extend(theme_tokens);
-    call_args.extend(std::iter::once(TokenTree::Group(Group::new(
+    tuple.extend(std::iter::once(TokenTree::Group(Group::new(
         Delimiter::Parenthesis,
         cb_args,
     ))));
-    overlap_expr.extend(std::iter::once(TokenTree::Group(Group::new(
+    outer_args.extend(std::iter::once(TokenTree::Group(Group::new(
         Delimiter::Parenthesis,
-        call_args,
+        tuple,
+    ))));
+    flex_expr.extend(std::iter::once(TokenTree::Group(Group::new(
+        Delimiter::Parenthesis,
+        outer_args,
+    ))));
+
+    // .cross_axis_alignment(::xilem::view::CrossAxisAlignment::Stretch)
+    push_punct(&mut flex_expr, '.', Spacing::Alone);
+    push_ident(&mut flex_expr, "cross_axis_alignment");
+    let mut caa_args = TokenStream::new();
+    push_path(
+        &mut caa_args,
+        &["", "xilem", "view", "CrossAxisAlignment", "Stretch"],
+    );
+    flex_expr.extend(std::iter::once(TokenTree::Group(Group::new(
+        Delimiter::Parenthesis,
+        caa_args,
     ))));
 
     // .gap(::xilem::masonry::layout::Length::px(8.0))
-    push_punct(&mut overlap_expr, '.', Spacing::Alone);
-    push_ident(&mut overlap_expr, "gap");
+    push_punct(&mut flex_expr, '.', Spacing::Alone);
+    push_ident(&mut flex_expr, "gap");
     let mut gap_args = TokenStream::new();
     push_path(
         &mut gap_args,
@@ -147,12 +149,12 @@ pub fn with_source(input: TokenStream) -> TokenStream {
         Delimiter::Parenthesis,
         px_args,
     ))));
-    overlap_expr.extend(std::iter::once(TokenTree::Group(Group::new(
+    flex_expr.extend(std::iter::once(TokenTree::Group(Group::new(
         Delimiter::Parenthesis,
         gap_args,
     ))));
 
-    block.extend(overlap_expr);
+    block.extend(flex_expr);
 
     let mut out = TokenStream::new();
     out.extend(std::iter::once(TokenTree::Group(Group::new(
