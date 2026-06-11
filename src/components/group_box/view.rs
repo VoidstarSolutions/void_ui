@@ -39,13 +39,55 @@ enum GroupBoxVariant {
     Outline,
 }
 
+/// Title state of a [`GroupBox`] that has no title.
+///
+/// In this state [`GroupBox::title_color`] is not available, since there is
+/// no title for it to color.
+#[derive(Debug)]
+pub struct NoTitle;
+
+/// Title state of a [`GroupBox`] that has a title, with an optional color
+/// override.
+#[derive(Debug)]
+pub struct WithTitle {
+    text: ArcStr,
+    color: Option<Color>,
+}
+
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for super::NoTitle {}
+    impl Sealed for super::WithTitle {}
+}
+
+/// The title state of a [`GroupBox`].
+///
+/// Implemented by [`NoTitle`] and [`WithTitle`]. This trait is sealed and has
+/// no public members; it exists only to let [`GroupBox::render`] be written
+/// once for both states.
+pub trait TitleState: sealed::Sealed {
+    #[doc(hidden)]
+    fn into_label(self) -> Option<(ArcStr, Option<Color>)>;
+}
+
+impl TitleState for NoTitle {
+    fn into_label(self) -> Option<(ArcStr, Option<Color>)> {
+        None
+    }
+}
+
+impl TitleState for WithTitle {
+    fn into_label(self) -> Option<(ArcStr, Option<Color>)> {
+        Some((self.text, self.color))
+    }
+}
+
 /// Builder for a titled grouping container.
 ///
 /// Created with [`group_box`]. Returns a view via [`Self::render`].
 #[must_use = "GroupBox does nothing until rendered with .render(&theme)"]
-pub struct GroupBox<V> {
-    title: Option<ArcStr>,
-    title_color: Option<Color>,
+pub struct GroupBox<V, T = NoTitle> {
+    title: T,
     background: Option<Color>,
     variant: GroupBoxVariant,
     child: V,
@@ -56,21 +98,37 @@ pub struct GroupBox<V> {
 /// Defaults to no background/border and no title.
 pub fn group_box<V>(child: V) -> GroupBox<V> {
     GroupBox {
-        title: None,
-        title_color: None,
+        title: NoTitle,
         background: None,
         variant: GroupBoxVariant::default(),
         child,
     }
 }
 
-impl<V> GroupBox<V> {
+impl<V> GroupBox<V, NoTitle> {
     /// Add a title above the content area.
-    pub fn title(mut self, text: impl Into<ArcStr>) -> Self {
-        self.title = Some(text.into());
+    pub fn title(self, text: impl Into<ArcStr>) -> GroupBox<V, WithTitle> {
+        GroupBox {
+            title: WithTitle {
+                text: text.into(),
+                color: None,
+            },
+            background: self.background,
+            variant: self.variant,
+            child: self.child,
+        }
+    }
+}
+
+impl<V> GroupBox<V, WithTitle> {
+    /// Override the title's text color. Defaults to `palette.text_muted`.
+    pub fn title_color(mut self, color: Color) -> Self {
+        self.title.color = Some(color);
         self
     }
+}
 
+impl<V, T> GroupBox<V, T> {
     /// Use a solid `surface` background with rounded corners.
     pub fn fill(mut self) -> Self {
         self.variant = GroupBoxVariant::Fill;
@@ -80,12 +138,6 @@ impl<V> GroupBox<V> {
     /// Use a bordered outline with rounded corners.
     pub fn outline(mut self) -> Self {
         self.variant = GroupBoxVariant::Outline;
-        self
-    }
-
-    /// Override the title's text color. Defaults to `palette.text_muted`.
-    pub fn title_color(mut self, color: Color) -> Self {
-        self.title_color = Some(color);
         self
     }
 
@@ -99,7 +151,9 @@ impl<V> GroupBox<V> {
         self.background = Some(color);
         self
     }
+}
 
+impl<V, T: TitleState> GroupBox<V, T> {
     /// Materialize a view at the supplied theme.
     #[must_use]
     pub fn render<State, Action>(self, theme: &Theme) -> Box<AnyWidgetView<State, Action>>
@@ -128,11 +182,11 @@ impl<V> GroupBox<V> {
             Box::new(base)
         };
 
-        match self.title {
-            Some(title) => {
+        match self.title.into_label() {
+            Some((title, title_color)) => {
                 let title_label = label(title)
                     .text_size(theme.typography.size_caption)
-                    .color(self.title_color.unwrap_or(theme.palette.text_muted))
+                    .color(title_color.unwrap_or(theme.palette.text_muted))
                     .render(theme);
                 Box::new(
                     flex_col((title_label, content))

@@ -8,4 +8,4 @@
 pub mod demo;
 mod view;
 
-pub use view::{GroupBox, group_box};
+pub use view::{GroupBox, NoTitle, TitleState, WithTitle, group_box};

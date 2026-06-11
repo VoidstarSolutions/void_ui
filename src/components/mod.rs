@@ -49,7 +49,7 @@ pub use data_grid::{
     optional_text_column, text_column,
 };
 pub use dropdown_button::{DropdownButton, DropdownButtonView, dropdown_button};
-pub use group_box::{GroupBox, group_box};
+pub use group_box::{GroupBox, NoTitle, TitleState, WithTitle, group_box};
 pub use icon::{Icon, IconName, icon};
 pub use input::{
     CurrencyFormat, CurrencyInput, Input, MaskedInput, NumberInput, currency_input,
