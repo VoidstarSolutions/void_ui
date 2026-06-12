@@ -26,7 +26,7 @@ use masonry::layout::UnitPoint;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::layout::Length;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, flex_col};
+use xilem::view::{CrossAxisAlignment, flex_col, sized_box};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::widget::{NotificationHost, NotificationTimeout};
@@ -166,7 +166,13 @@ impl<C> Notification<C> {
         if !self.show_icon {
             a = a.no_icon();
         }
-        let content = a.on_close(self.on_close).render(theme);
+        // Variant backgrounds are translucent accent tints, designed to sit
+        // on a page background. A toast floats over arbitrary content, so
+        // back it with an opaque surface to flatten that tint into a solid
+        // card instead of letting whatever's underneath show through.
+        let content = sized_box(a.on_close(self.on_close).render(theme))
+            .background_color(theme.palette.surface)
+            .corner_radius(Length::px(f64::from(theme.radius.small)));
 
         NotificationView {
             content,
