@@ -26,12 +26,9 @@
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
-    AccessCtx, ActionCtx, ChildrenIds, ErasedAction, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
-    NoAction, PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, Update, UpdateCtx,
-    Widget, WidgetId, WidgetMut, WidgetPod,
-    AccessCtx, ChildrenIds, ComposeCtx, EventCtx, LayoutCtx, MeasureCtx, NewWidget, NoAction,
-    PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, Update, UpdateCtx, Widget,
-    WidgetMut, WidgetPod,
+    AccessCtx, ActionCtx, ChildrenIds, ComposeCtx, ErasedAction, EventCtx, LayoutCtx, MeasureCtx,
+    NewWidget, NoAction, PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, Update,
+    UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, RoundedRect, Size, Stroke};
@@ -115,6 +112,7 @@ impl PopoverHost {
             open: false,
             anchor,
             theme: *theme,
+            trigger_id,
         }
     }
 
@@ -128,9 +126,11 @@ impl PopoverHost {
         scope: OverlayScopeHandle,
         key: u64,
     ) -> Self {
+        let trigger = trigger.erased();
+        let trigger_id = trigger.id();
         Self {
             hosting: Hosting::Portal {
-                trigger: trigger.erased().to_pod(),
+                trigger: trigger.to_pod(),
                 scope,
                 key,
                 last_anchor_rect_window: None,
@@ -264,14 +264,18 @@ impl PopoverHost {
 }
 
 // --- MARK: INTERNAL HELPERS
-impl PopoverHost {
-    /// Push `open` to whichever host mounts the content. `EventCtx` flavor —
-    /// used by click and Escape handling.
-    fn push_open_state(&mut self, ctx: &mut EventCtx<'_>, open: bool) {
-        match &mut self.hosting {
+
+/// Body of `push_open_state`, shared between the `EventCtx` and `ActionCtx`
+/// flavors below — both context types expose the same `mutate_child_later`,
+/// `mutate_later`, `to_window`, `border_box_size`, `widget_id`, and
+/// `request_compose` methods, but as separate inherent impls rather than a
+/// shared trait, so the body is factored out as a macro instead.
+macro_rules! push_open_state_body {
+    ($self:ident, $ctx:ident, $open:ident) => {
+        match &mut $self.hosting {
             Hosting::InTree { overlay_host } => {
-                ctx.mutate_child_later(overlay_host, move |mut w| {
-                    AnchoredOverlay::set_overlay_visible(&mut w, open);
+                $ctx.mutate_child_later(overlay_host, move |mut w| {
+                    AnchoredOverlay::set_overlay_visible(&mut w, $open);
                 });
             }
             Hosting::Portal {
@@ -286,23 +290,37 @@ impl PopoverHost {
                     return;
                 };
                 let key = *key;
-                let owner = Some(ctx.widget_id());
-                let anchor = self.anchor;
-                let gap = surface_gap(&self.theme).get();
+                let owner = Some($ctx.widget_id());
+                let anchor = $self.anchor;
+                let gap = surface_gap(&$self.theme).get();
                 let rect =
-                    Rect::from_origin_size(ctx.to_window(Point::ORIGIN), ctx.border_box_size());
+                    Rect::from_origin_size($ctx.to_window(Point::ORIGIN), $ctx.border_box_size());
                 *last_anchor_rect_window = Some(rect);
-                ctx.mutate_later(scope_id, move |mut w| {
+                $ctx.mutate_later(scope_id, move |mut w| {
                     let mut scope = w.downcast::<OverlayScope>();
                     OverlayScope::set_portal_visible(
-                        &mut scope, key, open, owner, rect, anchor, gap,
+                        &mut scope, key, $open, owner, rect, anchor, gap,
                     );
                 });
-                if open {
-                    ctx.request_compose();
+                if $open {
+                    $ctx.request_compose();
                 }
             }
         }
+    };
+}
+
+impl PopoverHost {
+    /// Push `open` to whichever host mounts the content. `EventCtx` flavor —
+    /// used by click and Escape handling.
+    fn push_open_state(&mut self, ctx: &mut EventCtx<'_>, open: bool) {
+        push_open_state_body!(self, ctx, open);
+    }
+
+    /// `ActionCtx` flavor of [`Self::push_open_state`] — used by the
+    /// trigger's bubbled `ButtonPress` (keyboard activation).
+    fn push_open_state_action(&mut self, ctx: &mut ActionCtx<'_>, open: bool) {
+        push_open_state_body!(self, ctx, open);
     }
 }
 
@@ -376,9 +394,7 @@ impl Widget for PopoverHost {
             ctx.set_handled();
             let open = !self.open;
             self.open = open;
-            ctx.mutate_child_later(&mut self.overlay_host, move |mut w| {
-                AnchoredOverlay::set_overlay_visible(&mut w, open);
-            });
+            self.push_open_state_action(ctx, open);
             ctx.request_paint_only();
         }
     }
@@ -675,6 +691,7 @@ mod tests {
     use masonry::testing::TestHarness;
     use masonry::theme::default_property_set;
     use masonry::widgets::Label;
+    use xilem::view::PointerButton;
 
     use super::*;
     use crate::components::button::widget::ThemedButton;
@@ -756,12 +773,7 @@ mod tests {
             h.edit_root_widget(|wm| wm.widget.open),
             "activating a button inside the popover content must not toggle the popover"
         );
-#[cfg(test)]
-mod tests {
-    use masonry::core::PointerButton;
-    use masonry::testing::TestHarness;
-
-    use super::*;
+    }
 
     /// Builds the standard portal-wiring fixture: an `OverlayScope` whose
     /// content is a portal-mode `PopoverHost` (sharing the scope's handle +
