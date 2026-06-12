@@ -62,8 +62,8 @@ impl NotificationHost {
     /// stay disarmed forever. Re-arm whenever the timeout changes, or the
     /// timer isn't currently running but should be.
     pub fn set_timeout(this: &mut WidgetMut<'_, Self>, timeout: Option<Duration>) {
-        let needs_arm = timeout.is_some()
-            && (this.widget.timeout != timeout || this.widget.armed_at.is_none());
+        let needs_arm =
+            timeout.is_some() && (this.widget.timeout != timeout || this.widget.armed_at.is_none());
         this.widget.timeout = timeout;
         if timeout.is_none() {
             this.widget.armed_at = None;
