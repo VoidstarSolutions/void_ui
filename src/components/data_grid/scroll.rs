@@ -49,6 +49,19 @@ impl ScrollState {
         self.generation = self.generation.wrapping_add(1);
         self.index = index;
     }
+
+    /// The current request generation. Crate-internal: lets other
+    /// scroll-anchoring wrappers (e.g. `list::body::ListBodyView`) detect a
+    /// new request without duplicating [`ScrollState`]'s fields.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// The requested row/item index (display position), pre-clamping.
+    /// Crate-internal; see [`Self::generation`].
+    pub(crate) fn index(&self) -> u64 {
+        self.index
+    }
 }
 
 /// Clamps a requested scroll index to `0..row_count`, converted to the
