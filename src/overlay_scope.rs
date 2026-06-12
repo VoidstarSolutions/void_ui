@@ -243,11 +243,11 @@ impl Widget for OverlayScope {
     /// the scope bubbles through here, no occluding backdrop required:
     /// scroll, hover, and clicks all reach the content beneath an open
     /// popover normally (the open popover re-anchors via
-    /// `PopoverHost::compose` while its trigger scrolls). The press is not
-    /// consumed; whether it dismisses is the slot's call
-    /// (`PortalSlot::dismiss_outside` — deferred via `mutate_child_later`
-    /// because the per-child visibility/placement state lives in the slot,
-    /// out of reach of an `EventCtx`).
+    /// `PopoverHost::compose`, driven by its own anim-frame loop while open —
+    /// see that method). The press is not consumed; whether it dismisses is
+    /// the slot's call (`PortalSlot::dismiss_outside` — deferred via
+    /// `mutate_child_later` because the per-child visibility/placement state
+    /// lives in the slot, out of reach of an `EventCtx`).
     ///
     /// Known leak: a descendant that `set_handled`s the *down* half of a
     /// press stops it bubbling here, leaving the popover open for that
@@ -259,14 +259,13 @@ impl Widget for OverlayScope {
         _props: &mut PropertiesMut<'_>,
         event: &PointerEvent,
     ) {
-        let PointerEvent::Down(PointerButtonEvent { state, .. }) = event else {
-            return;
-        };
-        // Slot-local == scope-local: the slot is placed at the scope origin.
-        let pos = ctx.local_position(state.position);
-        ctx.mutate_child_later(&mut self.portal_slot, move |mut slot| {
-            PortalSlot::dismiss_outside(&mut slot, pos);
-        });
+        if let PointerEvent::Down(PointerButtonEvent { state, .. }) = event {
+            // Slot-local == scope-local: the slot is placed at the scope origin.
+            let pos = ctx.local_position(state.position);
+            ctx.mutate_child_later(&mut self.portal_slot, move |mut slot| {
+                PortalSlot::dismiss_outside(&mut slot, pos);
+            });
+        }
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {

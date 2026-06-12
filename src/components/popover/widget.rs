@@ -304,6 +304,7 @@ macro_rules! push_open_state_body {
                 });
                 if $open {
                     $ctx.request_compose();
+                    $ctx.request_anim_frame();
                 }
             }
         }
@@ -469,13 +470,13 @@ impl Widget for PopoverHost {
     /// slot), so — unlike `AnchoredOverlay`, which tracks for free as a
     /// rigidly-attached descendant — nothing re-places it automatically.
     ///
-    /// Self-renews only while we're actually moving: each call compares our
-    /// current window-space anchor rect to the last one we pushed, and only
-    /// re-arms (`mutate_self_later` → `request_compose`) when it changed.
-    /// `ComposeCtx` exposes neither `transform_has_changed` nor
-    /// `request_compose` (both are `MutateCtx`-only), hence the comparison —
-    /// it gives the same "stop cleanly once stable, no busy-loop" behavior.
-    /// Mirrors `ThemedDropdownButton::compose`.
+    /// An ancestor `ScrollContainer` scrolling changes our window transform
+    /// via its own `compose`, but that alone doesn't call *our* `compose` —
+    /// masonry only invokes a widget's `compose` when that widget itself
+    /// requested it. So [`Self::on_anim_frame`] keeps `request_compose`
+    /// armed every frame while we're open, regardless of where the pointer
+    /// is or what's scrolling. Each call here is a single check-and-push: if
+    /// the rect is unchanged from what we last pushed, it's a no-op.
     fn compose(&mut self, ctx: &mut ComposeCtx<'_>) {
         if !self.open {
             return;
@@ -502,9 +503,19 @@ impl Widget for PopoverHost {
             let mut scope = w.downcast::<OverlayScope>();
             OverlayScope::set_portal_placement(&mut scope, key, rect);
         });
-        ctx.mutate_self_later(|mut w| {
-            w.ctx.request_compose();
-        });
+    }
+
+    /// Keeps a still-open portal popover's [`Self::compose`] running every
+    /// frame so it re-anchors regardless of pointer position or which
+    /// ancestor scrolled — see that method. Stops re-arming once `open` goes
+    /// `false` (checked on the *next* frame after close, since `push_open_state`
+    /// already requested the frame that observes the close).
+    fn on_anim_frame(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, _: u64) {
+        if !self.open || !matches!(self.hosting, Hosting::Portal { .. }) {
+            return;
+        }
+        ctx.request_compose();
+        ctx.request_anim_frame();
     }
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
@@ -978,5 +989,120 @@ mod tests {
                 "slot child must be hidden after the toggle"
             );
         });
+    }
+
+    /// An open portal popover must re-anchor as its trigger scrolls within an
+    /// ancestor. Stands in for a real `ScrollContainer` with a minimal
+    /// `ModularWidget` that, on `PointerEvent::Scroll`, accumulates a
+    /// translation and applies it to its child via
+    /// `set_child_scroll_translation` from `compose` — exactly the
+    /// `ContentClip` mechanism `ScrollContainer` uses, without dragging in
+    /// the whole scroll-bar/viewport machinery.
+    #[test]
+    fn portal_popover_re_anchors_on_ancestor_scroll() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        use masonry::kurbo::Vec2;
+        use masonry::layout::{AsUnit, LayoutSize};
+        use masonry::testing::ModularWidget;
+
+        let key = 9;
+        let theme = Theme::default();
+        let handle = OverlayScopeHandle::new();
+
+        let trigger = masonry::widgets::Label::new("trigger").prepare().erased();
+        let host = NewWidget::new(PopoverHost::new_portal(
+            trigger,
+            PopoverAnchor::BottomStart,
+            &theme,
+            handle.clone(),
+            key,
+        ));
+        let sized = masonry::widgets::SizedBox::new(host.erased())
+            .width(100.0.px())
+            .height(40.0.px())
+            .prepare();
+
+        let translation = Rc::new(Cell::new(Vec2::ZERO));
+        let on_scroll = translation.clone();
+        let on_compose = translation.clone();
+        // Oversize the stub relative to the 100x40 trigger so there's room to
+        // position the pointer over the "scroll container" but away from the
+        // trigger itself.
+        let scroll_stub = ModularWidget::new_parent(sized.erased())
+            .pointer_event_fn(move |_child, ctx, _props, event| {
+                if matches!(event, PointerEvent::Scroll(_)) {
+                    let mut t = on_scroll.get();
+                    t.y += 30.0;
+                    on_scroll.set(t);
+                    ctx.request_compose();
+                }
+            })
+            .compose_fn(move |child, ctx| {
+                ctx.set_child_scroll_translation(child, on_compose.get());
+            })
+            .measure_fn(|child, ctx, _props, axis, len_req, cross_length| {
+                let context_size = LayoutSize::maybe(axis.cross(), cross_length);
+                let _ = ctx.compute_length(child, len_req.into(), context_size, axis, cross_length);
+                match axis {
+                    Axis::Horizontal => 100.0.px(),
+                    Axis::Vertical => 200.0.px(),
+                }
+            })
+            .layout_fn(|child, ctx, _props, size| {
+                let child_size = ctx.compute_size(child, SizeDef::fit(size), size.into());
+                ctx.run_layout(child, child_size);
+                ctx.place_child(child, Point::ZERO);
+                ctx.derive_baselines(child);
+            });
+
+        let content = NewWidget::new(scroll_stub).erased();
+        let popover_body = masonry::widgets::Label::new("popover body")
+            .prepare()
+            .erased();
+        let surface = NewWidget::new(PopoverSurface::new(popover_body, &theme)).erased();
+        let scope = OverlayScope::new(handle, content, vec![(key, surface)]);
+        let mut harness = TestHarness::create(
+            masonry::theme::default_property_set(),
+            NewWidget::new(scope),
+        );
+
+        // Open the popover by clicking its trigger, pinned at (0,0)-(100,40).
+        harness.mouse_move(Point::new(50.0, 20.0));
+        harness.mouse_button_press(Some(PointerButton::Primary));
+        harness.mouse_button_release(Some(PointerButton::Primary));
+
+        let before = harness
+            .edit_root_widget(|mut wm| {
+                let slot = OverlayScope::portal_slot_mut(&mut wm);
+                slot.widget.placed_rect(key)
+            })
+            .expect("popover must be placed once open");
+
+        // Scroll with the pointer away from the trigger (which only spans
+        // (0,0)-(100,40)) but still over the larger scroll stub. The
+        // `PopoverHost`'s anim-frame loop (armed while open) re-checks its
+        // anchor on the next frame regardless of where the pointer sits or
+        // what scrolled.
+        harness.mouse_move(Point::new(50.0, 150.0));
+        harness.mouse_wheel(Vec2::new(0.0, 50.0));
+        harness.animate_ms(16);
+
+        let after = harness
+            .edit_root_widget(|mut wm| {
+                let slot = OverlayScope::portal_slot_mut(&mut wm);
+                slot.widget.placed_rect(key)
+            })
+            .expect("popover must remain placed after scrolling");
+
+        assert_ne!(
+            before, after,
+            "popover must re-anchor when its trigger scrolls"
+        );
+        assert!(
+            (after.y0 - before.y0 - 30.0).abs() < 1e-6,
+            "re-anchored placement must track the scroll translation"
+        );
     }
 }
