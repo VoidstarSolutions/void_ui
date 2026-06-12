@@ -83,32 +83,18 @@ fn build_inner(theme: &Theme, state: &SidebarDemo) -> impl WidgetView<SidebarDem
         .gap(Length::px(2.0))
     });
 
-    // --- roving-tabindex nav list ---
-
-    let nav_example = with_source!(theme, {
-        sidebar_nav(
-            vec![
-                SidebarNavItem::new("Dashboard"),
-                SidebarNavItem::new("Charts"),
-                SidebarNavItem::new("Settings"),
-            ],
-            state.nav_selected,
-            |s: &mut SidebarDemo, i| s.nav_selected = i,
-        )
-        .render(theme)
-    });
-
     // --- interactive collapse demo ---
 
-    let items = flex_col((
-        sidebar_item("Dashboard", |_: &mut SidebarDemo| {})
-            .active(true)
-            .render(theme),
-        sidebar_item("Charts", |_: &mut SidebarDemo| {}).render(theme),
-        sidebar_item("Settings", |_: &mut SidebarDemo| {}).render(theme),
-    ))
-    .cross_axis_alignment(CrossAxisAlignment::Stretch)
-    .gap(Length::px(2.0));
+    let items = sidebar_nav(
+        vec![
+            SidebarNavItem::new("Dashboard"),
+            SidebarNavItem::new("Charts"),
+            SidebarNavItem::new("Settings"),
+        ],
+        state.nav_selected,
+        |s: &mut SidebarDemo, i| s.nav_selected = i,
+    )
+    .render(theme);
 
     let content = flex_col((label("Content area")
         .text_size(theme.typography.size_caption)
@@ -149,10 +135,8 @@ fn build_inner(theme: &Theme, state: &SidebarDemo) -> impl WidgetView<SidebarDem
             header("Default — hover shows fill, label muted when inactive"),
             default_example,
             header(
-                "Roving-tabindex nav — Tab to the list, Up/Down to move focus, Enter/Space to select",
+                "Collapsible panel — click the ‹ strip on the right to collapse, › to expand. Tab to the list, Up/Down to move focus, Enter/Space to select",
             ),
-            nav_example,
-            header("Collapsible panel — click the ‹ strip on the right to collapse, › to expand"),
             panel_row,
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
