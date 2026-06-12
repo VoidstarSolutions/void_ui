@@ -18,7 +18,9 @@ use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, flex_col, flex_row, sized_box};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
-use super::{DEFAULT_TIMEOUT, NotificationPosition, notification, notification_stack};
+use super::{
+    DEFAULT_TIMEOUT, NotificationPosition, notification, notification_overlay, notification_stack,
+};
 use crate::components::ScrollBarVisibility;
 use crate::layout::flex_wrap;
 use crate::{AlertVariant, Theme, button, label, scroll_container};
@@ -233,25 +235,14 @@ fn build_inner<S: NotificationDemoHost>(
 /// [`NotificationPosition`]'s [`UnitPoint`] conversion) and place it in a
 /// `zstack` around the host application's whole window (see
 /// `examples/gallery.rs`) so toasts float over everything, not just the
-/// notification demo panel.
+/// notification demo panel. [`notification_overlay`] makes the stack
+/// report its true content size to that `zstack`, so the chosen corner is
+/// honored regardless of how many toasts are showing.
 #[must_use]
 pub fn overlay<S: NotificationDemoHost>(
     theme: &Theme,
     demo: &NotificationDemoState,
 ) -> Box<AnyWidgetView<S, ()>> {
-    if demo.toasts.is_empty() {
-        // Explicit 0x0 when there's nothing to show. Without an explicit
-        // size, `SizedBox` measures its empty `flex_col` child under a
-        // `FitContent` request, which reports wanting to fill all available
-        // space — expanding this overlay to cover (and hit-test-capture
-        // clicks on) the entire zstack.
-        return Box::new(
-            sized_box(notification_stack::<S, ()>(theme, Vec::new()))
-                .fixed_width(Length::ZERO)
-                .fixed_height(Length::ZERO),
-        );
-    }
-
     let items: Vec<Box<AnyWidgetView<S, ()>>> = demo
         .toasts
         .iter()
@@ -269,11 +260,11 @@ pub fn overlay<S: NotificationDemoHost>(
         })
         .collect();
 
-    Box::new(
-        sized_box(notification_stack(theme, items))
-            .fixed_width(Length::px(280.0))
-            .padding(Length::px(8.0)),
-    )
+    let stack = sized_box(notification_stack(theme, items))
+        .fixed_width(Length::px(280.0))
+        .padding(Length::px(8.0));
+
+    Box::new(notification_overlay(stack))
 }
 
 type InnerView<S> = Box<AnyWidgetView<S, ()>>;

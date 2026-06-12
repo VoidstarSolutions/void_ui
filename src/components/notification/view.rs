@@ -29,7 +29,7 @@ use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, flex_col, sized_box};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
-use super::widget::{NotificationHost, NotificationTimeout};
+use super::widget::{NotificationHost, NotificationOverlay, NotificationTimeout};
 use crate::components::alert::{CloseCallback, alert};
 use crate::{AlertVariant, IconName, Theme};
 
@@ -301,6 +301,88 @@ pub fn notification_stack<State: 'static, Action: 'static>(
     flex_col(items)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .gap(Length::px(f64::from(theme.density.pad) * 0.5))
+}
+
+/// Wrap `content` (typically a [`notification_stack`]) so it reports its
+/// intrinsic content size to a surrounding `zstack`, rather than expanding
+/// to fill it.
+///
+/// Place the result in a `zstack` covering the whole window and chain
+/// `.alignment(UnitPoint::from(position))` (see [`NotificationPosition`]'s
+/// [`UnitPoint`] conversion) onto it to anchor the stack to one of the 6
+/// corners. See [`NotificationOverlay`] for why this wrapper is needed —
+/// without it, `ZStack`'s alignment can't tell top from bottom.
+pub fn notification_overlay<State, Action, V>(
+    content: V,
+) -> NotificationOverlayView<V, State, Action>
+where
+    State: 'static,
+    Action: 'static,
+    V: WidgetView<State, Action>,
+{
+    NotificationOverlayView {
+        content,
+        phantom: PhantomData,
+    }
+}
+
+#[must_use = "View values do nothing unless provided to Xilem."]
+pub struct NotificationOverlayView<V, State, Action> {
+    content: V,
+    phantom: PhantomData<fn(State) -> Action>,
+}
+
+impl<V, State, Action> ViewMarker for NotificationOverlayView<V, State, Action> {}
+
+impl<V, State, Action> View<State, Action, ViewCtx> for NotificationOverlayView<V, State, Action>
+where
+    State: 'static,
+    Action: 'static,
+    V: WidgetView<State, Action>,
+{
+    type Element = Pod<NotificationOverlay>;
+    type ViewState = V::ViewState;
+
+    fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
+        let (child, child_state) = self.content.build(ctx, app_state);
+        let widget = NotificationOverlay::new(child.new_widget.erased());
+        (ctx.create_pod(widget), child_state)
+    }
+
+    fn rebuild(
+        &self,
+        prev: &Self,
+        view_state: &mut Self::ViewState,
+        ctx: &mut ViewCtx,
+        mut element: Mut<'_, Self::Element>,
+        app_state: &mut State,
+    ) {
+        let mut child = NotificationOverlay::child_mut(&mut element);
+        self.content
+            .rebuild(&prev.content, view_state, ctx, child.downcast(), app_state);
+    }
+
+    fn teardown(
+        &self,
+        view_state: &mut Self::ViewState,
+        ctx: &mut ViewCtx,
+        mut element: Mut<'_, Self::Element>,
+    ) {
+        let mut child = NotificationOverlay::child_mut(&mut element);
+        self.content.teardown(view_state, ctx, child.downcast());
+    }
+
+    fn message(
+        &self,
+        view_state: &mut Self::ViewState,
+        message: &mut MessageCtx,
+        mut element: Mut<'_, Self::Element>,
+        app_state: &mut State,
+    ) -> MessageResult<Action> {
+        let mut child = NotificationOverlay::child_mut(&mut element);
+        self.content
+            .message(view_state, message, child.downcast(), app_state)
+    }
 }
 
 #[cfg(test)]
