@@ -277,3 +277,79 @@ impl Widget for TooltipHost {
         ChildrenIds::from_slice(&[self.child.id()])
     }
 }
+
+// --- MARK: TESTS
+
+#[cfg(test)]
+mod tests {
+    use masonry::core::NewWidget;
+    use masonry::testing::TestHarness;
+    use masonry::theme::default_property_set;
+    use masonry::widgets::Label;
+
+    use super::*;
+    use crate::components::button::widget::ThemedButton;
+
+    /// Builds a `TooltipHost` wrapping a focusable button child, returning
+    /// the harness and the child's `WidgetId`.
+    fn harness(delay: Duration) -> (TestHarness<TooltipHost>, WidgetId) {
+        let theme = Theme::dark();
+        let child = NewWidget::new(ThemedButton::new(
+            NewWidget::new(Label::new("Hover me")).erased(),
+            &theme,
+        ))
+        .erased();
+        let child_id = child.id();
+        let widget = TooltipHost::new(child, "Tip text".into(), &theme, delay);
+        let h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+        (h, child_id)
+    }
+
+    #[test]
+    fn accessibility_exposes_tooltip_text_as_description() {
+        let (mut h, _) = harness(Duration::from_millis(300));
+        h.redraw();
+
+        let node = h.access_node(h.root_id()).expect("node exists");
+        assert_eq!(node.description(), Some("Tip text".to_string()));
+    }
+
+    #[test]
+    fn set_text_updates_accessibility_description() {
+        let (mut h, _) = harness(Duration::from_millis(300));
+
+        h.edit_root_widget(|mut wm| {
+            TooltipHost::set_text(&mut wm, "New text".into());
+        });
+        h.redraw();
+
+        let node = h.access_node(h.root_id()).expect("node exists");
+        assert_eq!(node.description(), Some("New text".to_string()));
+    }
+
+    /// Keyboard users never produce pointer-move events, so focus gain must
+    /// arm the same idle timer hover does.
+    #[test]
+    fn child_focus_gain_shows_layer_after_delay() {
+        let (mut h, child_id) = harness(Duration::ZERO);
+
+        h.focus_on(Some(child_id));
+        h.animate_ms(1);
+
+        assert!(h.edit_root_widget(|wm| wm.widget.layer_id.is_some()));
+    }
+
+    /// Losing focus has no follow-up pointer event to trigger the layer's
+    /// self-dismissal, so it must be removed explicitly.
+    #[test]
+    fn child_focus_loss_removes_layer() {
+        let (mut h, child_id) = harness(Duration::ZERO);
+
+        h.focus_on(Some(child_id));
+        h.animate_ms(1);
+        assert!(h.edit_root_widget(|wm| wm.widget.layer_id.is_some()));
+
+        h.focus_on(None);
+        assert!(h.edit_root_widget(|wm| wm.widget.layer_id.is_none()));
+    }
+}
