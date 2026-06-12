@@ -467,8 +467,10 @@ impl Widget for ThemedSidebarNav {
                 Size::new(inner_width, 0.0).into(),
             );
             let item_height = content_size.height + 2.0 * PAD_V;
-            self.placed
-                .push(Rect::from_origin_size(Point::new(0.0, y), Size::new(size.width, item_height)));
+            self.placed.push(Rect::from_origin_size(
+                Point::new(0.0, y),
+                Size::new(size.width, item_height),
+            ));
 
             let cs = Size::new(inner_width, content_size.height);
             ctx.run_layout(item, cs);

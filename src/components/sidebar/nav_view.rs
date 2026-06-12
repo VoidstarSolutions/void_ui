@@ -169,7 +169,11 @@ where
             new_widgets.push(pod.new_widget.erased());
             states.push(state);
         }
-        let names = self.items.iter().map(SidebarNavItem::accessible_name).collect();
+        let names = self
+            .items
+            .iter()
+            .map(SidebarNavItem::accessible_name)
+            .collect();
         let widget = ThemedSidebarNav::new(new_widgets, names, self.active, &self.theme);
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, states)
@@ -229,7 +233,11 @@ where
                 new_widgets.push(pod.new_widget.erased());
                 new_states.push(state);
             }
-            let names = self.items.iter().map(SidebarNavItem::accessible_name).collect();
+            let names = self
+                .items
+                .iter()
+                .map(SidebarNavItem::accessible_name)
+                .collect();
             ThemedSidebarNav::set_items(&mut element, new_widgets, names, self.active);
             *view_state = new_states;
         }

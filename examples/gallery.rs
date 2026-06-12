@@ -127,7 +127,10 @@ fn topbar(theme_panel_open: bool, theme: &Theme) -> impl WidgetView<State> + use
 fn sidebar_items(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State> + use<> {
     let kinds = ComponentKind::all();
     let active = kinds.iter().position(|&k| k == focused).unwrap_or(0);
-    let items = kinds.iter().map(|kind| SidebarNavItem::new(kind.label())).collect();
+    let items = kinds
+        .iter()
+        .map(|kind| SidebarNavItem::new(kind.label()))
+        .collect();
 
     scroll_container(
         sidebar_nav(items, active, |s: &mut State, i| {
