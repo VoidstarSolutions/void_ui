@@ -232,6 +232,7 @@ impl Widget for ToggleWidget {
             && (matches!(&event.key, Key::Character(c) if c == " ")
                 || event.key == Key::Named(NamedKey::Enter))
         {
+            ctx.set_handled();
             ctx.submit_action::<Self::Action>(TogglePress);
         }
     }

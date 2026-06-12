@@ -68,7 +68,8 @@ pub use scroll_container::{
 };
 pub use separator::{Orientation, Separator, SeparatorStyle, separator};
 pub use sidebar::{
-    SidebarItem, SidebarItemView, SidebarPanel, SidebarPanelView, sidebar_item, sidebar_panel,
+    SidebarItem, SidebarItemView, SidebarNav, SidebarNavItem, SidebarNavView, SidebarPanel,
+    SidebarPanelView, sidebar_item, sidebar_nav, sidebar_panel,
 };
 pub use slider::{RangeSlider, RangeSliderView, Slider, SliderView, range_slider, slider};
 pub use spinner::{Spinner, SpinnerView, SpinnerWidget, spinner};

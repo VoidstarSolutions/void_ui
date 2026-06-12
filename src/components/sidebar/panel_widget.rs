@@ -11,7 +11,10 @@ use std::any::TypeId;
 
 use crate::animated_clip::AnimatedClip;
 use crate::components::icon::IconName;
+use crate::focus_ring::paint_focus_ring;
+use masonry::accesskit;
 use masonry::accesskit::{Node, Role};
+use masonry::core::keyboard::{Key, NamedKey};
 use masonry::core::{
     AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
     PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef,
@@ -181,6 +184,7 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
                 if pos.x >= self.current_strip_x {
                     self.strip_pressed = true;
                     ctx.capture_pointer();
+                    ctx.request_focus();
                     ctx.request_paint_only();
                 }
             }
@@ -204,18 +208,29 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
 
     fn on_text_event(
         &mut self,
-        _ctx: &mut EventCtx<'_>,
+        ctx: &mut EventCtx<'_>,
         _props: &mut PropertiesMut<'_>,
-        _event: &TextEvent,
+        event: &TextEvent,
     ) {
+        if let TextEvent::Keyboard(event) = event
+            && event.state.is_up()
+            && (matches!(&event.key, Key::Character(c) if c == " ")
+                || event.key == Key::Named(NamedKey::Enter))
+        {
+            ctx.set_handled();
+            ctx.submit_action::<Self::Action>(SidebarTogglePressed);
+        }
     }
 
     fn on_access_event(
         &mut self,
-        _ctx: &mut EventCtx<'_>,
+        ctx: &mut EventCtx<'_>,
         _props: &mut PropertiesMut<'_>,
-        _event: &AccessEvent,
+        event: &AccessEvent,
     ) {
+        if event.action == accesskit::Action::Click {
+            ctx.submit_action::<Self::Action>(SidebarTogglePressed);
+        }
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
@@ -223,6 +238,9 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
             && self.strip_hovered
         {
             self.strip_hovered = false;
+            ctx.request_paint_only();
+        }
+        if let Update::FocusChanged(_) = event {
             ctx.request_paint_only();
         }
     }
@@ -285,7 +303,7 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
 
     fn paint(
         &mut self,
-        _ctx: &mut PaintCtx<'_>,
+        ctx: &mut PaintCtx<'_>,
         _props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
@@ -309,6 +327,14 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
         }
 
         // Chevron is a self-painting Label child placed during layout.
+
+        if ctx.is_focus_target() {
+            let focus_rect = Rect::from_origin_size(
+                Point::new(strip_x + SEPARATOR_WIDTH, 0.0),
+                Size::new(STRIP_WIDTH - SEPARATOR_WIDTH, h),
+            );
+            paint_focus_ring(painter, focus_rect, &self.theme);
+        }
     }
 
     fn accessibility_role(&self) -> Role {
@@ -319,8 +345,15 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
         &mut self,
         _ctx: &mut AccessCtx<'_>,
         _props: &PropertiesRef<'_>,
-        _node: &mut Node,
+        node: &mut Node,
     ) {
+        node.add_action(accesskit::Action::Click);
+        let label = if self.collapsed {
+            "Expand sidebar"
+        } else {
+            "Collapse sidebar"
+        };
+        node.set_label(label);
     }
 
     fn children_ids(&self) -> ChildrenIds {
@@ -333,7 +366,7 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
     }
 
     fn accepts_focus(&self) -> bool {
-        false
+        true
     }
 
     fn accepts_text_input(&self) -> bool {

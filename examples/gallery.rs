@@ -18,7 +18,7 @@ use xilem::view::{
 use xilem::winit::error::EventLoopError;
 use xilem::{AnyWidgetView, EventLoop, WidgetView, WindowOptions, Xilem};
 
-use void_ui::components::{ComponentKind, button, sidebar_item, sidebar_panel};
+use void_ui::components::{ComponentKind, SidebarNavItem, button, sidebar_nav, sidebar_panel};
 use void_ui::layout::flex_wrap;
 use void_ui::theme::{Density, Theme};
 use void_ui::{label, scroll_container};
@@ -125,23 +125,18 @@ fn topbar(theme_panel_open: bool, theme: &Theme) -> impl WidgetView<State> + use
 }
 
 fn sidebar_items(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State> + use<> {
-    let items: Vec<Box<AnyWidgetView<State>>> = ComponentKind::all()
+    let kinds = ComponentKind::all();
+    let active = kinds.iter().position(|&k| k == focused).unwrap_or(0);
+    let items = kinds
         .iter()
-        .copied()
-        .map(|kind| -> Box<AnyWidgetView<State>> {
-            Box::new(
-                sidebar_item(kind.label(), move |s: &mut State| {
-                    s.focused = kind;
-                })
-                .active(focused == kind)
-                .render(theme),
-            )
-        })
+        .map(|kind| SidebarNavItem::new(kind.label()))
         .collect();
+
     scroll_container(
-        flex_col(items)
-            .cross_axis_alignment(CrossAxisAlignment::Stretch)
-            .gap(Length::px(2.0)),
+        sidebar_nav(items, active, |s: &mut State, i| {
+            s.focused = ComponentKind::all()[i];
+        })
+        .render(theme),
     )
     .constrain_horizontal(true)
     .scroll_bar_visibility(OnActivity)

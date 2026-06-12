@@ -186,6 +186,7 @@ impl Widget for ThemedRadio {
             && event.state.is_up()
             && matches!(&event.key, Key::Character(c) if c == " ")
         {
+            ctx.set_handled();
             ctx.submit_action::<Self::Action>(ButtonPress { button: None });
         }
     }

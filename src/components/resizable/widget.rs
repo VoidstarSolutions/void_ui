@@ -682,6 +682,11 @@ impl Widget for ResizableWidget {
         node.add_action(Action::Increment);
         node.add_action(Action::Decrement);
         node.add_action(Action::SetValue);
+        let label = match self.axis {
+            Axis::Horizontal => "Resize panels horizontally",
+            Axis::Vertical => "Resize panels vertically",
+        };
+        node.set_label(label);
     }
 
     fn children_ids(&self) -> ChildrenIds {

@@ -7,7 +7,7 @@ use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, MainAxisAlignment, flex_col, flex_row};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
-use super::{sidebar_item, sidebar_panel};
+use super::{SidebarNavItem, sidebar_item, sidebar_nav, sidebar_panel};
 use crate::Theme;
 use crate::components::ScrollBarVisibility;
 use crate::label;
@@ -19,11 +19,15 @@ use crate::with_source;
 
 struct SidebarDemo {
     collapsed: bool,
+    nav_selected: usize,
 }
 
 impl SidebarDemo {
     fn new() -> Self {
-        Self { collapsed: false }
+        Self {
+            collapsed: false,
+            nav_selected: 0,
+        }
     }
 }
 
@@ -81,15 +85,16 @@ fn build_inner(theme: &Theme, state: &SidebarDemo) -> impl WidgetView<SidebarDem
 
     // --- interactive collapse demo ---
 
-    let items = flex_col((
-        sidebar_item("Dashboard", |_: &mut SidebarDemo| {})
-            .active(true)
-            .render(theme),
-        sidebar_item("Charts", |_: &mut SidebarDemo| {}).render(theme),
-        sidebar_item("Settings", |_: &mut SidebarDemo| {}).render(theme),
-    ))
-    .cross_axis_alignment(CrossAxisAlignment::Stretch)
-    .gap(Length::px(2.0));
+    let items = sidebar_nav(
+        vec![
+            SidebarNavItem::new("Dashboard"),
+            SidebarNavItem::new("Charts"),
+            SidebarNavItem::new("Settings"),
+        ],
+        state.nav_selected,
+        |s: &mut SidebarDemo, i| s.nav_selected = i,
+    )
+    .render(theme);
 
     let content = flex_col((label("Content area")
         .text_size(theme.typography.size_caption)
@@ -129,7 +134,9 @@ fn build_inner(theme: &Theme, state: &SidebarDemo) -> impl WidgetView<SidebarDem
             active_example,
             header("Default — hover shows fill, label muted when inactive"),
             default_example,
-            header("Collapsible panel — click the ‹ strip on the right to collapse, › to expand"),
+            header(
+                "Collapsible panel — click the ‹ strip on the right to collapse, › to expand. Tab to the list, Up/Down to move focus, Enter/Space to select",
+            ),
             panel_row,
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)

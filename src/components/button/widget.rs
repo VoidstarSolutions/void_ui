@@ -487,6 +487,7 @@ impl Widget for ThemedButton {
             && (matches!(&event.key, Key::Character(c) if c == " ")
                 || event.key == Key::Named(NamedKey::Enter))
         {
+            ctx.set_handled();
             if let Some(payload) = &self.clipboard_payload {
                 ctx.set_clipboard(payload.to_string());
             }

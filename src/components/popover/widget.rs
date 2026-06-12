@@ -23,15 +23,16 @@
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
-    AccessCtx, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
-    PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, Update, UpdateCtx, Widget, WidgetMut,
-    WidgetPod,
+    AccessCtx, ActionCtx, ChildrenIds, ErasedAction, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
+    NoAction, PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, Update, UpdateCtx,
+    Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, RoundedRect, Size, Stroke};
 use masonry::layout::{LenReq, Length};
 use masonry::peniko::Color;
 use masonry::properties::Padding;
+use masonry::widgets::ButtonPress;
 
 use super::PopoverAnchor;
 use crate::Theme;
@@ -58,6 +59,10 @@ pub struct PopoverHost {
     open: bool,
     anchor: PopoverAnchor,
     theme: Theme,
+    /// The trigger's own widget id, captured at construction. Used by
+    /// `on_action` to ignore bubbled `ButtonPress` actions that originate
+    /// from inside the popover content rather than the trigger itself.
+    trigger_id: WidgetId,
 }
 
 // --- MARK: BUILDERS
@@ -70,6 +75,7 @@ impl PopoverHost {
         theme: &Theme,
     ) -> Self {
         let trigger = trigger.erased();
+        let trigger_id = trigger.id();
         content
             .properties
             .insert(Padding::all(Length::px(f64::from(theme.density.pad))));
@@ -81,6 +87,7 @@ impl PopoverHost {
             open: false,
             anchor,
             theme: *theme,
+            trigger_id,
         }
     }
 }
@@ -160,9 +167,43 @@ impl Widget for PopoverHost {
             && event.key == Key::Named(NamedKey::Escape)
             && self.open
         {
+            ctx.set_handled();
             self.open = false;
             ctx.mutate_child_later(&mut self.overlay_host, |mut w| {
                 AnchoredOverlay::set_overlay_visible(&mut w, false);
+            });
+            ctx.request_paint_only();
+        }
+    }
+
+    /// Routes a keyboard-issued `ButtonPress` (`button: None`, emitted on
+    /// Enter/Space while the trigger is focused) into the open/close toggle,
+    /// mirroring `ThemedDropdownButton::on_action`. Action bubbling is
+    /// independent of `EventCtx::set_handled`, so this fires even though the
+    /// trigger itself consumes the keyboard event. Pointer clicks are handled
+    /// by `on_pointer_event` instead — a `ButtonPress` with `button: Some(_)`
+    /// is ignored here to avoid double-toggling.
+    ///
+    /// `ButtonPress` actions bubble from anywhere in the subtree, including
+    /// buttons inside the popover content — only react when `source` is the
+    /// trigger itself, so activating a button inside the open content doesn't
+    /// also toggle the popover.
+    fn on_action(
+        &mut self,
+        ctx: &mut ActionCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        action: &ErasedAction,
+        source: WidgetId,
+    ) {
+        if let Some(press) = action.downcast_ref::<ButtonPress>()
+            && press.button.is_none()
+            && source == self.trigger_id
+        {
+            ctx.set_handled();
+            let open = !self.open;
+            self.open = open;
+            ctx.mutate_child_later(&mut self.overlay_host, move |mut w| {
+                AnchoredOverlay::set_overlay_visible(&mut w, open);
             });
             ctx.request_paint_only();
         }
