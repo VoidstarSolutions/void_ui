@@ -99,6 +99,7 @@ impl TooltipHost {
     /// Replaces the tooltip text shown on the layer.
     pub fn set_text(this: &mut WidgetMut<'_, Self>, text: ArcStr) {
         this.widget.text = text;
+        this.ctx.request_accessibility_update();
     }
 
     /// Replaces the hover-idle delay before the tooltip appears.
@@ -191,13 +192,35 @@ impl Widget for TooltipHost {
         }
     }
 
-    fn update(&mut self, _ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        // `HoveredChanged` fires only on the directly-hovered widget (the label
-        // or button inside us), not on TooltipHost itself. TooltipHost receives
-        // `ChildHoveredChanged` when no descendant is hovered — use that to
-        // disarm the timer so we don't accumulate live timers across siblings.
-        if let Update::ChildHoveredChanged(false) = event {
-            self.last_pointer_move = None;
+    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        match event {
+            // `HoveredChanged` fires only on the directly-hovered widget (the label
+            // or button inside us), not on TooltipHost itself. TooltipHost receives
+            // `ChildHoveredChanged` when no descendant is hovered — use that to
+            // disarm the timer so we don't accumulate live timers across siblings.
+            Update::ChildHoveredChanged(false) => {
+                self.last_pointer_move = None;
+            }
+            // Keyboard users never produce pointer events, so focus is the
+            // equivalent "arm the timer" signal: anchor the tooltip at the
+            // child's bottom-left corner and start the same idle countdown
+            // used for hover.
+            Update::ChildFocusChanged(true) => {
+                let rect = ctx.border_box();
+                self.last_cursor_pos = ctx.to_window(Point::new(rect.x0, rect.y1));
+                self.layer_id = None;
+                self.last_pointer_move = Some(Instant::now());
+                ctx.request_anim_frame();
+            }
+            // Unlike hover, losing focus has no follow-up pointer event to
+            // trigger the layer's self-dismissal, so remove it explicitly.
+            Update::ChildFocusChanged(false) => {
+                self.last_pointer_move = None;
+                if let Some(layer_id) = self.layer_id.take() {
+                    ctx.remove_layer(layer_id);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -240,8 +263,12 @@ impl Widget for TooltipHost {
         &mut self,
         _ctx: &mut AccessCtx<'_>,
         _props: &PropertiesRef<'_>,
-        _node: &mut Node,
+        node: &mut Node,
     ) {
+        // Exposes the tooltip text to assistive tech regardless of whether
+        // the layer is currently shown, mirroring the alt-text pattern used
+        // by `Image`/`Canvas`/`Svg`.
+        node.set_description(&*self.text);
     }
 
     fn children_ids(&self) -> ChildrenIds {
