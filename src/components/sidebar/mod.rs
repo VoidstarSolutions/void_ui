@@ -24,10 +24,13 @@
 
 #[cfg(feature = "gallery")]
 pub mod demo;
+mod nav_view;
+pub mod nav_widget;
 mod panel_view;
 pub mod panel_widget;
 mod view;
 pub mod widget;
 
+pub use nav_view::{SidebarNav, SidebarNavItem, SidebarNavView, sidebar_nav};
 pub use panel_view::{SidebarPanel, SidebarPanelView, sidebar_panel};
 pub use view::{SidebarItem, SidebarItemView, sidebar_item};

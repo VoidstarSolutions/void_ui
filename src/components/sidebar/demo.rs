@@ -7,7 +7,7 @@ use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, MainAxisAlignment, flex_col, flex_row};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
-use super::{sidebar_item, sidebar_panel};
+use super::{SidebarNavItem, sidebar_item, sidebar_nav, sidebar_panel};
 use crate::Theme;
 use crate::components::ScrollBarVisibility;
 use crate::label;
@@ -19,11 +19,15 @@ use crate::with_source;
 
 struct SidebarDemo {
     collapsed: bool,
+    nav_selected: usize,
 }
 
 impl SidebarDemo {
     fn new() -> Self {
-        Self { collapsed: false }
+        Self {
+            collapsed: false,
+            nav_selected: 0,
+        }
     }
 }
 
@@ -79,6 +83,21 @@ fn build_inner(theme: &Theme, state: &SidebarDemo) -> impl WidgetView<SidebarDem
         .gap(Length::px(2.0))
     });
 
+    // --- roving-tabindex nav list ---
+
+    let nav_example = with_source!(theme, {
+        sidebar_nav(
+            vec![
+                SidebarNavItem::new("Dashboard"),
+                SidebarNavItem::new("Charts"),
+                SidebarNavItem::new("Settings"),
+            ],
+            state.nav_selected,
+            |s: &mut SidebarDemo, i| s.nav_selected = i,
+        )
+        .render(theme)
+    });
+
     // --- interactive collapse demo ---
 
     let items = flex_col((
@@ -129,6 +148,10 @@ fn build_inner(theme: &Theme, state: &SidebarDemo) -> impl WidgetView<SidebarDem
             active_example,
             header("Default — hover shows fill, label muted when inactive"),
             default_example,
+            header(
+                "Roving-tabindex nav — Tab to the list, Up/Down to move focus, Enter/Space to select",
+            ),
+            nav_example,
             header("Collapsible panel — click the ‹ strip on the right to collapse, › to expand"),
             panel_row,
         ))
