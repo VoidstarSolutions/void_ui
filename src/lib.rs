@@ -86,7 +86,7 @@ pub use components::{
     Notification, NotificationPosition, NotificationView, Orientation, Popover, PopoverAnchor,
     PopoverHost, PopoverView, RangeSlider, RangeSliderView, ReadOnlyText, ReadOnlyTextView,
     Resizable, ResizablePanel, ResizablePanels, ResizablePanelsView, ResizableView,
-    RustHighlighter, ScrollContainer, ScrollContainerView, SelectionState, Separator,
+    RustHighlighter, ScrollContainer, ScrollContainerView, ScrollState, SelectionState, Separator,
     SeparatorStyle, SidebarItem, SidebarItemView, SidebarNav, SidebarNavItem, SidebarNavView,
     SidebarPanel, SidebarPanelView, Slider, SliderView, SortDirection, SortState, Spinner,
     SpinnerView, SpinnerWidget, TitleState, Tooltip, TooltipView, WithTitle, alert, button,
