@@ -184,20 +184,23 @@ fn build_inner(theme: &Theme, demo: &ListDemo) -> impl WidgetView<ListDemo> + us
     let toolbar = build_toolbar(theme, loading);
 
     let list_view = with_source!(theme, {
-        list()
-            .items(|s: &ListDemo| &s.filtered[..])
-            .item_count(item_count)
-            .item_height(52.0)
-            .render_item(build_item_row)
-            .item_id(|item: &Person| item.id)
-            .selection(|s: &mut ListDemo| &mut s.selection)
-            .scroll_to(scroll)
-            .loading(loading)
-            .search(query, |s: &mut ListDemo, q| s.set_query(q))
-            .search_placeholder("Search by name or email\u{2026}")
-            .on_load_more(|s: &mut ListDemo| s.load_more())
-            .load_threshold(10)
-            .render(theme)
+        sized_box(
+            list()
+                .items(|s: &ListDemo| &s.filtered[..])
+                .item_count(item_count)
+                .item_height(52.0)
+                .render_item(build_item_row)
+                .item_id(|item: &Person| item.id)
+                .selection(|s: &mut ListDemo| &mut s.selection)
+                .scroll_to(scroll)
+                .loading(loading)
+                .search(query, |s: &mut ListDemo, q| s.set_query(q))
+                .search_placeholder("Search by name or email\u{2026}")
+                .on_load_more(|s: &mut ListDemo| s.load_more())
+                .load_threshold(10)
+                .render(theme),
+        )
+        .fixed_height(Length::px(480.0))
     });
 
     flex_col((toolbar, sized_box(list_view).flex(1.0)))
