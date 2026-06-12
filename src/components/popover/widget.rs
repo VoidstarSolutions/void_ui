@@ -781,8 +781,12 @@ mod tests {
         let trigger = button("Open", &theme);
         let trigger_id = trigger.id();
         let content = NewWidget::new(Label::new("Content")).erased();
-        let host =
-            NewWidget::new(PopoverHost::new(trigger, content, PopoverAnchor::BottomStart, &theme));
+        let host = NewWidget::new(PopoverHost::new(
+            trigger,
+            content,
+            PopoverAnchor::BottomStart,
+            &theme,
+        ));
 
         let parent = ModularWidget::new_parent(host).layout_fn(|child, ctx, _props, size| {
             if ctx.child_is_stashed(child) {
@@ -815,7 +819,10 @@ mod tests {
 
         h.edit_root_widget(|mut wm| {
             let host = wm.ctx.get_mut(&mut wm.widget.state);
-            assert!(!host.widget.open, "stashing while open must close the popover");
+            assert!(
+                !host.widget.open,
+                "stashing while open must close the popover"
+            );
         });
 
         // Unstash and re-layout: with `overlay_visible` correctly cleared
