@@ -208,7 +208,9 @@ impl Widget for TooltipHost {
             Update::ChildFocusChanged(true) => {
                 let rect = ctx.border_box();
                 self.last_cursor_pos = ctx.to_window(Point::new(rect.x0, rect.y1));
-                self.layer_id = None;
+                if let Some(layer_id) = self.layer_id.take() {
+                    ctx.remove_layer(layer_id);
+                }
                 self.last_pointer_move = Some(Instant::now());
                 ctx.request_anim_frame();
             }
