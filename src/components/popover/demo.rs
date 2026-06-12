@@ -13,6 +13,7 @@ use crate::components::ScrollBarVisibility;
 use crate::components::button::button;
 use crate::components::popover::{PopoverAnchor, popover};
 use crate::label;
+use crate::overlay_scope::overlay_scope;
 use crate::scroll_container;
 use crate::separator;
 use crate::with_source;
@@ -55,6 +56,9 @@ fn basic_row(theme: &Theme) -> impl WidgetView<PopoverDemo> + use<> {
                 label("You can put any content here, including text, buttons, forms, and more.")
                     .color(theme.palette.text_muted)
                     .multiline(true)
+                    .render(theme),
+                button(|_: &mut PopoverDemo| {})
+                    .label("Inner action")
                     .render(theme),
             ))
             .cross_axis_alignment(CrossAxisAlignment::Start)
@@ -130,7 +134,7 @@ fn anchor_row(theme: &Theme) -> impl WidgetView<PopoverDemo> + use<> {
             .cross_axis_alignment(CrossAxisAlignment::Center)
             .main_axis_alignment(MainAxisAlignment::SpaceBetween),
         ))
-        .gap(Length::px(48.0))
+        .gap(Length::px(16.0))
     })
 }
 
@@ -156,7 +160,7 @@ fn build_inner(theme: &Theme) -> impl WidgetView<PopoverDemo> + use<> {
     .cross_axis_alignment(CrossAxisAlignment::Start)
     .gap(Length::px(4.0));
 
-    scroll_container(
+    let inner = scroll_container(
         flex_col((
             title_block,
             separator().render(theme),
@@ -170,7 +174,8 @@ fn build_inner(theme: &Theme) -> impl WidgetView<PopoverDemo> + use<> {
     )
     .constrain_horizontal(true)
     .scroll_bar_visibility(ScrollBarVisibility::OnActivity)
-    .render(theme)
+    .render(theme);
+    overlay_scope(inner)
 }
 
 impl ViewMarker for PopoverDemoPanel {}

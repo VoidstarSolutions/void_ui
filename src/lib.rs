@@ -27,6 +27,7 @@ pub mod focus_ring;
 #[cfg(feature = "gallery")]
 pub mod gallery;
 pub mod layout;
+pub mod overlay_portal;
 pub mod overlay_scope;
 pub mod pointer_inert;
 pub mod theme;

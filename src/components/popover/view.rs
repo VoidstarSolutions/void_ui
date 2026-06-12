@@ -12,8 +12,16 @@
 //! .anchor(PopoverAnchor::BottomStart)
 //! .render(&theme)
 //! ```
+//!
+//! `render` erases the content view into an `Arc`. At `build`, the view looks
+//! for the nearest [`crate::overlay_scope`]'s [`OverlayPortal`] in the xilem
+//! `Environment`: if present, the content is *registered* with the portal (the
+//! scope's own view mounts it in the always-on-top `PortalSlot`) and the
+//! `PopoverHost` hosts only the trigger; otherwise the content is built
+//! in-tree under the host's `AnchoredOverlay`, exactly as before.
 
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
@@ -22,6 +30,9 @@ use super::PopoverAnchor;
 use super::widget::{PopoverHost, PopoverSurface};
 use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
+use crate::overlay_portal::{
+    OverlayPortal, PortalContentView, PortalContentViewState, portal_from_env,
+};
 
 /// Builder for a popover.
 ///
@@ -55,7 +66,13 @@ where
     }
 }
 
-impl<State, Action, TriggerV, ContentV> Popover<State, Action, TriggerV, ContentV> {
+impl<State, Action, TriggerV, ContentV> Popover<State, Action, TriggerV, ContentV>
+where
+    State: 'static,
+    Action: 'static,
+    TriggerV: WidgetView<State, Action>,
+    ContentV: WidgetView<State, Action>,
+{
     /// Set where the content panel appears relative to the trigger.
     pub fn anchor(mut self, anchor: PopoverAnchor) -> Self {
         self.anchor = anchor;
@@ -63,10 +80,11 @@ impl<State, Action, TriggerV, ContentV> Popover<State, Action, TriggerV, Content
     }
 
     /// Materialize the xilem view at the supplied theme.
-    pub fn render(self, theme: &Theme) -> PopoverView<TriggerV, ContentV, State, Action> {
+    pub fn render(self, theme: &Theme) -> PopoverView<TriggerV, State, Action> {
+        let content: Arc<PortalContentView<State, Action>> = Arc::new(self.content);
         PopoverView {
             trigger: self.trigger,
-            content: self.content,
+            content,
             anchor: self.anchor,
             theme: *theme,
             phantom: PhantomData,
@@ -78,54 +96,83 @@ impl<State, Action, TriggerV, ContentV> Popover<State, Action, TriggerV, Content
 ///
 /// Not constructed directly; use [`Popover::render`].
 #[must_use = "View values do nothing unless provided to Xilem."]
-pub struct PopoverView<TriggerV, ContentV, State, Action> {
+pub struct PopoverView<TriggerV, State, Action> {
     trigger: TriggerV,
-    content: ContentV,
+    content: Arc<PortalContentView<State, Action>>,
     anchor: PopoverAnchor,
     theme: Theme,
     phantom: PhantomData<fn(State) -> Action>,
 }
 
-impl<TriggerV, ContentV, State, Action> ViewMarker
-    for PopoverView<TriggerV, ContentV, State, Action>
-{
+impl<TriggerV, State, Action> ViewMarker for PopoverView<TriggerV, State, Action> {}
+
+/// Where this popover's content is bound: the nearest scope's portal
+/// (registered by key; the scope's view mounts/rebuilds it), or in-tree under
+/// our own `PopoverHost` (fallback).
+enum ContentBinding<State: 'static, Action: 'static> {
+    Portal {
+        portal: OverlayPortal<State, Action>,
+        key: u64,
+    },
+    InTree {
+        content_vs: PortalContentViewState<State, Action>,
+    },
 }
 
-/// View state for `PopoverView`: the trigger's and content's child view
-/// states, both permanently mounted inside `PopoverHost`'s `overlay_host`.
-pub struct PopoverViewState<TriggerVS, ContentVS> {
+/// View state for `PopoverView`: the trigger's child view state plus the
+/// content binding (see [`ContentBinding`]).
+#[doc(hidden)]
+pub struct PopoverViewState<TriggerVS, State: 'static, Action: 'static> {
     trigger_vs: TriggerVS,
-    content_vs: ContentVS,
+    binding: ContentBinding<State, Action>,
 }
 
-impl<TriggerV, ContentV, State, Action> View<State, Action, ViewCtx>
-    for PopoverView<TriggerV, ContentV, State, Action>
+impl<TriggerV, State, Action> View<State, Action, ViewCtx> for PopoverView<TriggerV, State, Action>
 where
     State: 'static,
     Action: 'static,
     TriggerV: WidgetView<State, Action>,
-    ContentV: WidgetView<State, Action>,
 {
     type Element = Pod<PopoverHost>;
-    type ViewState = PopoverViewState<TriggerV::ViewState, ContentV::ViewState>;
+    type ViewState = PopoverViewState<TriggerV::ViewState, State, Action>;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
+        let portal = portal_from_env::<State, Action>(ctx);
         let (trigger_pod, trigger_vs) = self.trigger.build(ctx, app_state);
-        let (content_pod, content_vs) = self.content.build(ctx, app_state);
-        let widget = PopoverHost::new(
-            trigger_pod.new_widget.erased(),
-            content_pod.new_widget.erased(),
-            self.anchor,
-            &self.theme,
-        );
-        let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
-        (
-            element,
-            PopoverViewState {
-                trigger_vs,
-                content_vs,
-            },
-        )
+        if let Some(portal) = portal {
+            let key = portal.register(self.content.clone(), &self.theme);
+            let widget = PopoverHost::new_portal(
+                trigger_pod.new_widget.erased(),
+                self.anchor,
+                &self.theme,
+                portal.scope().clone(),
+                key,
+            );
+            let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
+            (
+                element,
+                PopoverViewState {
+                    trigger_vs,
+                    binding: ContentBinding::Portal { portal, key },
+                },
+            )
+        } else {
+            let (content_pod, content_vs) = self.content.build(ctx, app_state);
+            let widget = PopoverHost::new(
+                trigger_pod.new_widget.erased(),
+                content_pod.new_widget.erased(),
+                self.anchor,
+                &self.theme,
+            );
+            let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
+            (
+                element,
+                PopoverViewState {
+                    trigger_vs,
+                    binding: ContentBinding::InTree { content_vs },
+                },
+            )
+        }
     }
 
     fn rebuild(
@@ -136,32 +183,46 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) {
-        let mut overlay_host = PopoverHost::overlay_host_mut(&mut element);
-        let mut primary = AnchoredOverlay::primary_mut(&mut overlay_host);
-        self.trigger.rebuild(
-            &prev.trigger,
-            &mut view_state.trigger_vs,
-            ctx,
-            primary.downcast(),
-            app_state,
-        );
-        drop(primary);
-
-        let mut overlay = AnchoredOverlay::overlay_mut(&mut overlay_host);
-        let mut surface = overlay.downcast::<PopoverSurface>();
-        let mut content = PopoverSurface::content_mut(&mut surface);
-        self.content.rebuild(
-            &prev.content,
-            &mut view_state.content_vs,
-            ctx,
-            content.downcast(),
-            app_state,
-        );
-        drop(content);
-        drop(surface);
-        drop(overlay);
-        drop(overlay_host);
-
+        match &mut view_state.binding {
+            ContentBinding::Portal { portal, key } => {
+                {
+                    let mut trigger = PopoverHost::trigger_mut(&mut element);
+                    self.trigger.rebuild(
+                        &prev.trigger,
+                        &mut view_state.trigger_vs,
+                        ctx,
+                        trigger.downcast(),
+                        app_state,
+                    );
+                }
+                // Content rebuild happens when the scope's view diffs the
+                // registry (after our subtree's rebuild returns) — we only
+                // refresh the registered view value here.
+                portal.update(*key, self.content.clone(), &self.theme);
+            }
+            ContentBinding::InTree { content_vs } => {
+                let mut overlay_host = PopoverHost::overlay_host_mut(&mut element);
+                let mut primary = AnchoredOverlay::primary_mut(&mut overlay_host);
+                self.trigger.rebuild(
+                    &prev.trigger,
+                    &mut view_state.trigger_vs,
+                    ctx,
+                    primary.downcast(),
+                    app_state,
+                );
+                drop(primary);
+                let mut overlay = AnchoredOverlay::overlay_mut(&mut overlay_host);
+                let mut surface = overlay.downcast::<PopoverSurface>();
+                let mut content = PopoverSurface::content_mut(&mut surface);
+                self.content.rebuild(
+                    &prev.content,
+                    content_vs,
+                    ctx,
+                    content.downcast(),
+                    app_state,
+                );
+            }
+        }
         if self.theme != prev.theme {
             PopoverHost::set_theme(&mut element, &self.theme);
         }
@@ -176,20 +237,28 @@ where
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
     ) {
-        let mut overlay_host = PopoverHost::overlay_host_mut(&mut element);
-        let mut primary = AnchoredOverlay::primary_mut(&mut overlay_host);
-        self.trigger
-            .teardown(&mut view_state.trigger_vs, ctx, primary.downcast());
-        drop(primary);
-        let mut overlay = AnchoredOverlay::overlay_mut(&mut overlay_host);
-        let mut surface = overlay.downcast::<PopoverSurface>();
-        let mut content = PopoverSurface::content_mut(&mut surface);
-        self.content
-            .teardown(&mut view_state.content_vs, ctx, content.downcast());
-        drop(content);
-        drop(surface);
-        drop(overlay);
-        drop(overlay_host);
+        match &mut view_state.binding {
+            ContentBinding::Portal { portal, key } => {
+                {
+                    let mut trigger = PopoverHost::trigger_mut(&mut element);
+                    self.trigger
+                        .teardown(&mut view_state.trigger_vs, ctx, trigger.downcast());
+                }
+                // The scope's next rebuild (same pass) unmounts the slot child.
+                portal.deregister(*key);
+            }
+            ContentBinding::InTree { content_vs } => {
+                let mut overlay_host = PopoverHost::overlay_host_mut(&mut element);
+                let mut primary = AnchoredOverlay::primary_mut(&mut overlay_host);
+                self.trigger
+                    .teardown(&mut view_state.trigger_vs, ctx, primary.downcast());
+                drop(primary);
+                let mut overlay = AnchoredOverlay::overlay_mut(&mut overlay_host);
+                let mut surface = overlay.downcast::<PopoverSurface>();
+                let mut content = PopoverSurface::content_mut(&mut surface);
+                self.content.teardown(content_vs, ctx, content.downcast());
+            }
+        }
         ctx.teardown_action_source(element);
     }
 
@@ -200,28 +269,39 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        let mut overlay_host = PopoverHost::overlay_host_mut(&mut element);
-        let mut primary = AnchoredOverlay::primary_mut(&mut overlay_host);
-        let result = self.trigger.message(
-            &mut view_state.trigger_vs,
-            message,
-            primary.downcast(),
-            app_state,
-        );
-        drop(primary);
-        match result {
-            MessageResult::Nop => {
-                let mut overlay = AnchoredOverlay::overlay_mut(&mut overlay_host);
-                let mut surface = overlay.downcast::<PopoverSurface>();
-                let mut content = PopoverSurface::content_mut(&mut surface);
-                self.content.message(
-                    &mut view_state.content_vs,
+        match &mut view_state.binding {
+            ContentBinding::Portal { .. } => {
+                // Content messages route through the scope's slot path, never
+                // through us.
+                let mut trigger = PopoverHost::trigger_mut(&mut element);
+                self.trigger.message(
+                    &mut view_state.trigger_vs,
                     message,
-                    content.downcast(),
+                    trigger.downcast(),
                     app_state,
                 )
             }
-            other => other,
+            ContentBinding::InTree { content_vs } => {
+                let mut overlay_host = PopoverHost::overlay_host_mut(&mut element);
+                let mut primary = AnchoredOverlay::primary_mut(&mut overlay_host);
+                let result = self.trigger.message(
+                    &mut view_state.trigger_vs,
+                    message,
+                    primary.downcast(),
+                    app_state,
+                );
+                drop(primary);
+                match result {
+                    MessageResult::Nop => {
+                        let mut overlay = AnchoredOverlay::overlay_mut(&mut overlay_host);
+                        let mut surface = overlay.downcast::<PopoverSurface>();
+                        let mut content = PopoverSurface::content_mut(&mut surface);
+                        self.content
+                            .message(content_vs, message, content.downcast(), app_state)
+                    }
+                    other => other,
+                }
+            }
         }
     }
 }
