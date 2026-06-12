@@ -41,6 +41,7 @@ pub struct MenuItem<State, Action> {
     label: ArcStr,
     icon: Option<IconName>,
     shortcut: Option<ArcStr>,
+    checked: Option<bool>,
     disabled: bool,
     on_select: Option<SelectCallback<State, Action>>,
 }
@@ -51,13 +52,15 @@ pub fn item<State, Action>(label: impl Into<ArcStr>) -> MenuItem<State, Action> 
         label: label.into(),
         icon: None,
         shortcut: None,
+        checked: None,
         disabled: false,
         on_select: None,
     }
 }
 
 impl<State, Action> MenuItem<State, Action> {
-    /// Attach a leading icon from the Lucide icon set.
+    /// Attach a leading icon from the Lucide icon set. Ignored when the row is
+    /// also [`checkable`](Self::checked) — the check takes the gutter.
     pub fn icon(mut self, name: IconName) -> Self {
         self.icon = Some(name);
         self
@@ -66,6 +69,13 @@ impl<State, Action> MenuItem<State, Action> {
     /// Attach trailing keyboard-shortcut text (e.g. `"Ctrl+C"`).
     pub fn shortcut(mut self, shortcut: impl Into<ArcStr>) -> Self {
         self.shortcut = Some(shortcut.into());
+        self
+    }
+
+    /// Make this a checkable row, showing a check in the gutter when `checked`.
+    /// Checkable rows reserve the gutter even when unchecked so labels align.
+    pub fn checked(mut self, checked: bool) -> Self {
+        self.checked = Some(checked);
         self
     }
 
@@ -85,10 +95,11 @@ impl<State, Action> MenuItem<State, Action> {
     }
 }
 
-/// One entry in a menu: a command row or a divider.
+/// One entry in a menu: a command row, a divider, or a section header.
 enum Entry<State, Action> {
     Item(MenuItem<State, Action>),
     Separator,
+    Section(ArcStr),
 }
 
 /// Translate builder entries into the widget's display specs plus the parallel
@@ -107,6 +118,7 @@ fn entries_to_rows<State, Action>(
                     label: it.label,
                     icon: it.icon,
                     shortcut: it.shortcut,
+                    checked: it.checked,
                     disabled: it.disabled,
                 });
                 // Disabled rows never emit a selection, so their callback is
@@ -115,6 +127,10 @@ fn entries_to_rows<State, Action>(
             }
             Entry::Separator => {
                 rows.push(MenuRowSpec::Separator);
+                callbacks.push(None);
+            }
+            Entry::Section(text) => {
+                rows.push(MenuRowSpec::Section { text });
                 callbacks.push(None);
             }
         }
@@ -173,6 +189,12 @@ where
     /// Append a divider between rows.
     pub fn separator(mut self) -> Self {
         self.entries.push(Entry::Separator);
+        self
+    }
+
+    /// Append a non-interactive, muted section header.
+    pub fn section(mut self, text: impl Into<ArcStr>) -> Self {
+        self.entries.push(Entry::Section(text.into()));
         self
     }
 
@@ -308,6 +330,12 @@ where
     /// Append a divider between rows.
     pub fn separator(mut self) -> Self {
         self.entries.push(Entry::Separator);
+        self
+    }
+
+    /// Append a non-interactive, muted section header.
+    pub fn section(mut self, text: impl Into<ArcStr>) -> Self {
+        self.entries.push(Entry::Section(text.into()));
         self
     }
 

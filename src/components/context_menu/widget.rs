@@ -6,12 +6,14 @@
 //! into the original spec list, so the [`super::view`] layer can map it straight
 //! back to the item's callback.
 //!
-//! Rows are laid out in three columns: an optional leading-icon gutter, the
-//! label, and optional right-aligned keyboard-shortcut text. The gutter is
-//! reserved for every row as soon as any row has an icon, so labels stay
-//! aligned. Later chunks add the check column and submenu chevron. It
-//! deliberately mirrors `dropdown_button`'s `MenuContent` (chrome look, hover
-//! model, hit-testing) so the two menu surfaces stay visually consistent.
+//! Rows are laid out in three columns: a leading gutter (check or icon glyph),
+//! the label, and optional right-aligned keyboard-shortcut text. The gutter is
+//! reserved for every row as soon as any row is checkable or has an icon, so
+//! labels stay aligned. Rows come in three kinds — selectable actions,
+//! separators, and muted non-interactive section headers. A later chunk adds
+//! the submenu chevron. It deliberately mirrors `dropdown_button`'s
+//! `MenuContent` (chrome look, hover model, hit-testing) so the two menu
+//! surfaces stay visually consistent.
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
@@ -53,15 +55,20 @@ const SHORTCUT_GAP: f64 = 24.0;
 #[derive(Clone)]
 pub enum MenuRowSpec {
     /// A selectable command row: optional leading icon, label, optional trailing
-    /// keyboard-shortcut text. `disabled` mutes it and blocks selection.
+    /// keyboard-shortcut text. `checked` makes it a checkable row (the gutter
+    /// shows a check when `Some(true)`); `disabled` mutes it and blocks
+    /// selection.
     Action {
         label: ArcStr,
         icon: Option<IconName>,
         shortcut: Option<ArcStr>,
+        checked: Option<bool>,
         disabled: bool,
     },
     /// A non-interactive horizontal divider.
     Separator,
+    /// A non-interactive, muted section header.
+    Section { text: ArcStr },
 }
 
 impl PartialEq for MenuRowSpec {
@@ -72,12 +79,14 @@ impl PartialEq for MenuRowSpec {
                     label: l1,
                     icon: i1,
                     shortcut: s1,
+                    checked: c1,
                     disabled: d1,
                 },
                 Self::Action {
                     label: l2,
                     icon: i2,
                     shortcut: s2,
+                    checked: c2,
                     disabled: d2,
                 },
             ) => {
@@ -86,10 +95,12 @@ impl PartialEq for MenuRowSpec {
                 // `dropdown_button` diffs icons.
                 l1 == l2
                     && d1 == d2
+                    && c1 == c2
                     && s1 == s2
                     && i1.map(char::from) == i2.map(char::from)
             }
             (Self::Separator, Self::Separator) => true,
+            (Self::Section { text: t1 }, Self::Section { text: t2 }) => t1 == t2,
             _ => false,
         }
     }
@@ -100,17 +111,27 @@ impl PartialEq for MenuRowSpec {
 #[derive(Debug)]
 pub struct MenuItemSelected(pub usize);
 
+/// What kind of row this is — drives selectability, height, and paint.
+enum RowKind {
+    Action,
+    Separator,
+    Section,
+}
+
 /// Per-row state resolved at build time, plus the layout rect filled in by
 /// `layout()`.
 struct Row {
-    /// Leading-gutter icon, if any.
-    icon: Option<WidgetPod<dyn Widget>>,
+    /// Leading-gutter glyph (a check or an icon), if any. `None` for a
+    /// checkable-but-unchecked row, which still reserves the gutter.
+    gutter: Option<WidgetPod<dyn Widget>>,
+    /// Whether this row reserves the leading gutter (checkable or has an icon).
+    reserves_gutter: bool,
     /// `None` for separators; otherwise the row's label child.
     label: Option<WidgetPod<dyn Widget>>,
     /// Trailing keyboard-shortcut text, if any.
     shortcut: Option<WidgetPod<dyn Widget>>,
     disabled: bool,
-    is_separator: bool,
+    kind: RowKind,
     /// Local-coordinate bounds, populated during `layout`.
     rect: Rect,
 }
@@ -118,7 +139,7 @@ struct Row {
 impl Row {
     /// Whether a pointer/keyboard selection can land on this row.
     fn selectable(&self) -> bool {
-        !self.is_separator && !self.disabled
+        matches!(self.kind, RowKind::Action) && !self.disabled
     }
 }
 
@@ -151,32 +172,53 @@ impl MenuPanel {
                 label,
                 icon,
                 shortcut,
+                checked,
                 disabled,
-            } => Row {
-                icon: icon.map(|name| Self::make_icon(name, disabled, theme)),
-                label: Some(Self::make_label(&label, disabled, theme)),
-                shortcut: shortcut.map(|s| Self::make_shortcut(&s, disabled, theme)),
-                disabled,
-                is_separator: false,
-                rect: Rect::ZERO,
-            },
+            } => {
+                // The gutter holds a check for a checkable row, otherwise the
+                // icon. A checkable row reserves the gutter even when unchecked
+                // (empty slot) so its label aligns with checked siblings.
+                let gutter = match checked {
+                    Some(true) => Some(Self::make_icon(IconName::Check, disabled, theme)),
+                    Some(false) => None,
+                    None => icon.map(|name| Self::make_icon(name, disabled, theme)),
+                };
+                Row {
+                    gutter,
+                    reserves_gutter: checked.is_some() || icon.is_some(),
+                    label: Some(Self::make_label(&label, Self::label_color(disabled, theme), theme)),
+                    shortcut: shortcut.map(|s| Self::make_shortcut(&s, disabled, theme)),
+                    disabled,
+                    kind: RowKind::Action,
+                    rect: Rect::ZERO,
+                }
+            }
             MenuRowSpec::Separator => Row {
-                icon: None,
+                gutter: None,
+                reserves_gutter: false,
                 label: None,
                 shortcut: None,
                 disabled: false,
-                is_separator: true,
+                kind: RowKind::Separator,
+                rect: Rect::ZERO,
+            },
+            MenuRowSpec::Section { text } => Row {
+                gutter: None,
+                reserves_gutter: false,
+                label: Some(Self::make_label(&text, theme.palette.text_faint, theme)),
+                shortcut: None,
+                disabled: false,
+                kind: RowKind::Section,
                 rect: Rect::ZERO,
             },
         }
     }
 
-    fn make_label(text: &ArcStr, disabled: bool, theme: &Theme) -> WidgetPod<dyn Widget> {
+    fn make_label(text: &ArcStr, color: Color, theme: &Theme) -> WidgetPod<dyn Widget> {
         let mut lbl = Label::new(text.clone())
             .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
             .prepare();
-        lbl.properties
-            .insert(ContentColor::new(Self::label_color(disabled, theme)));
+        lbl.properties.insert(ContentColor::new(color));
         lbl.erased().to_pod()
     }
 
@@ -215,16 +257,24 @@ impl MenuPanel {
         }
     }
 
-    /// Whether any row has a leading icon — if so all rows reserve the gutter so
-    /// labels align.
-    fn has_icon(&self) -> bool {
-        self.rows.iter().any(|r| r.icon.is_some())
+    /// The label color for a row, given its kind — section headers are muted.
+    fn row_label_color(kind: &RowKind, disabled: bool, theme: &Theme) -> Color {
+        match kind {
+            RowKind::Section => theme.palette.text_faint,
+            _ => Self::label_color(disabled, theme),
+        }
     }
 
-    /// Width reserved on the left for the icon gutter (icon column + gap), or 0
-    /// when no row has an icon.
+    /// Whether any row reserves the leading gutter (checkable or icon-bearing) —
+    /// if so all rows reserve it so labels align.
+    fn has_gutter(&self) -> bool {
+        self.rows.iter().any(|r| r.reserves_gutter)
+    }
+
+    /// Width reserved on the left for the gutter (glyph column + gap), or 0 when
+    /// no row reserves it.
     fn gutter(&self) -> f64 {
-        if self.has_icon() {
+        if self.has_gutter() {
             f64::from(self.theme.density.ui_font_size) + ICON_GAP
         } else {
             0.0
@@ -265,12 +315,12 @@ impl MenuPanel {
         this.widget.theme = *theme;
         let font_size = theme.density.ui_font_size;
         for row in &mut this.widget.rows {
-            let fg = Self::label_color(row.disabled, theme);
+            let gutter_fg = Self::label_color(row.disabled, theme);
+            let label_fg = Self::row_label_color(&row.kind, row.disabled, theme);
             let shortcut_fg = Self::shortcut_color(row.disabled, theme);
-            // Icon and label share the label color; the shortcut is muted.
             for (child, color) in [
-                (&mut row.icon, fg),
-                (&mut row.label, fg),
+                (&mut row.gutter, gutter_fg),
+                (&mut row.label, label_fg),
                 (&mut row.shortcut, shortcut_fg),
             ] {
                 if let Some(child) = child {
@@ -290,7 +340,7 @@ impl MenuPanel {
     pub fn set_rows(this: &mut WidgetMut<'_, Self>, specs: impl IntoIterator<Item = MenuRowSpec>) {
         let old: Vec<_> = this.widget.rows.drain(..).collect();
         for row in old {
-            for child in [row.icon, row.label, row.shortcut].into_iter().flatten() {
+            for child in [row.gutter, row.label, row.shortcut].into_iter().flatten() {
                 this.ctx.remove_child(child);
             }
         }
@@ -369,7 +419,7 @@ impl Widget for MenuPanel {
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
         for row in &mut self.rows {
-            for child in [&mut row.icon, &mut row.label, &mut row.shortcut]
+            for child in [&mut row.gutter, &mut row.label, &mut row.shortcut]
                 .into_iter()
                 .flatten()
             {
@@ -393,12 +443,9 @@ impl Widget for MenuPanel {
                 let content: f64 = self
                     .rows
                     .iter()
-                    .map(|r| {
-                        if r.is_separator {
-                            SEPARATOR_ROW_HEIGHT
-                        } else {
-                            action_h
-                        }
+                    .map(|r| match r.kind {
+                        RowKind::Separator => SEPARATOR_ROW_HEIGHT,
+                        _ => action_h,
                     })
                     .sum();
                 Length::px(MENU_PAD_V * 2.0 + content)
@@ -445,10 +492,9 @@ impl Widget for MenuPanel {
 
         let mut y = MENU_PAD_V;
         for row in &mut self.rows {
-            let row_h = if row.is_separator {
-                SEPARATOR_ROW_HEIGHT
-            } else {
-                action_h
+            let row_h = match row.kind {
+                RowKind::Separator => SEPARATOR_ROW_HEIGHT,
+                _ => action_h,
             };
             row.rect = Rect::from_origin_size(Point::new(0.0, y), Size::new(size.width, row_h));
             // Vertically centre a child of `child_h` within this row. `move`
@@ -457,11 +503,11 @@ impl Widget for MenuPanel {
             let centre_y = move |child_h: f64| y + (row_h - child_h) * 0.5;
             let full = Size::new((size.width - 2.0 * pad_h).max(0.0), row_h);
 
-            // Leading icon, left-aligned in the gutter.
-            if let Some(ic) = &mut row.icon {
-                let ic_size = ctx.compute_size(ic, SizeDef::MIN, full.into());
-                ctx.run_layout(ic, ic_size);
-                ctx.place_child(ic, Point::new(pad_h, centre_y(ic_size.height)));
+            // Leading gutter glyph (check or icon), left-aligned.
+            if let Some(g) = &mut row.gutter {
+                let g_size = ctx.compute_size(g, SizeDef::MIN, full.into());
+                ctx.run_layout(g, g_size);
+                ctx.place_child(g, Point::new(pad_h, centre_y(g_size.height)));
             }
 
             // Label, after the gutter.
@@ -507,7 +553,7 @@ impl Widget for MenuPanel {
         }
 
         for row in &self.rows {
-            if row.is_separator {
+            if matches!(row.kind, RowKind::Separator) {
                 let y = row.rect.y0 + row.rect.height() * 0.5;
                 let line = masonry::kurbo::Line::new(
                     Point::new(row.rect.x0 + pad_h, y),
@@ -536,7 +582,7 @@ impl Widget for MenuPanel {
         let ids: Vec<_> = self
             .rows
             .iter()
-            .flat_map(|r| [r.icon.as_ref(), r.label.as_ref(), r.shortcut.as_ref()])
+            .flat_map(|r| [r.gutter.as_ref(), r.label.as_ref(), r.shortcut.as_ref()])
             .flatten()
             .map(WidgetPod::id)
             .collect();
@@ -564,6 +610,7 @@ mod tests {
             label: label.into(),
             icon: None,
             shortcut: None,
+            checked: None,
             disabled: false,
         }
     }
@@ -573,6 +620,7 @@ mod tests {
             label: label.into(),
             icon: None,
             shortcut: None,
+            checked: None,
             disabled: true,
         }
     }
@@ -615,5 +663,36 @@ mod tests {
     fn separator_is_never_selectable() {
         let panel = panel_with(vec![MenuRowSpec::Separator], vec![Rect::ZERO]);
         assert!(!panel.rows[0].selectable());
+    }
+
+    #[test]
+    fn section_header_is_never_selectable() {
+        let panel = panel_with(
+            vec![MenuRowSpec::Section {
+                text: "View".into(),
+            }],
+            vec![Rect::new(0.0, 0.0, 100.0, 20.0)],
+        );
+        assert!(!panel.rows[0].selectable());
+        assert_eq!(panel.hit_row(Point::new(50.0, 10.0)), None);
+    }
+
+    #[test]
+    fn checkable_rows_reserve_the_gutter() {
+        let checkable = |checked: bool| MenuRowSpec::Action {
+            label: "x".into(),
+            icon: None,
+            shortcut: None,
+            checked: Some(checked),
+            disabled: false,
+        };
+        let panel = panel_with(vec![checkable(true), checkable(false)], vec![Rect::ZERO; 2]);
+        // Checked row has a check glyph; unchecked has none — but both reserve
+        // the gutter so their labels align.
+        assert!(panel.rows[0].gutter.is_some());
+        assert!(panel.rows[1].gutter.is_none());
+        assert!(panel.rows[0].reserves_gutter);
+        assert!(panel.rows[1].reserves_gutter);
+        assert!(panel.has_gutter());
     }
 }

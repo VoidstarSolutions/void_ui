@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 
 use masonry::core::{ArcStr, NewWidget, StyleProperty, Widget as _};
-use masonry::parley::{FontFamily, FontFamilyName};
+use masonry::parley::{FontFamily, FontFamilyName, LineHeight};
 use masonry::properties::ContentColor;
 use masonry::widgets::Label;
 
@@ -25,6 +25,12 @@ impl Icon {
             .with_style(StyleProperty::FontFamily(FontFamily::Single(
                 FontFamilyName::Named(Cow::Borrowed("lucide")),
             )))
+            // Match `Icon::render`'s `.line_height(1.0)`: the default line
+            // height floats the glyph above a row's centerline (visible when an
+            // icon is laid out next to text, e.g. a context-menu row). A
+            // font-size-relative line height of 1.0 hugs the glyph so it
+            // centers true. Keeps the view and widget build paths consistent.
+            .with_style(StyleProperty::LineHeight(LineHeight::FontSizeRelative(1.0)))
             .prepare();
         lbl.properties.insert(ContentColor::new(color));
         lbl

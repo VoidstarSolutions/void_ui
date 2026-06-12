@@ -22,6 +22,7 @@ use crate::with_source;
 #[derive(Debug, Default)]
 struct ContextMenuDemo {
     last_action: String,
+    word_wrap: bool,
 }
 
 type InnerView = Box<AnyWidgetView<ContextMenuDemo>>;
@@ -49,6 +50,7 @@ fn basic_menu(theme: &Theme) -> impl WidgetView<ContextMenuDemo> + use<> {
     with_source!(theme, {
         flex_row(
             menu()
+                .section("Edit")
                 .item(
                     item("Cut")
                         .shortcut("Ctrl+X")
@@ -73,20 +75,19 @@ fn basic_menu(theme: &Theme) -> impl WidgetView<ContextMenuDemo> + use<> {
                         }),
                 )
                 .separator()
+                .section("View")
                 .item(
-                    item("Settings")
-                        .icon(IconName::Settings)
-                        .shortcut("Ctrl+,")
+                    item("Word Wrap")
+                        .checked(true)
                         .on_select(|s: &mut ContextMenuDemo| {
-                            s.last_action = "Settings".into();
+                            s.last_action = "Word Wrap".into();
                         }),
                 )
                 .item(
-                    item("Select All")
-                        .icon(IconName::Check)
-                        .shortcut("Ctrl+A")
+                    item("Minimap")
+                        .checked(false)
                         .on_select(|s: &mut ContextMenuDemo| {
-                            s.last_action = "Select All".into();
+                            s.last_action = "Minimap".into();
                         }),
                 )
                 .render(theme),
@@ -94,7 +95,11 @@ fn basic_menu(theme: &Theme) -> impl WidgetView<ContextMenuDemo> + use<> {
     })
 }
 
-fn right_click_area(theme: &Theme) -> impl WidgetView<ContextMenuDemo> + use<> {
+fn right_click_area(
+    theme: &Theme,
+    state: &ContextMenuDemo,
+) -> impl WidgetView<ContextMenuDemo> + use<> {
+    let wrap = state.word_wrap;
     with_source!(theme, {
         context_menu_area(
             sized_box(
@@ -108,6 +113,7 @@ fn right_click_area(theme: &Theme) -> impl WidgetView<ContextMenuDemo> + use<> {
             .border_color(theme.palette.border)
             .border_width(Length::px(1.0)),
         )
+        .section("Edit")
         .item(
             item("Cut")
                 .shortcut("Ctrl+X")
@@ -132,12 +138,15 @@ fn right_click_area(theme: &Theme) -> impl WidgetView<ContextMenuDemo> + use<> {
                 }),
         )
         .separator()
+        .section("View")
+        // Live checkable: toggles on each selection so the gutter check
+        // appears/disappears on the next open.
         .item(
-            item("Select All")
-                .icon(IconName::Check)
-                .shortcut("Ctrl+A")
+            item("Word Wrap")
+                .checked(wrap)
                 .on_select(|s: &mut ContextMenuDemo| {
-                    s.last_action = "Select All".into();
+                    s.word_wrap = !s.word_wrap;
+                    s.last_action = "Word Wrap".into();
                 }),
         )
         .render(theme)
@@ -184,7 +193,7 @@ fn build_inner(
             header("Menu (inline)"),
             basic_menu(theme),
             header("Right-click trigger"),
-            right_click_area(theme),
+            right_click_area(theme, state),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(16.0)),
