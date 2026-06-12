@@ -7,13 +7,15 @@
 //! back to the item's callback.
 //!
 //! Rows are laid out in three columns: a leading gutter (check or icon glyph),
-//! the label, and optional right-aligned keyboard-shortcut text. The gutter is
-//! reserved for every row as soon as any row is checkable or has an icon, so
-//! labels stay aligned. Rows come in three kinds — selectable actions,
-//! separators, and muted non-interactive section headers. A later chunk adds
-//! the submenu chevron. It deliberately mirrors `dropdown_button`'s
-//! `MenuContent` (chrome look, hover model, hit-testing) so the two menu
-//! surfaces stay visually consistent.
+//! the label, and optional right-aligned keyboard-shortcut text. An item may
+//! also carry a sub-title — a smaller muted second line under the label, which
+//! makes that row taller; the gutter glyph and shortcut then align to the label
+//! line, not the row center. The gutter is reserved for every row as soon as
+//! any row is checkable or has an icon, so labels stay aligned. Rows come in
+//! three kinds — selectable actions, separators, and muted non-interactive
+//! section headers. A later chunk adds the submenu chevron. It deliberately
+//! mirrors `dropdown_button`'s `MenuContent` (chrome look, hover model,
+//! hit-testing) so the two menu surfaces stay visually consistent.
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
@@ -47,6 +49,8 @@ const ICON_GAP: f64 = 8.0;
 /// Minimum gap between the label column and the trailing shortcut column, so a
 /// long label and a long shortcut never collide.
 const SHORTCUT_GAP: f64 = 24.0;
+/// Vertical gap between an item's label and its sub-title line.
+const SUBTITLE_GAP: f64 = 2.0;
 
 /// One row of a [`MenuPanel`], as handed in by the view layer.
 ///
@@ -60,6 +64,7 @@ pub enum MenuRowSpec {
     /// selection.
     Action {
         label: ArcStr,
+        subtitle: Option<ArcStr>,
         icon: Option<IconName>,
         shortcut: Option<ArcStr>,
         checked: Option<bool>,
@@ -77,6 +82,7 @@ impl PartialEq for MenuRowSpec {
             (
                 Self::Action {
                     label: l1,
+                    subtitle: sub1,
                     icon: i1,
                     shortcut: s1,
                     checked: c1,
@@ -84,6 +90,7 @@ impl PartialEq for MenuRowSpec {
                 },
                 Self::Action {
                     label: l2,
+                    subtitle: sub2,
                     icon: i2,
                     shortcut: s2,
                     checked: c2,
@@ -94,6 +101,7 @@ impl PartialEq for MenuRowSpec {
                 // doesn't itself implement `PartialEq` — matches how
                 // `dropdown_button` diffs icons.
                 l1 == l2
+                    && sub1 == sub2
                     && d1 == d2
                     && c1 == c2
                     && s1 == s2
@@ -128,6 +136,8 @@ struct Row {
     reserves_gutter: bool,
     /// `None` for separators; otherwise the row's label child.
     label: Option<WidgetPod<dyn Widget>>,
+    /// Secondary line under the label, if any.
+    subtitle: Option<WidgetPod<dyn Widget>>,
     /// Trailing keyboard-shortcut text, if any.
     shortcut: Option<WidgetPod<dyn Widget>>,
     disabled: bool,
@@ -170,6 +180,7 @@ impl MenuPanel {
         match spec {
             MenuRowSpec::Action {
                 label,
+                subtitle,
                 icon,
                 shortcut,
                 checked,
@@ -187,6 +198,7 @@ impl MenuPanel {
                     gutter,
                     reserves_gutter: checked.is_some() || icon.is_some(),
                     label: Some(Self::make_label(&label, Self::label_color(disabled, theme), theme)),
+                    subtitle: subtitle.map(|s| Self::make_subtitle(&s, disabled, theme)),
                     shortcut: shortcut.map(|s| Self::make_shortcut(&s, disabled, theme)),
                     disabled,
                     kind: RowKind::Action,
@@ -197,6 +209,7 @@ impl MenuPanel {
                 gutter: None,
                 reserves_gutter: false,
                 label: None,
+                subtitle: None,
                 shortcut: None,
                 disabled: false,
                 kind: RowKind::Separator,
@@ -206,6 +219,7 @@ impl MenuPanel {
                 gutter: None,
                 reserves_gutter: false,
                 label: Some(Self::make_label(&text, theme.palette.text_faint, theme)),
+                subtitle: None,
                 shortcut: None,
                 disabled: false,
                 kind: RowKind::Section,
@@ -235,6 +249,16 @@ impl MenuPanel {
     fn make_shortcut(text: &ArcStr, disabled: bool, theme: &Theme) -> WidgetPod<dyn Widget> {
         let mut lbl = Label::new(text.clone())
             .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
+            .prepare();
+        lbl.properties
+            .insert(ContentColor::new(Self::shortcut_color(disabled, theme)));
+        lbl.erased().to_pod()
+    }
+
+    /// Secondary line under the label — smaller (caption size) and muted.
+    fn make_subtitle(text: &ArcStr, disabled: bool, theme: &Theme) -> WidgetPod<dyn Widget> {
+        let mut lbl = Label::new(text.clone())
+            .with_style(StyleProperty::FontSize(theme.typography.size_caption))
             .prepare();
         lbl.properties
             .insert(ContentColor::new(Self::shortcut_color(disabled, theme)));
@@ -330,6 +354,17 @@ impl MenuPanel {
                     Label::insert_style(&mut lbl, StyleProperty::FontSize(font_size));
                 }
             }
+            // The sub-title uses the smaller caption size, so it's restyled
+            // separately from the ui-font-size trio above.
+            if let Some(subtitle) = &mut row.subtitle {
+                let mut lbl = this.ctx.get_mut(subtitle);
+                lbl.insert_prop(ContentColor::new(shortcut_fg));
+                let mut lbl = lbl.downcast::<Label>();
+                Label::insert_style(
+                    &mut lbl,
+                    StyleProperty::FontSize(theme.typography.size_caption),
+                );
+            }
         }
         this.ctx.request_layout();
         this.ctx.request_paint_only();
@@ -340,7 +375,10 @@ impl MenuPanel {
     pub fn set_rows(this: &mut WidgetMut<'_, Self>, specs: impl IntoIterator<Item = MenuRowSpec>) {
         let old: Vec<_> = this.widget.rows.drain(..).collect();
         for row in old {
-            for child in [row.gutter, row.label, row.shortcut].into_iter().flatten() {
+            for child in [row.gutter, row.label, row.subtitle, row.shortcut]
+                .into_iter()
+                .flatten()
+            {
                 this.ctx.remove_child(child);
             }
         }
@@ -419,9 +457,14 @@ impl Widget for MenuPanel {
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
         for row in &mut self.rows {
-            for child in [&mut row.gutter, &mut row.label, &mut row.shortcut]
-                .into_iter()
-                .flatten()
+            for child in [
+                &mut row.gutter,
+                &mut row.label,
+                &mut row.subtitle,
+                &mut row.shortcut,
+            ]
+            .into_iter()
+            .flatten()
             {
                 ctx.register_child(child);
             }
@@ -440,11 +483,14 @@ impl Widget for MenuPanel {
         let pad_h = self.pad_h();
         match axis {
             Axis::Vertical => {
+                let subtitle_extra =
+                    SUBTITLE_GAP + f64::from(self.theme.typography.size_caption);
                 let content: f64 = self
                     .rows
                     .iter()
                     .map(|r| match r.kind {
                         RowKind::Separator => SEPARATOR_ROW_HEIGHT,
+                        _ if r.subtitle.is_some() => action_h + subtitle_extra,
                         _ => action_h,
                     })
                     .sum();
@@ -470,6 +516,10 @@ impl Widget for MenuPanel {
                     if let Some(label) = &mut row.label {
                         max_label = max_label.max(measure(label));
                     }
+                    // The sub-title shares the label column, so it widens it.
+                    if let Some(subtitle) = &mut row.subtitle {
+                        max_label = max_label.max(measure(subtitle));
+                    }
                     if let Some(shortcut) = &mut row.shortcut {
                         max_shortcut = max_shortcut.max(measure(shortcut));
                     }
@@ -487,43 +537,60 @@ impl Widget for MenuPanel {
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         let pad_h = self.pad_h();
+        let pad_v = f64::from(self.theme.density.button_pad_v);
         let action_h = self.action_height();
+        let subtitle_extra = SUBTITLE_GAP + f64::from(self.theme.typography.size_caption);
         let gutter = self.gutter();
 
         let mut y = MENU_PAD_V;
         for row in &mut self.rows {
+            let has_subtitle = row.subtitle.is_some();
             let row_h = match row.kind {
                 RowKind::Separator => SEPARATOR_ROW_HEIGHT,
+                _ if has_subtitle => action_h + subtitle_extra,
                 _ => action_h,
             };
             row.rect = Rect::from_origin_size(Point::new(0.0, y), Size::new(size.width, row_h));
-            // Vertically centre a child of `child_h` within this row. `move`
-            // copies the current `y`/`row_h` so the `y += row_h` below is free
-            // to mutate `y`.
-            let centre_y = move |child_h: f64| y + (row_h - child_h) * 0.5;
             let full = Size::new((size.width - 2.0 * pad_h).max(0.0), row_h);
+            let label_avail = Size::new((size.width - 2.0 * pad_h - gutter).max(0.0), row_h);
 
-            // Leading gutter glyph (check or icon), left-aligned.
+            // Label first — its vertical centerline is what the gutter glyph and
+            // shortcut align to. With a sub-title the label is top-aligned and
+            // the sub-title sits beneath it; otherwise the label is centred.
+            let mut line_center = y + row_h * 0.5;
+            if let Some(label) = &mut row.label {
+                let label_size = ctx.compute_size(label, SizeDef::fit(label_avail), label_avail.into());
+                ctx.run_layout(label, label_size);
+                let label_y = if has_subtitle {
+                    y + pad_v
+                } else {
+                    y + (row_h - label_size.height) * 0.5
+                };
+                ctx.place_child(label, Point::new(pad_h + gutter, label_y));
+                line_center = label_y + label_size.height * 0.5;
+
+                if let Some(subtitle) = &mut row.subtitle {
+                    let sub_size =
+                        ctx.compute_size(subtitle, SizeDef::fit(label_avail), label_avail.into());
+                    ctx.run_layout(subtitle, sub_size);
+                    let sub_y = label_y + label_size.height + SUBTITLE_GAP;
+                    ctx.place_child(subtitle, Point::new(pad_h + gutter, sub_y));
+                }
+            }
+
+            // Leading gutter glyph (check or icon), aligned to the label line.
             if let Some(g) = &mut row.gutter {
                 let g_size = ctx.compute_size(g, SizeDef::MIN, full.into());
                 ctx.run_layout(g, g_size);
-                ctx.place_child(g, Point::new(pad_h, centre_y(g_size.height)));
+                ctx.place_child(g, Point::new(pad_h, line_center - g_size.height * 0.5));
             }
 
-            // Label, after the gutter.
-            if let Some(label) = &mut row.label {
-                let avail = Size::new((size.width - 2.0 * pad_h - gutter).max(0.0), row_h);
-                let label_size = ctx.compute_size(label, SizeDef::fit(avail), avail.into());
-                ctx.run_layout(label, label_size);
-                ctx.place_child(label, Point::new(pad_h + gutter, centre_y(label_size.height)));
-            }
-
-            // Trailing shortcut, right-aligned.
+            // Trailing shortcut, right-aligned to the label line.
             if let Some(shortcut) = &mut row.shortcut {
                 let sc_size = ctx.compute_size(shortcut, SizeDef::MIN, full.into());
                 ctx.run_layout(shortcut, sc_size);
                 let sx = size.width - pad_h - sc_size.width;
-                ctx.place_child(shortcut, Point::new(sx, centre_y(sc_size.height)));
+                ctx.place_child(shortcut, Point::new(sx, line_center - sc_size.height * 0.5));
             }
 
             y += row_h;
@@ -582,7 +649,14 @@ impl Widget for MenuPanel {
         let ids: Vec<_> = self
             .rows
             .iter()
-            .flat_map(|r| [r.gutter.as_ref(), r.label.as_ref(), r.shortcut.as_ref()])
+            .flat_map(|r| {
+                [
+                    r.gutter.as_ref(),
+                    r.label.as_ref(),
+                    r.subtitle.as_ref(),
+                    r.shortcut.as_ref(),
+                ]
+            })
             .flatten()
             .map(WidgetPod::id)
             .collect();
@@ -608,6 +682,7 @@ mod tests {
     fn action(label: &str) -> MenuRowSpec {
         MenuRowSpec::Action {
             label: label.into(),
+            subtitle: None,
             icon: None,
             shortcut: None,
             checked: None,
@@ -618,6 +693,7 @@ mod tests {
     fn disabled(label: &str) -> MenuRowSpec {
         MenuRowSpec::Action {
             label: label.into(),
+            subtitle: None,
             icon: None,
             shortcut: None,
             checked: None,
@@ -681,6 +757,7 @@ mod tests {
     fn checkable_rows_reserve_the_gutter() {
         let checkable = |checked: bool| MenuRowSpec::Action {
             label: "x".into(),
+            subtitle: None,
             icon: None,
             shortcut: None,
             checked: Some(checked),

@@ -39,6 +39,7 @@ type SelectCallback<State, Action> = Box<dyn Fn(&mut State) -> Action + Send + S
 #[must_use = "MenuItem does nothing until added to a menu() with .item(...)"]
 pub struct MenuItem<State, Action> {
     label: ArcStr,
+    subtitle: Option<ArcStr>,
     icon: Option<IconName>,
     shortcut: Option<ArcStr>,
     checked: Option<bool>,
@@ -50,6 +51,7 @@ pub struct MenuItem<State, Action> {
 pub fn item<State, Action>(label: impl Into<ArcStr>) -> MenuItem<State, Action> {
     MenuItem {
         label: label.into(),
+        subtitle: None,
         icon: None,
         shortcut: None,
         checked: None,
@@ -59,6 +61,12 @@ pub fn item<State, Action>(label: impl Into<ArcStr>) -> MenuItem<State, Action> 
 }
 
 impl<State, Action> MenuItem<State, Action> {
+    /// Attach a secondary line of text under the label.
+    pub fn subtitle(mut self, subtitle: impl Into<ArcStr>) -> Self {
+        self.subtitle = Some(subtitle.into());
+        self
+    }
+
     /// Attach a leading icon from the Lucide icon set. Ignored when the row is
     /// also [`checkable`](Self::checked) — the check takes the gutter.
     pub fn icon(mut self, name: IconName) -> Self {
@@ -116,6 +124,7 @@ fn entries_to_rows<State, Action>(
             Entry::Item(it) => {
                 rows.push(MenuRowSpec::Action {
                     label: it.label,
+                    subtitle: it.subtitle,
                     icon: it.icon,
                     shortcut: it.shortcut,
                     checked: it.checked,

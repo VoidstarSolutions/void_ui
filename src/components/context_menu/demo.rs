@@ -85,6 +85,7 @@ fn basic_menu(theme: &Theme) -> impl WidgetView<ContextMenuDemo> + use<> {
                 )
                 .item(
                     item("Minimap")
+                        .subtitle("Show a code overview on the right")
                         .checked(false)
                         .on_select(|s: &mut ContextMenuDemo| {
                             s.last_action = "Minimap".into();
@@ -171,9 +172,11 @@ fn build_inner(
             .color(theme.palette.text)
             .render(theme),
         label(
-            "Rich menu surface — command rows, separators, and disabled items. \
-             Hover to highlight; click an enabled row to select it. (Right-click \
-             trigger and icon/shortcut/check columns land in later chunks.)",
+            "Rich menu surface — command rows with optional icons, keyboard \
+             shortcuts, checkable state and sub-titles, plus separators, \
+             section headers and disabled items. Hover or right-click the box \
+             below to open a menu at the cursor; click an enabled row to select \
+             it. (Keyboard navigation and submenus land in later chunks.)",
         )
         .color(theme.palette.text_muted)
         .multiline(true)
