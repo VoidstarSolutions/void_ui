@@ -584,7 +584,12 @@ mod tests {
     ) -> TestHarness<ThemedSidebarNav> {
         TestHarness::create(
             default_property_set(),
-            NewWidget::new(ThemedSidebarNav::new(items, names, active, &Theme::default())),
+            NewWidget::new(ThemedSidebarNav::new(
+                items,
+                names,
+                active,
+                &Theme::default(),
+            )),
         )
     }
 
@@ -759,8 +764,7 @@ mod tests {
 
     #[test]
     fn set_name_updates_accessible_label() {
-        let mut h =
-            harness_with_names(vec![item(100.0, 20.0)], vec![Some("Original".into())], 0);
+        let mut h = harness_with_names(vec![item(100.0, 20.0)], vec![Some("Original".into())], 0);
         let id = h.edit_root_widget(|mut wm| ThemedSidebarNav::item_mut(&mut wm, 0).id());
 
         h.edit_root_widget(|mut wm| {
