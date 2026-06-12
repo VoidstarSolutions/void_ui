@@ -223,6 +223,7 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) {
+        NotificationHost::set_timeout(&mut element, self.timeout);
         let mut child = NotificationHost::child_mut(&mut element);
         self.content
             .rebuild(&prev.content, view_state, ctx, child.downcast(), app_state);

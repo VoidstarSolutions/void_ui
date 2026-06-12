@@ -51,6 +51,27 @@ impl NotificationHost {
     pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
         this.ctx.get_mut(&mut this.widget.child)
     }
+
+    /// Update the auto-dismiss timeout, re-arming the countdown if needed.
+    ///
+    /// `flex_col`'s positional diffing can reuse this host for a different
+    /// logical toast (e.g. when an earlier toast is dismissed and the list
+    /// shifts), so `Update::WidgetAdded` — and thus the initial arm in
+    /// [`Widget::update`] — won't fire again for the new toast. Without this,
+    /// a host whose previous timer already elapsed (`armed_at: None`) would
+    /// stay disarmed forever. Re-arm whenever the timeout changes, or the
+    /// timer isn't currently running but should be.
+    pub fn set_timeout(this: &mut WidgetMut<'_, Self>, timeout: Option<Duration>) {
+        let needs_arm = timeout.is_some()
+            && (this.widget.timeout != timeout || this.widget.armed_at.is_none());
+        this.widget.timeout = timeout;
+        if timeout.is_none() {
+            this.widget.armed_at = None;
+        } else if needs_arm {
+            this.widget.armed_at = Some(Instant::now());
+            this.ctx.request_anim_frame();
+        }
+    }
 }
 
 impl Widget for NotificationHost {
