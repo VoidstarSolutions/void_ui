@@ -390,3 +390,97 @@ impl Widget for PopoverSurface {
         ChildrenIds::from_slice(&[self.content.id()])
     }
 }
+
+// --- MARK: TESTS
+
+#[cfg(test)]
+mod tests {
+    use masonry::core::TextEvent;
+    use masonry::core::keyboard::{Key, NamedKey};
+    use masonry::core::{Handled, NewWidget};
+    use masonry::testing::TestHarness;
+    use masonry::theme::default_property_set;
+    use masonry::widgets::Label;
+
+    use super::*;
+    use crate::components::button::widget::ThemedButton;
+
+    fn button(label: &str, theme: &Theme) -> NewWidget<dyn Widget> {
+        NewWidget::new(ThemedButton::new(
+            NewWidget::new(Label::new(label)).erased(),
+            theme,
+        ))
+        .erased()
+    }
+
+    /// Builds a `PopoverHost` with a button trigger and label content,
+    /// returning the harness and the trigger's `WidgetId`.
+    fn harness() -> (TestHarness<PopoverHost>, WidgetId) {
+        let theme = Theme::dark();
+        let trigger = button("Open", &theme);
+        let trigger_id = trigger.id();
+        let content = NewWidget::new(Label::new("Content")).erased();
+        let widget = PopoverHost::new(trigger, content, PopoverAnchor::BottomStart, &theme);
+        let h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+        (h, trigger_id)
+    }
+
+    #[test]
+    fn enter_on_the_trigger_toggles_open() {
+        let (mut h, trigger_id) = harness();
+        h.focus_on(Some(trigger_id));
+
+        h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
+        assert!(h.edit_root_widget(|wm| wm.widget.open));
+
+        h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
+        assert!(!h.edit_root_widget(|wm| wm.widget.open));
+    }
+
+    #[test]
+    fn space_on_the_trigger_toggles_open() {
+        let (mut h, trigger_id) = harness();
+        h.focus_on(Some(trigger_id));
+
+        h.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
+        assert!(h.edit_root_widget(|wm| wm.widget.open));
+    }
+
+    #[test]
+    fn escape_closes_and_is_handled() {
+        let (mut h, trigger_id) = harness();
+        h.focus_on(Some(trigger_id));
+        h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
+        assert!(h.edit_root_widget(|wm| wm.widget.open));
+
+        let handled = h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Escape)));
+        assert_eq!(handled, Handled::Yes);
+        assert!(!h.edit_root_widget(|wm| wm.widget.open));
+    }
+
+    /// A keyboard activation of a button inside the open popover content
+    /// bubbles a `ButtonPress { button: None }` action just like the
+    /// trigger's does — `on_action` must only react when it originates from
+    /// the trigger itself.
+    #[test]
+    fn button_press_from_content_does_not_toggle_popover() {
+        let theme = Theme::dark();
+        let trigger = button("Open", &theme);
+        let trigger_id = trigger.id();
+        let content = button("Inside", &theme);
+        let content_id = content.id();
+        let widget = PopoverHost::new(trigger, content, PopoverAnchor::BottomStart, &theme);
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+
+        h.focus_on(Some(trigger_id));
+        h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
+        assert!(h.edit_root_widget(|wm| wm.widget.open));
+
+        h.focus_on(Some(content_id));
+        h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
+        assert!(
+            h.edit_root_widget(|wm| wm.widget.open),
+            "activating a button inside the popover content must not toggle the popover"
+        );
+    }
+}

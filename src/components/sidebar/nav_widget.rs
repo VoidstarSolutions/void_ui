@@ -577,6 +577,22 @@ mod tests {
         )
     }
 
+    fn harness_with_names(
+        items: Vec<NewWidget<dyn Widget>>,
+        names: Vec<Option<ArcStr>>,
+        active: usize,
+    ) -> TestHarness<ThemedSidebarNav> {
+        TestHarness::create(
+            default_property_set(),
+            NewWidget::new(ThemedSidebarNav::new(
+                items,
+                names,
+                active,
+                &Theme::default(),
+            )),
+        )
+    }
+
     // --- item_at ---
 
     #[test]
@@ -716,5 +732,48 @@ mod tests {
             assert!(ThemedSidebarNav::item_mut(&mut wm, 1).widget.selected);
             assert_eq!(wm.widget.focused, 1);
         });
+    }
+
+    // --- accessibility ---
+
+    #[test]
+    fn items_expose_label_selected_and_set_position() {
+        let mut h = harness_with_names(
+            vec![item(100.0, 20.0), item(100.0, 20.0)],
+            vec![Some("First".into()), Some("Second".into())],
+            1,
+        );
+        let ids = h.edit_root_widget(|mut wm| {
+            let first = ThemedSidebarNav::item_mut(&mut wm, 0).id();
+            let second = ThemedSidebarNav::item_mut(&mut wm, 1).id();
+            [first, second]
+        });
+        h.redraw();
+
+        let first = h.access_node(ids[0]).expect("node exists");
+        assert_eq!(first.label(), Some("First".to_string()));
+        assert_eq!(first.is_selected(), Some(false));
+        assert_eq!(first.position_in_set(), Some(1));
+        assert_eq!(first.size_of_set(), Some(2));
+
+        let second = h.access_node(ids[1]).expect("node exists");
+        assert_eq!(second.label(), Some("Second".to_string()));
+        assert_eq!(second.is_selected(), Some(true));
+        assert_eq!(second.position_in_set(), Some(2));
+    }
+
+    #[test]
+    fn set_name_updates_accessible_label() {
+        let mut h = harness_with_names(vec![item(100.0, 20.0)], vec![Some("Original".into())], 0);
+        let id = h.edit_root_widget(|mut wm| ThemedSidebarNav::item_mut(&mut wm, 0).id());
+
+        h.edit_root_widget(|mut wm| {
+            let mut node = ThemedSidebarNav::item_mut(&mut wm, 0);
+            SidebarNavItemNode::set_name(&mut node, Some("Updated".into()));
+        });
+        h.redraw();
+
+        let node = h.access_node(id).expect("node exists");
+        assert_eq!(node.label(), Some("Updated".to_string()));
     }
 }
