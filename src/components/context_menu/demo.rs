@@ -13,7 +13,7 @@ use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use crate::Theme;
 use crate::components::ScrollBarVisibility;
-use crate::components::context_menu::{context_menu_area, item, menu};
+use crate::components::context_menu::{context_menu_area, item, menu, submenu};
 use crate::components::icon::IconName;
 use crate::label;
 use crate::scroll_container;
@@ -51,6 +51,21 @@ fn basic_menu(theme: &Theme) -> impl WidgetView<ContextMenuDemo> + use<> {
         flex_row(
             menu()
                 .section("Edit")
+                .submenu(
+                    submenu("Open Recent")
+                        .icon(IconName::Copy)
+                        .item(item("project-a").on_select(|s: &mut ContextMenuDemo| {
+                            s.last_action = "Recent: project-a".into();
+                        }))
+                        .item(item("project-b").on_select(|s: &mut ContextMenuDemo| {
+                            s.last_action = "Recent: project-b".into();
+                        }))
+                        .separator()
+                        .item(item("Clear Recent").on_select(|s: &mut ContextMenuDemo| {
+                            s.last_action = "Clear Recent".into();
+                        })),
+                )
+                .separator()
                 .item(
                     item("Cut")
                         .shortcut("Ctrl+X")
@@ -173,10 +188,10 @@ fn build_inner(
             .render(theme),
         label(
             "Rich menu surface — command rows with optional icons, keyboard \
-             shortcuts, checkable state and sub-titles, plus separators, \
-             section headers and disabled items. Hover or right-click the box \
-             below to open a menu at the cursor; click an enabled row to select \
-             it. (Keyboard navigation and submenus land in later chunks.)",
+             shortcuts, checkable state, sub-titles and hover-open submenus, \
+             plus separators, section headers and disabled items. Right-click \
+             the box below to open a menu at the cursor; click or use the \
+             keyboard (arrows / Home / End / Enter / Esc) to select.",
         )
         .color(theme.palette.text_muted)
         .multiline(true)

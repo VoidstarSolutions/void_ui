@@ -10,11 +10,11 @@
 //! the nodes vertically and paints the chrome/hover/focus-ring/separators around
 //! their placed rects.
 
-use masonry::accesskit::{Action, Node, Role, Toggled};
+use masonry::accesskit::{Action, HasPopup, Node, Role, Toggled};
 use masonry::core::{
-    AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
-    PaintCtx, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty, Update, UpdateCtx, Widget,
-    WidgetMut, WidgetPod,
+    AccessCtx, AccessEvent, ActionCtx, ArcStr, ChildrenIds, ErasedAction, EventCtx, LayoutCtx,
+    MeasureCtx, NewWidget, PaintCtx, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty,
+    Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Size};
@@ -23,9 +23,12 @@ use masonry::peniko::Color;
 use masonry::properties::ContentColor;
 use masonry::widgets::Label;
 
-use super::widget::MenuRowSpec;
+use super::widget::{MenuAction, MenuPanel, MenuRowSpec};
 use crate::Theme;
 use crate::components::icon::{IconName, icon};
+
+/// Gap between a submenu item's right edge and its fly-out panel.
+const SUBMENU_GAP: f64 = 1.0;
 
 /// Total height of a separator row (line centered within it).
 pub(crate) const SEPARATOR_ROW_HEIGHT: f64 = 9.0;
@@ -43,6 +46,7 @@ pub(crate) enum RowKind {
     Action,
     Separator,
     Section,
+    Submenu,
 }
 
 /// Action a [`MenuItemNode`] submits when activated via the accessibility tree
@@ -66,6 +70,9 @@ pub(crate) fn reserves_gutter(spec: &MenuRowSpec) -> bool {
             checked: Some(_),
             ..
         } | MenuRowSpec::Action {
+            icon: Some(_),
+            ..
+        } | MenuRowSpec::Submenu {
             icon: Some(_),
             ..
         }
@@ -104,6 +111,15 @@ fn make_icon(name: IconName, disabled: bool, theme: &Theme) -> WidgetPod<dyn Wid
         .to_pod()
 }
 
+/// Trailing chevron for a submenu row — muted, like a shortcut.
+fn make_chevron(theme: &Theme) -> WidgetPod<dyn Widget> {
+    icon(IconName::ChevronRight)
+        .color(muted_color(false, theme))
+        .build_widget(theme)
+        .erased()
+        .to_pod()
+}
+
 /// Per-row accessibility + layout wrapper. See module docs.
 pub(crate) struct MenuItemNode {
     gutter: Option<WidgetPod<dyn Widget>>,
@@ -122,6 +138,10 @@ pub(crate) struct MenuItemNode {
     /// Shared gutter column width (0 when no row reserves it).
     gutter_width: f64,
     theme: Theme,
+    /// The nested fly-out panel (Submenu rows only), stashed until open and
+    /// placed to the right of this row.
+    submenu: Option<WidgetPod<MenuPanel>>,
+    submenu_open: bool,
 }
 
 impl MenuItemNode {
@@ -136,6 +156,7 @@ impl MenuItemNode {
         let caption = theme.typography.size_caption;
         let node = match spec {
             MenuRowSpec::Action {
+                id: _,
                 label,
                 subtitle,
                 icon,
@@ -163,6 +184,8 @@ impl MenuItemNode {
                     set_pos,
                     gutter_width,
                     theme: *theme,
+                    submenu: None,
+                    submenu_open: false,
                 }
             }
             MenuRowSpec::Separator => MenuItemNode {
@@ -178,6 +201,8 @@ impl MenuItemNode {
                 set_pos: None,
                 gutter_width,
                 theme: *theme,
+                submenu: None,
+                submenu_open: false,
             },
             MenuRowSpec::Section { text } => MenuItemNode {
                 gutter: None,
@@ -192,7 +217,33 @@ impl MenuItemNode {
                 set_pos: None,
                 gutter_width,
                 theme: *theme,
+                submenu: None,
+                submenu_open: false,
             },
+            MenuRowSpec::Submenu {
+                label,
+                icon: leading,
+                children,
+            } => {
+                // The fly-out is its own MenuPanel, stashed until hovered.
+                let panel = NewWidget::new(MenuPanel::new(children, theme)).to_pod();
+                MenuItemNode {
+                    gutter: leading.map(|name| make_icon(name, false, theme)),
+                    label: Some(make_text(&label, size, label_color(false, theme))),
+                    subtitle: None,
+                    shortcut: Some(make_chevron(theme)),
+                    kind: RowKind::Submenu,
+                    name: label,
+                    checked: None,
+                    disabled: false,
+                    index,
+                    set_pos,
+                    gutter_width,
+                    theme: *theme,
+                    submenu: Some(panel),
+                    submenu_open: false,
+                }
+            }
         };
         NewWidget::new(node)
     }
@@ -224,8 +275,24 @@ impl MenuItemNode {
                 Label::insert_style(&mut lbl, StyleProperty::FontSize(fsize));
             }
         }
+        // Propagate the theme into the fly-out panel.
+        if let Some(panel) = &mut this.widget.submenu {
+            let mut p = this.ctx.get_mut(panel);
+            MenuPanel::set_theme(&mut p, theme);
+        }
         this.ctx.request_layout();
         this.ctx.request_paint_only();
+    }
+
+    /// Show/hide the fly-out (Submenu rows only), driven by the parent panel's
+    /// hover. Triggers a layout pass and an accessibility update (expanded).
+    pub(crate) fn set_submenu_open(this: &mut WidgetMut<'_, Self>, open: bool) {
+        if this.widget.submenu.is_some() && this.widget.submenu_open != open {
+            this.widget.submenu_open = open;
+            this.ctx.request_layout();
+            this.ctx.request_paint_only();
+            this.ctx.request_accessibility_update();
+        }
     }
 
     fn action_height(&self) -> f64 {
@@ -250,6 +317,16 @@ impl MenuItemNode {
 impl Widget for MenuItemNode {
     type Action = NodeActivated;
 
+    fn accepts_pointer_interaction(&self) -> bool {
+        // The parent `MenuPanel` hit-tests rows; we're transparent so events
+        // pass through to it — but we propagate so a fly-out child can be hit.
+        false
+    }
+
+    fn propagates_pointer_interaction(&self) -> bool {
+        true
+    }
+
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
         for child in [
             &mut self.gutter,
@@ -262,14 +339,40 @@ impl Widget for MenuItemNode {
         {
             ctx.register_child(child);
         }
+        if let Some(panel) = &mut self.submenu {
+            ctx.register_child(panel);
+        }
+    }
+
+    /// A selection from the fly-out bubbles up as [`MenuAction::Selected`];
+    /// re-emit it as our [`NodeActivated`] so the parent panel routes it onward
+    /// to the root (area/view).
+    fn on_action(
+        &mut self,
+        ctx: &mut ActionCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        action: &ErasedAction,
+        _source: WidgetId,
+    ) {
+        if let Some(&MenuAction::Selected(id)) = action.downcast_ref::<MenuAction>() {
+            ctx.submit_action::<Self::Action>(NodeActivated(id));
+            ctx.set_handled();
+        }
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        // Sync masonry's system-level disabled flag on attach so event routing
-        // and the accessibility pass (`node.set_disabled`) stay correct —
-        // mirrors `TabItemNode`/checkbox.
-        if matches!(event, Update::WidgetAdded) {
-            ctx.set_disabled(self.disabled);
+        match event {
+            // Sync masonry's system-level disabled flag on attach so event
+            // routing and the accessibility pass (`node.set_disabled`) stay
+            // correct — mirrors `TabItemNode`/checkbox.
+            Update::WidgetAdded => ctx.set_disabled(self.disabled),
+            // Stashed (the menu closed) while our fly-out was open: close it so
+            // it doesn't reappear when the menu re-opens.
+            Update::StashedChanged(true) if self.submenu_open => {
+                self.submenu_open = false;
+                ctx.request_layout();
+            }
+            _ => {}
         }
     }
 
@@ -368,12 +471,29 @@ impl Widget for MenuItemNode {
             ctx.place_child(g, Point::new(0.0, line_center - g_size.height * 0.5));
         }
 
-        // Trailing shortcut, right-aligned to the label line.
+        // Trailing shortcut (or submenu chevron), right-aligned to the label line.
         if let Some(shortcut) = &mut self.shortcut {
             let sc_size = ctx.compute_size(shortcut, SizeDef::MIN, full.into());
             ctx.run_layout(shortcut, sc_size);
             let sx = size.width - sc_size.width;
             ctx.place_child(shortcut, Point::new(sx, line_center - sc_size.height * 0.5));
+        }
+
+        // Fly-out submenu: placed just past the menu's right border when open,
+        // stashed otherwise. It overflows our box (and the parent menu's), so
+        // it stays visible until a real clipping ancestor — like the trigger
+        // overlays elsewhere in the toolkit.
+        if let Some(panel) = &mut self.submenu {
+            if self.submenu_open {
+                ctx.set_stashed(panel, false);
+                let avail = Size::new(100_000.0, 100_000.0);
+                let panel_size = ctx.compute_size(panel, SizeDef::MIN, avail.into());
+                ctx.run_layout(panel, panel_size);
+                let pad_h = f64::from(self.theme.density.button_pad_h);
+                ctx.place_child(panel, Point::new(size.width + pad_h + SUBMENU_GAP, 0.0));
+            } else {
+                ctx.set_stashed(panel, true);
+            }
         }
     }
 
@@ -390,7 +510,7 @@ impl Widget for MenuItemNode {
     fn accessibility_role(&self) -> Role {
         match self.kind {
             RowKind::Action if self.checked.is_some() => Role::MenuItemCheckBox,
-            RowKind::Action => Role::MenuItem,
+            RowKind::Action | RowKind::Submenu => Role::MenuItem,
             RowKind::Separator => Role::Splitter,
             RowKind::Section => Role::Label,
         }
@@ -417,13 +537,21 @@ impl Widget for MenuItemNode {
                     node.add_action(Action::Focus);
                 }
             }
+            // Submenu: a labeled menu item that owns a popup, with its
+            // open/closed state exposed as expanded.
+            RowKind::Submenu => {
+                node.set_label(self.name.to_string());
+                node.set_has_popup(HasPopup::Menu);
+                node.set_expanded(self.submenu_open);
+                node.add_action(Action::Focus);
+            }
             RowKind::Section => node.set_label(self.name.to_string()),
             RowKind::Separator => {}
         }
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        let ids: Vec<_> = [
+        let mut ids: Vec<_> = [
             self.gutter.as_ref(),
             self.label.as_ref(),
             self.subtitle.as_ref(),
@@ -433,6 +561,9 @@ impl Widget for MenuItemNode {
         .flatten()
         .map(WidgetPod::id)
         .collect();
+        if let Some(panel) = &self.submenu {
+            ids.push(panel.id());
+        }
         ChildrenIds::from_slice(&ids)
     }
 }
@@ -443,6 +574,7 @@ mod tests {
 
     fn action(checked: Option<bool>, icon: Option<IconName>) -> MenuRowSpec {
         MenuRowSpec::Action {
+            id: 0,
             label: "x".into(),
             subtitle: None,
             icon,

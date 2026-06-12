@@ -16,9 +16,10 @@
 //!     .render(&theme)
 //! ```
 //!
-//! This is the foundation surface (chunk 1): flat actions, separators, disabled
-//! rows. The right-click trigger and richer columns (icon/shortcut/check,
-//! submenus) build on top in later chunks.
+//! Rows can be actions (with icon/shortcut/checked/sub-title/disabled),
+//! separators, section headers, or [`submenu`]s (hover-open fly-outs of nested
+//! entries). Each command is assigned a stable leaf id so selections — at any
+//! nesting depth — route back to the right callback.
 
 use std::marker::PhantomData;
 
@@ -103,71 +104,159 @@ impl<State, Action> MenuItem<State, Action> {
     }
 }
 
-/// One entry in a menu: a command row, a divider, or a section header.
+/// Builder for a submenu — a labeled row that opens a nested fly-out of its
+/// own items on hover. Build with [`submenu`], add rows the same way as a
+/// [`Menu`] (including nested [`Self::submenu`]s), then add it to a parent with
+/// `.submenu(...)`.
+#[must_use = "Submenu does nothing until added to a menu with .submenu(...)"]
+pub struct Submenu<State, Action> {
+    label: ArcStr,
+    icon: Option<IconName>,
+    entries: Vec<Entry<State, Action>>,
+}
+
+/// Start building a submenu with the given label.
+pub fn submenu<State, Action>(label: impl Into<ArcStr>) -> Submenu<State, Action> {
+    Submenu {
+        label: label.into(),
+        icon: None,
+        entries: Vec::new(),
+    }
+}
+
+impl<State, Action> Submenu<State, Action> {
+    /// Attach a leading icon from the Lucide icon set.
+    pub fn icon(mut self, name: IconName) -> Self {
+        self.icon = Some(name);
+        self
+    }
+
+    /// Append a command row.
+    pub fn item(mut self, item: MenuItem<State, Action>) -> Self {
+        self.entries.push(Entry::Item(item));
+        self
+    }
+
+    /// Append a divider between rows.
+    pub fn separator(mut self) -> Self {
+        self.entries.push(Entry::Separator);
+        self
+    }
+
+    /// Append a non-interactive, muted section header.
+    pub fn section(mut self, text: impl Into<ArcStr>) -> Self {
+        self.entries.push(Entry::Section(text.into()));
+        self
+    }
+
+    /// Append a nested submenu.
+    pub fn submenu(mut self, submenu: Submenu<State, Action>) -> Self {
+        self.entries.push(submenu.into_entry());
+        self
+    }
+
+    fn into_entry(self) -> Entry<State, Action> {
+        Entry::Submenu {
+            label: self.label,
+            icon: self.icon,
+            children: self.entries,
+        }
+    }
+}
+
+/// One entry in a menu: a command row, a divider, a section header, or a
+/// submenu (a labeled fly-out of nested entries).
 enum Entry<State, Action> {
     Item(MenuItem<State, Action>),
     Separator,
     Section(ArcStr),
+    Submenu {
+        label: ArcStr,
+        icon: Option<IconName>,
+        children: Vec<Entry<State, Action>>,
+    },
 }
 
-/// Translate builder entries into the widget's display specs plus the parallel
-/// index→callback table. Shared by the inline [`Menu`] and the
-/// [`context_menu_area`] trigger so both map a [`MenuItemSelected`] index back
-/// to its callback identically.
+/// Recursively translate builder entries into the widget's display specs,
+/// assigning each command row a stable global leaf id and pushing its callback
+/// at that id into `callbacks` (so `callbacks[id]` is the row's callback,
+/// across any nesting). Shared by the inline [`Menu`] and the
+/// [`context_menu_area`] trigger.
 fn entries_to_rows<State, Action>(
     entries: Vec<Entry<State, Action>>,
-) -> (Vec<MenuRowSpec>, Vec<Option<SelectCallback<State, Action>>>) {
-    let mut rows = Vec::with_capacity(entries.len());
-    let mut callbacks = Vec::with_capacity(entries.len());
-    for entry in entries {
-        match entry {
+    next_id: &mut usize,
+    callbacks: &mut Vec<Option<SelectCallback<State, Action>>>,
+) -> Vec<MenuRowSpec> {
+    entries
+        .into_iter()
+        .map(|entry| match entry {
             Entry::Item(it) => {
-                rows.push(MenuRowSpec::Action {
+                let id = *next_id;
+                *next_id += 1;
+                // Ids are allocated in lockstep with this push, so the callback
+                // lands at index `id`. Disabled rows never fire, so drop theirs.
+                debug_assert_eq!(callbacks.len(), id);
+                callbacks.push(if it.disabled { None } else { it.on_select });
+                MenuRowSpec::Action {
+                    id,
                     label: it.label,
                     subtitle: it.subtitle,
                     icon: it.icon,
                     shortcut: it.shortcut,
                     checked: it.checked,
                     disabled: it.disabled,
-                });
-                // Disabled rows never emit a selection, so their callback is
-                // irrelevant — drop it to keep the index→callback mapping honest.
-                callbacks.push(if it.disabled { None } else { it.on_select });
+                }
             }
-            Entry::Separator => {
-                rows.push(MenuRowSpec::Separator);
-                callbacks.push(None);
-            }
-            Entry::Section(text) => {
-                rows.push(MenuRowSpec::Section { text });
-                callbacks.push(None);
-            }
-        }
-    }
+            Entry::Separator => MenuRowSpec::Separator,
+            Entry::Section(text) => MenuRowSpec::Section { text },
+            Entry::Submenu {
+                label,
+                icon,
+                children,
+            } => MenuRowSpec::Submenu {
+                label,
+                icon,
+                children: entries_to_rows(children, next_id, callbacks),
+            },
+        })
+        .collect()
+}
+
+/// Build the top-level spec list and the id→callback table from builder entries.
+fn build_menu<State, Action>(
+    entries: Vec<Entry<State, Action>>,
+) -> (Vec<MenuRowSpec>, Vec<Option<SelectCallback<State, Action>>>) {
+    let mut next_id = 0;
+    let mut callbacks = Vec::new();
+    let rows = entries_to_rows(entries, &mut next_id, &mut callbacks);
     (rows, callbacks)
 }
 
-/// Indices of the rows a keyboard highlight can land on (enabled action rows).
-/// The [`context_menu_area`] widget owns keyboard nav, so it needs this list.
-fn selectable_indices(rows: &[MenuRowSpec]) -> Vec<usize> {
+/// The top-level rows a keyboard highlight can land on, as `(row index, leaf
+/// id)` — the [`context_menu_area`] widget highlights by row index but emits
+/// the leaf id. (Submenu rows open fly-outs; they aren't keyboard-selectable
+/// at this level.)
+fn selectable_rows(rows: &[MenuRowSpec]) -> Vec<(usize, usize)> {
     rows.iter()
         .enumerate()
         .filter_map(|(i, r)| match r {
             MenuRowSpec::Action {
-                disabled: false, ..
-            } => Some(i),
+                id,
+                disabled: false,
+                ..
+            } => Some((i, *id)),
             _ => None,
         })
         .collect()
 }
 
-/// Route a selected row index to its callback, shared by both consumers.
+/// Route a selected leaf id to its callback, shared by both consumers.
 fn dispatch_selection<State, Action>(
     callbacks: &[Option<SelectCallback<State, Action>>],
-    index: usize,
+    id: usize,
     app_state: &mut State,
 ) -> MessageResult<Action> {
-    match callbacks.get(index) {
+    match callbacks.get(id) {
         Some(Some(callback)) => MessageResult::Action(callback(app_state)),
         // Selected an enabled row that carries no callback — consumed, but
         // there's nothing to emit.
@@ -221,9 +310,15 @@ where
         self
     }
 
+    /// Append a submenu that opens a nested fly-out on hover.
+    pub fn submenu(mut self, submenu: Submenu<State, Action>) -> Self {
+        self.entries.push(submenu.into_entry());
+        self
+    }
+
     /// Materialize the xilem view at the supplied theme.
     pub fn render(self, theme: &Theme) -> MenuView<State, Action> {
-        let (rows, callbacks) = entries_to_rows(self.entries);
+        let (rows, callbacks) = build_menu(self.entries);
         MenuView {
             rows,
             callbacks,
@@ -363,9 +458,15 @@ where
         self
     }
 
+    /// Append a submenu that opens a nested fly-out on hover.
+    pub fn submenu(mut self, submenu: Submenu<State, Action>) -> Self {
+        self.entries.push(submenu.into_entry());
+        self
+    }
+
     /// Materialize the xilem view at the supplied theme.
     pub fn render(self, theme: &Theme) -> ContextMenuAreaView<V, State, Action> {
-        let (rows, callbacks) = entries_to_rows(self.entries);
+        let (rows, callbacks) = build_menu(self.entries);
         ContextMenuAreaView {
             content: self.content,
             rows,
@@ -403,7 +504,7 @@ where
         let widget = ContextMenuArea::new(
             content_pod.new_widget.erased(),
             NewWidget::new(menu),
-            selectable_indices(&self.rows),
+            selectable_rows(&self.rows),
         );
         // Register as an action source so the area's `ContextMenuAction` routes
         // to this view's `message`.
@@ -433,7 +534,7 @@ where
                 let mut menu = ContextMenuArea::menu_mut(&mut element);
                 MenuPanel::set_rows(&mut menu, self.rows.iter().cloned());
             }
-            ContextMenuArea::set_selectable(&mut element, selectable_indices(&self.rows));
+            ContextMenuArea::set_selectable(&mut element, selectable_rows(&self.rows));
         }
     }
 
@@ -464,6 +565,37 @@ where
             let mut content = ContextMenuArea::content_mut(&mut element);
             self.content
                 .message(view_state, message, content.downcast(), app_state)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_menu_assigns_sequential_leaf_ids_across_nesting() {
+        // a, [submenu S: b, c], d → leaf ids 0,1,2,3 in tree order; the
+        // callbacks table has one slot per command, indexed by id.
+        let entries: Vec<Entry<(), ()>> = vec![
+            Entry::Item(item("a")),
+            submenu::<(), ()>("S")
+                .item(item("b"))
+                .item(item("c"))
+                .into_entry(),
+            Entry::Item(item("d")),
+        ];
+        let (rows, callbacks) = build_menu(entries);
+
+        assert_eq!(callbacks.len(), 4);
+        assert!(matches!(rows[0], MenuRowSpec::Action { id: 0, .. }));
+        assert!(matches!(rows[2], MenuRowSpec::Action { id: 3, .. }));
+        match &rows[1] {
+            MenuRowSpec::Submenu { children, .. } => {
+                assert!(matches!(children[0], MenuRowSpec::Action { id: 1, .. }));
+                assert!(matches!(children[1], MenuRowSpec::Action { id: 2, .. }));
+            }
+            _ => panic!("expected a submenu row"),
         }
     }
 }

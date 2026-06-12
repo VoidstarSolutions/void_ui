@@ -52,8 +52,10 @@ pub enum MenuRowSpec {
     /// A selectable command row: optional leading icon, label, optional trailing
     /// keyboard-shortcut text. `checked` makes it a checkable row (the gutter
     /// shows a check when `Some(true)`); `disabled` mutes it and blocks
-    /// selection.
+    /// selection. `id` is the global leaf id the view assigns for callback
+    /// routing — stable across nesting, unlike the row's position.
     Action {
+        id: usize,
         label: ArcStr,
         subtitle: Option<ArcStr>,
         icon: Option<IconName>,
@@ -65,6 +67,13 @@ pub enum MenuRowSpec {
     Separator,
     /// A non-interactive, muted section header.
     Section { text: ArcStr },
+    /// A row that opens a nested fly-out menu of `children` on hover. Shows a
+    /// trailing chevron; itself carries no callback.
+    Submenu {
+        label: ArcStr,
+        icon: Option<IconName>,
+        children: Vec<MenuRowSpec>,
+    },
 }
 
 impl MenuRowSpec {
@@ -86,6 +95,14 @@ impl MenuRowSpec {
             }
         )
     }
+
+    /// The leaf id emitted when this row is selected (action rows only).
+    fn leaf_id(&self) -> Option<usize> {
+        match self {
+            Self::Action { id, .. } => Some(*id),
+            _ => None,
+        }
+    }
 }
 
 impl PartialEq for MenuRowSpec {
@@ -93,6 +110,7 @@ impl PartialEq for MenuRowSpec {
         match (self, other) {
             (
                 Self::Action {
+                    id: id1,
                     label: l1,
                     subtitle: sub1,
                     icon: i1,
@@ -101,6 +119,7 @@ impl PartialEq for MenuRowSpec {
                     disabled: d1,
                 },
                 Self::Action {
+                    id: id2,
                     label: l2,
                     subtitle: sub2,
                     icon: i2,
@@ -112,7 +131,8 @@ impl PartialEq for MenuRowSpec {
                 // `IconName` (lucide's `Icon`) is compared by glyph since it
                 // doesn't itself implement `PartialEq` — matches how
                 // `dropdown_button` diffs icons.
-                l1 == l2
+                id1 == id2
+                    && l1 == l2
                     && sub1 == sub2
                     && d1 == d2
                     && c1 == c2
@@ -121,6 +141,18 @@ impl PartialEq for MenuRowSpec {
             }
             (Self::Separator, Self::Separator) => true,
             (Self::Section { text: t1 }, Self::Section { text: t2 }) => t1 == t2,
+            (
+                Self::Submenu {
+                    label: l1,
+                    icon: i1,
+                    children: ch1,
+                },
+                Self::Submenu {
+                    label: l2,
+                    icon: i2,
+                    children: ch2,
+                },
+            ) => l1 == l2 && i1.map(char::from) == i2.map(char::from) && ch1 == ch2,
             _ => false,
         }
     }
@@ -146,8 +178,19 @@ struct RowEntry {
     node: WidgetPod<MenuItemNode>,
     is_separator: bool,
     selectable: bool,
+    /// Whether this row opens a submenu fly-out on hover.
+    is_submenu: bool,
+    /// Global leaf id emitted when this row is selected (action rows only).
+    leaf_id: Option<usize>,
     /// Local-coordinate bounds (full panel width), populated during `layout`.
     rect: Rect,
+}
+
+impl RowEntry {
+    /// Whether the pointer can hover this row (selectable actions + submenus).
+    fn hoverable(&self) -> bool {
+        self.selectable || self.is_submenu
+    }
 }
 
 /// Rich item-list widget for a context menu.
@@ -159,6 +202,8 @@ pub struct MenuPanel {
     /// Keyboard-highlighted row (roving focus), painted as a focus ring. Only
     /// ever a selectable row; cleared on focus loss / close.
     highlighted: Option<usize>,
+    /// The submenu row whose fly-out is currently open, if any.
+    open_submenu: Option<usize>,
     theme: Theme,
 }
 
@@ -169,6 +214,7 @@ impl MenuPanel {
             rows: build_rows(specs, theme),
             hover_index: None,
             highlighted: None,
+            open_submenu: None,
             theme: *theme,
         }
     }
@@ -182,6 +228,34 @@ impl MenuPanel {
         self.rows
             .iter()
             .position(|r| r.selectable && r.rect.contains(local_pos))
+    }
+
+    /// The hoverable row containing `local_pos` (selectable actions + submenus).
+    fn hit_hoverable(&self, local_pos: Point) -> Option<usize> {
+        self.rows
+            .iter()
+            .position(|r| r.hoverable() && r.rect.contains(local_pos))
+    }
+
+    /// Push open/closed state into row `row`'s submenu node.
+    fn set_node_submenu_open(&mut self, ctx: &mut EventCtx<'_>, row: usize, open: bool) {
+        ctx.mutate_child_later(&mut self.rows[row].node, move |mut w| {
+            MenuItemNode::set_submenu_open(&mut w, open);
+        });
+    }
+
+    /// Close whichever submenu is currently open (if any).
+    fn close_open_submenu(&mut self, ctx: &mut EventCtx<'_>) {
+        if let Some(row) = self.open_submenu.take() {
+            self.set_node_submenu_open(ctx, row, false);
+        }
+    }
+
+    /// Open row `row`'s submenu, closing any previously-open one first.
+    fn open_submenu_at(&mut self, ctx: &mut EventCtx<'_>, row: usize) {
+        self.close_open_submenu(ctx);
+        self.open_submenu = Some(row);
+        self.set_node_submenu_open(ctx, row, true);
     }
 
     /// Row indices that can receive the keyboard highlight (selectable actions),
@@ -218,6 +292,17 @@ impl MenuPanel {
         let origin = ctx.to_window(Point::ZERO);
         window_pos - origin.to_vec2()
     }
+
+    /// Emit the highlighted row's selection (keyboard activation); no-op when
+    /// nothing is highlighted.
+    fn activate_highlighted(&mut self, ctx: &mut EventCtx<'_>) {
+        if let Some(i) = self.highlighted.take()
+            && let Some(id) = self.rows[i].leaf_id
+        {
+            ctx.submit_action::<MenuAction>(MenuAction::Selected(id));
+            ctx.request_paint_only();
+        }
+    }
 }
 
 /// Build the per-row nodes + metadata from specs, computing the shared gutter
@@ -234,21 +319,27 @@ fn build_rows(specs: impl IntoIterator<Item = MenuRowSpec>, theme: &Theme) -> Ve
     let mut action_pos = 0usize;
     specs
         .into_iter()
-        .enumerate()
-        .map(|(i, spec)| {
+        .map(|spec| {
             let is_separator = spec.is_separator();
+            let is_submenu = matches!(spec, MenuRowSpec::Submenu { .. });
             let selectable = spec.selectable();
+            let leaf_id = spec.leaf_id();
             let set_pos = if spec.is_action() {
                 action_pos += 1;
                 Some((action_pos, action_count))
             } else {
                 None
             };
-            let node = MenuItemNode::new(spec, gutter_width, i, set_pos, theme).to_pod();
+            // The node carries the leaf id so its accessibility `Click` routes
+            // through the same `MenuAction::Selected(id)` path.
+            let node = MenuItemNode::new(spec, gutter_width, leaf_id.unwrap_or(0), set_pos, theme)
+                .to_pod();
             RowEntry {
                 node,
                 is_separator,
                 selectable,
+                is_submenu,
+                leaf_id,
                 rect: Rect::ZERO,
             }
         })
@@ -295,6 +386,7 @@ impl MenuPanel {
         this.widget.rows = build_rows(specs, &theme);
         this.widget.hover_index = None;
         this.widget.highlighted = None;
+        this.widget.open_submenu = None;
         this.ctx.children_changed();
         this.ctx.request_layout();
         this.ctx.request_paint_only();
@@ -310,9 +402,11 @@ impl Widget for MenuPanel {
     }
 
     fn propagates_pointer_interaction(&self) -> bool {
-        // We hit-test rows ourselves against their placed rects; the per-row
-        // nodes (and their label children) take no pointer events.
-        false
+        // We hit-test rows ourselves, but must propagate so an open submenu
+        // fly-out (nested under a row's node) can receive its own pointer
+        // events; the rows' label/icon children stay pointer-transparent, so
+        // events over them still bubble back to us for hit-testing.
+        true
     }
 
     fn on_pointer_event(
@@ -324,10 +418,33 @@ impl Widget for MenuPanel {
         match event {
             PointerEvent::Move(PointerUpdate { current, .. }) => {
                 let local = Self::to_local(ctx, current.logical_point());
-                let new_hover = self.hit_row(local);
-                if new_hover != self.hover_index {
-                    self.hover_index = new_hover;
-                    ctx.request_paint_only();
+                match self.hit_hoverable(local) {
+                    Some(row) => {
+                        if self.hover_index != Some(row) {
+                            self.hover_index = Some(row);
+                            ctx.request_paint_only();
+                        }
+                        if self.rows[row].is_submenu {
+                            // Hovering a submenu row opens its fly-out (closing
+                            // any other open one).
+                            if self.open_submenu != Some(row) {
+                                self.open_submenu_at(ctx, row);
+                            }
+                        } else {
+                            // Hovering a plain row closes any open submenu.
+                            self.close_open_submenu(ctx);
+                        }
+                    }
+                    // Off all rows (e.g. the pointer travelled into the open
+                    // fly-out, which overflows our box): keep the submenu open
+                    // and its row highlighted. Only clear hover when nothing is
+                    // open.
+                    None => {
+                        if self.open_submenu.is_none() && self.hover_index.is_some() {
+                            self.hover_index = None;
+                            ctx.request_paint_only();
+                        }
+                    }
                 }
             }
             PointerEvent::Down(PointerButtonEvent {
@@ -335,6 +452,10 @@ impl Widget for MenuPanel {
                 ..
             }) => {
                 ctx.capture_pointer();
+                // Consume so an ancestor `MenuPanel` (when we're a fly-out)
+                // doesn't also capture and swallow the release — which would
+                // drop the selection.
+                ctx.set_handled();
             }
             PointerEvent::Up(PointerButtonEvent {
                 button: Some(PointerButton::Primary),
@@ -342,12 +463,17 @@ impl Widget for MenuPanel {
                 ..
             }) if ctx.is_active() && ctx.is_hovered() => {
                 let local = Self::to_local(ctx, state.logical_point());
-                if let Some(i) = self.hit_row(local) {
-                    ctx.submit_action::<Self::Action>(MenuAction::Selected(i));
+                if let Some(i) = self.hit_row(local)
+                    && let Some(id) = self.rows[i].leaf_id
+                {
+                    ctx.submit_action::<Self::Action>(MenuAction::Selected(id));
                     ctx.set_handled();
                 }
             }
-            PointerEvent::Leave(_) if self.hover_index.is_some() => {
+            // Pointer left our box. Keep an open submenu open (the pointer may
+            // have crossed into its fly-out, which lives outside our box);
+            // otherwise drop the hover highlight.
+            PointerEvent::Leave(_) if self.open_submenu.is_none() && self.hover_index.is_some() => {
                 self.hover_index = None;
                 ctx.request_paint_only();
             }
@@ -391,17 +517,11 @@ impl Widget for MenuPanel {
             }
             // Activate the highlighted row (no-op if nothing is highlighted).
             Key::Named(NamedKey::Enter) => {
-                if let Some(i) = self.highlighted.take() {
-                    ctx.submit_action::<Self::Action>(MenuAction::Selected(i));
-                    ctx.request_paint_only();
-                }
+                self.activate_highlighted(ctx);
                 ctx.set_handled();
             }
             Key::Character(_) if is_space => {
-                if let Some(i) = self.highlighted.take() {
-                    ctx.submit_action::<Self::Action>(MenuAction::Selected(i));
-                    ctx.request_paint_only();
-                }
+                self.activate_highlighted(ctx);
                 ctx.set_handled();
             }
             Key::Named(NamedKey::Escape) => {
@@ -433,10 +553,12 @@ impl Widget for MenuPanel {
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
             // Stash state flipping (a right-click menu opening/closing) resets
-            // the highlight so it never lingers across opens. The host area
-            // transfers focus to us on open (`ContextMenuArea` → `set_focus`).
+            // the highlight and forgets any open submenu so neither lingers
+            // across opens (each submenu node closes itself on stash too). The
+            // host area transfers focus to us on open (`ContextMenuArea`).
             Update::StashedChanged(_) => {
                 self.highlighted = None;
+                self.open_submenu = None;
             }
             // Focus left us (e.g. an outside click): clear the keyboard
             // highlight so the focus ring doesn't paint while unfocused.
@@ -621,8 +743,9 @@ mod tests {
         panel
     }
 
-    fn action(label: &str) -> MenuRowSpec {
+    fn action_id(id: usize, label: &str) -> MenuRowSpec {
         MenuRowSpec::Action {
+            id,
             label: label.into(),
             subtitle: None,
             icon: None,
@@ -632,8 +755,13 @@ mod tests {
         }
     }
 
+    fn action(label: &str) -> MenuRowSpec {
+        action_id(0, label)
+    }
+
     fn disabled(label: &str) -> MenuRowSpec {
         MenuRowSpec::Action {
+            id: 0,
             label: label.into(),
             subtitle: None,
             icon: None,
@@ -675,6 +803,21 @@ mod tests {
     fn hit_row_returns_none_outside_all_rects() {
         let panel = panel_with(vec![action("a")], vec![Rect::new(0.0, 0.0, 100.0, 20.0)]);
         assert_eq!(panel.hit_row(Point::new(50.0, 50.0)), None);
+    }
+
+    #[test]
+    fn submenu_row_is_hoverable_but_not_selectable() {
+        let theme = Theme::default();
+        let specs = vec![MenuRowSpec::Submenu {
+            label: "More".into(),
+            icon: None,
+            children: vec![action_id(5, "leaf")],
+        }];
+        let panel = MenuPanel::new(specs, &theme);
+        assert!(panel.rows[0].is_submenu);
+        assert!(!panel.rows[0].selectable, "a submenu row isn't click-selectable");
+        assert!(panel.rows[0].hoverable(), "but it is hoverable (opens on hover)");
+        assert!(panel.rows[0].leaf_id.is_none(), "and carries no leaf id of its own");
     }
 
     #[test]
@@ -746,14 +889,16 @@ mod tests {
 
     #[test]
     fn enter_activates_the_highlighted_row() {
-        let mut h = harness(vec![action("a"), action("b")]);
+        // Leaf ids 10/11 (distinct from row indices) to prove selection emits
+        // the leaf id, not the row position.
+        let mut h = harness(vec![action_id(10, "a"), action_id(11, "b")]);
         press(&mut h, NamedKey::ArrowDown);
         press(&mut h, NamedKey::ArrowDown); // highlight row 1
         press(&mut h, NamedKey::Enter);
         let (action, _) = h
             .pop_action::<MenuAction>()
             .expect("Enter on a highlighted row selects it");
-        assert!(matches!(action, MenuAction::Selected(1)));
+        assert!(matches!(action, MenuAction::Selected(11)));
     }
 
     #[test]
@@ -780,6 +925,7 @@ mod tests {
         use masonry::accesskit::{Role, Toggled};
 
         let checkable = MenuRowSpec::Action {
+            id: 1,
             label: "Wrap".into(),
             subtitle: None,
             icon: None,

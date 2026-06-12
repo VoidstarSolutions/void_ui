@@ -48,10 +48,11 @@ pub struct ContextMenuArea {
     open: bool,
     /// Cursor point (local coords) where the menu was opened.
     cursor: Point,
-    /// Row indices that can receive the keyboard highlight (selectable actions),
-    /// supplied by the view. We own keyboard navigation while focused and push
-    /// the resulting highlight into the menu (mirrors `ThemedDropdownButton`).
-    selectable: Vec<usize>,
+    /// `(row index, leaf id)` for the top-level rows that can receive the
+    /// keyboard highlight, supplied by the view. We own keyboard navigation
+    /// while focused, highlight by row index, and emit the leaf id (mirrors
+    /// `ThemedDropdownButton`).
+    selectable: Vec<(usize, usize)>,
     /// Currently highlighted row index (into the full row list), or `None`.
     highlighted: Option<usize>,
 }
@@ -61,7 +62,7 @@ impl ContextMenuArea {
     pub fn new(
         content: NewWidget<dyn Widget>,
         menu: NewWidget<MenuPanel>,
-        selectable: Vec<usize>,
+        selectable: Vec<(usize, usize)>,
     ) -> Self {
         Self {
             content: content.to_pod(),
@@ -83,8 +84,8 @@ impl ContextMenuArea {
         this.ctx.get_mut(&mut this.widget.menu)
     }
 
-    /// Replace the selectable-row index list (on a live item-set change).
-    pub fn set_selectable(this: &mut WidgetMut<'_, Self>, selectable: Vec<usize>) {
+    /// Replace the `(row index, leaf id)` list (on a live item-set change).
+    pub fn set_selectable(this: &mut WidgetMut<'_, Self>, selectable: Vec<(usize, usize)>) {
         this.widget.selectable = selectable;
     }
 
@@ -109,23 +110,27 @@ impl ContextMenuArea {
         }
         let pos = self
             .highlighted
-            .and_then(|cur| self.selectable.iter().position(|&i| i == cur));
+            .and_then(|cur| self.selectable.iter().position(|&(row, _)| row == cur));
         let len = self.selectable.len().cast_signed();
         let next = match pos {
             Some(p) => (p.cast_signed() + dir).rem_euclid(len),
             None if dir >= 0 => 0,
             None => len - 1,
         };
-        let idx = self.selectable[next.cast_unsigned()];
-        self.set_highlight(ctx, Some(idx));
+        let (row, _) = self.selectable[next.cast_unsigned()];
+        self.set_highlight(ctx, Some(row));
     }
 
-    /// Select the highlighted row (keyboard activation): close and emit. No-op
-    /// when nothing is highlighted.
+    /// Select the highlighted row (keyboard activation): close and emit its leaf
+    /// id. No-op when nothing is highlighted.
     fn activate_highlighted(&mut self, ctx: &mut EventCtx<'_>) {
-        if let Some(index) = self.highlighted {
+        let leaf = self
+            .highlighted
+            .and_then(|cur| self.selectable.iter().find(|&&(row, _)| row == cur))
+            .map(|&(_, leaf)| leaf);
+        if let Some(leaf) = leaf {
             self.open = false;
-            ctx.submit_action::<ContextMenuAction>(ContextMenuAction::ItemSelected(index));
+            ctx.submit_action::<ContextMenuAction>(ContextMenuAction::ItemSelected(leaf));
             ctx.request_layout();
             ctx.request_paint_only();
         }
@@ -205,12 +210,12 @@ impl Widget for ContextMenuArea {
                 ctx.set_handled();
             }
             Key::Named(NamedKey::Home) => {
-                let first = self.selectable.first().copied();
+                let first = self.selectable.first().map(|&(row, _)| row);
                 self.set_highlight(ctx, first);
                 ctx.set_handled();
             }
             Key::Named(NamedKey::End) => {
-                let last = self.selectable.last().copied();
+                let last = self.selectable.last().map(|&(row, _)| row);
                 self.set_highlight(ctx, last);
                 ctx.set_handled();
             }
@@ -406,7 +411,8 @@ mod tests {
         use crate::components::context_menu::widget::{MenuPanel, MenuRowSpec};
 
         let theme = Theme::default();
-        let row = |label: &str| MenuRowSpec::Action {
+        let row = |id: usize, label: &str| MenuRowSpec::Action {
+            id,
             label: label.into(),
             subtitle: None,
             icon: None,
@@ -419,9 +425,9 @@ mod tests {
             .height(120.0.px())
             .prepare()
             .erased();
-        let menu = MenuPanel::new(vec![row("Copy"), row("Paste")], &theme);
-        // Both rows selectable (indices 0 and 1).
-        let area = ContextMenuArea::new(content, NewWidget::new(menu), vec![0, 1]);
+        let menu = MenuPanel::new(vec![row(0, "Copy"), row(1, "Paste")], &theme);
+        // Both rows selectable: (row index, leaf id) pairs.
+        let area = ContextMenuArea::new(content, NewWidget::new(menu), vec![(0, 0), (1, 1)]);
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(area));
 
         // Right-click inside the area opens the menu.
