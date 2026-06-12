@@ -427,28 +427,35 @@ impl Widget for PopoverHost {
             }
             // A trigger stashed mid-open (e.g. a tab/panel container hiding us
             // without tearing us down) can no longer be clicked to dismiss its
-            // popover, and in portal mode the slot child would stay visible while
-            // we stop painting. Close eagerly — mirrors `ThemedDropdownButton`'s
-            // disabled-mid-open close. In-tree mode self-heals (the overlay is a
-            // stashed descendant), so only portal mode needs the push.
+            // popover, and the overlay would stay visible/painted once the
+            // host is unstashed even though `self.open` is now false. Close
+            // eagerly — mirrors `ThemedDropdownButton`'s disabled-mid-open
+            // close — for both hosting modes.
             Update::StashedChanged(true) if self.open => {
                 self.open = false;
-                if let Hosting::Portal { scope, key, .. } = &self.hosting
-                    && let Some(scope_id) = scope.widget_id()
-                {
-                    let key = *key;
-                    ctx.mutate_later(scope_id, move |mut w| {
-                        let mut scope = w.downcast::<OverlayScope>();
-                        OverlayScope::set_portal_visible(
-                            &mut scope,
-                            key,
-                            false,
-                            None,
-                            Rect::ZERO,
-                            PopoverAnchor::BottomStart,
-                            0.0,
-                        );
-                    });
+                match &mut self.hosting {
+                    Hosting::InTree { overlay_host } => {
+                        ctx.mutate_child_later(overlay_host, |mut w| {
+                            AnchoredOverlay::set_overlay_visible(&mut w, false);
+                        });
+                    }
+                    Hosting::Portal { scope, key, .. } => {
+                        if let Some(scope_id) = scope.widget_id() {
+                            let key = *key;
+                            ctx.mutate_later(scope_id, move |mut w| {
+                                let mut scope = w.downcast::<OverlayScope>();
+                                OverlayScope::set_portal_visible(
+                                    &mut scope,
+                                    key,
+                                    false,
+                                    None,
+                                    Rect::ZERO,
+                                    PopoverAnchor::BottomStart,
+                                    0.0,
+                                );
+                            });
+                        }
+                    }
                 }
                 ctx.request_paint_only();
             }
