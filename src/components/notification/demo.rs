@@ -238,7 +238,20 @@ fn build_inner<S: NotificationDemoHost>(
 pub fn overlay<S: NotificationDemoHost>(
     theme: &Theme,
     demo: &NotificationDemoState,
-) -> impl WidgetView<S, ()> + use<S> {
+) -> Box<AnyWidgetView<S, ()>> {
+    if demo.toasts.is_empty() {
+        // Explicit 0x0 when there's nothing to show. Without an explicit
+        // size, `SizedBox` measures its empty `flex_col` child under a
+        // `FitContent` request, which reports wanting to fill all available
+        // space — expanding this overlay to cover (and hit-test-capture
+        // clicks on) the entire zstack.
+        return Box::new(
+            sized_box(notification_stack::<S, ()>(theme, Vec::new()))
+                .fixed_width(Length::ZERO)
+                .fixed_height(Length::ZERO),
+        );
+    }
+
     let items: Vec<Box<AnyWidgetView<S, ()>>> = demo
         .toasts
         .iter()
@@ -256,9 +269,11 @@ pub fn overlay<S: NotificationDemoHost>(
         })
         .collect();
 
-    sized_box(notification_stack(theme, items))
-        .fixed_width(Length::px(280.0))
-        .padding(Length::px(8.0))
+    Box::new(
+        sized_box(notification_stack(theme, items))
+            .fixed_width(Length::px(280.0))
+            .padding(Length::px(8.0)),
+    )
 }
 
 type InnerView<S> = Box<AnyWidgetView<S, ()>>;
