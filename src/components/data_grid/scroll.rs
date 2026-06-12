@@ -4,7 +4,7 @@
 //! its app state, calls [`ScrollState::scroll_to_index`] from any
 //! callback, and passes a snapshot to the grid via
 //! [`DataGrid::scroll_to`](super::view::DataGrid::scroll_to). The grid's
-//! body wrapper ([`ScrollToView`]) compares the snapshot's generation
+//! body wrapper (`ScrollToView`) compares the snapshot's generation
 //! against the last one it applied and, when they differ, re-anchors
 //! masonry's `VirtualScroll` so the requested row's top aligns with the
 //! top of the viewport.
