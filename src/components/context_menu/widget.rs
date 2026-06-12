@@ -6,11 +6,12 @@
 //! into the original spec list, so the [`super::view`] layer can map it straight
 //! back to the item's callback.
 //!
-//! This is the foundation the context menu is built on; later chunks enrich the
-//! row content (leading icon/check gutter, trailing shortcut, submenu chevron),
-//! but the layout/hit-test/selection spine lives here. It deliberately mirrors
-//! `dropdown_button`'s `MenuContent` (chrome look, hover model, hit-testing) so
-//! the two menu surfaces stay visually consistent.
+//! Rows are laid out in three columns: an optional leading-icon gutter, the
+//! label, and optional right-aligned keyboard-shortcut text. The gutter is
+//! reserved for every row as soon as any row has an icon, so labels stay
+//! aligned. Later chunks add the check column and submenu chevron. It
+//! deliberately mirrors `dropdown_button`'s `MenuContent` (chrome look, hover
+//! model, hit-testing) so the two menu surfaces stay visually consistent.
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
@@ -21,10 +22,12 @@ use masonry::core::{
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, RoundedRect, Size, Stroke};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
+use masonry::peniko::Color;
 use masonry::properties::ContentColor;
 use masonry::widgets::Label;
 
 use crate::Theme;
+use crate::components::icon::{IconName, icon};
 
 /// Vertical padding above and below the item list.
 const MENU_PAD_V: f64 = 4.0;
@@ -37,17 +40,59 @@ const SEPARATOR_ROW_HEIGHT: f64 = 9.0;
 /// Minimum menu width in logical pixels, keeping a readable popup even when all
 /// item labels are very short.
 const MIN_MENU_WIDTH: f64 = 80.0;
+/// Gap between the leading-icon gutter and the label.
+const ICON_GAP: f64 = 8.0;
+/// Minimum gap between the label column and the trailing shortcut column, so a
+/// long label and a long shortcut never collide.
+const SHORTCUT_GAP: f64 = 24.0;
 
 /// One row of a [`MenuPanel`], as handed in by the view layer.
 ///
 /// Display-only — callbacks stay in the view and are matched back up by the
 /// row's index (see [`MenuItemSelected`]).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub enum MenuRowSpec {
-    /// A selectable command row. `disabled` mutes it and blocks selection.
-    Action { label: ArcStr, disabled: bool },
+    /// A selectable command row: optional leading icon, label, optional trailing
+    /// keyboard-shortcut text. `disabled` mutes it and blocks selection.
+    Action {
+        label: ArcStr,
+        icon: Option<IconName>,
+        shortcut: Option<ArcStr>,
+        disabled: bool,
+    },
     /// A non-interactive horizontal divider.
     Separator,
+}
+
+impl PartialEq for MenuRowSpec {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Action {
+                    label: l1,
+                    icon: i1,
+                    shortcut: s1,
+                    disabled: d1,
+                },
+                Self::Action {
+                    label: l2,
+                    icon: i2,
+                    shortcut: s2,
+                    disabled: d2,
+                },
+            ) => {
+                // `IconName` (lucide's `Icon`) is compared by glyph since it
+                // doesn't itself implement `PartialEq` — matches how
+                // `dropdown_button` diffs icons.
+                l1 == l2
+                    && d1 == d2
+                    && s1 == s2
+                    && i1.map(char::from) == i2.map(char::from)
+            }
+            (Self::Separator, Self::Separator) => true,
+            _ => false,
+        }
+    }
 }
 
 /// Action emitted when the user selects the enabled action row at index `0`
@@ -58,8 +103,12 @@ pub struct MenuItemSelected(pub usize);
 /// Per-row state resolved at build time, plus the layout rect filled in by
 /// `layout()`.
 struct Row {
+    /// Leading-gutter icon, if any.
+    icon: Option<WidgetPod<dyn Widget>>,
     /// `None` for separators; otherwise the row's label child.
     label: Option<WidgetPod<dyn Widget>>,
+    /// Trailing keyboard-shortcut text, if any.
+    shortcut: Option<WidgetPod<dyn Widget>>,
     disabled: bool,
     is_separator: bool,
     /// Local-coordinate bounds, populated during `layout`.
@@ -98,14 +147,23 @@ impl MenuPanel {
 
     fn make_row(spec: MenuRowSpec, theme: &Theme) -> Row {
         match spec {
-            MenuRowSpec::Action { label, disabled } => Row {
+            MenuRowSpec::Action {
+                label,
+                icon,
+                shortcut,
+                disabled,
+            } => Row {
+                icon: icon.map(|name| Self::make_icon(name, disabled, theme)),
                 label: Some(Self::make_label(&label, disabled, theme)),
+                shortcut: shortcut.map(|s| Self::make_shortcut(&s, disabled, theme)),
                 disabled,
                 is_separator: false,
                 rect: Rect::ZERO,
             },
             MenuRowSpec::Separator => Row {
+                icon: None,
                 label: None,
+                shortcut: None,
                 disabled: false,
                 is_separator: true,
                 rect: Rect::ZERO,
@@ -122,11 +180,54 @@ impl MenuPanel {
         lbl.erased().to_pod()
     }
 
-    fn label_color(disabled: bool, theme: &Theme) -> masonry::peniko::Color {
+    /// Leading icon, dogfooding the `icon` component's widget builder.
+    fn make_icon(name: IconName, disabled: bool, theme: &Theme) -> WidgetPod<dyn Widget> {
+        icon(name)
+            .color(Self::label_color(disabled, theme))
+            .build_widget(theme)
+            .erased()
+            .to_pod()
+    }
+
+    /// Trailing keyboard-shortcut text — muted relative to the label.
+    fn make_shortcut(text: &ArcStr, disabled: bool, theme: &Theme) -> WidgetPod<dyn Widget> {
+        let mut lbl = Label::new(text.clone())
+            .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
+            .prepare();
+        lbl.properties
+            .insert(ContentColor::new(Self::shortcut_color(disabled, theme)));
+        lbl.erased().to_pod()
+    }
+
+    fn label_color(disabled: bool, theme: &Theme) -> Color {
         if disabled {
             theme.palette.text_faint
         } else {
             theme.palette.text
+        }
+    }
+
+    fn shortcut_color(disabled: bool, theme: &Theme) -> Color {
+        if disabled {
+            theme.palette.text_faint
+        } else {
+            theme.palette.text_muted
+        }
+    }
+
+    /// Whether any row has a leading icon — if so all rows reserve the gutter so
+    /// labels align.
+    fn has_icon(&self) -> bool {
+        self.rows.iter().any(|r| r.icon.is_some())
+    }
+
+    /// Width reserved on the left for the icon gutter (icon column + gap), or 0
+    /// when no row has an icon.
+    fn gutter(&self) -> f64 {
+        if self.has_icon() {
+            f64::from(self.theme.density.ui_font_size) + ICON_GAP
+        } else {
+            0.0
         }
     }
 
@@ -162,16 +263,22 @@ impl MenuPanel {
             return;
         }
         this.widget.theme = *theme;
+        let font_size = theme.density.ui_font_size;
         for row in &mut this.widget.rows {
-            let color = Self::label_color(row.disabled, theme);
-            if let Some(label) = &mut row.label {
-                let mut lbl = this.ctx.get_mut(label);
-                lbl.insert_prop(ContentColor::new(color));
-                let mut lbl = lbl.downcast::<Label>();
-                Label::insert_style(
-                    &mut lbl,
-                    StyleProperty::FontSize(theme.density.ui_font_size),
-                );
+            let fg = Self::label_color(row.disabled, theme);
+            let shortcut_fg = Self::shortcut_color(row.disabled, theme);
+            // Icon and label share the label color; the shortcut is muted.
+            for (child, color) in [
+                (&mut row.icon, fg),
+                (&mut row.label, fg),
+                (&mut row.shortcut, shortcut_fg),
+            ] {
+                if let Some(child) = child {
+                    let mut lbl = this.ctx.get_mut(child);
+                    lbl.insert_prop(ContentColor::new(color));
+                    let mut lbl = lbl.downcast::<Label>();
+                    Label::insert_style(&mut lbl, StyleProperty::FontSize(font_size));
+                }
             }
         }
         this.ctx.request_layout();
@@ -183,8 +290,8 @@ impl MenuPanel {
     pub fn set_rows(this: &mut WidgetMut<'_, Self>, specs: impl IntoIterator<Item = MenuRowSpec>) {
         let old: Vec<_> = this.widget.rows.drain(..).collect();
         for row in old {
-            if let Some(label) = row.label {
-                this.ctx.remove_child(label);
+            for child in [row.icon, row.label, row.shortcut].into_iter().flatten() {
+                this.ctx.remove_child(child);
             }
         }
         let theme = this.widget.theme;
@@ -262,8 +369,11 @@ impl Widget for MenuPanel {
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
         for row in &mut self.rows {
-            if let Some(label) = &mut row.label {
-                ctx.register_child(label);
+            for child in [&mut row.icon, &mut row.label, &mut row.shortcut]
+                .into_iter()
+                .flatten()
+            {
+                ctx.register_child(child);
             }
         }
     }
@@ -296,22 +406,34 @@ impl Widget for MenuPanel {
             Axis::Horizontal => {
                 let inner_cross =
                     cross_length.map(|c| Length::px((c.get() - 2.0 * pad_h).max(0.0)));
-                let mut max_w = MIN_MENU_WIDTH;
+                let gutter = self.gutter();
+                let mut max_label = 0.0_f64;
+                let mut max_shortcut = 0.0_f64;
+                let mut measure = |pod: &mut WidgetPod<dyn Widget>| {
+                    ctx.compute_length(
+                        pod,
+                        len_req.into(),
+                        LayoutSize::maybe(Axis::Vertical, inner_cross),
+                        Axis::Horizontal,
+                        inner_cross,
+                    )
+                    .get()
+                };
                 for row in &mut self.rows {
                     if let Some(label) = &mut row.label {
-                        let w = ctx
-                            .compute_length(
-                                label,
-                                len_req.into(),
-                                LayoutSize::maybe(Axis::Vertical, inner_cross),
-                                Axis::Horizontal,
-                                inner_cross,
-                            )
-                            .get();
-                        max_w = max_w.max(w);
+                        max_label = max_label.max(measure(label));
+                    }
+                    if let Some(shortcut) = &mut row.shortcut {
+                        max_shortcut = max_shortcut.max(measure(shortcut));
                     }
                 }
-                Length::px(max_w + 2.0 * pad_h)
+                let shortcut_col = if max_shortcut > 0.0 {
+                    SHORTCUT_GAP + max_shortcut
+                } else {
+                    0.0
+                };
+                let content = gutter + max_label + shortcut_col;
+                Length::px(content.max(MIN_MENU_WIDTH) + 2.0 * pad_h)
             }
         }
     }
@@ -319,7 +441,7 @@ impl Widget for MenuPanel {
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         let pad_h = self.pad_h();
         let action_h = self.action_height();
-        let label_available = Size::new((size.width - 2.0 * pad_h).max(0.0), action_h);
+        let gutter = self.gutter();
 
         let mut y = MENU_PAD_V;
         for row in &mut self.rows {
@@ -329,13 +451,33 @@ impl Widget for MenuPanel {
                 action_h
             };
             row.rect = Rect::from_origin_size(Point::new(0.0, y), Size::new(size.width, row_h));
+            // Vertically centre a child of `child_h` within this row. `move`
+            // copies the current `y`/`row_h` so the `y += row_h` below is free
+            // to mutate `y`.
+            let centre_y = move |child_h: f64| y + (row_h - child_h) * 0.5;
+            let full = Size::new((size.width - 2.0 * pad_h).max(0.0), row_h);
 
+            // Leading icon, left-aligned in the gutter.
+            if let Some(ic) = &mut row.icon {
+                let ic_size = ctx.compute_size(ic, SizeDef::MIN, full.into());
+                ctx.run_layout(ic, ic_size);
+                ctx.place_child(ic, Point::new(pad_h, centre_y(ic_size.height)));
+            }
+
+            // Label, after the gutter.
             if let Some(label) = &mut row.label {
-                let label_size =
-                    ctx.compute_size(label, SizeDef::fit(label_available), label_available.into());
+                let avail = Size::new((size.width - 2.0 * pad_h - gutter).max(0.0), row_h);
+                let label_size = ctx.compute_size(label, SizeDef::fit(avail), avail.into());
                 ctx.run_layout(label, label_size);
-                let label_y = y + (row_h - label_size.height) * 0.5;
-                ctx.place_child(label, Point::new(pad_h, label_y));
+                ctx.place_child(label, Point::new(pad_h + gutter, centre_y(label_size.height)));
+            }
+
+            // Trailing shortcut, right-aligned.
+            if let Some(shortcut) = &mut row.shortcut {
+                let sc_size = ctx.compute_size(shortcut, SizeDef::MIN, full.into());
+                ctx.run_layout(shortcut, sc_size);
+                let sx = size.width - pad_h - sc_size.width;
+                ctx.place_child(shortcut, Point::new(sx, centre_y(sc_size.height)));
             }
 
             y += row_h;
@@ -394,7 +536,9 @@ impl Widget for MenuPanel {
         let ids: Vec<_> = self
             .rows
             .iter()
-            .filter_map(|r| r.label.as_ref().map(WidgetPod::id))
+            .flat_map(|r| [r.icon.as_ref(), r.label.as_ref(), r.shortcut.as_ref()])
+            .flatten()
+            .map(WidgetPod::id)
             .collect();
         ChildrenIds::from_slice(&ids)
     }
@@ -418,6 +562,8 @@ mod tests {
     fn action(label: &str) -> MenuRowSpec {
         MenuRowSpec::Action {
             label: label.into(),
+            icon: None,
+            shortcut: None,
             disabled: false,
         }
     }
@@ -425,6 +571,8 @@ mod tests {
     fn disabled(label: &str) -> MenuRowSpec {
         MenuRowSpec::Action {
             label: label.into(),
+            icon: None,
+            shortcut: None,
             disabled: true,
         }
     }

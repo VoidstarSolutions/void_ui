@@ -29,6 +29,7 @@ use xilem::{Pod, ViewCtx, WidgetView};
 use super::area::{ContextMenuArea, ContextMenuAction};
 use super::widget::{MenuItemSelected, MenuPanel, MenuRowSpec};
 use crate::Theme;
+use crate::components::icon::IconName;
 
 type SelectCallback<State, Action> = Box<dyn Fn(&mut State) -> Action + Send + Sync>;
 
@@ -38,6 +39,8 @@ type SelectCallback<State, Action> = Box<dyn Fn(&mut State) -> Action + Send + S
 #[must_use = "MenuItem does nothing until added to a menu() with .item(...)"]
 pub struct MenuItem<State, Action> {
     label: ArcStr,
+    icon: Option<IconName>,
+    shortcut: Option<ArcStr>,
     disabled: bool,
     on_select: Option<SelectCallback<State, Action>>,
 }
@@ -46,12 +49,26 @@ pub struct MenuItem<State, Action> {
 pub fn item<State, Action>(label: impl Into<ArcStr>) -> MenuItem<State, Action> {
     MenuItem {
         label: label.into(),
+        icon: None,
+        shortcut: None,
         disabled: false,
         on_select: None,
     }
 }
 
 impl<State, Action> MenuItem<State, Action> {
+    /// Attach a leading icon from the Lucide icon set.
+    pub fn icon(mut self, name: IconName) -> Self {
+        self.icon = Some(name);
+        self
+    }
+
+    /// Attach trailing keyboard-shortcut text (e.g. `"Ctrl+C"`).
+    pub fn shortcut(mut self, shortcut: impl Into<ArcStr>) -> Self {
+        self.shortcut = Some(shortcut.into());
+        self
+    }
+
     /// Mute the row and block its selection.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
@@ -88,6 +105,8 @@ fn entries_to_rows<State, Action>(
             Entry::Item(it) => {
                 rows.push(MenuRowSpec::Action {
                     label: it.label,
+                    icon: it.icon,
+                    shortcut: it.shortcut,
                     disabled: it.disabled,
                 });
                 // Disabled rows never emit a selection, so their callback is

@@ -14,6 +14,7 @@ use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 use crate::Theme;
 use crate::components::ScrollBarVisibility;
 use crate::components::context_menu::{context_menu_area, item, menu};
+use crate::components::icon::IconName;
 use crate::label;
 use crate::scroll_container;
 use crate::with_source;
@@ -48,23 +49,46 @@ fn basic_menu(theme: &Theme) -> impl WidgetView<ContextMenuDemo> + use<> {
     with_source!(theme, {
         flex_row(
             menu()
-                .item(item("Cut").on_select(|s: &mut ContextMenuDemo| {
-                    s.last_action = "Cut".into();
-                }))
-                .item(item("Copy").on_select(|s: &mut ContextMenuDemo| {
-                    s.last_action = "Copy".into();
-                }))
+                .item(
+                    item("Cut")
+                        .shortcut("Ctrl+X")
+                        .on_select(|s: &mut ContextMenuDemo| {
+                            s.last_action = "Cut".into();
+                        }),
+                )
+                .item(
+                    item("Copy")
+                        .icon(IconName::Copy)
+                        .shortcut("Ctrl+C")
+                        .on_select(|s: &mut ContextMenuDemo| {
+                            s.last_action = "Copy".into();
+                        }),
+                )
                 .item(
                     item("Paste")
+                        .shortcut("Ctrl+V")
                         .disabled(true)
                         .on_select(|s: &mut ContextMenuDemo| {
                             s.last_action = "Paste".into();
                         }),
                 )
                 .separator()
-                .item(item("Select All").on_select(|s: &mut ContextMenuDemo| {
-                    s.last_action = "Select All".into();
-                }))
+                .item(
+                    item("Settings")
+                        .icon(IconName::Settings)
+                        .shortcut("Ctrl+,")
+                        .on_select(|s: &mut ContextMenuDemo| {
+                            s.last_action = "Settings".into();
+                        }),
+                )
+                .item(
+                    item("Select All")
+                        .icon(IconName::Check)
+                        .shortcut("Ctrl+A")
+                        .on_select(|s: &mut ContextMenuDemo| {
+                            s.last_action = "Select All".into();
+                        }),
+                )
                 .render(theme),
         )
     })
@@ -84,23 +108,38 @@ fn right_click_area(theme: &Theme) -> impl WidgetView<ContextMenuDemo> + use<> {
             .border_color(theme.palette.border)
             .border_width(Length::px(1.0)),
         )
-        .item(item("Cut").on_select(|s: &mut ContextMenuDemo| {
-            s.last_action = "Cut".into();
-        }))
-        .item(item("Copy").on_select(|s: &mut ContextMenuDemo| {
-            s.last_action = "Copy".into();
-        }))
+        .item(
+            item("Cut")
+                .shortcut("Ctrl+X")
+                .on_select(|s: &mut ContextMenuDemo| {
+                    s.last_action = "Cut".into();
+                }),
+        )
+        .item(
+            item("Copy")
+                .icon(IconName::Copy)
+                .shortcut("Ctrl+C")
+                .on_select(|s: &mut ContextMenuDemo| {
+                    s.last_action = "Copy".into();
+                }),
+        )
         .item(
             item("Paste")
+                .shortcut("Ctrl+V")
                 .disabled(true)
                 .on_select(|s: &mut ContextMenuDemo| {
                     s.last_action = "Paste".into();
                 }),
         )
         .separator()
-        .item(item("Select All").on_select(|s: &mut ContextMenuDemo| {
-            s.last_action = "Select All".into();
-        }))
+        .item(
+            item("Select All")
+                .icon(IconName::Check)
+                .shortcut("Ctrl+A")
+                .on_select(|s: &mut ContextMenuDemo| {
+                    s.last_action = "Select All".into();
+                }),
+        )
         .render(theme)
     })
 }
