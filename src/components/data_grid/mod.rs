@@ -29,7 +29,8 @@
 //! Entry points: [`view::data_grid`] for the xilem view,
 //! [`column::ColumnDef`] for the per-column contract,
 //! [`selection::SelectionState`] for the selection model,
-//! [`sort::SortState`] for the sort model.
+//! [`sort::SortState`] for the sort model,
+//! [`scroll::ScrollState`] for programmatic scroll-to-row.
 //!
 //! ## The host owns row order (sorting *and* filtering)
 //!
