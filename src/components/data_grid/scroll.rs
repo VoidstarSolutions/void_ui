@@ -3,7 +3,7 @@
 //! [`ScrollState`] is a host-owned request token: the host keeps one in
 //! its app state, calls [`ScrollState::scroll_to_index`] from any
 //! callback, and passes a snapshot to the grid via
-//! `DataGrid::scroll_to`. The grid's
+//! [`DataGrid::scroll_to`](super::view::DataGrid::scroll_to). The grid's
 //! body wrapper ([`ScrollToView`]) compares the snapshot's generation
 //! against the last one it applied and, when they differ, re-anchors
 //! masonry's `VirtualScroll` so the requested row's top aligns with the
@@ -108,7 +108,10 @@ where
         // needs a WidgetMut that only exists once the widget is in the
         // tree. Recording generation 0 here means a request pending at
         // build time (snapshot generation != 0) is applied at the first
-        // rebuild.
+        // rebuild. A remounted grid (torn down and rebuilt by the host)
+        // therefore re-applies the host's last request on its first
+        // rebuild — acceptable, since scroll position is lost on remount
+        // anyway.
         (
             element,
             ScrollToViewState {

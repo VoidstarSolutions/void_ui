@@ -38,6 +38,7 @@ use super::copy_shortcut::CopyOnShortcut;
 use super::filter::FilterState;
 use super::header_click::clickable_header;
 use super::row_click::clickable_row;
+use super::scroll::{ScrollState, ScrollToView};
 use super::selection::SelectionState;
 use super::sort::{SortDirection, SortState};
 use super::width::ColumnWidths;
@@ -213,6 +214,7 @@ pub struct DataGrid<State, R> {
     filter_change: Option<FilterChange<State>>,
     column_widths: ColumnWidths,
     width_change: Option<WidthChange<State>>,
+    scroll: ScrollState,
 }
 
 /// Default fixed row height when [`DataGrid::row_height`] is unset.
@@ -239,6 +241,7 @@ where
             filter_change: None,
             column_widths: ColumnWidths::new(),
             width_change: None,
+            scroll: ScrollState::new(),
         }
     }
 
@@ -387,6 +390,30 @@ where
         self
     }
 
+    /// Supplies the current [`ScrollState`] snapshot. When the
+    /// snapshot's generation differs from the one the grid last
+    /// applied, the body scrolls so the requested row's top aligns with
+    /// the top of the viewport (masonry's `overwrite_anchor`
+    /// semantics). The index is a display position in the host's
+    /// ordered view — the same domain as [`Self::row_count`] — and is
+    /// clamped to the row range; a request against an empty grid is a
+    /// no-op. Defaults to no request.
+    ///
+    /// The host keeps the `ScrollState` in its app state and calls
+    /// [`ScrollState::scroll_to_index`] from any callback:
+    ///
+    /// ```ignore
+    /// // In app state: scroll: ScrollState,
+    /// // In any callback:
+    /// state.scroll.scroll_to_index(50_000);
+    /// // At frame time:
+    /// data_grid(columns).scroll_to(state.scroll) /* ... */
+    /// ```
+    pub fn scroll_to(mut self, scroll: ScrollState) -> Self {
+        self.scroll = scroll;
+        self
+    }
+
     /// Materializes the xilem view at the supplied theme.
     #[must_use]
     pub fn render(self, theme: &Theme) -> impl WidgetView<State, ()> + use<State, R> {
@@ -513,6 +540,7 @@ where
         filter_change,
         column_widths,
         width_change,
+        scroll,
     } = grid;
 
     // Default the data accessor to an empty slice when unset.
@@ -605,6 +633,7 @@ where
         rows: rows.clone(),
         selection_lens: selection_lens.clone(),
         row_id: row_id.clone(),
+        scroll,
     });
 
     // Build the filter-input row only when filtering is configured and
@@ -978,6 +1007,8 @@ struct BodyParams<State, R> {
     rows: RowsFn<State, R>,
     selection_lens: Option<SelectionLens<State>>,
     row_id: RowIdSource<R>,
+    /// Pending programmatic-scroll request snapshot (see [`ScrollState`]).
+    scroll: ScrollState,
 }
 
 /// Builds the virtualized body. The host supplies rows **already in
@@ -998,6 +1029,7 @@ where
         rows,
         selection_lens,
         row_id,
+        scroll,
     } = params;
     let valid_range_end = scroll_range_end(row_count);
     // Column widths are identical for every row and don't change between
@@ -1006,94 +1038,100 @@ where
     // every visible row; `column_strip` takes the `Arc` directly, so each
     // row costs a refcount bump, not a `Vec` allocation.
     let widths: Arc<Vec<f64>> = Arc::new(render_slots.iter().map(|s| s.width).collect());
-    virtual_scroll(0..valid_range_end, move |state: &mut State, idx: i64| {
-        // Host owns order: virtual position is the slice position.
-        let pos = scroll_idx_to_slice(idx);
+    // Wrap the virtual scroll so pending ScrollState requests re-anchor
+    // it (programmatic scroll-to-row); see `scroll::ScrollToView`.
+    ScrollToView {
+        child: virtual_scroll(0..valid_range_end, move |state: &mut State, idx: i64| {
+            // Host owns order: virtual position is the slice position.
+            let pos = scroll_idx_to_slice(idx);
 
-        let data = (*rows)(state);
-        // The clicked row's stable id, resolved from the current ordered
-        // slice. `None` when `pos` is past the end (a row scrolled past a
-        // shrinking dataset) — that row renders empty and is inert.
-        let row_id_at_pos = data.get(pos).map(|row| row_id.id_of(pos, row));
+            let data = (*rows)(state);
+            // The clicked row's stable id, resolved from the current ordered
+            // slice. `None` when `pos` is past the end (a row scrolled past a
+            // shrinking dataset) — that row renders empty and is inert.
+            let row_id_at_pos = data.get(pos).map(|row| row_id.id_of(pos, row));
 
-        let is_selected = match (selection_lens.as_ref(), row_id_at_pos) {
-            (Some(sel), Some(id)) => (**sel)(state).contains(id),
-            _ => false,
-        };
-
-        // Re-borrow the slice: the `is_selected` arm above took a
-        // `&mut State` through the selection lens, ending the earlier
-        // `&[R]` borrow, so we fetch the rows again for cell rendering.
-        let data = (*rows)(state);
-        let cells: Vec<Box<AnyWidgetView<State>>> = if let Some(row) = data.get(pos) {
-            render_slots
-                .iter()
-                .map(|slot| {
-                    // Cell content only; ColumnStrip owns the width.
-                    // Keep the per-cell alignment wrapper so Start/
-                    // Center/End still position text within the cell.
-                    aligned_cell((slot.render)(row, &theme), slot.width, slot.align)
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-
-        let row_bg = if is_selected {
-            theme.palette.surface_2
-        } else {
-            Color::TRANSPARENT
-        };
-        // ColumnStrip gives every body row the same authoritative column
-        // x-positions as the header/filter strips. The shared width list
-        // is handed over as an `Arc` clone — a refcount bump, not a per-
-        // row `Vec` allocation.
-        let row_view = sized_box(column_strip(Arc::clone(&widths), row_height, cells))
-            .background_color(row_bg);
-
-        // Click handler: route modifiers to the matching SelectionState
-        // op, all keyed by the row's *stable id*. Borrows of `state` are
-        // kept disjoint (id/data reads vs. the mutable selection borrow)
-        // by snapshotting Copy values between them.
-        let lens_for_click = selection_lens.clone();
-        let row_id_for_click = row_id.clone();
-        let rows_for_click = rows.clone();
-        clickable_row(row_view, move |state: &mut State, action| {
-            let Some(sel_lens) = lens_for_click.as_ref() else {
-                return;
-            };
-            // Re-resolve the target id at click time from the live slice
-            // (the captured `pos` is stable for this row's lifetime).
-            let Some(target_id) = ({
-                let data = (*rows_for_click)(state);
-                data.get(pos).map(|row| row_id_for_click.id_of(pos, row))
-            }) else {
-                return;
+            let is_selected = match (selection_lens.as_ref(), row_id_at_pos) {
+                (Some(sel), Some(id)) => (**sel)(state).contains(id),
+                _ => false,
             };
 
-            if action.shift {
-                // Shift-extend over the *visual* range. Snapshot the
-                // anchor id, resolve the inclusive id span from the
-                // ordered slice, then apply — each borrow disjoint.
-                let anchor = (**sel_lens)(state).anchor();
-                let range = anchor.and_then(|anchor_id| {
-                    let data = (*rows_for_click)(state);
-                    visual_range_ids(data, &row_id_for_click, anchor_id, target_id)
-                });
-                match range {
-                    Some(ids) => (**sel_lens)(state).extend_range(ids),
-                    // No anchor yet, or the anchor isn't in the current
-                    // view (e.g. filtered out): plain-select the target,
-                    // which reseats the anchor there for the next extend.
-                    None => (**sel_lens)(state).replace_with(target_id),
-                }
-            } else if action.action_mod {
-                (**sel_lens)(state).toggle(target_id);
+            // Re-borrow the slice: the `is_selected` arm above took a
+            // `&mut State` through the selection lens, ending the earlier
+            // `&[R]` borrow, so we fetch the rows again for cell rendering.
+            let data = (*rows)(state);
+            let cells: Vec<Box<AnyWidgetView<State>>> = if let Some(row) = data.get(pos) {
+                render_slots
+                    .iter()
+                    .map(|slot| {
+                        // Cell content only; ColumnStrip owns the width.
+                        // Keep the per-cell alignment wrapper so Start/
+                        // Center/End still position text within the cell.
+                        aligned_cell((slot.render)(row, &theme), slot.width, slot.align)
+                    })
+                    .collect()
             } else {
-                (**sel_lens)(state).replace_with(target_id);
-            }
-        })
-    })
+                Vec::new()
+            };
+
+            let row_bg = if is_selected {
+                theme.palette.surface_2
+            } else {
+                Color::TRANSPARENT
+            };
+            // ColumnStrip gives every body row the same authoritative column
+            // x-positions as the header/filter strips. The shared width list
+            // is handed over as an `Arc` clone — a refcount bump, not a per-
+            // row `Vec` allocation.
+            let row_view = sized_box(column_strip(Arc::clone(&widths), row_height, cells))
+                .background_color(row_bg);
+
+            // Click handler: route modifiers to the matching SelectionState
+            // op, all keyed by the row's *stable id*. Borrows of `state` are
+            // kept disjoint (id/data reads vs. the mutable selection borrow)
+            // by snapshotting Copy values between them.
+            let lens_for_click = selection_lens.clone();
+            let row_id_for_click = row_id.clone();
+            let rows_for_click = rows.clone();
+            clickable_row(row_view, move |state: &mut State, action| {
+                let Some(sel_lens) = lens_for_click.as_ref() else {
+                    return;
+                };
+                // Re-resolve the target id at click time from the live slice
+                // (the captured `pos` is stable for this row's lifetime).
+                let Some(target_id) = ({
+                    let data = (*rows_for_click)(state);
+                    data.get(pos).map(|row| row_id_for_click.id_of(pos, row))
+                }) else {
+                    return;
+                };
+
+                if action.shift {
+                    // Shift-extend over the *visual* range. Snapshot the
+                    // anchor id, resolve the inclusive id span from the
+                    // ordered slice, then apply — each borrow disjoint.
+                    let anchor = (**sel_lens)(state).anchor();
+                    let range = anchor.and_then(|anchor_id| {
+                        let data = (*rows_for_click)(state);
+                        visual_range_ids(data, &row_id_for_click, anchor_id, target_id)
+                    });
+                    match range {
+                        Some(ids) => (**sel_lens)(state).extend_range(ids),
+                        // No anchor yet, or the anchor isn't in the current
+                        // view (e.g. filtered out): plain-select the target,
+                        // which reseats the anchor there for the next extend.
+                        None => (**sel_lens)(state).replace_with(target_id),
+                    }
+                } else if action.action_mod {
+                    (**sel_lens)(state).toggle(target_id);
+                } else {
+                    (**sel_lens)(state).replace_with(target_id);
+                }
+            })
+        }),
+        scroll,
+        row_count,
+    }
 }
 
 /// Resolves the stable ids of the rows spanning the **visual** range
