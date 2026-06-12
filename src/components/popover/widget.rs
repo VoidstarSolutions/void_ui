@@ -695,6 +695,7 @@ mod tests {
     use masonry::core::TextEvent;
     use masonry::core::keyboard::{Key, NamedKey};
     use masonry::core::{Handled, NewWidget};
+    use masonry::layout::SizeDef;
     use masonry::testing::TestHarness;
     use masonry::theme::default_property_set;
     use masonry::widgets::Label;
@@ -754,6 +755,74 @@ mod tests {
         let handled = h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Escape)));
         assert_eq!(handled, Handled::Yes);
         assert!(!h.edit_root_widget(|wm| wm.widget.open));
+    }
+
+    /// Stashing the host while its in-tree popover is open (e.g. a tab/panel
+    /// container hiding it without tearing it down) must close the popover
+    /// *and* hide the `AnchoredOverlay`'s overlay — otherwise the overlay
+    /// stays `overlay_visible` and reappears on unstash even though `open`
+    /// is now `false`.
+    #[test]
+    fn stashing_while_open_closes_in_tree_popover() {
+        use masonry::testing::ModularWidget;
+
+        let theme = Theme::dark();
+        let trigger = button("Open", &theme);
+        let trigger_id = trigger.id();
+        let content = NewWidget::new(Label::new("Content")).erased();
+        let host =
+            NewWidget::new(PopoverHost::new(trigger, content, PopoverAnchor::BottomStart, &theme));
+
+        let parent = ModularWidget::new_parent(host).layout_fn(|child, ctx, _props, size| {
+            if ctx.child_is_stashed(child) {
+                return;
+            }
+            let child_size = ctx.compute_size(child, SizeDef::fit(size), size.into());
+            ctx.run_layout(child, child_size);
+            ctx.place_child(child, Point::ZERO);
+            ctx.derive_baselines(child);
+        });
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(parent));
+
+        h.focus_on(Some(trigger_id));
+        h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
+
+        h.edit_root_widget(|mut wm| {
+            let mut host = wm.ctx.get_mut(&mut wm.widget.state);
+            assert!(host.widget.open, "popover must be open after toggling");
+            let overlay_host = PopoverHost::overlay_host_mut(&mut host);
+            assert_ne!(
+                AnchoredOverlay::placed_overlay_rect(overlay_host.widget),
+                Rect::ZERO,
+                "overlay must be placed while open"
+            );
+        });
+
+        h.edit_root_widget(|mut wm| {
+            wm.ctx.set_stashed(&mut wm.widget.state, true);
+        });
+
+        h.edit_root_widget(|mut wm| {
+            let host = wm.ctx.get_mut(&mut wm.widget.state);
+            assert!(!host.widget.open, "stashing while open must close the popover");
+        });
+
+        // Unstash and re-layout: with `overlay_visible` correctly cleared
+        // while stashed, the overlay must come back hidden (placed rect
+        // zeroed) rather than reappearing as a "ghost" popover.
+        h.edit_root_widget(|mut wm| {
+            wm.ctx.set_stashed(&mut wm.widget.state, false);
+        });
+
+        h.edit_root_widget(|mut wm| {
+            let mut host = wm.ctx.get_mut(&mut wm.widget.state);
+            let overlay_host = PopoverHost::overlay_host_mut(&mut host);
+            assert_eq!(
+                AnchoredOverlay::placed_overlay_rect(overlay_host.widget),
+                Rect::ZERO,
+                "overlay must stay hidden after unstashing a closed popover"
+            );
+        });
     }
 
     /// A keyboard activation of a button inside the open popover content
