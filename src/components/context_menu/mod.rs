@@ -22,6 +22,7 @@
 pub mod area;
 #[cfg(feature = "gallery")]
 pub mod demo;
+pub(crate) mod item_node;
 mod view;
 pub mod widget;
 
@@ -30,4 +31,4 @@ pub use view::{
     ContextMenuAreaBuilder, ContextMenuAreaView, Menu, MenuItem, MenuView, context_menu_area, item,
     menu,
 };
-pub use widget::{MenuItemSelected, MenuPanel, MenuRowSpec};
+pub use widget::{MenuAction, MenuPanel, MenuRowSpec};

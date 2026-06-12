@@ -1,37 +1,35 @@
 //! `MenuPanel` — the rich context-menu item-list widget.
 //!
-//! Lays out one row per [`MenuRowSpec`], tracks per-row hover, paints its own
-//! background/border chrome plus separators, and fires [`MenuItemSelected`] when
-//! an enabled action row is clicked. Selection is reported by the row's index
-//! into the original spec list, so the [`super::view`] layer can map it straight
-//! back to the item's callback.
+//! Stacks one [`MenuItemNode`] per [`MenuRowSpec`] vertically, tracks per-row
+//! hover and a keyboard highlight, paints its own background/border chrome plus
+//! separator lines and the focus ring, and fires [`MenuAction`] when an enabled
+//! action row is selected (by pointer, keyboard, or an accessibility invoke).
+//! Selection is reported by the row's index into the original spec list, so the
+//! [`super::view`] layer can map it straight back to the item's callback.
 //!
-//! Rows are laid out in three columns: a leading gutter (check or icon glyph),
-//! the label, and optional right-aligned keyboard-shortcut text. An item may
-//! also carry a sub-title — a smaller muted second line under the label, which
-//! makes that row taller; the gutter glyph and shortcut then align to the label
-//! line, not the row center. The gutter is reserved for every row as soon as
-//! any row is checkable or has an icon, so labels stay aligned. Rows come in
-//! three kinds — selectable actions, separators, and muted non-interactive
-//! section headers. A later chunk adds the submenu chevron. It deliberately
-//! mirrors `dropdown_button`'s `MenuContent` (chrome look, hover model,
-//! hit-testing) so the two menu surfaces stay visually consistent.
+//! The per-row column layout (leading gutter glyph · label + optional sub-title
+//! · trailing shortcut) and per-row accessibility (role/name/checked/disabled/
+//! position-in-set) live in [`MenuItemNode`]; `MenuPanel` owns only the vertical
+//! stacking, chrome, hover/keyboard/hit-testing, and selection routing. It
+//! mirrors `dropdown_button`'s `MenuContent` look so the two menu surfaces stay
+//! visually consistent, and matches `tabs`/`sidebar`'s per-item a11y node model.
 
-use masonry::accesskit::{Node, Role};
+use masonry::accesskit::{Action, Node, Orientation, Role};
+use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
-    AccessCtx, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, PaintCtx, PointerButton,
-    PointerButtonEvent, PointerEvent, PointerUpdate, PropertiesMut, PropertiesRef, RegisterCtx,
-    StyleProperty, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
+    AccessCtx, ActionCtx, ArcStr, ChildrenIds, ErasedAction, EventCtx, LayoutCtx, MeasureCtx,
+    PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PointerUpdate, PropertiesMut,
+    PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
+    WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Point, Rect, RoundedRect, Size, Stroke};
+use masonry::kurbo::{Axis, Line, Point, Rect, RoundedRect, Size, Stroke};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
-use masonry::peniko::Color;
-use masonry::properties::ContentColor;
-use masonry::widgets::Label;
 
+use super::item_node::{MenuItemNode, NodeActivated, gutter_glyph_width, reserves_gutter};
 use crate::Theme;
-use crate::components::icon::{IconName, icon};
+use crate::components::icon::IconName;
+use crate::focus_ring::paint_focus_ring;
 
 /// Vertical padding above and below the item list.
 const MENU_PAD_V: f64 = 4.0;
@@ -39,23 +37,16 @@ const MENU_PAD_V: f64 = 4.0;
 const CORNER_RADIUS: f64 = 5.0;
 /// Border width of the menu's background chrome.
 const BORDER_WIDTH: f64 = 1.0;
-/// Total height of a separator row (line centered within it).
-const SEPARATOR_ROW_HEIGHT: f64 = 9.0;
 /// Minimum menu width in logical pixels, keeping a readable popup even when all
 /// item labels are very short.
 const MIN_MENU_WIDTH: f64 = 80.0;
-/// Gap between the leading-icon gutter and the label.
-const ICON_GAP: f64 = 8.0;
-/// Minimum gap between the label column and the trailing shortcut column, so a
-/// long label and a long shortcut never collide.
-const SHORTCUT_GAP: f64 = 24.0;
-/// Vertical gap between an item's label and its sub-title line.
-const SUBTITLE_GAP: f64 = 2.0;
+/// Inset of the keyboard-highlight focus ring from its row's bounds.
+const HIGHLIGHT_RING_INSET: f64 = 2.0;
 
 /// One row of a [`MenuPanel`], as handed in by the view layer.
 ///
 /// Display-only — callbacks stay in the view and are matched back up by the
-/// row's index (see [`MenuItemSelected`]).
+/// row's index (see [`MenuAction::Selected`]).
 #[derive(Clone)]
 pub enum MenuRowSpec {
     /// A selectable command row: optional leading icon, label, optional trailing
@@ -74,6 +65,27 @@ pub enum MenuRowSpec {
     Separator,
     /// A non-interactive, muted section header.
     Section { text: ArcStr },
+}
+
+impl MenuRowSpec {
+    fn is_separator(&self) -> bool {
+        matches!(self, Self::Separator)
+    }
+
+    fn is_action(&self) -> bool {
+        matches!(self, Self::Action { .. })
+    }
+
+    /// Whether a pointer/keyboard selection can land on this row.
+    fn selectable(&self) -> bool {
+        matches!(
+            self,
+            Self::Action {
+                disabled: false,
+                ..
+            }
+        )
+    }
 }
 
 impl PartialEq for MenuRowSpec {
@@ -114,200 +126,51 @@ impl PartialEq for MenuRowSpec {
     }
 }
 
-/// Action emitted when the user selects the enabled action row at index `0`
-/// (the row's position in the original [`MenuRowSpec`] list).
+/// The action a [`MenuPanel`] emits. A masonry widget can only submit its single
+/// declared `Action` type, so selection and dismissal share one enum.
 #[derive(Debug)]
-pub struct MenuItemSelected(pub usize);
-
-/// What kind of row this is — drives selectability, height, and paint.
-enum RowKind {
-    Action,
-    Separator,
-    Section,
+pub enum MenuAction {
+    /// The enabled action row at this index (its position in the original
+    /// [`MenuRowSpec`] list) was selected.
+    Selected(usize),
+    /// The menu was dismissed by keyboard (Escape) without a selection. A
+    /// hosting [`ContextMenuArea`](super::area::ContextMenuArea) closes on this;
+    /// a standalone inline menu ignores it.
+    Dismissed,
 }
 
-/// Per-row state resolved at build time, plus the layout rect filled in by
-/// `layout()`.
-struct Row {
-    /// Leading-gutter glyph (a check or an icon), if any. `None` for a
-    /// checkable-but-unchecked row, which still reserves the gutter.
-    gutter: Option<WidgetPod<dyn Widget>>,
-    /// Whether this row reserves the leading gutter (checkable or has an icon).
-    reserves_gutter: bool,
-    /// `None` for separators; otherwise the row's label child.
-    label: Option<WidgetPod<dyn Widget>>,
-    /// Secondary line under the label, if any.
-    subtitle: Option<WidgetPod<dyn Widget>>,
-    /// Trailing keyboard-shortcut text, if any.
-    shortcut: Option<WidgetPod<dyn Widget>>,
-    disabled: bool,
-    kind: RowKind,
-    /// Local-coordinate bounds, populated during `layout`.
+/// A row's node plus the lightweight metadata `MenuPanel` needs for
+/// hit-testing, hover/highlight, and separator painting without reaching into
+/// the node widget.
+struct RowEntry {
+    node: WidgetPod<MenuItemNode>,
+    is_separator: bool,
+    selectable: bool,
+    /// Local-coordinate bounds (full panel width), populated during `layout`.
     rect: Rect,
-}
-
-impl Row {
-    /// Whether a pointer/keyboard selection can land on this row.
-    fn selectable(&self) -> bool {
-        matches!(self.kind, RowKind::Action) && !self.disabled
-    }
 }
 
 /// Rich item-list widget for a context menu.
 pub struct MenuPanel {
-    rows: Vec<Row>,
+    rows: Vec<RowEntry>,
     /// Index (into `rows`) of the row the pointer is currently over — only ever
     /// a selectable row.
     hover_index: Option<usize>,
+    /// Keyboard-highlighted row (roving focus), painted as a focus ring. Only
+    /// ever a selectable row; cleared on focus loss / close.
+    highlighted: Option<usize>,
     theme: Theme,
 }
 
 impl MenuPanel {
     #[must_use]
     pub fn new(specs: impl IntoIterator<Item = MenuRowSpec>, theme: &Theme) -> Self {
-        let rows = specs
-            .into_iter()
-            .map(|spec| Self::make_row(spec, theme))
-            .collect();
         Self {
-            rows,
+            rows: build_rows(specs, theme),
             hover_index: None,
+            highlighted: None,
             theme: *theme,
         }
-    }
-
-    fn make_row(spec: MenuRowSpec, theme: &Theme) -> Row {
-        match spec {
-            MenuRowSpec::Action {
-                label,
-                subtitle,
-                icon,
-                shortcut,
-                checked,
-                disabled,
-            } => {
-                // The gutter holds a check for a checkable row, otherwise the
-                // icon. A checkable row reserves the gutter even when unchecked
-                // (empty slot) so its label aligns with checked siblings.
-                let gutter = match checked {
-                    Some(true) => Some(Self::make_icon(IconName::Check, disabled, theme)),
-                    Some(false) => None,
-                    None => icon.map(|name| Self::make_icon(name, disabled, theme)),
-                };
-                Row {
-                    gutter,
-                    reserves_gutter: checked.is_some() || icon.is_some(),
-                    label: Some(Self::make_label(&label, Self::label_color(disabled, theme), theme)),
-                    subtitle: subtitle.map(|s| Self::make_subtitle(&s, disabled, theme)),
-                    shortcut: shortcut.map(|s| Self::make_shortcut(&s, disabled, theme)),
-                    disabled,
-                    kind: RowKind::Action,
-                    rect: Rect::ZERO,
-                }
-            }
-            MenuRowSpec::Separator => Row {
-                gutter: None,
-                reserves_gutter: false,
-                label: None,
-                subtitle: None,
-                shortcut: None,
-                disabled: false,
-                kind: RowKind::Separator,
-                rect: Rect::ZERO,
-            },
-            MenuRowSpec::Section { text } => Row {
-                gutter: None,
-                reserves_gutter: false,
-                label: Some(Self::make_label(&text, theme.palette.text_faint, theme)),
-                subtitle: None,
-                shortcut: None,
-                disabled: false,
-                kind: RowKind::Section,
-                rect: Rect::ZERO,
-            },
-        }
-    }
-
-    fn make_label(text: &ArcStr, color: Color, theme: &Theme) -> WidgetPod<dyn Widget> {
-        let mut lbl = Label::new(text.clone())
-            .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
-            .prepare();
-        lbl.properties.insert(ContentColor::new(color));
-        lbl.erased().to_pod()
-    }
-
-    /// Leading icon, dogfooding the `icon` component's widget builder.
-    fn make_icon(name: IconName, disabled: bool, theme: &Theme) -> WidgetPod<dyn Widget> {
-        icon(name)
-            .color(Self::label_color(disabled, theme))
-            .build_widget(theme)
-            .erased()
-            .to_pod()
-    }
-
-    /// Trailing keyboard-shortcut text — muted relative to the label.
-    fn make_shortcut(text: &ArcStr, disabled: bool, theme: &Theme) -> WidgetPod<dyn Widget> {
-        let mut lbl = Label::new(text.clone())
-            .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
-            .prepare();
-        lbl.properties
-            .insert(ContentColor::new(Self::shortcut_color(disabled, theme)));
-        lbl.erased().to_pod()
-    }
-
-    /// Secondary line under the label — smaller (caption size) and muted.
-    fn make_subtitle(text: &ArcStr, disabled: bool, theme: &Theme) -> WidgetPod<dyn Widget> {
-        let mut lbl = Label::new(text.clone())
-            .with_style(StyleProperty::FontSize(theme.typography.size_caption))
-            .prepare();
-        lbl.properties
-            .insert(ContentColor::new(Self::shortcut_color(disabled, theme)));
-        lbl.erased().to_pod()
-    }
-
-    fn label_color(disabled: bool, theme: &Theme) -> Color {
-        if disabled {
-            theme.palette.text_faint
-        } else {
-            theme.palette.text
-        }
-    }
-
-    fn shortcut_color(disabled: bool, theme: &Theme) -> Color {
-        if disabled {
-            theme.palette.text_faint
-        } else {
-            theme.palette.text_muted
-        }
-    }
-
-    /// The label color for a row, given its kind — section headers are muted.
-    fn row_label_color(kind: &RowKind, disabled: bool, theme: &Theme) -> Color {
-        match kind {
-            RowKind::Section => theme.palette.text_faint,
-            _ => Self::label_color(disabled, theme),
-        }
-    }
-
-    /// Whether any row reserves the leading gutter (checkable or icon-bearing) —
-    /// if so all rows reserve it so labels align.
-    fn has_gutter(&self) -> bool {
-        self.rows.iter().any(|r| r.reserves_gutter)
-    }
-
-    /// Width reserved on the left for the gutter (glyph column + gap), or 0 when
-    /// no row reserves it.
-    fn gutter(&self) -> f64 {
-        if self.has_gutter() {
-            f64::from(self.theme.density.ui_font_size) + ICON_GAP
-        } else {
-            0.0
-        }
-    }
-
-    fn action_height(&self) -> f64 {
-        f64::from(self.theme.density.ui_font_size)
-            + 2.0 * f64::from(self.theme.density.button_pad_v)
     }
 
     fn pad_h(&self) -> f64 {
@@ -318,7 +181,37 @@ impl MenuPanel {
     fn hit_row(&self, local_pos: Point) -> Option<usize> {
         self.rows
             .iter()
-            .position(|r| r.selectable() && r.rect.contains(local_pos))
+            .position(|r| r.selectable && r.rect.contains(local_pos))
+    }
+
+    /// Row indices that can receive the keyboard highlight (selectable actions),
+    /// in order — separators, section headers, and disabled rows are skipped.
+    fn selectable_indices(&self) -> Vec<usize> {
+        (0..self.rows.len())
+            .filter(|&i| self.rows[i].selectable)
+            .collect()
+    }
+
+    /// The next highlight position when moving by `dir` (+1 down, -1 up),
+    /// wrapping at the ends and skipping non-selectable rows. `None` when there
+    /// is nothing selectable.
+    fn step_highlight(&self, dir: isize) -> Option<usize> {
+        let sel = self.selectable_indices();
+        if sel.is_empty() {
+            return None;
+        }
+        let pos = self
+            .highlighted
+            .and_then(|cur| sel.iter().position(|&i| i == cur));
+        let len = sel.len().cast_signed();
+        let next = match pos {
+            // Already on a selectable row: step with wraparound.
+            Some(p) => (p.cast_signed() + dir).rem_euclid(len),
+            // No current highlight: down enters at the top, up at the bottom.
+            None if dir >= 0 => 0,
+            None => len - 1,
+        };
+        Some(sel[next.cast_unsigned()])
     }
 
     fn to_local(ctx: &EventCtx<'_>, window_pos: Point) -> Point {
@@ -327,81 +220,98 @@ impl MenuPanel {
     }
 }
 
+/// Build the per-row nodes + metadata from specs, computing the shared gutter
+/// width and the action position-in-set for accessibility.
+fn build_rows(specs: impl IntoIterator<Item = MenuRowSpec>, theme: &Theme) -> Vec<RowEntry> {
+    let specs: Vec<MenuRowSpec> = specs.into_iter().collect();
+    let gutter_width = if specs.iter().any(reserves_gutter) {
+        gutter_glyph_width(theme)
+    } else {
+        0.0
+    };
+    let action_count = specs.iter().filter(|s| s.is_action()).count();
+
+    let mut action_pos = 0usize;
+    specs
+        .into_iter()
+        .enumerate()
+        .map(|(i, spec)| {
+            let is_separator = spec.is_separator();
+            let selectable = spec.selectable();
+            let set_pos = if spec.is_action() {
+                action_pos += 1;
+                Some((action_pos, action_count))
+            } else {
+                None
+            };
+            let node = MenuItemNode::new(spec, gutter_width, i, set_pos, theme).to_pod();
+            RowEntry {
+                node,
+                is_separator,
+                selectable,
+                rect: Rect::ZERO,
+            }
+        })
+        .collect()
+}
+
 // --- MARK: WIDGETMUT SETTERS
 impl MenuPanel {
-    /// Restyle existing labels and store the new theme — the panel persists
-    /// across rebuilds (e.g. a host theme swap), so a live theme change must be
-    /// reflected without rebuilding the children.
+    /// Restyle the per-row nodes and store the new theme — the panel persists
+    /// across rebuilds (e.g. a host theme swap).
     pub fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
         if this.widget.theme == *theme {
             return;
         }
         this.widget.theme = *theme;
-        let font_size = theme.density.ui_font_size;
-        for row in &mut this.widget.rows {
-            let gutter_fg = Self::label_color(row.disabled, theme);
-            let label_fg = Self::row_label_color(&row.kind, row.disabled, theme);
-            let shortcut_fg = Self::shortcut_color(row.disabled, theme);
-            for (child, color) in [
-                (&mut row.gutter, gutter_fg),
-                (&mut row.label, label_fg),
-                (&mut row.shortcut, shortcut_fg),
-            ] {
-                if let Some(child) = child {
-                    let mut lbl = this.ctx.get_mut(child);
-                    lbl.insert_prop(ContentColor::new(color));
-                    let mut lbl = lbl.downcast::<Label>();
-                    Label::insert_style(&mut lbl, StyleProperty::FontSize(font_size));
-                }
-            }
-            // The sub-title uses the smaller caption size, so it's restyled
-            // separately from the ui-font-size trio above.
-            if let Some(subtitle) = &mut row.subtitle {
-                let mut lbl = this.ctx.get_mut(subtitle);
-                lbl.insert_prop(ContentColor::new(shortcut_fg));
-                let mut lbl = lbl.downcast::<Label>();
-                Label::insert_style(
-                    &mut lbl,
-                    StyleProperty::FontSize(theme.typography.size_caption),
-                );
-            }
+        for i in 0..this.widget.rows.len() {
+            let mut node = this.ctx.get_mut(&mut this.widget.rows[i].node);
+            MenuItemNode::set_theme(&mut node, theme);
         }
         this.ctx.request_layout();
         this.ctx.request_paint_only();
+    }
+
+    /// Set the keyboard-highlighted row, driven externally by a host that owns
+    /// focus (e.g. [`ContextMenuArea`](super::area::ContextMenuArea)). Pass
+    /// `None` to clear. Standalone/inline menus drive their own highlight via
+    /// the keyboard handler instead.
+    pub fn set_highlighted(this: &mut WidgetMut<'_, Self>, index: Option<usize>) {
+        if this.widget.highlighted != index {
+            this.widget.highlighted = index;
+            this.ctx.request_paint_only();
+            // The highlight is the menu's active item — let AT follow it.
+            this.ctx.request_accessibility_update();
+        }
     }
 
     /// Replace the row list — the panel persists across rebuilds, so a changed
     /// item set must be applied in place.
     pub fn set_rows(this: &mut WidgetMut<'_, Self>, specs: impl IntoIterator<Item = MenuRowSpec>) {
-        let old: Vec<_> = this.widget.rows.drain(..).collect();
-        for row in old {
-            for child in [row.gutter, row.label, row.subtitle, row.shortcut]
-                .into_iter()
-                .flatten()
-            {
-                this.ctx.remove_child(child);
-            }
+        for row in std::mem::take(&mut this.widget.rows) {
+            this.ctx.remove_child(row.node);
         }
         let theme = this.widget.theme;
-        this.widget.rows = specs
-            .into_iter()
-            .map(|spec| Self::make_row(spec, &theme))
-            .collect();
+        this.widget.rows = build_rows(specs, &theme);
         this.widget.hover_index = None;
+        this.widget.highlighted = None;
         this.ctx.children_changed();
         this.ctx.request_layout();
         this.ctx.request_paint_only();
+        this.ctx.request_accessibility_update();
     }
 }
 
 impl Widget for MenuPanel {
-    type Action = MenuItemSelected;
+    type Action = MenuAction;
 
     fn accepts_pointer_interaction(&self) -> bool {
         true
     }
 
     fn propagates_pointer_interaction(&self) -> bool {
+        // We hit-test rows ourselves against their placed rects; the per-row
+        // nodes (and their label children) take no pointer events.
         false
     }
 
@@ -433,7 +343,7 @@ impl Widget for MenuPanel {
             }) if ctx.is_active() && ctx.is_hovered() => {
                 let local = Self::to_local(ctx, state.logical_point());
                 if let Some(i) = self.hit_row(local) {
-                    ctx.submit_action::<Self::Action>(MenuItemSelected(i));
+                    ctx.submit_action::<Self::Action>(MenuAction::Selected(i));
                     ctx.set_handled();
                 }
             }
@@ -445,29 +355,104 @@ impl Widget for MenuPanel {
         }
     }
 
-    fn update(
+    fn on_text_event(
         &mut self,
-        _ctx: &mut UpdateCtx<'_>,
+        ctx: &mut EventCtx<'_>,
         _props: &mut PropertiesMut<'_>,
-        _event: &Update,
+        event: &TextEvent,
     ) {
+        let TextEvent::Keyboard(key) = event else {
+            return;
+        };
+        if key.state != KeyState::Down {
+            return;
+        }
+        let is_space = matches!(&key.key, Key::Character(c) if c.as_str() == " ");
+        match &key.key {
+            Key::Named(NamedKey::ArrowDown) => {
+                self.highlighted = self.step_highlight(1);
+                ctx.request_paint_only();
+                ctx.set_handled();
+            }
+            Key::Named(NamedKey::ArrowUp) => {
+                self.highlighted = self.step_highlight(-1);
+                ctx.request_paint_only();
+                ctx.set_handled();
+            }
+            Key::Named(NamedKey::Home) => {
+                self.highlighted = self.selectable_indices().first().copied();
+                ctx.request_paint_only();
+                ctx.set_handled();
+            }
+            Key::Named(NamedKey::End) => {
+                self.highlighted = self.selectable_indices().last().copied();
+                ctx.request_paint_only();
+                ctx.set_handled();
+            }
+            // Activate the highlighted row (no-op if nothing is highlighted).
+            Key::Named(NamedKey::Enter) => {
+                if let Some(i) = self.highlighted.take() {
+                    ctx.submit_action::<Self::Action>(MenuAction::Selected(i));
+                    ctx.request_paint_only();
+                }
+                ctx.set_handled();
+            }
+            Key::Character(_) if is_space => {
+                if let Some(i) = self.highlighted.take() {
+                    ctx.submit_action::<Self::Action>(MenuAction::Selected(i));
+                    ctx.request_paint_only();
+                }
+                ctx.set_handled();
+            }
+            Key::Named(NamedKey::Escape) => {
+                self.highlighted = None;
+                ctx.submit_action::<Self::Action>(MenuAction::Dismissed);
+                ctx.request_paint_only();
+                ctx.set_handled();
+            }
+            _ => {}
+        }
+    }
+
+    /// An accessibility invoke on a row bubbles up as [`NodeActivated`]; re-emit
+    /// it as our own [`MenuAction::Selected`] (same path as a pointer/keyboard
+    /// selection).
+    fn on_action(
+        &mut self,
+        ctx: &mut ActionCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        action: &ErasedAction,
+        _source: WidgetId,
+    ) {
+        if let Some(&NodeActivated(index)) = action.downcast_ref::<NodeActivated>() {
+            ctx.submit_action::<Self::Action>(MenuAction::Selected(index));
+            ctx.set_handled();
+        }
+    }
+
+    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        match event {
+            // Stash state flipping (a right-click menu opening/closing) resets
+            // the highlight so it never lingers across opens. The host area
+            // transfers focus to us on open (`ContextMenuArea` → `set_focus`).
+            Update::StashedChanged(_) => {
+                self.highlighted = None;
+            }
+            // Focus left us (e.g. an outside click): clear the keyboard
+            // highlight so the focus ring doesn't paint while unfocused.
+            Update::FocusChanged(false) if self.highlighted.is_some() => {
+                self.highlighted = None;
+                ctx.request_paint_only();
+            }
+            _ => {}
+        }
     }
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
         for row in &mut self.rows {
-            for child in [
-                &mut row.gutter,
-                &mut row.label,
-                &mut row.subtitle,
-                &mut row.shortcut,
-            ]
-            .into_iter()
-            .flatten()
-            {
-                ctx.register_child(child);
-            }
+            ctx.register_child(&mut row.node);
         }
     }
 
@@ -479,19 +464,21 @@ impl Widget for MenuPanel {
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        let action_h = self.action_height();
         let pad_h = self.pad_h();
         match axis {
             Axis::Vertical => {
-                let subtitle_extra =
-                    SUBTITLE_GAP + f64::from(self.theme.typography.size_caption);
                 let content: f64 = self
                     .rows
-                    .iter()
-                    .map(|r| match r.kind {
-                        RowKind::Separator => SEPARATOR_ROW_HEIGHT,
-                        _ if r.subtitle.is_some() => action_h + subtitle_extra,
-                        _ => action_h,
+                    .iter_mut()
+                    .map(|r| {
+                        ctx.compute_length(
+                            &mut r.node,
+                            len_req.into(),
+                            LayoutSize::maybe(Axis::Horizontal, cross_length),
+                            Axis::Vertical,
+                            cross_length,
+                        )
+                        .get()
                     })
                     .sum();
                 Length::px(MENU_PAD_V * 2.0 + content)
@@ -499,101 +486,40 @@ impl Widget for MenuPanel {
             Axis::Horizontal => {
                 let inner_cross =
                     cross_length.map(|c| Length::px((c.get() - 2.0 * pad_h).max(0.0)));
-                let gutter = self.gutter();
-                let mut max_label = 0.0_f64;
-                let mut max_shortcut = 0.0_f64;
-                let mut measure = |pod: &mut WidgetPod<dyn Widget>| {
-                    ctx.compute_length(
-                        pod,
-                        len_req.into(),
-                        LayoutSize::maybe(Axis::Vertical, inner_cross),
-                        Axis::Horizontal,
-                        inner_cross,
-                    )
-                    .get()
-                };
+                let mut max_w = 0.0_f64;
                 for row in &mut self.rows {
-                    if let Some(label) = &mut row.label {
-                        max_label = max_label.max(measure(label));
-                    }
-                    // The sub-title shares the label column, so it widens it.
-                    if let Some(subtitle) = &mut row.subtitle {
-                        max_label = max_label.max(measure(subtitle));
-                    }
-                    if let Some(shortcut) = &mut row.shortcut {
-                        max_shortcut = max_shortcut.max(measure(shortcut));
-                    }
+                    let w = ctx
+                        .compute_length(
+                            &mut row.node,
+                            len_req.into(),
+                            LayoutSize::maybe(Axis::Vertical, inner_cross),
+                            Axis::Horizontal,
+                            inner_cross,
+                        )
+                        .get();
+                    max_w = max_w.max(w);
                 }
-                let shortcut_col = if max_shortcut > 0.0 {
-                    SHORTCUT_GAP + max_shortcut
-                } else {
-                    0.0
-                };
-                let content = gutter + max_label + shortcut_col;
-                Length::px(content.max(MIN_MENU_WIDTH) + 2.0 * pad_h)
+                Length::px(max_w.max(MIN_MENU_WIDTH) + 2.0 * pad_h)
             }
         }
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         let pad_h = self.pad_h();
-        let pad_v = f64::from(self.theme.density.button_pad_v);
-        let action_h = self.action_height();
-        let subtitle_extra = SUBTITLE_GAP + f64::from(self.theme.typography.size_caption);
-        let gutter = self.gutter();
+        let node_w = (size.width - 2.0 * pad_h).max(0.0);
 
         let mut y = MENU_PAD_V;
         for row in &mut self.rows {
-            let has_subtitle = row.subtitle.is_some();
-            let row_h = match row.kind {
-                RowKind::Separator => SEPARATOR_ROW_HEIGHT,
-                _ if has_subtitle => action_h + subtitle_extra,
-                _ => action_h,
-            };
-            row.rect = Rect::from_origin_size(Point::new(0.0, y), Size::new(size.width, row_h));
-            let full = Size::new((size.width - 2.0 * pad_h).max(0.0), row_h);
-            let label_avail = Size::new((size.width - 2.0 * pad_h - gutter).max(0.0), row_h);
-
-            // Label first — its vertical centerline is what the gutter glyph and
-            // shortcut align to. With a sub-title the label is top-aligned and
-            // the sub-title sits beneath it; otherwise the label is centred.
-            let mut line_center = y + row_h * 0.5;
-            if let Some(label) = &mut row.label {
-                let label_size = ctx.compute_size(label, SizeDef::fit(label_avail), label_avail.into());
-                ctx.run_layout(label, label_size);
-                let label_y = if has_subtitle {
-                    y + pad_v
-                } else {
-                    y + (row_h - label_size.height) * 0.5
-                };
-                ctx.place_child(label, Point::new(pad_h + gutter, label_y));
-                line_center = label_y + label_size.height * 0.5;
-
-                if let Some(subtitle) = &mut row.subtitle {
-                    let sub_size =
-                        ctx.compute_size(subtitle, SizeDef::fit(label_avail), label_avail.into());
-                    ctx.run_layout(subtitle, sub_size);
-                    let sub_y = label_y + label_size.height + SUBTITLE_GAP;
-                    ctx.place_child(subtitle, Point::new(pad_h + gutter, sub_y));
-                }
-            }
-
-            // Leading gutter glyph (check or icon), aligned to the label line.
-            if let Some(g) = &mut row.gutter {
-                let g_size = ctx.compute_size(g, SizeDef::MIN, full.into());
-                ctx.run_layout(g, g_size);
-                ctx.place_child(g, Point::new(pad_h, line_center - g_size.height * 0.5));
-            }
-
-            // Trailing shortcut, right-aligned to the label line.
-            if let Some(shortcut) = &mut row.shortcut {
-                let sc_size = ctx.compute_size(shortcut, SizeDef::MIN, full.into());
-                ctx.run_layout(shortcut, sc_size);
-                let sx = size.width - pad_h - sc_size.width;
-                ctx.place_child(shortcut, Point::new(sx, line_center - sc_size.height * 0.5));
-            }
-
-            y += row_h;
+            // The node's height is intrinsic (its row height); force its width
+            // to the panel's content width so trailing shortcuts right-align to
+            // a consistent edge.
+            let node_h = ctx
+                .compute_size(&mut row.node, SizeDef::MIN, Size::new(node_w, 0.0).into())
+                .height;
+            ctx.run_layout(&mut row.node, Size::new(node_w, node_h));
+            ctx.place_child(&mut row.node, Point::new(pad_h, y));
+            row.rect = Rect::from_origin_size(Point::new(0.0, y), Size::new(size.width, node_h));
+            y += node_h;
         }
     }
 
@@ -619,10 +545,24 @@ impl Widget for MenuPanel {
             painter.fill(row.rect, p.surface_2).draw();
         }
 
+        // Keyboard focus ring on the highlighted row, inset from its bounds.
+        if let Some(i) = self.highlighted
+            && let Some(row) = self.rows.get(i)
+        {
+            let inset = HIGHLIGHT_RING_INSET;
+            let ring = Rect::new(
+                row.rect.x0 + inset,
+                row.rect.y0 + inset,
+                row.rect.x1 - inset,
+                row.rect.y1 - inset,
+            );
+            paint_focus_ring(painter, ring, &self.theme);
+        }
+
         for row in &self.rows {
-            if matches!(row.kind, RowKind::Separator) {
+            if row.is_separator {
                 let y = row.rect.y0 + row.rect.height() * 0.5;
-                let line = masonry::kurbo::Line::new(
+                let line = Line::new(
                     Point::new(row.rect.x0 + pad_h, y),
                     Point::new(row.rect.x1 - pad_h, y),
                 );
@@ -633,6 +573,14 @@ impl Widget for MenuPanel {
         }
     }
 
+    fn accepts_focus(&self) -> bool {
+        true
+    }
+
+    fn accepts_text_input(&self) -> bool {
+        false
+    }
+
     fn accessibility_role(&self) -> Role {
         Role::Menu
     }
@@ -641,25 +589,19 @@ impl Widget for MenuPanel {
         &mut self,
         _ctx: &mut AccessCtx<'_>,
         _props: &PropertiesRef<'_>,
-        _node: &mut Node,
+        node: &mut Node,
     ) {
+        // Container-level a11y: a vertical, focusable menu. Each row's
+        // `MenuItem`/`MenuItemCheckBox`/`Splitter`/label semantics live on its
+        // `MenuItemNode` child.
+        node.set_orientation(Orientation::Vertical);
+        if self.rows.iter().any(|r| r.selectable) {
+            node.add_action(Action::Focus);
+        }
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        let ids: Vec<_> = self
-            .rows
-            .iter()
-            .flat_map(|r| {
-                [
-                    r.gutter.as_ref(),
-                    r.label.as_ref(),
-                    r.subtitle.as_ref(),
-                    r.shortcut.as_ref(),
-                ]
-            })
-            .flatten()
-            .map(WidgetPod::id)
-            .collect();
+        let ids: Vec<_> = self.rows.iter().map(|r| r.node.id()).collect();
         ChildrenIds::from_slice(&ids)
     }
 }
@@ -736,40 +678,150 @@ mod tests {
     }
 
     #[test]
-    fn separator_is_never_selectable() {
-        let panel = panel_with(vec![MenuRowSpec::Separator], vec![Rect::ZERO]);
-        assert!(!panel.rows[0].selectable());
-    }
-
-    #[test]
-    fn section_header_is_never_selectable() {
+    fn separators_and_sections_are_never_selectable() {
         let panel = panel_with(
-            vec![MenuRowSpec::Section {
-                text: "View".into(),
-            }],
-            vec![Rect::new(0.0, 0.0, 100.0, 20.0)],
+            vec![
+                MenuRowSpec::Separator,
+                MenuRowSpec::Section {
+                    text: "View".into(),
+                },
+            ],
+            vec![Rect::ZERO; 2],
         );
-        assert!(!panel.rows[0].selectable());
-        assert_eq!(panel.hit_row(Point::new(50.0, 10.0)), None);
+        assert!(!panel.rows[0].selectable);
+        assert!(!panel.rows[1].selectable);
+        assert_eq!(panel.selectable_indices(), Vec::<usize>::new());
+    }
+
+    // --- keyboard navigation (TestHarness) ---
+
+    use masonry::core::keyboard::{Key, NamedKey};
+    use masonry::core::{Handled, NewWidget, TextEvent};
+    use masonry::testing::TestHarness;
+    use masonry::theme::default_property_set;
+
+    fn harness(specs: Vec<MenuRowSpec>) -> TestHarness<MenuPanel> {
+        let theme = Theme::default();
+        let widget = MenuPanel::new(specs, &theme);
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+        h.focus_on(Some(h.root_id()));
+        h
+    }
+
+    fn press(h: &mut TestHarness<MenuPanel>, key: NamedKey) -> Handled {
+        h.process_text_event(TextEvent::key_down(Key::Named(key)))
+    }
+
+    fn highlight(h: &mut TestHarness<MenuPanel>) -> Option<usize> {
+        h.edit_root_widget(|wm| wm.widget.highlighted)
     }
 
     #[test]
-    fn checkable_rows_reserve_the_gutter() {
-        let checkable = |checked: bool| MenuRowSpec::Action {
-            label: "x".into(),
+    fn arrow_navigation_skips_nonselectable_rows_and_wraps() {
+        // selectable rows are 0 and 3; 1 (separator) and 2 (disabled) are not.
+        let mut h = harness(vec![
+            action("a"),
+            MenuRowSpec::Separator,
+            disabled("b"),
+            action("c"),
+        ]);
+        press(&mut h, NamedKey::ArrowDown);
+        assert_eq!(highlight(&mut h), Some(0), "down enters at the first selectable");
+        press(&mut h, NamedKey::ArrowDown);
+        assert_eq!(highlight(&mut h), Some(3), "skips the separator and disabled row");
+        press(&mut h, NamedKey::ArrowDown);
+        assert_eq!(highlight(&mut h), Some(0), "wraps past the end to the top");
+        press(&mut h, NamedKey::ArrowUp);
+        assert_eq!(highlight(&mut h), Some(3), "up from the top wraps to the bottom");
+    }
+
+    #[test]
+    fn home_and_end_jump_to_first_and_last_selectable() {
+        let mut h = harness(vec![action("a"), MenuRowSpec::Separator, action("c")]);
+        assert_eq!(press(&mut h, NamedKey::End), Handled::Yes);
+        assert_eq!(highlight(&mut h), Some(2));
+        press(&mut h, NamedKey::Home);
+        assert_eq!(highlight(&mut h), Some(0));
+    }
+
+    #[test]
+    fn enter_activates_the_highlighted_row() {
+        let mut h = harness(vec![action("a"), action("b")]);
+        press(&mut h, NamedKey::ArrowDown);
+        press(&mut h, NamedKey::ArrowDown); // highlight row 1
+        press(&mut h, NamedKey::Enter);
+        let (action, _) = h
+            .pop_action::<MenuAction>()
+            .expect("Enter on a highlighted row selects it");
+        assert!(matches!(action, MenuAction::Selected(1)));
+    }
+
+    #[test]
+    fn enter_without_a_highlight_selects_nothing() {
+        let mut h = harness(vec![action("a")]);
+        assert_eq!(press(&mut h, NamedKey::Enter), Handled::Yes);
+        assert!(h.pop_action::<MenuAction>().is_none());
+    }
+
+    #[test]
+    fn escape_emits_dismissed_and_is_handled() {
+        let mut h = harness(vec![action("a")]);
+        assert_eq!(press(&mut h, NamedKey::Escape), Handled::Yes);
+        assert!(matches!(
+            h.pop_action::<MenuAction>().map(|(a, _)| a),
+            Some(MenuAction::Dismissed)
+        ));
+    }
+
+    // --- per-row accessibility (TestHarness) ---
+
+    #[test]
+    fn rows_expose_per_item_accessibility_semantics() {
+        use masonry::accesskit::{Role, Toggled};
+
+        let checkable = MenuRowSpec::Action {
+            label: "Wrap".into(),
             subtitle: None,
             icon: None,
             shortcut: None,
-            checked: Some(checked),
+            checked: Some(true),
             disabled: false,
         };
-        let panel = panel_with(vec![checkable(true), checkable(false)], vec![Rect::ZERO; 2]);
-        // Checked row has a check glyph; unchecked has none — but both reserve
-        // the gutter so their labels align.
-        assert!(panel.rows[0].gutter.is_some());
-        assert!(panel.rows[1].gutter.is_none());
-        assert!(panel.rows[0].reserves_gutter);
-        assert!(panel.rows[1].reserves_gutter);
-        assert!(panel.has_gutter());
+        let specs = vec![
+            action("Copy"),
+            checkable,
+            MenuRowSpec::Separator,
+            MenuRowSpec::Section {
+                text: "View".into(),
+            },
+        ];
+        let theme = Theme::default();
+        let widget = MenuPanel::new(specs, &theme);
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+        let ids: Vec<_> =
+            h.edit_root_widget(|wm| wm.widget.rows.iter().map(|r| r.node.id()).collect());
+        h.redraw();
+
+        // Action → MenuItem, labeled, position 1 of the 2 action rows.
+        let copy = h.access_node(ids[0]).expect("action node exists");
+        assert_eq!(copy.role(), Role::MenuItem);
+        assert_eq!(copy.label(), Some("Copy".to_string()));
+        assert_eq!(copy.position_in_set(), Some(1));
+        assert_eq!(copy.size_of_set(), Some(2));
+
+        // Checkable action → MenuItemCheckBox, toggled on.
+        let wrap = h.access_node(ids[1]).expect("checkable node exists");
+        assert_eq!(wrap.role(), Role::MenuItemCheckBox);
+        assert_eq!(wrap.toggled(), Some(Toggled::True));
+        assert_eq!(wrap.position_in_set(), Some(2));
+
+        // Separator → Splitter.
+        let sep = h.access_node(ids[2]).expect("separator node exists");
+        assert_eq!(sep.role(), Role::Splitter);
+
+        // Section header → a labeled, non-interactive node.
+        let section = h.access_node(ids[3]).expect("section node exists");
+        assert_eq!(section.role(), Role::Label);
+        assert_eq!(section.label(), Some("View".to_string()));
     }
 }

@@ -27,7 +27,7 @@ use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
 use super::area::{ContextMenuArea, ContextMenuAction};
-use super::widget::{MenuItemSelected, MenuPanel, MenuRowSpec};
+use super::widget::{MenuAction, MenuPanel, MenuRowSpec};
 use crate::Theme;
 use crate::components::icon::IconName;
 
@@ -145,6 +145,20 @@ fn entries_to_rows<State, Action>(
         }
     }
     (rows, callbacks)
+}
+
+/// Indices of the rows a keyboard highlight can land on (enabled action rows).
+/// The [`context_menu_area`] widget owns keyboard nav, so it needs this list.
+fn selectable_indices(rows: &[MenuRowSpec]) -> Vec<usize> {
+    rows.iter()
+        .enumerate()
+        .filter_map(|(i, r)| match r {
+            MenuRowSpec::Action {
+                disabled: false, ..
+            } => Some(i),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Route a selected row index to its callback, shared by both consumers.
@@ -280,11 +294,12 @@ where
         _element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        match message.take_message::<MenuItemSelected>() {
-            Some(selected) => {
-                let MenuItemSelected(index) = *selected;
+        match message.take_message::<MenuAction>().map(|a| *a) {
+            Some(MenuAction::Selected(index)) => {
                 dispatch_selection(&self.callbacks, index, app_state)
             }
+            // A standalone inline menu has nothing to dismiss — consume it.
+            Some(MenuAction::Dismissed) => MessageResult::Nop,
             None => MessageResult::Stale,
         }
     }
@@ -385,7 +400,11 @@ where
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let (content_pod, content_vs) = self.content.build(ctx, app_state);
         let menu = MenuPanel::new(self.rows.iter().cloned(), &self.theme);
-        let widget = ContextMenuArea::new(content_pod.new_widget.erased(), NewWidget::new(menu));
+        let widget = ContextMenuArea::new(
+            content_pod.new_widget.erased(),
+            NewWidget::new(menu),
+            selectable_indices(&self.rows),
+        );
         // Register as an action source so the area's `ContextMenuAction` routes
         // to this view's `message`.
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
@@ -410,8 +429,11 @@ where
             MenuPanel::set_theme(&mut menu, &self.theme);
         }
         if self.rows != prev.rows {
-            let mut menu = ContextMenuArea::menu_mut(&mut element);
-            MenuPanel::set_rows(&mut menu, self.rows.iter().cloned());
+            {
+                let mut menu = ContextMenuArea::menu_mut(&mut element);
+                MenuPanel::set_rows(&mut menu, self.rows.iter().cloned());
+            }
+            ContextMenuArea::set_selectable(&mut element, selectable_indices(&self.rows));
         }
     }
 
