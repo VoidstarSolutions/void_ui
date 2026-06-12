@@ -44,6 +44,7 @@ pub struct Button<F> {
     icon: Option<LucideIcon>,
     trailing_icon: Option<LucideIcon>,
     corners: Option<RoundedRectRadii>,
+    tint: Option<AlphaColor<Srgb>>,
     callback: F,
 }
 
@@ -63,6 +64,7 @@ pub fn button<F>(callback: F) -> Button<F> {
         icon: None,
         trailing_icon: None,
         corners: None,
+        tint: None,
         callback,
     }
 }
@@ -130,6 +132,13 @@ impl<F> Button<F> {
         self
     }
 
+    /// Override the label and icon color, e.g. to match a surrounding
+    /// accent-colored card. Ignored while [`Self::disabled`].
+    pub fn tint(mut self, color: AlphaColor<Srgb>) -> Self {
+        self.tint = Some(color);
+        self
+    }
+
     /// Materialize the xilem view at the supplied theme.
     pub fn render<State, Action>(self, theme: &Theme) -> ButtonView<F, State, Action>
     where
@@ -147,6 +156,7 @@ impl<F> Button<F> {
             icon: self.icon,
             trailing_icon: self.trailing_icon,
             corners: self.corners,
+            tint: self.tint,
             theme: *theme,
             callback: self.callback,
             phantom: PhantomData,
@@ -168,6 +178,7 @@ pub struct ButtonView<F, State, Action> {
     icon: Option<LucideIcon>,
     trailing_icon: Option<LucideIcon>,
     corners: Option<RoundedRectRadii>,
+    tint: Option<AlphaColor<Srgb>>,
     theme: Theme,
     callback: F,
     phantom: PhantomData<fn(State) -> Action>,
@@ -176,8 +187,20 @@ impl<F, State, Action> ButtonView<F, State, Action> {
     fn text_color(&self) -> AlphaColor<Srgb> {
         if self.disabled {
             self.theme.palette.text_faint
+        } else if let Some(tint) = self.tint {
+            tint
         } else if self.variant == ButtonVariant::Link {
             self.theme.palette.teal
+        } else {
+            self.theme.palette.text
+        }
+    }
+
+    fn icon_color(&self) -> AlphaColor<Srgb> {
+        if self.disabled {
+            self.theme.palette.text_faint
+        } else if let Some(tint) = self.tint {
+            tint
         } else {
             self.theme.palette.text
         }
@@ -201,11 +224,7 @@ where
             .with_style(StyleProperty::FontSize(self.theme.density.ui_font_size))
             .prepare();
         label.properties.insert(ContentColor::new(text_color));
-        let icon_color = if self.disabled {
-            self.theme.palette.text_faint
-        } else {
-            self.theme.palette.text
-        };
+        let icon_color = self.icon_color();
         let mut widget = ThemedButton::new(label, &self.theme)
             .with_active(self.active)
             .with_disabled(self.disabled)
@@ -283,20 +302,12 @@ where
             if !self.disabled
                 && (self.variant == ButtonVariant::Link || prev.variant == ButtonVariant::Link)
             {
-                let text_color = if self.variant == ButtonVariant::Link {
-                    self.theme.palette.teal
-                } else {
-                    self.theme.palette.text
-                };
+                let text_color = self.text_color();
                 let mut child = ThemedButton::child_mut(&mut element);
                 child.insert_prop(ContentColor::new(text_color));
             }
         }
-        let icon_color = if self.disabled {
-            self.theme.palette.text_faint
-        } else {
-            self.theme.palette.text
-        };
+        let icon_color = self.icon_color();
         if self.icon.map(char::from) != prev.icon.map(char::from) {
             match self.icon {
                 Some(name) => ThemedButton::attach_icon(
@@ -307,7 +318,9 @@ where
                 ),
                 None => ThemedButton::detach_icon(&mut element),
             }
-        } else if (self.theme != prev.theme || self.disabled != prev.disabled)
+        } else if (self.theme != prev.theme
+            || self.disabled != prev.disabled
+            || self.tint != prev.tint)
             && let Some(mut m) = ThemedButton::icon_mut(&mut element)
         {
             m.insert_prop(ContentColor::new(icon_color));
@@ -326,7 +339,9 @@ where
                 ),
                 None => ThemedButton::detach_trailing_icon(&mut element),
             }
-        } else if (self.theme != prev.theme || self.disabled != prev.disabled)
+        } else if (self.theme != prev.theme
+            || self.disabled != prev.disabled
+            || self.tint != prev.tint)
             && let Some(mut m) = ThemedButton::trailing_icon_mut(&mut element)
         {
             m.insert_prop(ContentColor::new(icon_color));
@@ -375,5 +390,52 @@ where
             Some(_press) => MessageResult::Action((self.callback)(app_state)),
             None => MessageResult::Stale,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ButtonVariant;
+    use super::button;
+    use crate::Theme;
+
+    #[test]
+    fn default_colors_are_theme_text() {
+        let theme = Theme::dark();
+        let view = button(|(): &mut ()| ()).render::<(), ()>(&theme);
+        assert_eq!(view.text_color(), theme.palette.text);
+        assert_eq!(view.icon_color(), theme.palette.text);
+    }
+
+    #[test]
+    fn link_variant_uses_teal_text_but_default_icon_color() {
+        let theme = Theme::dark();
+        let view = button(|(): &mut ()| ())
+            .variant(ButtonVariant::Link)
+            .render::<(), ()>(&theme);
+        assert_eq!(view.text_color(), theme.palette.teal);
+        assert_eq!(view.icon_color(), theme.palette.text);
+    }
+
+    #[test]
+    fn tint_overrides_text_and_icon_color() {
+        let theme = Theme::dark();
+        let view = button(|(): &mut ()| ())
+            .tint(theme.palette.blue)
+            .render::<(), ()>(&theme);
+        assert_eq!(view.text_color(), theme.palette.blue);
+        assert_eq!(view.icon_color(), theme.palette.blue);
+    }
+
+    #[test]
+    fn disabled_ignores_tint_and_variant() {
+        let theme = Theme::dark();
+        let view = button(|(): &mut ()| ())
+            .variant(ButtonVariant::Link)
+            .tint(theme.palette.blue)
+            .disabled(true)
+            .render::<(), ()>(&theme);
+        assert_eq!(view.text_color(), theme.palette.text_faint);
+        assert_eq!(view.icon_color(), theme.palette.text_faint);
     }
 }

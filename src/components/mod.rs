@@ -12,6 +12,7 @@
 //! component value so that swapping themes is a single state change in
 //! the host, not a tree walk.
 
+pub mod alert;
 pub mod button;
 pub mod button_group;
 pub mod checkbox;
@@ -37,6 +38,7 @@ pub mod tabs;
 pub mod toggle;
 pub mod tooltip;
 
+pub use alert::{Alert, AlertVariant, alert};
 pub use button::{Button, ButtonVariant, ButtonView, button};
 pub use button_group::{ButtonGroup, button_group, toggle_button_group};
 pub use checkbox::{Checkbox, CheckboxView, checkbox};
@@ -83,6 +85,7 @@ pub use tooltip::{Tooltip, TooltipView, tooltip};
 /// Adding a new component is one variant + one dispatch arm in the gallery.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ComponentKind {
+    Alert,
     Button,
     ButtonGroup,
     DropdownButton,
@@ -114,6 +117,7 @@ impl ComponentKind {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
+            Self::Alert => "Alert",
             Self::Button => "Button",
             Self::ButtonGroup => "Button Group",
             Self::DropdownButton => "Dropdown Button",
@@ -145,6 +149,7 @@ impl ComponentKind {
     #[must_use]
     pub const fn all() -> &'static [Self] {
         &[
+            Self::Alert,
             Self::Button,
             Self::ButtonGroup,
             Self::Checkbox,
