@@ -19,11 +19,18 @@ use masonry::core::{
     WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Size};
+use masonry::kurbo::{Axis, Point, Rect, Size};
 use masonry::layout::{LenReq, Length};
 
 use super::single_child;
+use crate::Theme;
 use crate::components::click::{self, ClickPhase};
+
+/// Inset of the focus ring from the row's border-box edge, in logical
+/// pixels. Matches the smaller end of the per-component insets used
+/// elsewhere (checkbox/toggle/collapsible use 1.5); a full-bleed row
+/// benefits from staying just inside its bounds.
+const FOCUS_RING_INSET: f64 = 1.5;
 
 /// Action emitted by [`RowClickable`] on primary-button release. The
 /// receiver inspects the modifiers to decide whether this is a plain
@@ -42,14 +49,22 @@ pub struct RowClickAction {
 /// primary-button release inside its bounds.
 pub struct RowClickable {
     child: WidgetPod<dyn Widget>,
+    /// Reported via accesskit's `Selected` property — lets screen readers
+    /// announce a row's selection state. See [`Self::set_selected`].
+    selected: bool,
+    /// Used to color the focus ring drawn in [`Self::paint`] when this row
+    /// has keyboard focus.
+    theme: Theme,
 }
 
 // --- MARK: BUILDERS
 impl RowClickable {
     #[must_use]
-    pub fn new(child: NewWidget<impl Widget + ?Sized>) -> Self {
+    pub fn new(child: NewWidget<impl Widget + ?Sized>, selected: bool, theme: &Theme) -> Self {
         Self {
             child: child.erased().to_pod(),
+            selected,
+            theme: *theme,
         }
     }
 }
@@ -59,6 +74,23 @@ impl RowClickable {
     /// Returns a mutable reference to the wrapped child.
     pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
         this.ctx.get_mut(&mut this.widget.child)
+    }
+
+    /// Sets the row's selected state, requesting an accessibility update on
+    /// change so screen readers announce it.
+    pub fn set_selected(this: &mut WidgetMut<'_, Self>, selected: bool) {
+        if this.widget.selected != selected {
+            this.widget.selected = selected;
+            this.ctx.request_accessibility_update();
+        }
+    }
+
+    /// Replaces the theme used to color the focus ring.
+    pub fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
+        if this.widget.theme != *theme {
+            this.widget.theme = *theme;
+            this.ctx.request_paint_only();
+        }
     }
 }
 
@@ -139,10 +171,22 @@ impl Widget for RowClickable {
 
     fn paint(
         &mut self,
-        _ctx: &mut PaintCtx<'_>,
+        ctx: &mut PaintCtx<'_>,
         _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
+        painter: &mut Painter<'_>,
     ) {
+        if ctx.is_focus_target() {
+            let size = ctx.border_box_size();
+            let inset = FOCUS_RING_INSET;
+            let rect = Rect::from_origin_size(
+                Point::new(inset, inset),
+                Size::new(
+                    (size.width - 2.0 * inset).max(0.0),
+                    (size.height - 2.0 * inset).max(0.0),
+                ),
+            );
+            crate::focus_ring::paint_focus_ring(painter, rect, &self.theme);
+        }
     }
 
     fn accessibility_role(&self) -> Role {
@@ -153,8 +197,9 @@ impl Widget for RowClickable {
         &mut self,
         _ctx: &mut AccessCtx<'_>,
         _props: &PropertiesRef<'_>,
-        _node: &mut Node,
+        node: &mut Node,
     ) {
+        node.set_selected(self.selected);
     }
 
     fn children_ids(&self) -> ChildrenIds {
@@ -191,12 +236,22 @@ use xilem::{Pod, ViewCtx, WidgetView};
 #[must_use = "View values do nothing unless provided to Xilem."]
 pub struct ClickableRow<V, State, F> {
     child: V,
+    selected: bool,
+    theme: Theme,
     on_click: F,
     phantom: PhantomData<fn() -> State>,
 }
 
-/// Constructor for [`ClickableRow`].
-pub fn clickable_row<V, State, F>(child: V, on_click: F) -> ClickableRow<V, State, F>
+/// Constructor for [`ClickableRow`]. `selected` is reported to assistive
+/// technology via accesskit's `Selected` property — pass the row's current
+/// [`SelectionState`](super::selection::SelectionState) membership. `theme`
+/// colors the focus ring drawn when the row has keyboard focus.
+pub fn clickable_row<V, State, F>(
+    child: V,
+    selected: bool,
+    theme: &Theme,
+    on_click: F,
+) -> ClickableRow<V, State, F>
 where
     V: WidgetView<State, ()>,
     F: Fn(&mut State, RowClickAction) + Send + Sync + 'static,
@@ -204,6 +259,8 @@ where
 {
     ClickableRow {
         child,
+        selected,
+        theme: *theme,
         on_click,
         phantom: PhantomData,
     }
@@ -222,7 +279,7 @@ where
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let (child_pod, child_state) = self.child.build(ctx, app_state);
-        let widget = RowClickable::new(child_pod.new_widget);
+        let widget = RowClickable::new(child_pod.new_widget, self.selected, &self.theme);
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, child_state)
     }
@@ -235,6 +292,12 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) {
+        if self.selected != prev.selected {
+            RowClickable::set_selected(&mut element, self.selected);
+        }
+        if self.theme != prev.theme {
+            RowClickable::set_theme(&mut element, &self.theme);
+        }
         let mut child = RowClickable::child_mut(&mut element);
         self.child
             .rebuild(&prev.child, view_state, ctx, child.downcast(), app_state);

@@ -389,6 +389,8 @@ where
     let items = Arc::clone(ctx.items);
     Box::new(clickable_row(
         row_view,
+        is_selected,
+        ctx.theme,
         move |state: &mut State, action: RowClickAction| {
             apply_row_click(
                 state,

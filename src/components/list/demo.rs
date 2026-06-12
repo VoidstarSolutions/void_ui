@@ -33,7 +33,16 @@ struct Person {
 const CHUNK: u64 = 30;
 
 const FIRST_NAMES: &[&str] = &[
-    "Ada", "Grace", "Alan", "Margaret", "Linus", "Barbara", "Donald", "Katherine", "John", "Edsger",
+    "Ada",
+    "Grace",
+    "Alan",
+    "Margaret",
+    "Linus",
+    "Barbara",
+    "Donald",
+    "Katherine",
+    "John",
+    "Edsger",
 ];
 const LAST_NAMES: &[&str] = &[
     "Lovelace", "Hopper", "Turing", "Hamilton", "Torvalds", "Liskov", "Knuth", "Johnson", "Backus",
@@ -137,7 +146,11 @@ pub struct ListDemoPanel {
 fn build_toolbar(theme: &Theme, loading: bool) -> impl WidgetView<ListDemo> + use<> {
     flex_row((
         crate::components::button::button(|s: &mut ListDemo| s.toggle_loading())
-            .label(if loading { "Loading: on" } else { "Loading: off" })
+            .label(if loading {
+                "Loading: on"
+            } else {
+                "Loading: off"
+            })
             .active(loading)
             .render(theme),
         crate::components::button::button(|s: &mut ListDemo| s.scroll_to_top())
@@ -160,10 +173,16 @@ fn build_toolbar(theme: &Theme, loading: bool) -> impl WidgetView<ListDemo> + us
 }
 
 /// Renders one item: name on top, muted email beneath.
-fn build_item_row(item: &Person, _selected: bool, theme: &Theme) -> impl WidgetView<ListDemo> + use<> {
+fn build_item_row(
+    item: &Person,
+    _selected: bool,
+    theme: &Theme,
+) -> impl WidgetView<ListDemo> + use<> {
     sized_box(
         flex_col((
-            label(item.name.clone()).color(theme.palette.text).render(theme),
+            label(item.name.clone())
+                .color(theme.palette.text)
+                .render(theme),
             label(item.email.clone())
                 .text_size(theme.typography.size_caption)
                 .color(theme.palette.text_muted)

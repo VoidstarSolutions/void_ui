@@ -1093,41 +1093,46 @@ where
             let lens_for_click = selection_lens.clone();
             let row_id_for_click = row_id.clone();
             let rows_for_click = rows.clone();
-            clickable_row(row_view, move |state: &mut State, action| {
-                let Some(sel_lens) = lens_for_click.as_ref() else {
-                    return;
-                };
-                // Re-resolve the target id at click time from the live slice
-                // (the captured `pos` is stable for this row's lifetime).
-                let Some(target_id) = ({
-                    let data = (*rows_for_click)(state);
-                    data.get(pos).map(|row| row_id_for_click.id_of(pos, row))
-                }) else {
-                    return;
-                };
-
-                if action.shift {
-                    // Shift-extend over the *visual* range. Snapshot the
-                    // anchor id, resolve the inclusive id span from the
-                    // ordered slice, then apply — each borrow disjoint.
-                    let anchor = (**sel_lens)(state).anchor();
-                    let range = anchor.and_then(|anchor_id| {
+            clickable_row(
+                row_view,
+                is_selected,
+                &theme,
+                move |state: &mut State, action| {
+                    let Some(sel_lens) = lens_for_click.as_ref() else {
+                        return;
+                    };
+                    // Re-resolve the target id at click time from the live slice
+                    // (the captured `pos` is stable for this row's lifetime).
+                    let Some(target_id) = ({
                         let data = (*rows_for_click)(state);
-                        visual_range_ids(data, &row_id_for_click, anchor_id, target_id)
-                    });
-                    match range {
-                        Some(ids) => (**sel_lens)(state).extend_range(ids),
-                        // No anchor yet, or the anchor isn't in the current
-                        // view (e.g. filtered out): plain-select the target,
-                        // which reseats the anchor there for the next extend.
-                        None => (**sel_lens)(state).replace_with(target_id),
+                        data.get(pos).map(|row| row_id_for_click.id_of(pos, row))
+                    }) else {
+                        return;
+                    };
+
+                    if action.shift {
+                        // Shift-extend over the *visual* range. Snapshot the
+                        // anchor id, resolve the inclusive id span from the
+                        // ordered slice, then apply — each borrow disjoint.
+                        let anchor = (**sel_lens)(state).anchor();
+                        let range = anchor.and_then(|anchor_id| {
+                            let data = (*rows_for_click)(state);
+                            visual_range_ids(data, &row_id_for_click, anchor_id, target_id)
+                        });
+                        match range {
+                            Some(ids) => (**sel_lens)(state).extend_range(ids),
+                            // No anchor yet, or the anchor isn't in the current
+                            // view (e.g. filtered out): plain-select the target,
+                            // which reseats the anchor there for the next extend.
+                            None => (**sel_lens)(state).replace_with(target_id),
+                        }
+                    } else if action.action_mod {
+                        (**sel_lens)(state).toggle(target_id);
+                    } else {
+                        (**sel_lens)(state).replace_with(target_id);
                     }
-                } else if action.action_mod {
-                    (**sel_lens)(state).toggle(target_id);
-                } else {
-                    (**sel_lens)(state).replace_with(target_id);
-                }
-            })
+                },
+            )
         }),
         scroll,
         row_count,
