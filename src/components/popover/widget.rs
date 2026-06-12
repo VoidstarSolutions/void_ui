@@ -786,12 +786,10 @@ mod tests {
             .width(100.0.px())
             .height(40.0.px())
             .prepare();
-        let content = masonry::widgets::Align::new(
-            masonry::layout::UnitPoint::TOP_LEFT,
-            sized.erased(),
-        )
-        .prepare()
-        .erased();
+        let content =
+            masonry::widgets::Align::new(masonry::layout::UnitPoint::TOP_LEFT, sized.erased())
+                .prepare()
+                .erased();
 
         let popover_body = masonry::widgets::Label::new("popover body")
             .prepare()
