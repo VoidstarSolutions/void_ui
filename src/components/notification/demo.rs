@@ -21,8 +21,8 @@ use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 use super::{DEFAULT_TIMEOUT, NotificationPosition, notification, notification_stack};
 use crate::components::ScrollBarVisibility;
 use crate::layout::flex_wrap;
-use crate::with_source;
 use crate::{AlertVariant, Theme, button, label, scroll_container};
+use crate::{separator, with_source};
 
 const POSITIONS: [(NotificationPosition, &str); 6] = [
     (NotificationPosition::TopLeft, "Top Left"),
@@ -215,6 +215,7 @@ fn build_inner<S: NotificationDemoHost>(
     scroll_container(
         flex_col((
             title_block,
+            separator().render(theme),
             section_header::<S>("Live demo", theme),
             live_demo_section::<S>(theme, demo),
         ))
