@@ -23,8 +23,19 @@ use super::{
 };
 use crate::components::ScrollBarVisibility;
 use crate::layout::flex_wrap;
-use crate::{AlertVariant, Theme, button, label, scroll_container};
+use crate::{AlertVariant, ButtonVariant, Theme, button, label, scroll_container};
 use crate::{separator, with_source};
+
+/// Map a toast's [`AlertVariant`] to the [`ButtonVariant`] of the button that triggers it.
+fn button_variant_for(variant: AlertVariant) -> ButtonVariant {
+    match variant {
+        AlertVariant::Default => ButtonVariant::Default,
+        AlertVariant::Info => ButtonVariant::Info,
+        AlertVariant::Success => ButtonVariant::Success,
+        AlertVariant::Warning => ButtonVariant::Warning,
+        AlertVariant::Error => ButtonVariant::Danger,
+    }
+}
 
 const POSITIONS: [(NotificationPosition, &str); 6] = [
     (NotificationPosition::TopLeft, "Top Left"),
@@ -119,6 +130,7 @@ fn trigger_button<S: NotificationDemoHost>(
 ) -> impl WidgetView<S, ()> + use<S> {
     button(move |s: &mut S| s.as_mut().push_toast(message, variant, timeout))
         .label(label_text)
+        .variant(button_variant_for(variant))
         .render(theme)
 }
 
