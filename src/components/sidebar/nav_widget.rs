@@ -102,6 +102,15 @@ impl SidebarNavItemNode {
         }
     }
 
+    /// Updates the accessible name announced for this item, e.g. when the
+    /// item's label or `aria_label` changes without the item count changing.
+    pub fn set_name(this: &mut WidgetMut<'_, Self>, name: Option<ArcStr>) {
+        if this.widget.name != name {
+            this.widget.name = name;
+            this.ctx.request_accessibility_update();
+        }
+    }
+
     /// Mutable access to the wrapped content widget for the view layer.
     pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
         this.ctx.get_mut(&mut this.widget.child)

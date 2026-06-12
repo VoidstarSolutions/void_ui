@@ -202,6 +202,9 @@ where
                 #[allow(clippy::cast_possible_truncation)]
                 ctx.with_id(ViewId::new(i as u64), |ctx| {
                     let mut node = ThemedSidebarNav::item_mut(&mut element, i);
+                    if item.accessible_name() != prev_item.accessible_name() {
+                        SidebarNavItemNode::set_name(&mut node, item.accessible_name());
+                    }
                     let mut child = SidebarNavItemNode::child_mut(&mut node);
                     view.rebuild(
                         &prev_view,

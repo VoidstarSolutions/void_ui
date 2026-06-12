@@ -59,6 +59,10 @@ pub struct PopoverHost {
     open: bool,
     anchor: PopoverAnchor,
     theme: Theme,
+    /// The trigger's own widget id, captured at construction. Used by
+    /// `on_action` to ignore bubbled `ButtonPress` actions that originate
+    /// from inside the popover content rather than the trigger itself.
+    trigger_id: WidgetId,
 }
 
 // --- MARK: BUILDERS
@@ -71,6 +75,7 @@ impl PopoverHost {
         theme: &Theme,
     ) -> Self {
         let trigger = trigger.erased();
+        let trigger_id = trigger.id();
         content
             .properties
             .insert(Padding::all(Length::px(f64::from(theme.density.pad))));
@@ -82,6 +87,7 @@ impl PopoverHost {
             open: false,
             anchor,
             theme: *theme,
+            trigger_id,
         }
     }
 }
@@ -177,15 +183,21 @@ impl Widget for PopoverHost {
     /// trigger itself consumes the keyboard event. Pointer clicks are handled
     /// by `on_pointer_event` instead — a `ButtonPress` with `button: Some(_)`
     /// is ignored here to avoid double-toggling.
+    ///
+    /// `ButtonPress` actions bubble from anywhere in the subtree, including
+    /// buttons inside the popover content — only react when `source` is the
+    /// trigger itself, so activating a button inside the open content doesn't
+    /// also toggle the popover.
     fn on_action(
         &mut self,
         ctx: &mut ActionCtx<'_>,
         _props: &mut PropertiesMut<'_>,
         action: &ErasedAction,
-        _source: WidgetId,
+        source: WidgetId,
     ) {
         if let Some(press) = action.downcast_ref::<ButtonPress>()
             && press.button.is_none()
+            && source == self.trigger_id
         {
             ctx.set_handled();
             let open = !self.open;
