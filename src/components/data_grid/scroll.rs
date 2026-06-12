@@ -27,10 +27,10 @@ use xilem::{Pod, ViewCtx};
 pub struct ScrollState {
     /// Bumped on every request; the grid applies a snapshot when this
     /// differs from the generation it last applied.
-    pub(super) generation: u64,
+    generation: u64,
     /// Requested row (display position). Clamped to the row range at
     /// apply time.
-    pub(super) index: u64,
+    index: u64,
 }
 
 impl ScrollState {

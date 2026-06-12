@@ -47,8 +47,8 @@ pub use code_view::{ReadOnlyText, ReadOnlyTextView, RustHighlighter, read_only_t
 pub use collapsible::{Collapsible, CollapsibleView, collapsible};
 pub use data_grid::{
     CellAlign, ColumnDef, ColumnId, ColumnWidths, DataGrid, FilterState, MIN_COLUMN_WIDTH,
-    SelectionState, SortDirection, SortState, colored_text_column, data_grid, filtered_indices,
-    optional_text_column, text_column,
+    ScrollState, SelectionState, SortDirection, SortState, colored_text_column, data_grid,
+    filtered_indices, optional_text_column, text_column,
 };
 pub use dropdown_button::{DropdownButton, DropdownButtonView, dropdown_button};
 pub use group_box::{GroupBox, NoTitle, TitleState, WithTitle, group_box};
