@@ -28,6 +28,7 @@ use super::column::{
     CellAlign, ColumnDef, ColumnId, colored_text_column, optional_text_column, text_column,
 };
 use super::filter::{FilterState, filtered_indices};
+use super::scroll::ScrollState;
 use super::selection::SelectionState;
 use super::sort::{SortState, sort_indices};
 use super::width::ColumnWidths;
@@ -83,6 +84,8 @@ pub struct Demo {
     pub filter: FilterState,
     /// Per-column width overrides (drag-to-resize).
     pub column_widths: ColumnWidths,
+    /// Pending programmatic-scroll request (jump-to-row toolbar buttons).
+    pub scroll: ScrollState,
     /// Materialized filtered-then-sorted rows. Meaningful while the view
     /// is reordered (a filter is active *or* a sort column is set); the
     /// gallery's `rows` lens reads `ticks` directly in the plain
@@ -115,6 +118,7 @@ impl Demo {
             sort: SortState::new(),
             filter: FilterState::new(),
             column_widths: ColumnWidths::new(),
+            scroll: ScrollState::new(),
             visible: Vec::new(),
             column_order: None,
             rng_state: 0x0005_DEEC_E66D_u64.wrapping_mul(0xB16B_00B5),
@@ -293,6 +297,13 @@ impl Demo {
     /// Clears the selection.
     pub fn clear_selection(&mut self) {
         self.selection.clear();
+    }
+
+    /// Requests that the grid scroll row `index` (display position in
+    /// the current view) to the top of the viewport. Re-calling with
+    /// the same index re-triggers (the request is generation-stamped).
+    pub fn scroll_to_index(&mut self, index: u64) {
+        self.scroll.scroll_to_index(index);
     }
 
     fn next_tick(&mut self) -> DemoTick {
@@ -932,25 +943,12 @@ pub fn panel(theme: &Theme) -> DataGridDemoPanel {
     DataGridDemoPanel { theme: *theme }
 }
 
-fn build_inner(theme: &Theme, demo: &Demo) -> impl WidgetView<Demo> + use<> {
-    let dg_visible_len = if demo.view_is_materialized() {
-        demo.visible.len()
-    } else {
-        demo.ticks.len()
-    };
-    let row_count = u64::try_from(dg_visible_len).unwrap_or(u64::MAX);
-    let base_time_ns = demo.ticks.first().map_or(0, |t| t.event_ns);
-    let sort = demo.sort.clone();
-    let filter = demo.filter.clone();
-    let widths = demo.column_widths.clone();
-    let column_layout = demo.column_layout();
-
-    let columns = arrange_columns::<Demo>(&column_layout, base_time_ns);
-    let notional_id = ColumnId::from("Notional");
-    let notional_shown = column_layout.contains(&notional_id);
-    let theme_copy = *theme;
-
-    let toolbar = flex_row((
+fn build_toolbar(
+    theme: &Theme,
+    notional_shown: bool,
+    row_count: u64,
+) -> impl WidgetView<Demo> + use<> {
+    flex_row((
         crate::components::button::button(|s: &mut Demo| {
             s.append_n(100);
         })
@@ -970,6 +968,16 @@ fn build_inner(theme: &Theme, demo: &Demo) -> impl WidgetView<Demo> + use<> {
             s.clear_selection();
         })
         .label("Clear selection")
+        .render(theme),
+        crate::components::button::button(|s: &mut Demo| {
+            s.scroll_to_index(0);
+        })
+        .label("Jump to top")
+        .render(theme),
+        crate::components::button::button(|s: &mut Demo| {
+            s.scroll_to_index(50_000);
+        })
+        .label("Jump to 50k")
         .render(theme),
         FlexSpacer::Flex(1.0),
         crate::components::button::button(move |s: &mut Demo| {
@@ -998,7 +1006,29 @@ fn build_inner(theme: &Theme, demo: &Demo) -> impl WidgetView<Demo> + use<> {
             .render(theme),
     ))
     .cross_axis_alignment(CrossAxisAlignment::Center)
-    .gap(Length::px(8.0));
+    .gap(Length::px(8.0))
+}
+
+fn build_inner(theme: &Theme, demo: &Demo) -> impl WidgetView<Demo> + use<> {
+    let dg_visible_len = if demo.view_is_materialized() {
+        demo.visible.len()
+    } else {
+        demo.ticks.len()
+    };
+    let row_count = u64::try_from(dg_visible_len).unwrap_or(u64::MAX);
+    let base_time_ns = demo.ticks.first().map_or(0, |t| t.event_ns);
+    let sort = demo.sort.clone();
+    let filter = demo.filter.clone();
+    let widths = demo.column_widths.clone();
+    let scroll = demo.scroll;
+    let column_layout = demo.column_layout();
+
+    let columns = arrange_columns::<Demo>(&column_layout, base_time_ns);
+    let notional_id = ColumnId::from("Notional");
+    let notional_shown = column_layout.contains(&notional_id);
+    let theme_copy = *theme;
+
+    let toolbar = build_toolbar(theme, notional_shown, row_count);
 
     let grid = super::view::data_grid(columns)
         .rows(|s: &Demo| {
@@ -1022,6 +1052,7 @@ fn build_inner(theme: &Theme, demo: &Demo) -> impl WidgetView<Demo> + use<> {
             s.resize_column(col, new_width);
         })
         .row_height(22.0)
+        .scroll_to(scroll)
         .render(&theme_copy);
 
     flex_col((toolbar, sized_box(grid).flex(1.0)))

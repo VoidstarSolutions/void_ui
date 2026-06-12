@@ -29,7 +29,8 @@
 //! Entry points: [`view::data_grid`] for the xilem view,
 //! [`column::ColumnDef`] for the per-column contract,
 //! [`selection::SelectionState`] for the selection model,
-//! [`sort::SortState`] for the sort model.
+//! [`sort::SortState`] for the sort model,
+//! [`scroll::ScrollState`] for programmatic scroll-to-row.
 //!
 //! ## The host owns row order (sorting *and* filtering)
 //!
@@ -155,6 +156,7 @@ pub mod demo;
 pub mod filter;
 pub mod header_click;
 pub mod row_click;
+pub mod scroll;
 pub mod selection;
 mod single_child;
 pub mod sort;
@@ -170,6 +172,7 @@ pub use copy_shortcut::CopyOnShortcut;
 pub use filter::{FilterState, filtered_indices};
 pub use header_click::{HeaderClickable, HeaderClicked};
 pub use row_click::{RowClickAction, RowClickable};
+pub use scroll::ScrollState;
 pub use selection::SelectionState;
 pub use sort::{SortDirection, SortState, sort_indices};
 pub use view::{DataGrid, data_grid};
