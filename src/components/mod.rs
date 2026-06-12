@@ -48,7 +48,10 @@ pub use checkbox::{Checkbox, CheckboxView, checkbox};
 pub use clipboard::{Clipboard, ClipboardView, clipboard};
 pub use code_view::{ReadOnlyText, ReadOnlyTextView, RustHighlighter, read_only_text};
 pub use collapsible::{Collapsible, CollapsibleView, collapsible};
-pub use context_menu::{Menu, MenuItem, MenuView, item, menu};
+pub use context_menu::{
+    ContextMenuAreaBuilder, ContextMenuAreaView, Menu, MenuItem, MenuView, context_menu_area, item,
+    menu,
+};
 pub use data_grid::{
     CellAlign, ColumnDef, ColumnId, ColumnWidths, DataGrid, FilterState, MIN_COLUMN_WIDTH,
     ScrollState, SelectionState, SortDirection, SortState, colored_text_column, data_grid,

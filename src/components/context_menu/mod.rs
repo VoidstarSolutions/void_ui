@@ -19,10 +19,15 @@
 //! A right-click `context_menu_area` trigger that pops this panel at the cursor
 //! lands in a following chunk; for now the panel renders inline.
 
+pub mod area;
 #[cfg(feature = "gallery")]
 pub mod demo;
 mod view;
 pub mod widget;
 
-pub use view::{Menu, MenuItem, MenuView, item, menu};
+pub use area::{ContextMenuArea, ContextMenuAction};
+pub use view::{
+    ContextMenuAreaBuilder, ContextMenuAreaView, Menu, MenuItem, MenuView, context_menu_area, item,
+    menu,
+};
 pub use widget::{MenuItemSelected, MenuPanel, MenuRowSpec};

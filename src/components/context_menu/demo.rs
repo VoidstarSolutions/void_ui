@@ -1,19 +1,19 @@
 //! Context menu demo panel used by the void-ui gallery.
 //!
-//! Chunk 1 renders the [`MenuPanel`](super::widget::MenuPanel) inline so the
-//! row rendering, hover, separators, disabled state, and click-to-select can be
-//! exercised on their own — ahead of the right-click trigger.
+//! Shows the [`MenuPanel`](super::widget::MenuPanel) two ways: rendered inline
+//! (row rendering, hover, separators, disabled, click-to-select), and as a
+//! right-click [`context_menu_area`] that pops the menu at the cursor.
 
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::layout::Length;
 use xilem::masonry::widgets::Passthrough;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, flex_col, flex_row};
+use xilem::view::{CrossAxisAlignment, flex_col, flex_row, sized_box};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use crate::Theme;
 use crate::components::ScrollBarVisibility;
-use crate::components::context_menu::{item, menu};
+use crate::components::context_menu::{context_menu_area, item, menu};
 use crate::label;
 use crate::scroll_container;
 use crate::with_source;
@@ -70,6 +70,41 @@ fn basic_menu(theme: &Theme) -> impl WidgetView<ContextMenuDemo> + use<> {
     })
 }
 
+fn right_click_area(theme: &Theme) -> impl WidgetView<ContextMenuDemo> + use<> {
+    with_source!(theme, {
+        context_menu_area(
+            sized_box(
+                label("Right-click anywhere in this box")
+                    .color(theme.palette.text_muted)
+                    .render(theme),
+            )
+            .width(Length::px(320.0))
+            .height(Length::px(140.0))
+            .background_color(theme.palette.surface_2)
+            .border_color(theme.palette.border)
+            .border_width(Length::px(1.0)),
+        )
+        .item(item("Cut").on_select(|s: &mut ContextMenuDemo| {
+            s.last_action = "Cut".into();
+        }))
+        .item(item("Copy").on_select(|s: &mut ContextMenuDemo| {
+            s.last_action = "Copy".into();
+        }))
+        .item(
+            item("Paste")
+                .disabled(true)
+                .on_select(|s: &mut ContextMenuDemo| {
+                    s.last_action = "Paste".into();
+                }),
+        )
+        .separator()
+        .item(item("Select All").on_select(|s: &mut ContextMenuDemo| {
+            s.last_action = "Select All".into();
+        }))
+        .render(theme)
+    })
+}
+
 fn build_inner(
     theme: &Theme,
     state: &ContextMenuDemo,
@@ -107,8 +142,10 @@ fn build_inner(
         flex_col((
             title_block,
             status,
-            header("Menu"),
+            header("Menu (inline)"),
             basic_menu(theme),
+            header("Right-click trigger"),
+            right_click_area(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(16.0)),

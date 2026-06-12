@@ -22,10 +22,11 @@
 
 use std::marker::PhantomData;
 
-use masonry::core::ArcStr;
+use masonry::core::{ArcStr, NewWidget};
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
-use xilem::{Pod, ViewCtx};
+use xilem::{Pod, ViewCtx, WidgetView};
 
+use super::area::{ContextMenuArea, ContextMenuAction};
 use super::widget::{MenuItemSelected, MenuPanel, MenuRowSpec};
 use crate::Theme;
 
@@ -73,6 +74,50 @@ enum Entry<State, Action> {
     Separator,
 }
 
+/// Translate builder entries into the widget's display specs plus the parallel
+/// index→callback table. Shared by the inline [`Menu`] and the
+/// [`context_menu_area`] trigger so both map a [`MenuItemSelected`] index back
+/// to its callback identically.
+fn entries_to_rows<State, Action>(
+    entries: Vec<Entry<State, Action>>,
+) -> (Vec<MenuRowSpec>, Vec<Option<SelectCallback<State, Action>>>) {
+    let mut rows = Vec::with_capacity(entries.len());
+    let mut callbacks = Vec::with_capacity(entries.len());
+    for entry in entries {
+        match entry {
+            Entry::Item(it) => {
+                rows.push(MenuRowSpec::Action {
+                    label: it.label,
+                    disabled: it.disabled,
+                });
+                // Disabled rows never emit a selection, so their callback is
+                // irrelevant — drop it to keep the index→callback mapping honest.
+                callbacks.push(if it.disabled { None } else { it.on_select });
+            }
+            Entry::Separator => {
+                rows.push(MenuRowSpec::Separator);
+                callbacks.push(None);
+            }
+        }
+    }
+    (rows, callbacks)
+}
+
+/// Route a selected row index to its callback, shared by both consumers.
+fn dispatch_selection<State, Action>(
+    callbacks: &[Option<SelectCallback<State, Action>>],
+    index: usize,
+    app_state: &mut State,
+) -> MessageResult<Action> {
+    match callbacks.get(index) {
+        Some(Some(callback)) => MessageResult::Action(callback(app_state)),
+        // Selected an enabled row that carries no callback — consumed, but
+        // there's nothing to emit.
+        Some(None) => MessageResult::Nop,
+        None => MessageResult::Stale,
+    }
+}
+
 /// Builder for a rich menu panel.
 ///
 /// Create with [`menu`]; add rows with [`Self::item`] / [`Self::separator`];
@@ -114,25 +159,7 @@ where
 
     /// Materialize the xilem view at the supplied theme.
     pub fn render(self, theme: &Theme) -> MenuView<State, Action> {
-        let mut rows = Vec::with_capacity(self.entries.len());
-        let mut callbacks = Vec::with_capacity(self.entries.len());
-        for entry in self.entries {
-            match entry {
-                Entry::Item(it) => {
-                    rows.push(MenuRowSpec::Action {
-                        label: it.label,
-                        disabled: it.disabled,
-                    });
-                    // Disabled rows never emit a selection, so their callback is
-                    // irrelevant — drop it to keep the index→callback mapping honest.
-                    callbacks.push(if it.disabled { None } else { it.on_select });
-                }
-                Entry::Separator => {
-                    rows.push(MenuRowSpec::Separator);
-                    callbacks.push(None);
-                }
-            }
-        }
+        let (rows, callbacks) = entries_to_rows(self.entries);
         MenuView {
             rows,
             callbacks,
@@ -206,15 +233,159 @@ where
         match message.take_message::<MenuItemSelected>() {
             Some(selected) => {
                 let MenuItemSelected(index) = *selected;
-                match self.callbacks.get(index) {
-                    Some(Some(callback)) => MessageResult::Action(callback(app_state)),
-                    // Selected an enabled row that carries no callback — consumed,
-                    // but there's nothing to emit.
-                    Some(None) => MessageResult::Nop,
-                    None => MessageResult::Stale,
-                }
+                dispatch_selection(&self.callbacks, index, app_state)
             }
             None => MessageResult::Stale,
+        }
+    }
+}
+
+// --- MARK: context_menu_area (right-click trigger)
+
+/// Builder for a right-click context menu over arbitrary `content`.
+///
+/// Create with [`context_menu_area`]; add rows with [`Self::item`] /
+/// [`Self::separator`]; materialize with [`Self::render`]. Right-clicking
+/// anywhere in `content` opens the menu at the cursor; selecting a row fires its
+/// callback, and selecting / clicking outside / Escape dismisses it.
+///
+/// ```ignore
+/// use void_ui::components::context_menu::{context_menu_area, item};
+/// context_menu_area(my_content.render(&theme))
+///     .item(item("Cut").on_select(|s: &mut State| s.cut()))
+///     .item(item("Copy").on_select(|s: &mut State| s.copy()))
+///     .separator()
+///     .item(item("Paste").disabled(true).on_select(|s: &mut State| s.paste()))
+///     .render(&theme)
+/// ```
+#[must_use = "ContextMenuAreaBuilder does nothing until rendered with .render(&theme)"]
+pub struct ContextMenuAreaBuilder<State, Action, V> {
+    content: V,
+    entries: Vec<Entry<State, Action>>,
+}
+
+/// Wrap `content` so a right-click opens a context menu over it.
+pub fn context_menu_area<State, Action, V>(
+    content: V,
+) -> ContextMenuAreaBuilder<State, Action, V> {
+    ContextMenuAreaBuilder {
+        content,
+        entries: Vec::new(),
+    }
+}
+
+impl<State, Action, V> ContextMenuAreaBuilder<State, Action, V>
+where
+    State: 'static,
+    Action: 'static,
+    V: WidgetView<State, Action>,
+{
+    /// Append a command row.
+    pub fn item(mut self, item: MenuItem<State, Action>) -> Self {
+        self.entries.push(Entry::Item(item));
+        self
+    }
+
+    /// Append a divider between rows.
+    pub fn separator(mut self) -> Self {
+        self.entries.push(Entry::Separator);
+        self
+    }
+
+    /// Materialize the xilem view at the supplied theme.
+    pub fn render(self, theme: &Theme) -> ContextMenuAreaView<V, State, Action> {
+        let (rows, callbacks) = entries_to_rows(self.entries);
+        ContextMenuAreaView {
+            content: self.content,
+            rows,
+            callbacks,
+            theme: *theme,
+            phantom: PhantomData,
+        }
+    }
+}
+
+/// The materialized xilem `View` backing a [`ContextMenuAreaBuilder`].
+#[must_use = "View values do nothing unless provided to Xilem."]
+pub struct ContextMenuAreaView<V, State, Action> {
+    content: V,
+    rows: Vec<MenuRowSpec>,
+    callbacks: Vec<Option<SelectCallback<State, Action>>>,
+    theme: Theme,
+    phantom: PhantomData<fn(State) -> Action>,
+}
+
+impl<V, State, Action> ViewMarker for ContextMenuAreaView<V, State, Action> {}
+
+impl<V, State, Action> View<State, Action, ViewCtx> for ContextMenuAreaView<V, State, Action>
+where
+    State: 'static,
+    Action: 'static,
+    V: WidgetView<State, Action>,
+{
+    type Element = Pod<ContextMenuArea>;
+    type ViewState = V::ViewState;
+
+    fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
+        let (content_pod, content_vs) = self.content.build(ctx, app_state);
+        let menu = MenuPanel::new(self.rows.iter().cloned(), &self.theme);
+        let widget = ContextMenuArea::new(content_pod.new_widget.erased(), NewWidget::new(menu));
+        // Register as an action source so the area's `ContextMenuAction` routes
+        // to this view's `message`.
+        let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
+        (element, content_vs)
+    }
+
+    fn rebuild(
+        &self,
+        prev: &Self,
+        view_state: &mut Self::ViewState,
+        ctx: &mut ViewCtx,
+        mut element: Mut<'_, Self::Element>,
+        app_state: &mut State,
+    ) {
+        {
+            let mut content = ContextMenuArea::content_mut(&mut element);
+            self.content
+                .rebuild(&prev.content, view_state, ctx, content.downcast(), app_state);
+        }
+        if self.theme != prev.theme {
+            let mut menu = ContextMenuArea::menu_mut(&mut element);
+            MenuPanel::set_theme(&mut menu, &self.theme);
+        }
+        if self.rows != prev.rows {
+            let mut menu = ContextMenuArea::menu_mut(&mut element);
+            MenuPanel::set_rows(&mut menu, self.rows.iter().cloned());
+        }
+    }
+
+    fn teardown(
+        &self,
+        view_state: &mut Self::ViewState,
+        ctx: &mut ViewCtx,
+        mut element: Mut<'_, Self::Element>,
+    ) {
+        {
+            let mut content = ContextMenuArea::content_mut(&mut element);
+            self.content.teardown(view_state, ctx, content.downcast());
+        }
+        ctx.teardown_action_source(element);
+    }
+
+    fn message(
+        &self,
+        view_state: &mut Self::ViewState,
+        message: &mut MessageCtx,
+        mut element: Mut<'_, Self::Element>,
+        app_state: &mut State,
+    ) -> MessageResult<Action> {
+        if let Some(action) = message.take_message::<ContextMenuAction>() {
+            let ContextMenuAction::ItemSelected(index) = *action;
+            dispatch_selection(&self.callbacks, index, app_state)
+        } else {
+            let mut content = ContextMenuArea::content_mut(&mut element);
+            self.content
+                .message(view_state, message, content.downcast(), app_state)
         }
     }
 }
