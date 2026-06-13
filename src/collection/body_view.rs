@@ -305,6 +305,184 @@ mod tests {
         );
     }
 
+    /// BASELINE (reference only): times the per-row build work the
+    /// virtualized body's `virtual_scroll` closure performs for one
+    /// rebuild of a window of visible rows — resolve the item, compute
+    /// `is_selected` through the selection lens, build the per-row content
+    /// view, wrap it in the selection-background `sized_box`, and set up
+    /// the `clickable_row` click closure (which clones the items accessor,
+    /// id source, and selection lens `Arc`s). This is the cost a future
+    /// memoization optimization (deferred to the list rebuild branch) would
+    /// reduce.
+    ///
+    /// Honest scope: this replicates the *body* of `collection_body`'s
+    /// per-row closure rather than driving the closure through the View
+    /// machinery (no app/view-level rebuild harness exists on this xilem
+    /// rev — only masonry's widget-level `TestHarness`). View values are
+    /// lazy, so this measures the construction of the per-row view tree and
+    /// the `Arc` clones, *not* xilem's diff/`rebuild` traversal or any
+    /// widget mutation. Numbers are relative and hardware-dependent — for
+    /// before/after comparison only.
+    ///
+    /// Ignored by default; run with:
+    /// `cargo test --all-features -- --ignored --nocapture row_build_baseline`
+    #[test]
+    #[ignore = "baseline timing, not a correctness check; run with --ignored --nocapture"]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "self-contained measurement harness: synthetic state + per-row replica + timing loop"
+    )]
+    fn row_build_baseline() {
+        use std::hint::black_box;
+        use std::sync::Arc;
+        use std::time::Instant;
+
+        use xilem::AnyWidgetView;
+        use xilem::peniko::Color;
+        use xilem::style::Style as _;
+        use xilem::view::{flex_row, label, sized_box};
+
+        use super::{RenderRow, collection_body};
+        use crate::Theme;
+        use crate::collection::row_click::{RowClickAction, clickable_row};
+        use crate::collection::{
+            IdSource, ItemsFn, SelectionLens, SelectionState, apply_row_click,
+        };
+
+        // How many visible rows one rebuild materializes. A realistic
+        // virtualized window is a few dozen rows; 40 is representative.
+        const ROWS: usize = 40;
+        // Repeat the windowed build many times for a stable median.
+        const ITERS: usize = 2_000;
+
+        struct S {
+            items: Vec<Row>,
+            sel: SelectionState,
+        }
+        // Small realistic row: a handful of cell-sized fields.
+        struct Row {
+            id: u64,
+            name: String,
+            qty: u64,
+            note: String,
+        }
+
+        // One windowed build = the exact per-row work `collection_body`'s
+        // `virtual_scroll` closure runs, for ROWS consecutive positions.
+        fn build_window(
+            state: &mut S,
+            items_fn: &ItemsFn<S, Row>,
+            lens: &SelectionLens<S>,
+            id_source: &IdSource<Row>,
+            render_row: &RenderRow<S, Row>,
+            theme: &Theme,
+        ) {
+            for pos in 0..ROWS {
+                let data = (*items_fn)(state);
+                let id_at_pos = data.get(pos).map(|item| id_source.id_of(pos, item));
+                let is_selected = id_at_pos.is_some_and(|id| (*lens)(state).contains(id));
+
+                let data = (*items_fn)(state);
+                let content: Box<AnyWidgetView<S>> = match data.get(pos) {
+                    Some(item) => render_row(item, is_selected, theme),
+                    None => Box::new(label("")),
+                };
+
+                let row_bg = if is_selected {
+                    theme.palette.surface_2
+                } else {
+                    Color::TRANSPARENT
+                };
+                let row_view = sized_box(content).background_color(row_bg);
+
+                let items_fn = Arc::clone(items_fn);
+                let id_source = id_source.clone();
+                let selection_lens = Some(Arc::clone(lens));
+                let row = clickable_row(row_view, move |state: &mut S, action: RowClickAction| {
+                    apply_row_click(
+                        state,
+                        action,
+                        pos,
+                        &items_fn,
+                        selection_lens.as_ref(),
+                        &id_source,
+                    );
+                });
+                black_box(&row);
+            }
+        }
+
+        // Keep this baseline wired to the code path it measures: if
+        // `collection_body`'s signature changes, this test won't compile.
+        let _ = collection_body::<S, u64>;
+
+        let items: Vec<Row> = (0..ROWS as u64)
+            .map(|i| Row {
+                id: i,
+                name: format!("item {i}"),
+                qty: i * 3,
+                note: format!("note for row {i}"),
+            })
+            .collect();
+        let mut sel = SelectionState::new();
+        // A non-empty selection so the lens path does real work.
+        sel.replace_with(7);
+        let mut state = S { items, sel };
+
+        let items_fn: ItemsFn<S, Row> = Arc::new(|s: &S| &s.items[..]);
+        let lens: SelectionLens<S> = Arc::new(|s: &mut S| &mut s.sel);
+        let id_source: IdSource<Row> = IdSource::Explicit(Arc::new(|r: &Row| r.id));
+        let theme = Theme::default();
+        // Mirror data_grid: each row is a strip of a few labeled cells.
+        let render_row: RenderRow<S, Row> = Arc::new(
+            |row: &Row, _selected: bool, _theme: &Theme| -> Box<AnyWidgetView<S>> {
+                Box::new(flex_row((
+                    label(row.name.clone()),
+                    label(row.qty.to_string()),
+                    label(row.note.clone()),
+                )))
+            },
+        );
+
+        // Warm up (allocator, branch prediction) before timing.
+        for _ in 0..50 {
+            build_window(
+                &mut state,
+                &items_fn,
+                &lens,
+                &id_source,
+                &render_row,
+                &theme,
+            );
+        }
+
+        let mut samples: Vec<u128> = Vec::with_capacity(ITERS);
+        for _ in 0..ITERS {
+            let start = Instant::now();
+            build_window(
+                &mut state,
+                &items_fn,
+                &lens,
+                &id_source,
+                &render_row,
+                &theme,
+            );
+            samples.push(start.elapsed().as_nanos());
+        }
+        samples.sort_unstable();
+        let median_window_ns = samples[samples.len() / 2];
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "informational baseline print; ns values are far below f64's exact-integer range"
+        )]
+        let median_row_ns = median_window_ns as f64 / ROWS as f64;
+
+        println!(
+            "row_build_baseline: ROWS={ROWS} ITERS={ITERS} \
+             median window={median_window_ns}ns, per-row={median_row_ns:.1}ns"
+        );
+    }
+
     /// Smoke-test the public builder: constructing `collection_body` from a
     /// fully-populated `CollectionBodyParams` (selection lens, lazy-load,
     /// explicit id source, and a content renderer) yields a `WidgetView`
