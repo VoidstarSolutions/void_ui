@@ -738,10 +738,14 @@ where
             let items = Arc::clone(&items);
             let id_source = id_source.clone();
             let selection_lens = selection_lens.clone();
+            // NOTE: on this base branch `clickable_row` is the 2-arg form
+            // `(child, on_click)` — the `selected`/`theme`/focus-ring
+            // enhancements live on the list branch and are reconciled into
+            // `collection/row_click.rs` when `list` rebuilds on the substrate.
+            // The substrate applies the selection background itself (above),
+            // matching data_grid's current behavior.
             clickable_row(
                 row_view,
-                is_selected,
-                &theme,
                 move |state: &mut State, action: RowClickAction| {
                     apply_row_click(
                         state,
