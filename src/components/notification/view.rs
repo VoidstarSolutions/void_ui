@@ -72,6 +72,7 @@ pub struct Notification<C = ()> {
     icon: Option<IconName>,
     show_icon: bool,
     timeout: Option<Duration>,
+    timeout_explicit: bool,
     on_close: C,
 }
 
@@ -88,6 +89,7 @@ pub fn notification(message: impl Into<ArcStr>) -> Notification {
         icon: None,
         show_icon: true,
         timeout: Some(DEFAULT_TIMEOUT),
+        timeout_explicit: false,
         on_close: (),
     }
 }
@@ -121,10 +123,12 @@ impl<C> Notification<C> {
 
     /// Auto-dismiss after `duration` of being shown.
     ///
-    /// Ignored unless [`Self::on_close`] is set — with no callback there is
-    /// nothing to notify when the timeout elapses, so the timer never arms.
+    /// Requires [`Self::on_close`] — with no callback there is nothing to
+    /// notify when the timeout elapses, so [`Self::render`] panics if this
+    /// is called without one.
     pub fn timeout(mut self, duration: Duration) -> Self {
         self.timeout = Some(duration);
+        self.timeout_explicit = true;
         self
     }
 
@@ -144,11 +148,17 @@ impl<C> Notification<C> {
             icon: self.icon,
             show_icon: self.show_icon,
             timeout: self.timeout,
+            timeout_explicit: self.timeout_explicit,
             on_close,
         }
     }
 
     /// Materialize the xilem view at the supplied theme.
+    ///
+    /// # Panics
+    ///
+    /// Panics if [`Self::timeout`] was called without [`Self::on_close`] —
+    /// such a timeout can never fire, since there is no callback to notify.
     #[must_use = "View values do nothing unless provided to Xilem."]
     pub fn render<State, Action>(
         self,
@@ -159,6 +169,10 @@ impl<C> Notification<C> {
         Action: 'static,
         C: DismissCallback<State, Action>,
     {
+        assert!(
+            !self.timeout_explicit || C::enabled(),
+            "Notification::timeout() has no effect without Notification::on_close()"
+        );
         let timeout = if C::enabled() { self.timeout } else { None };
         let on_close = self.on_close.clone();
 
@@ -437,7 +451,35 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{NotificationPosition, UnitPoint};
+    use super::{NotificationPosition, UnitPoint, notification};
+    use crate::Theme;
+
+    #[test]
+    #[should_panic(
+        expected = "Notification::timeout() has no effect without Notification::on_close()"
+    )]
+    fn render_panics_on_explicit_timeout_without_on_close() {
+        let theme = Theme::default();
+        let _ = notification("hi")
+            .timeout(std::time::Duration::from_secs(2))
+            .render::<(), ()>(&theme);
+    }
+
+    #[test]
+    fn render_allows_explicit_timeout_with_on_close() {
+        let theme = Theme::default();
+        let _ = notification("hi")
+            .timeout(std::time::Duration::from_secs(2))
+            .on_close(|(): &mut ()| {})
+            .render::<(), ()>(&theme);
+    }
+
+    #[test]
+    fn render_allows_default_timeout_without_on_close() {
+        let theme = Theme::default();
+        // No explicit .timeout() call — the default DEFAULT_TIMEOUT must not panic.
+        let _ = notification("hi").render::<(), ()>(&theme);
+    }
 
     #[test]
     fn position_maps_to_matching_unit_point_corner() {
