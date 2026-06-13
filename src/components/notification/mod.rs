@@ -16,7 +16,7 @@
 #[cfg(feature = "gallery")]
 pub mod demo;
 mod view;
-pub mod widget;
+mod widget;
 
 pub use view::{
     DEFAULT_NOTIFICATION_WIDTH, DEFAULT_TIMEOUT, DismissCallback, Notification,

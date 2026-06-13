@@ -25,7 +25,9 @@ use xilem::WidgetView;
 use xilem::masonry::layout::Length;
 use xilem::peniko::Color;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, FlexExt as _, MainAxisAlignment, flex_col, flex_row, sized_box};
+use xilem::view::{
+    CrossAxisAlignment, FlexExt as _, MainAxisAlignment, flex_col, flex_row, sized_box,
+};
 
 use crate::theme::Palette;
 use crate::{ButtonVariant, IconName, Theme, button, icon, label};
