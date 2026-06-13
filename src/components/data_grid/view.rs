@@ -1,11 +1,12 @@
 //! Xilem [`View`] composition for the data grid.
 //!
-//! - The body is `flex_col(header, virtual_scroll(body))` — pure xilem
-//!   stock with a row builder closure that materializes one
-//!   `flex_row` of fixed-width cells per loaded index. Each row is
-//!   wrapped in [`crate::collection::row_click::clickable_row`] so primary clicks
-//!   (with optional shift / ctrl-cmd modifiers) update the
-//!   [`SelectionState`].
+//! - The body is `flex_col(header, collection_body(..))`: the grid
+//!   supplies only per-row *content* (one `ColumnStrip` of fixed-width
+//!   cells per loaded index) via `render_row`, and the collection
+//!   substrate's `collection_body` owns
+//!   virtualization, scroll-to-row, arrow-key row navigation, the
+//!   selection background, and the modifier-aware click routing (shift /
+//!   ctrl-cmd) that updates the [`SelectionState`].
 //! - The header + filter + body stack is wrapped in a horizontal-only
 //!   [`scroll_container`](crate::components::scroll_container) so columns
 //!   wider than the viewport are reachable (header and body share the
@@ -24,11 +25,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use xilem::WidgetView;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::layout::Length;
-use xilem::peniko::Color;
 use xilem::style::Style as _;
 use xilem::view::{
     AnyFlexChild, CrossAxisAlignment, MainAxisAlignment, flex_col, flex_item, flex_row, label,
-    sized_box, text_input, virtual_scroll,
+    sized_box, text_input,
 };
 use xilem::{AnyWidgetView, Pod, ViewCtx};
 
@@ -37,14 +37,12 @@ use super::column_strip::{SeparatorStyle, column_strip};
 use super::copy_shortcut::CopyOnShortcut;
 use super::filter::FilterState;
 use super::header_click::clickable_header;
-use super::scroll::ScrollToView;
 use super::sort::{SortDirection, SortState};
 use super::width::ColumnWidths;
 use crate::Theme;
 use crate::collection::ScrollState;
 use crate::collection::SelectionState;
-use crate::collection::clickable_row;
-use crate::collection::{IdSource, scroll_idx_to_slice, scroll_range_end, visual_range_ids};
+use crate::collection::{CollectionBodyParams, IdSource, RenderRow, collection_body};
 use crate::components::scroll_container::scroll_container;
 
 /// Boxed row-data accessor (`Fn(&State) -> &[R]`), shared via `Arc`
@@ -983,107 +981,49 @@ where
         row_id,
         scroll,
     } = params;
-    let valid_range_end = scroll_range_end(row_count);
     // Column widths are identical for every row and don't change between
     // rebuilds of this body, so compute them once and share the `Arc` into
     // the per-row closure rather than re-deriving from `render_slots` on
     // every visible row; `column_strip` takes the `Arc` directly, so each
     // row costs a refcount bump, not a `Vec` allocation.
     let widths: Arc<Vec<f64>> = Arc::new(render_slots.iter().map(|s| s.width).collect());
-    // Wrap the virtual scroll so pending ScrollState requests re-anchor
-    // it (programmatic scroll-to-row); see `scroll::ScrollToView`.
-    ScrollToView {
-        child: virtual_scroll(0..valid_range_end, move |state: &mut State, idx: i64| {
-            // Host owns order: virtual position is the slice position.
-            let pos = scroll_idx_to_slice(idx);
 
-            let data = (*rows)(state);
-            // The clicked row's stable id, resolved from the current ordered
-            // slice. `None` when `pos` is past the end (a row scrolled past a
-            // shrinking dataset) — that row renders empty and is inert.
-            let row_id_at_pos = data.get(pos).map(|row| row_id.id_of(pos, row));
-
-            let is_selected = match (selection_lens.as_ref(), row_id_at_pos) {
-                (Some(sel), Some(id)) => (**sel)(state).contains(id),
-                _ => false,
-            };
-
-            // Re-borrow the slice: the `is_selected` arm above took a
-            // `&mut State` through the selection lens, ending the earlier
-            // `&[R]` borrow, so we fetch the rows again for cell rendering.
-            let data = (*rows)(state);
-            let cells: Vec<Box<AnyWidgetView<State>>> = if let Some(row) = data.get(pos) {
-                render_slots
+    // Per-row CONTENT only: the cell strip. `collection_body` wraps this
+    // with the selection background (`surface_2` when selected) and the
+    // `clickable_row` selection routing, so this closure neither styles
+    // selection nor handles clicks. ColumnStrip gives every body row the
+    // same authoritative column x-positions as the header/filter strips;
+    // the shared width list is handed over as an `Arc` clone — a refcount
+    // bump, not a per-row `Vec` allocation.
+    let render_row: RenderRow<State, R> = {
+        let render_slots = Arc::clone(&render_slots);
+        let widths = Arc::clone(&widths);
+        Arc::new(
+            move |row: &R, _selected: bool, theme: &Theme| -> Box<AnyWidgetView<State>> {
+                let cells: Vec<Box<AnyWidgetView<State>>> = render_slots
                     .iter()
                     .map(|slot| {
                         // Cell content only; ColumnStrip owns the width.
                         // Keep the per-cell alignment wrapper so Start/
                         // Center/End still position text within the cell.
-                        aligned_cell((slot.render)(row, &theme), slot.width, slot.align)
+                        aligned_cell((slot.render)(row, theme), slot.width, slot.align)
                     })
-                    .collect()
-            } else {
-                Vec::new()
-            };
+                    .collect();
+                Box::new(column_strip(Arc::clone(&widths), row_height, cells))
+            },
+        )
+    };
 
-            let row_bg = if is_selected {
-                theme.palette.surface_2
-            } else {
-                Color::TRANSPARENT
-            };
-            // ColumnStrip gives every body row the same authoritative column
-            // x-positions as the header/filter strips. The shared width list
-            // is handed over as an `Arc` clone — a refcount bump, not a per-
-            // row `Vec` allocation.
-            let row_view = sized_box(column_strip(Arc::clone(&widths), row_height, cells))
-                .background_color(row_bg);
-
-            // Click handler: route modifiers to the matching SelectionState
-            // op, all keyed by the row's *stable id*. Borrows of `state` are
-            // kept disjoint (id/data reads vs. the mutable selection borrow)
-            // by snapshotting Copy values between them.
-            let lens_for_click = selection_lens.clone();
-            let row_id_for_click = row_id.clone();
-            let rows_for_click = rows.clone();
-            clickable_row(row_view, move |state: &mut State, action| {
-                let Some(sel_lens) = lens_for_click.as_ref() else {
-                    return;
-                };
-                // Re-resolve the target id at click time from the live slice
-                // (the captured `pos` is stable for this row's lifetime).
-                let Some(target_id) = ({
-                    let data = (*rows_for_click)(state);
-                    data.get(pos).map(|row| row_id_for_click.id_of(pos, row))
-                }) else {
-                    return;
-                };
-
-                if action.shift {
-                    // Shift-extend over the *visual* range. Snapshot the
-                    // anchor id, resolve the inclusive id span from the
-                    // ordered slice, then apply — each borrow disjoint.
-                    let anchor = (**sel_lens)(state).anchor();
-                    let range = anchor.and_then(|anchor_id| {
-                        let data = (*rows_for_click)(state);
-                        visual_range_ids(data, &row_id_for_click, anchor_id, target_id)
-                    });
-                    match range {
-                        Some(ids) => (**sel_lens)(state).extend_range(ids),
-                        // No anchor yet, or the anchor isn't in the current
-                        // view (e.g. filtered out): plain-select the target,
-                        // which reseats the anchor there for the next extend.
-                        None => (**sel_lens)(state).replace_with(target_id),
-                    }
-                } else if action.action_mod {
-                    (**sel_lens)(state).toggle(target_id);
-                } else {
-                    (**sel_lens)(state).replace_with(target_id);
-                }
-            })
-        }),
+    collection_body(CollectionBodyParams {
+        item_count: row_count,
+        items: rows,
+        id_source: row_id,
+        selection_lens,
         scroll,
-        row_count,
-    }
+        lazy: None,
+        render_row,
+        theme,
+    })
 }
 
 // --- MARK: STACK ASSEMBLY ----------------------------------------------
@@ -1172,11 +1112,20 @@ const FILTER_ROW_HEIGHT: f64 = 30.0;
 
 #[cfg(test)]
 mod tests {
-    use super::{decompose_columns, project_tsv};
-    use crate::collection::{IdSource, SelectionState};
+    use std::fmt;
+    use std::sync::Arc;
+
+    use masonry::core::{NewWidget, WidgetRef};
+    use masonry::testing::TestHarness;
+    use masonry::widgets::Flex;
+    use xilem::ViewCtx;
+    use xilem::core::{ProxyError, RawProxy, SendMessage, View, ViewId};
+
+    use super::{data_grid, decompose_columns, project_tsv};
+    use crate::Theme;
+    use crate::collection::{CollectionBodyWidget, IdSource, SelectionState};
     use crate::components::data_grid::column::{CellAlign, TextProjector, text_column};
     use crate::components::data_grid::width::ColumnWidths;
-    use std::sync::Arc;
 
     /// Row id == the row value itself, so test slices read naturally:
     /// `[10, 20, 30]` are rows with ids 10/20/30 in that display order.
@@ -1236,5 +1185,80 @@ mod tests {
             text_column::<u64, (), _>("Price", 80.0, CellAlign::End, |r: &u64| r.to_string()),
         ];
         let _ = decompose_columns(cols, &ColumnWidths::new());
+    }
+
+    /// A [`RawProxy`] that drops every message — tests build the view
+    /// directly and never expect a proxied message back.
+    #[derive(Debug)]
+    struct NoopProxy;
+
+    impl RawProxy for NoopProxy {
+        fn send_message(
+            &self,
+            _path: Arc<[ViewId]>,
+            _message: SendMessage,
+        ) -> Result<(), ProxyError> {
+            Ok(())
+        }
+        fn dyn_debug(&self) -> &dyn fmt::Debug {
+            self
+        }
+    }
+
+    /// Depth-first search for a [`CollectionBodyWidget`] in the tree.
+    fn find_collection_body(
+        widget: WidgetRef<'_, dyn masonry::core::Widget>,
+    ) -> Option<WidgetRef<'_, CollectionBodyWidget>> {
+        if let Some(body) = widget.downcast::<CollectionBodyWidget>() {
+            return Some(body);
+        }
+        widget.children().into_iter().find_map(find_collection_body)
+    }
+
+    /// `data_grid`'s body is now the collection substrate's
+    /// [`CollectionBodyWidget`], which is what grants it arrow-key row
+    /// navigation (the navigation behavior itself is exercised
+    /// exhaustively by `collection::body`'s widget-level arrow-key tests).
+    /// This integration test materializes a real `data_grid` view and
+    /// asserts the substrate body widget is present in the rendered tree —
+    /// the seam that wires `data_grid` onto that navigation.
+    #[test]
+    fn data_grid_body_is_the_collection_substrate_widget() {
+        struct State {
+            rows: Vec<u64>,
+        }
+
+        let mut state = State {
+            rows: vec![10, 20, 30],
+        };
+
+        let columns = vec![text_column::<u64, State, _>(
+            "Value",
+            80.0,
+            CellAlign::End,
+            |r: &u64| r.to_string(),
+        )];
+        let view = data_grid::<State, u64>(columns)
+            .rows(|s: &State| &s.rows[..])
+            .row_count(3)
+            .render(&Theme::default());
+
+        let proxy: Arc<dyn RawProxy> = Arc::new(NoopProxy);
+        let runtime = Arc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap(),
+        );
+        let mut ctx = ViewCtx::new(proxy, runtime);
+        let (pod, _view_state) = view.build(&mut ctx, &mut state);
+
+        let root = Flex::column().with_fixed(pod.new_widget);
+        let harness =
+            TestHarness::create(masonry::theme::default_property_set(), NewWidget::new(root));
+
+        assert!(
+            find_collection_body(harness.root_widget().as_dyn()).is_some(),
+            "data_grid's body should be a CollectionBodyWidget (grants arrow-key nav)",
+        );
     }
 }

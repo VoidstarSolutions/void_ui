@@ -155,7 +155,6 @@ pub mod copy_shortcut;
 pub mod demo;
 pub mod filter;
 pub mod header_click;
-pub mod scroll;
 pub mod sort;
 pub mod view;
 pub mod width;

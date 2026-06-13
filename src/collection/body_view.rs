@@ -3,16 +3,8 @@
 //! lazy-load, central row-click routing, and the selection background.
 //! The caller supplies only per-row content via `render_row`.
 //!
-//! `collection_body` and its params are dead in the lib build until the
-//! `data_grid` migration in the next task wires them in; the `#[cfg(test)]`
-//! tests below exercise the builder and the scroll-to mechanism.
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "consumed by the data_grid migration in the next task"
-    )
-)]
+//! The `#[cfg(test)]` tests below exercise the builder and the scroll-to
+//! mechanism directly at the widget level.
 
 use std::sync::Arc;
 
