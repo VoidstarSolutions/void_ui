@@ -12,11 +12,20 @@
 //! `ScrollState` are surfaced to consumers by re-export from the
 //! components and the crate root.
 
+mod click;
 mod ids;
+pub(crate) mod row_click;
 mod scroll;
 mod selection;
+pub(crate) mod single_child;
 
+#[expect(
+    unused_imports,
+    reason = "consumed by data_grid migration in the next task"
+)]
+pub(crate) use click::{ItemsFn, RowClick, SelectionLens, apply_row_click};
 pub(crate) use ids::{IdSource, scroll_idx_to_slice, scroll_range_end, visual_range_ids};
+pub(crate) use row_click::clickable_row;
 pub use scroll::ScrollState;
 pub(crate) use scroll::clamp_scroll_index;
 pub use selection::SelectionState;

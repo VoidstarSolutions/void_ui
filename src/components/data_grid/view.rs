@@ -3,7 +3,7 @@
 //! - The body is `flex_col(header, virtual_scroll(body))` — pure xilem
 //!   stock with a row builder closure that materializes one
 //!   `flex_row` of fixed-width cells per loaded index. Each row is
-//!   wrapped in [`super::row_click::clickable_row`] so primary clicks
+//!   wrapped in [`crate::collection::row_click::clickable_row`] so primary clicks
 //!   (with optional shift / ctrl-cmd modifiers) update the
 //!   [`SelectionState`].
 //! - The header + filter + body stack is wrapped in a horizontal-only
@@ -37,13 +37,13 @@ use super::column_strip::{SeparatorStyle, column_strip};
 use super::copy_shortcut::CopyOnShortcut;
 use super::filter::FilterState;
 use super::header_click::clickable_header;
-use super::row_click::clickable_row;
 use super::scroll::ScrollToView;
 use super::sort::{SortDirection, SortState};
 use super::width::ColumnWidths;
 use crate::Theme;
 use crate::collection::ScrollState;
 use crate::collection::SelectionState;
+use crate::collection::clickable_row;
 use crate::collection::{IdSource, scroll_idx_to_slice, scroll_range_end, visual_range_ids};
 use crate::components::scroll_container::scroll_container;
 

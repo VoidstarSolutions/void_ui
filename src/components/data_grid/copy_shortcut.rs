@@ -28,7 +28,7 @@ use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Size};
 use masonry::layout::{LenReq, Length};
 
-use super::single_child;
+use crate::collection::single_child;
 
 /// Wrap an arbitrary child widget; intercept Ctrl/Cmd+C; on press,
 /// write the cached payload to the clipboard.

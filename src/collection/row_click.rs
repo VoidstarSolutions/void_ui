@@ -1,7 +1,7 @@
 //! Single-child wrapper widget that detects primary-button clicks
 //! with modifier state and emits a [`RowClickAction`].
 //!
-//! Modeled on [`super::copy_shortcut::CopyOnShortcut`] but for pointer
+//! Modeled on [`crate::components::data_grid::copy_shortcut::CopyOnShortcut`] but for pointer
 //! events instead of keyboard events. The widget itself stays dumb —
 //! it just reports "primary click happened at these modifiers" — the
 //! grid's xilem view layer translates that into the right
@@ -9,7 +9,7 @@
 //! affected row.
 //!
 //! `accepts_focus = true` so subsequent Ctrl/Cmd+C on the parent
-//! [`CopyOnShortcut`](super::copy_shortcut::CopyOnShortcut) wrapper
+//! [`CopyOnShortcut`](crate::components::data_grid::copy_shortcut::CopyOnShortcut) wrapper
 //! has a focused descendant inside the grid.
 
 use masonry::accesskit::{Node, Role};

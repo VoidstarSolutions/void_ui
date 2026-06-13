@@ -1,6 +1,6 @@
 //! Single-child wrapper widget that detects a primary-button click and
 //! emits a [`HeaderClicked`] action — the header-row counterpart to
-//! [`super::row_click::RowClickable`].
+//! [`crate::collection::row_click::RowClickable`].
 //!
 //! Kept deliberately separate from `RowClickable`. Header clicks are
 //! modifier-agnostic (a plain click cycles the column's sort) and must
@@ -20,7 +20,7 @@ use masonry::kurbo::{Axis, Point, Rect, Size};
 use masonry::layout::{LenReq, Length};
 use masonry::peniko::Color;
 
-use super::single_child;
+use crate::collection::single_child;
 use crate::components::click::{self, ClickPhase};
 
 /// Action emitted by [`HeaderClickable`] on primary-button release
