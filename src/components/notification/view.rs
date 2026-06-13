@@ -19,18 +19,21 @@
 //! ```
 
 use std::marker::PhantomData;
+use std::sync::Arc;
 use std::time::Duration;
 
 use masonry::core::ArcStr;
 use masonry::layout::UnitPoint;
+use masonry::widgets::SizedBox;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::layout::Length;
 use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, flex_col, sized_box};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
-use super::widget::{NotificationHost, NotificationOverlay, NotificationTimeout};
+use super::widget::{NotificationHost, NotificationTimeout};
 use crate::components::alert::{CloseCallback, alert};
+use crate::overlay_portal::{PortalContentView, PortalPlacement, portal_from_env};
 use crate::{AlertVariant, IconName, Theme};
 
 /// Default auto-dismiss delay, matching gpui-component's notification default.
@@ -304,85 +307,104 @@ pub fn notification_stack<State: 'static, Action: 'static>(
         .gap(Length::px(f64::from(theme.density.pad) * 0.5))
 }
 
-/// Wrap `content` (typically a [`notification_stack`]) so it reports its
-/// intrinsic content size to a surrounding `zstack`, rather than expanding
-/// to fill it.
+/// Register `content` (typically a [`notification_stack`]) as a corner-anchored
+/// layer in the nearest ancestor [`crate::overlay_scope`]'s portal.
 ///
-/// Place the result in a `zstack` covering the whole window and chain
-/// `.alignment(UnitPoint::from(position))` (see [`NotificationPosition`]'s
-/// [`UnitPoint`] conversion) onto it to anchor the stack to one of the 6
-/// corners. See [`NotificationOverlay`] for why this wrapper is needed —
-/// without it, `ZStack`'s alignment can't tell top from bottom.
-pub fn notification_overlay<State, Action, V>(
+/// The scope's view mounts the content in its always-on-top `PortalSlot`,
+/// sized to its own intrinsic content and aligned to `position`'s
+/// [`UnitPoint`] corner (see [`NotificationPosition`]'s conversion). The
+/// returned view itself renders nothing in-tree — wrap your app's root (or
+/// the region toasts should float over) in [`crate::overlay_scope`] and place
+/// this view anywhere inside it.
+///
+/// # Panics
+///
+/// Panics at `build` if there is no ancestor [`crate::overlay_scope`].
+pub fn notification_layer<State, Action, V>(
     content: V,
-) -> NotificationOverlayView<V, State, Action>
+    theme: &Theme,
+    position: NotificationPosition,
+) -> NotificationLayerView<State, Action>
 where
     State: 'static,
     Action: 'static,
     V: WidgetView<State, Action>,
 {
-    NotificationOverlayView {
+    let content: Arc<PortalContentView<State, Action>> = Arc::new(content);
+    NotificationLayerView {
         content,
+        theme: *theme,
+        position,
         phantom: PhantomData,
     }
 }
 
 #[must_use = "View values do nothing unless provided to Xilem."]
-pub struct NotificationOverlayView<V, State, Action> {
-    content: V,
+pub struct NotificationLayerView<State, Action> {
+    content: Arc<PortalContentView<State, Action>>,
+    theme: Theme,
+    position: NotificationPosition,
     phantom: PhantomData<fn(State) -> Action>,
 }
 
-impl<V, State, Action> ViewMarker for NotificationOverlayView<V, State, Action> {}
+impl<State, Action> ViewMarker for NotificationLayerView<State, Action> {}
 
-impl<V, State, Action> View<State, Action, ViewCtx> for NotificationOverlayView<V, State, Action>
+impl<State, Action> View<State, Action, ViewCtx> for NotificationLayerView<State, Action>
 where
     State: 'static,
     Action: 'static,
-    V: WidgetView<State, Action>,
 {
-    type Element = Pod<NotificationOverlay>;
-    type ViewState = V::ViewState;
+    type Element = Pod<SizedBox>;
+    type ViewState = (
+        crate::overlay_portal::OverlayPortal<State, Action>,
+        u64,
+    );
 
-    fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        let (child, child_state) = self.content.build(ctx, app_state);
-        let widget = NotificationOverlay::new(child.new_widget.erased());
-        (ctx.create_pod(widget), child_state)
+    fn build(&self, ctx: &mut ViewCtx, _app_state: &mut State) -> (Self::Element, Self::ViewState) {
+        let portal = portal_from_env::<State, Action>(ctx)
+            .expect("notification_layer requires an ancestor overlay_scope");
+        let key = portal.register(
+            self.content.clone(),
+            &self.theme,
+            PortalPlacement::Corner(self.position.into()),
+        );
+        let element = ctx.create_pod(SizedBox::empty());
+        (element, (portal, key))
     }
 
     fn rebuild(
         &self,
-        prev: &Self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
-        app_state: &mut State,
+        _prev: &Self,
+        (portal, key): &mut Self::ViewState,
+        _ctx: &mut ViewCtx,
+        _element: Mut<'_, Self::Element>,
+        _app_state: &mut State,
     ) {
-        let mut child = NotificationOverlay::child_mut(&mut element);
-        self.content
-            .rebuild(&prev.content, view_state, ctx, child.downcast(), app_state);
+        portal.update(
+            *key,
+            self.content.clone(),
+            &self.theme,
+            PortalPlacement::Corner(self.position.into()),
+        );
     }
 
     fn teardown(
         &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
+        (portal, key): &mut Self::ViewState,
+        _ctx: &mut ViewCtx,
+        _element: Mut<'_, Self::Element>,
     ) {
-        let mut child = NotificationOverlay::child_mut(&mut element);
-        self.content.teardown(view_state, ctx, child.downcast());
+        portal.deregister(*key);
     }
 
     fn message(
         &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        mut element: Mut<'_, Self::Element>,
-        app_state: &mut State,
+        _view_state: &mut Self::ViewState,
+        _message: &mut MessageCtx,
+        _element: Mut<'_, Self::Element>,
+        _app_state: &mut State,
     ) -> MessageResult<Action> {
-        let mut child = NotificationOverlay::child_mut(&mut element);
-        self.content
-            .message(view_state, message, child.downcast(), app_state)
+        MessageResult::Stale
     }
 }
 

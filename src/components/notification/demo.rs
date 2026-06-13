@@ -19,7 +19,7 @@ use xilem::view::{CrossAxisAlignment, flex_col, flex_row, sized_box};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::{
-    DEFAULT_TIMEOUT, NotificationPosition, notification, notification_overlay, notification_stack,
+    DEFAULT_TIMEOUT, NotificationPosition, notification, notification_layer, notification_stack,
 };
 use crate::components::ScrollBarVisibility;
 use crate::layout::flex_wrap;
@@ -241,15 +241,13 @@ fn build_inner<S: NotificationDemoHost>(
     .render(theme)
 }
 
-/// Render the active toast stack.
+/// Render the active toast stack as a corner-anchored overlay layer.
 ///
-/// Wrap the result in `.alignment(UnitPoint::from(demo.position))` (see
-/// [`NotificationPosition`]'s [`UnitPoint`] conversion) and place it in a
-/// `zstack` around the host application's whole window (see
-/// `examples/gallery.rs`) so toasts float over everything, not just the
-/// notification demo panel. [`notification_overlay`] makes the stack
-/// report its true content size to that `zstack`, so the chosen corner is
-/// honored regardless of how many toasts are showing.
+/// Registers the stack with the nearest ancestor [`crate::overlay_scope`]'s
+/// portal, anchored to [`NotificationDemoState::position`] (see
+/// [`notification_layer`]). Place the result anywhere inside an
+/// `overlay_scope`-wrapped tree (see `examples/gallery.rs`) so toasts float
+/// over the whole window, not just the notification demo panel.
 #[must_use]
 pub fn overlay<S: NotificationDemoHost>(
     theme: &Theme,
@@ -276,7 +274,7 @@ pub fn overlay<S: NotificationDemoHost>(
         .fixed_width(Length::px(280.0))
         .padding(Length::px(8.0));
 
-    Box::new(notification_overlay(stack))
+    Box::new(notification_layer(stack, theme, demo.position))
 }
 
 type InnerView<S> = Box<AnyWidgetView<S, ()>>;

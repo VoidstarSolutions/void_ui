@@ -100,11 +100,31 @@ pub type PortalContentView<State, Action> =
 pub(crate) type PortalContentViewState<State, Action> =
     <Arc<PortalContentView<State, Action>> as View<State, Action, ViewCtx>>::ViewState;
 
+/// Where a portal entry's content is positioned within the slot.
+///
+/// [`crate::components::popover`] registers [`Self::Trigger`] entries: hidden
+/// until [`PortalSlot::set_visible`] shows them anchored to a trigger rect
+/// (in scope-local coordinates) via [`PopoverAnchor`], wrapped in
+/// [`PopoverSurface`] chrome to match in-tree popovers.
+///
+/// [`crate::components::notification`] registers [`Self::Corner`] entries:
+/// always visible, aligned to one of the scope's corners/edges via
+/// [`masonry::layout::UnitPoint`] and sized to their own intrinsic content
+/// (`SizeDef::MIN`, exactly like [`Self::Trigger`]'s sizing — see
+/// [`PortalSlot::layout`]), with no added chrome since toast cards already
+/// carry their own surface.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum PortalPlacement {
+    Trigger,
+    Corner(masonry::layout::UnitPoint),
+}
+
 /// One registered popover's content, as the scope's view sees it.
 pub(crate) struct PortalEntry<State, Action> {
     pub(crate) key: u64,
     pub(crate) content: Arc<PortalContentView<State, Action>>,
     pub(crate) theme: Theme,
+    pub(crate) placement: PortalPlacement,
 }
 
 impl<State, Action> Clone for PortalEntry<State, Action> {
@@ -113,6 +133,7 @@ impl<State, Action> Clone for PortalEntry<State, Action> {
             key: self.key,
             content: self.content.clone(),
             theme: self.theme,
+            placement: self.placement,
         }
     }
 }
@@ -180,6 +201,7 @@ impl<State, Action> OverlayPortal<State, Action> {
         &self,
         content: Arc<PortalContentView<State, Action>>,
         theme: &Theme,
+        placement: PortalPlacement,
     ) -> u64 {
         let mut reg = self.inner.borrow_mut();
         let key = reg.next_key;
@@ -188,21 +210,24 @@ impl<State, Action> OverlayPortal<State, Action> {
             key,
             content,
             theme: *theme,
+            placement,
         });
         key
     }
 
-    /// Replace the content/theme for an existing key (no-op if unknown).
+    /// Replace the content/theme/placement for an existing key (no-op if unknown).
     pub(crate) fn update(
         &self,
         key: u64,
         content: Arc<PortalContentView<State, Action>>,
         theme: &Theme,
+        placement: PortalPlacement,
     ) {
         let mut reg = self.inner.borrow_mut();
         if let Some(entry) = reg.entries.iter_mut().find(|e| e.key == key) {
             entry.content = content;
             entry.theme = *theme;
+            entry.placement = placement;
         }
     }
 
@@ -258,7 +283,7 @@ use masonry::core::{
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, Size};
-use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
+use masonry::layout::{LayoutSize, LenReq, Length, SizeDef, UnitPoint};
 
 use crate::components::popover::PopoverAnchor;
 use crate::components::popover::widget::PopoverHost;
@@ -268,16 +293,39 @@ struct PortalChild {
     key: u64,
     widget: WidgetPod<dyn Widget>,
     /// `PopoverHost` to sync (via [`PopoverHost::mark_closed`]) when an
-    /// outside press dismisses this child. `None` in tests / ownerless pushes.
+    /// outside press dismisses this child. `None` in tests / ownerless pushes,
+    /// and unused for [`PortalPlacement::Corner`] children.
     owner: Option<WidgetId>,
+    /// [`PortalPlacement::Trigger`] children start hidden and are shown via
+    /// [`Self::set_visible`]; [`PortalPlacement::Corner`] children are always
+    /// visible.
     visible: bool,
-    /// Trigger's anchor rect in the *scope's* local coordinates.
+    /// Trigger's anchor rect in the *scope's* local coordinates. Unused for
+    /// [`PortalPlacement::Corner`] children.
     placement: Rect,
     anchor: PopoverAnchor,
     /// Gap between trigger edge and surface, px, in the open direction.
+    /// Unused for [`PortalPlacement::Corner`] children.
     gap: f64,
     /// Where layout last placed this child (local coords); valid while visible.
     placed: Rect,
+    mode: PortalPlacement,
+}
+
+impl PortalChild {
+    fn new(key: u64, widget: WidgetPod<dyn Widget>, mode: PortalPlacement) -> Self {
+        Self {
+            key,
+            widget,
+            owner: None,
+            visible: matches!(mode, PortalPlacement::Corner(_)),
+            placement: Rect::ZERO,
+            anchor: PopoverAnchor::BottomStart,
+            gap: 0.0,
+            placed: Rect::ZERO,
+            mode,
+        }
+    }
 }
 
 /// Always-last-painted child of [`crate::overlay_scope::OverlayScope`] that
@@ -299,38 +347,40 @@ pub struct PortalSlot {
 
 impl PortalSlot {
     #[must_use]
-    pub(crate) fn new(children: Vec<(u64, NewWidget<dyn Widget>)>) -> Self {
+    pub(crate) fn new(children: Vec<(u64, NewWidget<dyn Widget>, PortalPlacement)>) -> Self {
         Self {
             children: children
                 .into_iter()
-                .map(|(key, widget)| PortalChild {
-                    key,
-                    widget: widget.to_pod(),
-                    owner: None,
-                    visible: false,
-                    placement: Rect::ZERO,
-                    anchor: PopoverAnchor::BottomStart,
-                    gap: 0.0,
-                    placed: Rect::ZERO,
-                })
+                .map(|(key, widget, mode)| PortalChild::new(key, widget.to_pod(), mode))
                 .collect(),
         }
     }
 
-    /// Mount a new (hidden) child for `key`. Called from the scope view's
-    /// rebuild when a popover registers after initial build.
-    pub(crate) fn insert(this: &mut WidgetMut<'_, Self>, key: u64, widget: NewWidget<dyn Widget>) {
-        this.widget.children.push(PortalChild {
-            key,
-            widget: widget.to_pod(),
-            owner: None,
-            visible: false,
-            placement: Rect::ZERO,
-            anchor: PopoverAnchor::BottomStart,
-            gap: 0.0,
-            placed: Rect::ZERO,
-        });
+    /// Mount a new child for `key`. Called from the scope view's rebuild when
+    /// a popover or toast layer registers after initial build.
+    pub(crate) fn insert(
+        this: &mut WidgetMut<'_, Self>,
+        key: u64,
+        widget: NewWidget<dyn Widget>,
+        mode: PortalPlacement,
+    ) {
+        this.widget
+            .children
+            .push(PortalChild::new(key, widget.to_pod(), mode));
         this.ctx.children_changed();
+    }
+
+    /// Update a [`PortalPlacement::Corner`] child's corner/edge alignment.
+    /// No-op if the key is unknown or unchanged.
+    pub(crate) fn set_corner(this: &mut WidgetMut<'_, Self>, key: u64, unit_point: UnitPoint) {
+        let Some(child) = this.widget.children.iter_mut().find(|c| c.key == key) else {
+            return;
+        };
+        if child.mode == PortalPlacement::Corner(unit_point) {
+            return;
+        }
+        child.mode = PortalPlacement::Corner(unit_point);
+        this.ctx.request_layout();
     }
 
     /// Unmount the child for `key` (no-op if unknown).
@@ -434,7 +484,7 @@ impl PortalSlot {
         }
         let mut dismissed = false;
         for child in &mut this.widget.children {
-            if !child.visible {
+            if !child.visible || matches!(child.mode, PortalPlacement::Corner(_)) {
                 continue;
             }
             child.visible = false;
@@ -484,29 +534,48 @@ impl Widget for PortalSlot {
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         for child in &mut self.children {
-            if child.visible {
-                ctx.set_stashed(&mut child.widget, false);
-                // Snug to intrinsic content size — see `AnchoredOverlay::layout`.
-                let child_size =
-                    ctx.compute_size(&mut child.widget, SizeDef::MIN, LayoutSize::from(size));
-                ctx.run_layout(&mut child.widget, child_size);
-                let offset = child
-                    .anchor
-                    .child_offset(child.placement.size(), child_size)
-                    + child.placement.origin().to_vec2();
-                let offset = match child.anchor {
-                    PopoverAnchor::BottomStart
-                    | PopoverAnchor::BottomCenter
-                    | PopoverAnchor::BottomEnd => Point::new(offset.x, offset.y + child.gap),
-                    PopoverAnchor::TopStart | PopoverAnchor::TopCenter | PopoverAnchor::TopEnd => {
-                        Point::new(offset.x, offset.y - child.gap)
-                    }
-                };
-                ctx.place_child(&mut child.widget, offset);
-                child.placed = Rect::from_origin_size(offset, child_size);
-            } else {
-                ctx.set_stashed(&mut child.widget, true);
-                child.placed = Rect::ZERO;
+            match child.mode {
+                PortalPlacement::Corner(unit_point) => {
+                    ctx.set_stashed(&mut child.widget, false);
+                    // Snug to intrinsic content size — see `AnchoredOverlay::layout`.
+                    let child_size =
+                        ctx.compute_size(&mut child.widget, SizeDef::MIN, LayoutSize::from(size));
+                    ctx.run_layout(&mut child.widget, child_size);
+                    let extra = Rect::new(
+                        0.0,
+                        0.0,
+                        size.width - child_size.width,
+                        size.height - child_size.height,
+                    );
+                    let offset = unit_point.resolve(extra);
+                    ctx.place_child(&mut child.widget, offset);
+                    child.placed = Rect::from_origin_size(offset, child_size);
+                }
+                PortalPlacement::Trigger if child.visible => {
+                    ctx.set_stashed(&mut child.widget, false);
+                    // Snug to intrinsic content size — see `AnchoredOverlay::layout`.
+                    let child_size =
+                        ctx.compute_size(&mut child.widget, SizeDef::MIN, LayoutSize::from(size));
+                    ctx.run_layout(&mut child.widget, child_size);
+                    let offset = child
+                        .anchor
+                        .child_offset(child.placement.size(), child_size)
+                        + child.placement.origin().to_vec2();
+                    let offset = match child.anchor {
+                        PopoverAnchor::BottomStart
+                        | PopoverAnchor::BottomCenter
+                        | PopoverAnchor::BottomEnd => Point::new(offset.x, offset.y + child.gap),
+                        PopoverAnchor::TopStart
+                        | PopoverAnchor::TopCenter
+                        | PopoverAnchor::TopEnd => Point::new(offset.x, offset.y - child.gap),
+                    };
+                    ctx.place_child(&mut child.widget, offset);
+                    child.placed = Rect::from_origin_size(offset, child_size);
+                }
+                PortalPlacement::Trigger => {
+                    ctx.set_stashed(&mut child.widget, true);
+                    child.placed = Rect::ZERO;
+                }
             }
         }
     }
@@ -555,8 +624,8 @@ mod tests {
     fn register_allocates_distinct_keys_starting_at_one() {
         let portal = OverlayPortal::<(), ()>::new(OverlayScopeHandle::new());
         let theme = Theme::default();
-        let a = portal.register(content(), &theme);
-        let b = portal.register(content(), &theme);
+        let a = portal.register(content(), &theme, PortalPlacement::Trigger);
+        let b = portal.register(content(), &theme, PortalPlacement::Trigger);
         assert_eq!(a, 1);
         assert_eq!(b, 2);
     }
@@ -565,8 +634,8 @@ mod tests {
     fn snapshot_returns_entries_in_registration_order() {
         let portal = OverlayPortal::<(), ()>::new(OverlayScopeHandle::new());
         let theme = Theme::default();
-        let a = portal.register(content(), &theme);
-        let b = portal.register(content(), &theme);
+        let a = portal.register(content(), &theme, PortalPlacement::Trigger);
+        let b = portal.register(content(), &theme, PortalPlacement::Trigger);
         let keys: Vec<u64> = portal.snapshot().iter().map(|e| e.key).collect();
         assert_eq!(keys, vec![a, b]);
     }
@@ -575,9 +644,9 @@ mod tests {
     fn update_replaces_content_for_an_existing_key() {
         let portal = OverlayPortal::<(), ()>::new(OverlayScopeHandle::new());
         let theme = Theme::default();
-        let key = portal.register(content(), &theme);
+        let key = portal.register(content(), &theme, PortalPlacement::Trigger);
         let replacement = content();
-        portal.update(key, replacement.clone(), &theme);
+        portal.update(key, replacement.clone(), &theme, PortalPlacement::Trigger);
         let snap = portal.snapshot();
         assert_eq!(snap.len(), 1);
         assert!(Arc::ptr_eq(&snap[0].content, &replacement));
@@ -587,7 +656,7 @@ mod tests {
     fn deregister_removes_the_entry_and_tolerates_unknown_keys() {
         let portal = OverlayPortal::<(), ()>::new(OverlayScopeHandle::new());
         let theme = Theme::default();
-        let key = portal.register(content(), &theme);
+        let key = portal.register(content(), &theme, PortalPlacement::Trigger);
         portal.deregister(key);
         assert!(portal.snapshot().is_empty());
         portal.deregister(999); // must not panic
@@ -598,7 +667,7 @@ mod tests {
         let portal = OverlayPortal::<(), ()>::new(OverlayScopeHandle::new());
         let clone = portal.clone();
         let theme = Theme::default();
-        clone.register(content(), &theme);
+        clone.register(content(), &theme, PortalPlacement::Trigger);
         assert_eq!(portal.snapshot().len(), 1);
     }
 
@@ -606,10 +675,10 @@ mod tests {
     fn keys_are_never_reused_after_deregister() {
         let portal = OverlayPortal::<(), ()>::new(OverlayScopeHandle::new());
         let theme = Theme::default();
-        let first = portal.register(content(), &theme);
+        let first = portal.register(content(), &theme, PortalPlacement::Trigger);
         assert_eq!(first, 1);
         portal.deregister(first);
-        let second = portal.register(content(), &theme);
+        let second = portal.register(content(), &theme, PortalPlacement::Trigger);
         assert_eq!(second, 2, "key must not be recycled after deregister");
     }
 
@@ -618,9 +687,9 @@ mod tests {
         let portal = OverlayPortal::<(), ()>::new(OverlayScopeHandle::new());
         let theme = Theme::default();
         let original = content();
-        portal.register(original.clone(), &theme);
+        portal.register(original.clone(), &theme, PortalPlacement::Trigger);
         // update with a key that was never registered — must not panic
-        portal.update(999, content(), &theme);
+        portal.update(999, content(), &theme, PortalPlacement::Trigger);
         let snap = portal.snapshot();
         assert_eq!(snap.len(), 1);
         assert!(
@@ -645,7 +714,7 @@ mod tests {
 
     fn slot_with_one_child() -> (TestHarness<PortalSlot>, u64) {
         let key = 7;
-        let slot = PortalSlot::new(vec![(key, test_child())]);
+        let slot = PortalSlot::new(vec![(key, test_child(), PortalPlacement::Trigger)]);
         let harness = TestHarness::create(
             masonry::theme::default_property_set(),
             masonry::core::NewWidget::new(slot),
@@ -820,7 +889,7 @@ mod tests {
     fn pointer_down_inside_a_visible_child_does_not_dismiss() {
         let key = 7;
         let probe = NewWidget::new(ClickProbe { downs: 0 }).erased();
-        let slot = PortalSlot::new(vec![(key, probe)]);
+        let slot = PortalSlot::new(vec![(key, probe, PortalPlacement::Trigger)]);
         let mut harness = TestHarness::create(
             masonry::theme::default_property_set(),
             masonry::core::NewWidget::new(slot),

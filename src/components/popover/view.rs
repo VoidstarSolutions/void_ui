@@ -31,7 +31,7 @@ use super::widget::{PopoverHost, PopoverSurface};
 use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
 use crate::overlay_portal::{
-    OverlayPortal, PortalContentView, PortalContentViewState, portal_from_env,
+    OverlayPortal, PortalContentView, PortalContentViewState, PortalPlacement, portal_from_env,
 };
 
 /// Builder for a popover.
@@ -140,7 +140,7 @@ where
         let portal = portal_from_env::<State, Action>(ctx);
         let (trigger_pod, trigger_vs) = self.trigger.build(ctx, app_state);
         if let Some(portal) = portal {
-            let key = portal.register(self.content.clone(), &self.theme);
+            let key = portal.register(self.content.clone(), &self.theme, PortalPlacement::Trigger);
             let widget = PopoverHost::new_portal(
                 trigger_pod.new_widget.erased(),
                 self.anchor,
@@ -198,7 +198,12 @@ where
                 // Content rebuild happens when the scope's view diffs the
                 // registry (after our subtree's rebuild returns) — we only
                 // refresh the registered view value here.
-                portal.update(*key, self.content.clone(), &self.theme);
+                portal.update(
+                    *key,
+                    self.content.clone(),
+                    &self.theme,
+                    PortalPlacement::Trigger,
+                );
             }
             ContentBinding::InTree { content_vs } => {
                 let mut overlay_host = PopoverHost::overlay_host_mut(&mut element);

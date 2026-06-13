@@ -9,18 +9,19 @@
 
 use void_ui::components::ScrollBarVisibility::OnActivity;
 use void_ui::components::notification::demo::NotificationDemoState;
-use xilem::masonry::layout::{Length, UnitPoint};
+use xilem::masonry::layout::Length;
 use xilem::peniko::Color;
 use xilem::style::Style as _;
 use xilem::view::{
-    CrossAxisAlignment, FlexExt as _, FlexSpacer, MainAxisAlignment, ZStackExt as _, flex_col,
-    flex_row, portal, sized_box, zstack,
+    CrossAxisAlignment, FlexExt as _, FlexSpacer, MainAxisAlignment, flex_col, flex_row, portal,
+    sized_box, zstack,
 };
 use xilem::winit::error::EventLoopError;
 use xilem::{AnyWidgetView, EventLoop, WidgetView, WindowOptions, Xilem};
 
 use void_ui::components::{ComponentKind, SidebarNavItem, button, sidebar_nav, sidebar_panel};
 use void_ui::layout::flex_wrap;
+use void_ui::overlay_scope::overlay_scope;
 use void_ui::theme::{Density, Theme};
 use void_ui::{label, scroll_container};
 
@@ -64,11 +65,10 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
         .main_axis_alignment(MainAxisAlignment::Start);
 
     let content = sized_box(outer).background_color(theme.palette.bg_deep);
-    let toast_overlay =
-        void_ui::components::notification::demo::overlay::<State>(&theme, &notification_demo)
-            .alignment(UnitPoint::from(notification_demo.position));
+    let toast_layer =
+        void_ui::components::notification::demo::overlay::<State>(&theme, &notification_demo);
 
-    zstack((content, toast_overlay))
+    overlay_scope(zstack((content, toast_layer)))
 }
 
 fn workspace_row(
