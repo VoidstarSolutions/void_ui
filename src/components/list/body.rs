@@ -21,6 +21,7 @@
 
 use std::sync::Arc;
 
+use masonry::accesskit::Role;
 use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
     AccessCtx, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
@@ -29,7 +30,6 @@ use masonry::core::{
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Size};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
-use masonry::accesskit::Role;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::widgets::{VirtualScroll as VirtualScrollWidget, VirtualScrollAction};
 use xilem::{Pod, ViewCtx};
@@ -156,10 +156,7 @@ impl Widget for ListBodyWidget {
         let Some(pos) = row_ids.iter().position(|&id| id == focused) else {
             return;
         };
-        let Some(&target) = pos
-            .checked_add_signed(delta)
-            .and_then(|i| row_ids.get(i))
-        else {
+        let Some(&target) = pos.checked_add_signed(delta).and_then(|i| row_ids.get(i)) else {
             return;
         };
         ctx.set_focus(target);
@@ -331,8 +328,12 @@ where
             });
         }
         let virtual_scroll = ListBodyWidget::virtual_scroll_mut(&mut element);
-        self.child
-            .message(&mut view_state.child_state, message, virtual_scroll, app_state)
+        self.child.message(
+            &mut view_state.child_state,
+            message,
+            virtual_scroll,
+            app_state,
+        )
     }
 }
 
@@ -379,7 +380,10 @@ mod tests {
             let Some((action, id)) = harness.pop_action::<VirtualScrollAction>() else {
                 break;
             };
-            assert_eq!(id, virtual_scroll_id, "only the VirtualScroll emits this action");
+            assert_eq!(
+                id, virtual_scroll_id,
+                "only the VirtualScroll emits this action"
+            );
             harness.edit_root_widget(|mut root| {
                 let mut scroll = ListBodyWidget::virtual_scroll_mut(&mut root);
                 VirtualScrollWidget::will_handle_action(&mut scroll, &action);
@@ -408,7 +412,11 @@ mod tests {
     /// Builds a harness with `ROW_COUNT` rows anchored at index 0, returning
     /// the harness, the wrapped `VirtualScroll`'s id, and a map of
     /// materialized row indices to their `WidgetId`s.
-    fn harness_with_rows() -> (TestHarness<ListBodyWidget>, WidgetId, HashMap<i64, WidgetId>) {
+    fn harness_with_rows() -> (
+        TestHarness<ListBodyWidget>,
+        WidgetId,
+        HashMap<i64, WidgetId>,
+    ) {
         let virtual_scroll = VirtualScrollWidget::new(0)
             .with_valid_range(0..ROW_COUNT)
             .prepare();

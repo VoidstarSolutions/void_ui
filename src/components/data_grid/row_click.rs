@@ -163,12 +163,7 @@ impl Widget for RowClickable {
     ) {
     }
 
-    fn update(
-        &mut self,
-        ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &Update,
-    ) {
+    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         // The focus ring drawn in `paint` depends on `ctx.is_focus_target()`;
         // without this, gaining/losing focus doesn't trigger a repaint and
         // the ring never appears.
