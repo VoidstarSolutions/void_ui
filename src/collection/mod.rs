@@ -12,6 +12,9 @@
 //! `ScrollState` are surfaced to consumers by re-export from the
 //! components and the crate root.
 
+mod scroll;
 mod selection;
 
+pub use scroll::ScrollState;
+pub(crate) use scroll::clamp_scroll_index;
 pub use selection::SelectionState;

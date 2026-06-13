@@ -30,7 +30,7 @@
 //! [`column::ColumnDef`] for the per-column contract,
 //! [`SelectionState`] for the selection model,
 //! [`sort::SortState`] for the sort model,
-//! [`scroll::ScrollState`] for programmatic scroll-to-row.
+//! [`ScrollState`] for programmatic scroll-to-row.
 //!
 //! ## The host owns row order (sorting *and* filtering)
 //!
@@ -172,7 +172,7 @@ pub use filter::{FilterState, filtered_indices};
 pub use header_click::{HeaderClickable, HeaderClicked};
 pub use row_click::{RowClickAction, RowClickable};
 pub use crate::collection::SelectionState;
-pub use scroll::ScrollState;
+pub use crate::collection::ScrollState;
 pub use sort::{SortDirection, SortState, sort_indices};
 pub use view::{DataGrid, data_grid};
 pub use width::{ColumnWidths, MIN_COLUMN_WIDTH};

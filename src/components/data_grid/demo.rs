@@ -28,7 +28,7 @@ use super::column::{
     CellAlign, ColumnDef, ColumnId, colored_text_column, optional_text_column, text_column,
 };
 use super::filter::{FilterState, filtered_indices};
-use super::scroll::ScrollState;
+use crate::collection::ScrollState;
 use crate::collection::SelectionState;
 use super::sort::{SortState, sort_indices};
 use super::width::ColumnWidths;
