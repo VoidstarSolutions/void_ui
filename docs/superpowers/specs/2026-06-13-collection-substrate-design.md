@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-13
 **Status:** Approved design — pending implementation plan
-**Branches:** base = `collection-substrate`; `data_grid` refactor and `list` rebuild stack on top.
+**Branches:** base = `collection-substrate`, branched off `feature/data-grid-scroll-to-index` (PR #71 — `main` does not yet have `data_grid`'s scroll-to-index feature, which this work unifies); `data_grid` refactor and `list` rebuild stack on top. When PR #71 lands on `main`, rebase the base onto `main`.
 
 ## Problem
 
@@ -185,7 +185,7 @@ measurement shows them.
 Three branches; `data_grid` and `list` are siblings stacked on the substrate
 base (not on each other).
 
-1. **`collection-substrate`** (base, off `main`): the substrate module + the
+1. **`collection-substrate`** (base, off `feature/data-grid-scroll-to-index` — PR #71, since `main` lacks the scroll-to-index feature this unifies): the substrate module + the
    relocated `SelectionState` / `ScrollState` (with re-exports keeping the
    public names), plus the substrate's own unit tests. Compiles green on its
    own.
