@@ -20,12 +20,13 @@
 //! placed at the *cursor point* where the right-click landed, clamped so it
 //! stays inside the area's box.
 
-use masonry::accesskit::{Node, Role};
+use masonry::accesskit::{Action, HasPopup, Node, Role};
 use masonry::core::keyboard::KeyState;
 use masonry::core::{
-    AccessCtx, ActionCtx, ChildrenIds, ErasedAction, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
-    PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef,
-    RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, AccessEvent, ActionCtx, ChildrenIds, ErasedAction, EventCtx, LayoutCtx, MeasureCtx,
+    NewWidget, PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut,
+    PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
+    WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Size};
@@ -76,6 +77,16 @@ impl ContextMenuArea {
         window_pos - origin.to_vec2()
     }
 
+    /// Open the menu at `cursor` (local coords) and take focus — shared by the
+    /// right-click handler and the accessibility `ShowContextMenu` invoke.
+    fn open_at(&mut self, ctx: &mut EventCtx<'_>, cursor: Point) {
+        self.cursor = cursor;
+        self.open = true;
+        ctx.request_focus();
+        ctx.request_layout();
+        ctx.request_paint_only();
+    }
+
     /// Place the menu's top-left at `cursor`, shifted back inside `container`
     /// when it would overflow the right/bottom edge.
     fn clamp(cursor: Point, menu: Size, container: Size) -> Point {
@@ -111,15 +122,27 @@ impl Widget for ContextMenuArea {
             ..
         }) = event
         {
-            self.cursor = Self::to_local(ctx, state.logical_point());
-            self.open = true;
             // We hold focus ourselves while open (the menu can't take focus
             // while it's still stashing on open). A later click outside clears
             // our focus — our `FocusChanged(false)` dismissal — and we forward
             // navigation keys into the menu (`on_text_event`).
-            ctx.request_focus();
-            ctx.request_layout();
-            ctx.request_paint_only();
+            self.open_at(ctx, Self::to_local(ctx, state.logical_point()));
+            ctx.set_handled();
+        }
+    }
+
+    /// An AT "show context menu" invoke (e.g. NVDA/VoiceOver's context-menu
+    /// gesture, or the keyboard context-menu key) opens the menu centered on
+    /// the area, exactly as a right-click would.
+    fn on_access_event(
+        &mut self,
+        ctx: &mut EventCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        event: &AccessEvent,
+    ) {
+        if event.action == Action::ShowContextMenu && !self.open {
+            let size = ctx.border_box_size();
+            self.open_at(ctx, Point::new(size.width / 2.0, size.height / 2.0));
             ctx.set_handled();
         }
     }
@@ -254,12 +277,18 @@ impl Widget for ContextMenuArea {
         Role::GenericContainer
     }
 
+    /// Exposes the right-click menu to ATs: `has_popup`/`expanded` mirror a
+    /// submenu row's semantics, and `ShowContextMenu` lets an AT (or the
+    /// keyboard context-menu key) open the menu without a real right-click.
     fn accessibility(
         &mut self,
         _ctx: &mut AccessCtx<'_>,
         _props: &PropertiesRef<'_>,
-        _node: &mut Node,
+        node: &mut Node,
     ) {
+        node.set_has_popup(HasPopup::Menu);
+        node.set_expanded(self.open);
+        node.add_action(Action::ShowContextMenu);
     }
 
     fn children_ids(&self) -> ChildrenIds {
@@ -370,6 +399,59 @@ mod tests {
         assert!(
             !h.edit_root_widget(|wm| wm.widget.open),
             "selecting a row must close the menu"
+        );
+    }
+
+    /// An AT "show context menu" invoke (the accessibility action a screen
+    /// reader sends for its context-menu gesture / the keyboard menu key)
+    /// opens the menu and focuses the area, exactly like a right-click.
+    #[test]
+    fn show_context_menu_access_action_opens_the_menu() {
+        use masonry::accesskit::{Action, ActionRequest, TreeId};
+        use masonry::core::{NewWidget, Widget as _};
+        use masonry::layout::AsUnit;
+        use masonry::testing::TestHarness;
+        use masonry::theme::default_property_set;
+        use masonry::widgets::{Label, SizedBox};
+
+        use crate::Theme;
+        use crate::components::context_menu::widget::{MenuPanel, MenuRowSpec};
+
+        let theme = Theme::default();
+        let row = |id: usize, label: &str| MenuRowSpec::Action {
+            id,
+            label: label.into(),
+            subtitle: None,
+            icon: None,
+            shortcut: None,
+            checked: None,
+            disabled: false,
+        };
+        let content = SizedBox::new(Label::new("area").prepare().erased())
+            .width(200.0.px())
+            .height(120.0.px())
+            .prepare()
+            .erased();
+        let menu = MenuPanel::new(vec![row(0, "Copy")], &theme).hosted();
+        let area = ContextMenuArea::new(content, NewWidget::new(menu));
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(area));
+        let root_id = h.root_id();
+
+        h.process_access_event(ActionRequest {
+            action: Action::ShowContextMenu,
+            target_tree: TreeId::ROOT,
+            target_node: root_id.into(),
+            data: None,
+        });
+
+        assert!(
+            h.edit_root_widget(|wm| wm.widget.open),
+            "ShowContextMenu must open the menu"
+        );
+        assert_eq!(
+            h.focused_widget_id(),
+            Some(root_id),
+            "the area must take focus so it can forward navigation keys"
         );
     }
 }
