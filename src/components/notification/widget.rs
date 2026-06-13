@@ -215,8 +215,12 @@ mod tests {
     /// expire as long as other toasts keep appearing/disappearing around it.
     #[test]
     fn unrelated_rebuild_with_unchanged_armed_at_does_not_reset_the_timer() {
+        // Already past the 50ms timeout when the host is created, so the
+        // very first anim frame fires unless `set_timeout` resets `armed_at`
+        // to "now" (which would make it not-yet-elapsed and require a real
+        // 50ms wait — exactly the bug this test guards against).
         let t0 = Instant::now()
-            .checked_sub(Duration::from_millis(40))
+            .checked_sub(Duration::from_millis(100))
             .unwrap();
         let mut h = harness(Some(Duration::from_millis(50)), Some(t0));
 
@@ -226,9 +230,7 @@ mod tests {
             NotificationHost::set_timeout(&mut wm, Some(Duration::from_millis(50)), Some(t0));
         });
 
-        // Only 10ms remain on the original 50ms countdown from t0; firing
-        // confirms the rebuild above didn't restart it.
-        h.animate_ms(15);
+        h.animate_ms(1);
 
         assert_eq!(
             h.pop_action::<NotificationTimeout>().map(|(_, id)| id),
