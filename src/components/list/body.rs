@@ -321,7 +321,7 @@ where
             let item_count = scroll_range_end(self.item_count);
             let threshold = i64::try_from(self.load_threshold).unwrap_or(i64::MAX);
             message.maybe_take_message::<VirtualScrollAction>(|action| {
-                if item_count - action.target.end <= threshold {
+                if action.target.end < item_count && item_count - action.target.end <= threshold {
                     on_load_more(app_state);
                 }
                 false
