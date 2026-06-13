@@ -9,7 +9,7 @@
 //! its whole window. This panel renders only the trigger buttons and
 //! position picker.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use masonry::layout::Length;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
@@ -51,6 +51,7 @@ pub struct ToastEntry {
     pub message: String,
     pub variant: AlertVariant,
     pub timeout: Option<Duration>,
+    pub created_at: Instant,
 }
 
 /// Toast list + corner position for the notification demo.
@@ -79,6 +80,7 @@ impl NotificationDemoState {
             message: message.to_string(),
             variant,
             timeout,
+            created_at: Instant::now(),
         });
     }
 }
@@ -261,7 +263,9 @@ pub fn overlay<S: NotificationDemoHost>(
         .iter()
         .map(|toast| -> Box<AnyWidgetView<S, ()>> {
             let id = toast.id;
-            let mut n = notification(toast.message.clone()).variant(toast.variant);
+            let mut n = notification(toast.message.clone())
+                .variant(toast.variant)
+                .created_at(toast.created_at);
             n = match toast.timeout {
                 Some(timeout) => n.timeout(timeout),
                 None => n.no_timeout(),

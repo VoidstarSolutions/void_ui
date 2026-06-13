@@ -20,7 +20,7 @@
 
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use masonry::core::ArcStr;
 use masonry::layout::UnitPoint;
@@ -73,6 +73,7 @@ pub struct Notification<C = ()> {
     show_icon: bool,
     timeout: Option<Duration>,
     timeout_explicit: bool,
+    created_at: Option<Instant>,
     on_close: C,
 }
 
@@ -90,6 +91,7 @@ pub fn notification(message: impl Into<ArcStr>) -> Notification {
         show_icon: true,
         timeout: Some(DEFAULT_TIMEOUT),
         timeout_explicit: false,
+        created_at: None,
         on_close: (),
     }
 }
@@ -138,6 +140,21 @@ impl<C> Notification<C> {
         self
     }
 
+    /// The instant this toast was created (became visible).
+    ///
+    /// Required when this notification has an active auto-dismiss timeout
+    /// (the default, or set via [`Self::timeout`]) — the auto-dismiss
+    /// countdown runs for [`Self::timeout`] starting from `created_at`,
+    /// regardless of `flex_col` positional reuse of this card's host widget
+    /// (e.g. when an earlier toast is dismissed and the stack shifts). Store
+    /// this on your toast entry when it's created (e.g.
+    /// `Instant::now()`) and pass the same value on every render. See
+    /// [`Self::render`]'s panic.
+    pub fn created_at(mut self, created_at: Instant) -> Self {
+        self.created_at = Some(created_at);
+        self
+    }
+
     /// Show a close (X) button and arm the auto-dismiss timer (if any);
     /// both invoke `on_close` when triggered.
     pub fn on_close<F>(self, on_close: F) -> Notification<F> {
@@ -149,6 +166,7 @@ impl<C> Notification<C> {
             show_icon: self.show_icon,
             timeout: self.timeout,
             timeout_explicit: self.timeout_explicit,
+            created_at: self.created_at,
             on_close,
         }
     }
@@ -159,6 +177,11 @@ impl<C> Notification<C> {
     ///
     /// Panics if [`Self::timeout`] was called without [`Self::on_close`] —
     /// such a timeout can never fire, since there is no callback to notify.
+    ///
+    /// Panics if an auto-dismiss timeout is active (explicitly set, or the
+    /// default) without [`Self::created_at`] — the host needs this toast's
+    /// own creation time to run its countdown independent of `flex_col`
+    /// positional reuse (see [`NotificationHost::set_timeout`]).
     #[must_use = "View values do nothing unless provided to Xilem."]
     pub fn render<State, Action>(
         self,
@@ -174,6 +197,12 @@ impl<C> Notification<C> {
             "Notification::timeout() has no effect without Notification::on_close()"
         );
         let timeout = if C::enabled() { self.timeout } else { None };
+        assert!(
+            timeout.is_none() || self.created_at.is_some(),
+            "Notification with an active timeout requires Notification::created_at() \
+             so its host can run the countdown independent of flex_col positional reuse"
+        );
+        let armed_at = timeout.and(self.created_at);
         let on_close = self.on_close.clone();
 
         let mut a = alert(self.message).variant(self.variant);
@@ -197,6 +226,7 @@ impl<C> Notification<C> {
         NotificationView {
             content,
             timeout,
+            armed_at,
             on_close,
             phantom: PhantomData,
         }
@@ -210,6 +240,7 @@ impl<C> Notification<C> {
 pub struct NotificationView<V, C, State, Action> {
     content: V,
     timeout: Option<Duration>,
+    armed_at: Option<Instant>,
     on_close: C,
     phantom: PhantomData<fn(State) -> Action>,
 }
@@ -228,7 +259,7 @@ where
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let (child, child_state) = self.content.build(ctx, app_state);
-        let widget = NotificationHost::new(child.new_widget.erased(), self.timeout);
+        let widget = NotificationHost::new(child.new_widget.erased(), self.timeout, self.armed_at);
         // `with_action_widget` registers the widget as an action source so
         // `NotificationTimeout` bubbles up to this view's `message` handler.
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
@@ -243,7 +274,7 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) {
-        NotificationHost::set_timeout(&mut element, self.timeout);
+        NotificationHost::set_timeout(&mut element, self.timeout, self.armed_at);
         let mut child = NotificationHost::child_mut(&mut element);
         self.content
             .rebuild(&prev.content, view_state, ctx, child.downcast(), app_state);
@@ -451,6 +482,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use super::{NotificationPosition, UnitPoint, notification};
     use crate::Theme;
 
@@ -470,6 +503,7 @@ mod tests {
         let theme = Theme::default();
         let _ = notification("hi")
             .timeout(std::time::Duration::from_secs(2))
+            .created_at(Instant::now())
             .on_close(|(): &mut ()| {})
             .render::<(), ()>(&theme);
     }

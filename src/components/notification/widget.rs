@@ -36,14 +36,22 @@ pub struct NotificationHost {
 }
 
 impl NotificationHost {
-    /// Create a host wrapping `child`, arming a `timeout` countdown on
-    /// mount if `Some`.
+    /// Create a host wrapping `child`, arming a `timeout` countdown that
+    /// elapses `timeout` after `armed_at`.
+    ///
+    /// `armed_at` is the toast's own creation/appearance time, owned by the
+    /// host application (e.g. stored on its toast entry); see
+    /// [`Self::set_timeout`].
     #[must_use]
-    pub fn new(child: NewWidget<impl Widget + ?Sized>, timeout: Option<Duration>) -> Self {
+    pub fn new(
+        child: NewWidget<impl Widget + ?Sized>,
+        timeout: Option<Duration>,
+        armed_at: Option<Instant>,
+    ) -> Self {
         Self {
             child: child.erased().to_pod(),
             timeout,
-            armed_at: None,
+            armed_at,
         }
     }
 
@@ -52,23 +60,24 @@ impl NotificationHost {
         this.ctx.get_mut(&mut this.widget.child)
     }
 
-    /// Update the auto-dismiss timeout, re-arming the countdown if needed.
+    /// Update the auto-dismiss timeout and its starting instant.
     ///
     /// `flex_col`'s positional diffing can reuse this host for a different
     /// logical toast (e.g. when an earlier toast is dismissed and the list
-    /// shifts), so `Update::WidgetAdded` — and thus the initial arm in
-    /// [`Widget::update`] — won't fire again for the new toast. Without this,
-    /// a host whose previous timer already elapsed (`armed_at: None`) would
-    /// stay disarmed forever. Re-arm whenever the timeout changes, or the
-    /// timer isn't currently running but should be.
-    pub fn set_timeout(this: &mut WidgetMut<'_, Self>, timeout: Option<Duration>) {
-        let needs_arm =
-            timeout.is_some() && (this.widget.timeout != timeout || this.widget.armed_at.is_none());
+    /// shifts), so `Update::WidgetAdded` won't fire again for the new toast.
+    /// Rather than have the host guess whether it's been handed a new toast,
+    /// `armed_at` is the toast's own creation time, supplied fresh by the
+    /// view on every rebuild — overwriting it here is always correct,
+    /// whether this host is continuing to serve the same toast or has been
+    /// reused for a different one.
+    pub fn set_timeout(
+        this: &mut WidgetMut<'_, Self>,
+        timeout: Option<Duration>,
+        armed_at: Option<Instant>,
+    ) {
         this.widget.timeout = timeout;
-        if timeout.is_none() {
-            this.widget.armed_at = None;
-        } else if needs_arm {
-            this.widget.armed_at = Some(Instant::now());
+        this.widget.armed_at = armed_at;
+        if timeout.is_some() {
             this.ctx.request_anim_frame();
         }
     }
@@ -81,7 +90,6 @@ impl Widget for NotificationHost {
         if let Update::WidgetAdded = event
             && self.timeout.is_some()
         {
-            self.armed_at = Some(Instant::now());
             ctx.request_anim_frame();
         }
     }
@@ -146,5 +154,86 @@ impl Widget for NotificationHost {
 
     fn children_ids(&self) -> ChildrenIds {
         ChildrenIds::from_slice(&[self.child.id()])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use masonry::core::NewWidget;
+    use masonry::testing::TestHarness;
+    use masonry::theme::default_property_set;
+    use masonry::widgets::Label;
+
+    use super::*;
+
+    fn harness(
+        timeout: Option<Duration>,
+        armed_at: Option<Instant>,
+    ) -> TestHarness<NotificationHost> {
+        let child = NewWidget::new(Label::new("toast")).erased();
+        let widget = NotificationHost::new(child, timeout, armed_at);
+        TestHarness::create(default_property_set(), NewWidget::new(widget))
+    }
+
+    /// `flex_col`'s positional diffing reuses a host for a different logical
+    /// toast when an earlier one is dismissed and the list shifts (see
+    /// [`NotificationHost::set_timeout`]'s doc comment). `armed_at` is the
+    /// new toast's own creation time, supplied by the view — `set_timeout`
+    /// must adopt it unconditionally, even when the new toast happens to
+    /// have the same configured `timeout` as the old one, otherwise the new
+    /// toast inherits the old toast's stale `armed_at` and fires too early.
+    #[test]
+    fn reusing_host_for_new_toast_adopts_its_armed_at() {
+        let t0 = Instant::now();
+        let t1 = t0 + Duration::from_millis(10);
+        let mut h = harness(Some(Duration::from_millis(50)), Some(t0));
+
+        // toast1 slides into this slot, configured with the same 50ms
+        // timeout as toast0 but created at t1 — `NotificationView::rebuild`
+        // calls `set_timeout` exactly like this.
+        h.edit_root_widget(|mut wm| {
+            NotificationHost::set_timeout(&mut wm, Some(Duration::from_millis(50)), Some(t1));
+        });
+
+        let armed_at = h.edit_root_widget(|wm| wm.widget.armed_at);
+
+        assert_eq!(
+            armed_at,
+            Some(t1),
+            "reusing the host for a new toast must adopt the new toast's own \
+             creation time, even when the new toast's timeout duration \
+             matches the old one"
+        );
+    }
+
+    /// The flip side of the previous test: when *this* toast is unchanged
+    /// but a *different* toast elsewhere in the stack is added/removed, the
+    /// whole `flex_col` rebuilds and `set_timeout` is called again for this
+    /// host with the same `timeout` and `armed_at` it already had. Since
+    /// `armed_at` is this toast's own creation time and hasn't changed, the
+    /// countdown must not effectively restart — otherwise a toast can never
+    /// expire as long as other toasts keep appearing/disappearing around it.
+    #[test]
+    fn unrelated_rebuild_with_unchanged_armed_at_does_not_reset_the_timer() {
+        let t0 = Instant::now()
+            .checked_sub(Duration::from_millis(40))
+            .unwrap();
+        let mut h = harness(Some(Duration::from_millis(50)), Some(t0));
+
+        // Same toast (same creation time), same timeout — as if a sibling
+        // toast's dismissal triggered a stack-wide rebuild.
+        h.edit_root_widget(|mut wm| {
+            NotificationHost::set_timeout(&mut wm, Some(Duration::from_millis(50)), Some(t0));
+        });
+
+        // Only 10ms remain on the original 50ms countdown from t0; firing
+        // confirms the rebuild above didn't restart it.
+        h.animate_ms(15);
+
+        assert_eq!(
+            h.pop_action::<NotificationTimeout>().map(|(_, id)| id),
+            Some(h.root_id()),
+            "an unrelated rebuild must not restart this toast's countdown"
+        );
     }
 }
