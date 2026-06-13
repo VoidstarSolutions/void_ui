@@ -82,6 +82,7 @@ pub use components::{
     sidebar_panel, slider, spinner, text_column, toggle_button_group, tooltip, v_resizable,
     v_resizable_panels,
     ColumnWidths, DataGrid, DismissCallback, DropdownButton, DropdownButtonView, FilterState,
+    ColumnWidths, DataGrid, DropdownButton, DropdownButtonView, FilterState,
     GroupBox, Icon, IconName, Label, LabelAlignment, MIN_COLUMN_WIDTH, MIN_PANEL_SIZE, NoTitle,
     Notification, NotificationLayerView, NotificationPosition, NotificationView, Orientation,
     Popover, PopoverAnchor, PopoverHost, PopoverView, RangeSlider, RangeSliderView, ReadOnlyText,
