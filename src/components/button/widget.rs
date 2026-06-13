@@ -628,8 +628,11 @@ impl Widget for ThemedButton {
         } else {
             0.0
         };
-        // Label sits between the leading and trailing icon areas.
-        let child_x = pad_h + icon_extra;
+        let leading_gap = icon_extra - icon_base;
+        let trailing_gap = if trailing_base > 0.0 { gap } else { 0.0 };
+        let label_area = (inner.width - leading_gap - trailing_gap).max(0.0);
+        // Label is centered in the space between the leading and trailing icon areas.
+        let child_x = pad_h + icon_extra + ((label_area - child_size.width) * 0.5).max(0.0);
         let child_y = pad_v + ((inner.height - child_size.height) * 0.5).max(0.0);
         ctx.place_child(&mut self.child, Point::new(child_x, child_y));
         ctx.derive_baselines(&self.child);
