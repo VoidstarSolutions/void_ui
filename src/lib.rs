@@ -37,7 +37,7 @@ pub use animated_clip::AnimatedClip;
 pub use components::{
     Alert, AlertVariant, Button, ButtonGroup, ButtonVariant, ButtonView, CellAlign, ColumnDef,
     ColumnWidths, DataGrid, DropdownButton, DropdownButtonView, FilterState, GroupBox, Icon,
-    IconName, Label, LabelAlignment, MIN_COLUMN_WIDTH, MIN_PANEL_SIZE, NoTitle, Orientation,
+    IconName, Label, LabelAlignment, List, MIN_COLUMN_WIDTH, MIN_PANEL_SIZE, NoTitle, Orientation,
     Popover, PopoverAnchor, PopoverHost, PopoverView, RangeSlider, RangeSliderView, ReadOnlyText,
     ReadOnlyTextView, Resizable, ResizablePanel, ResizablePanels, ResizablePanelsView,
     ResizableView, RustHighlighter, ScrollContainer, ScrollContainerView, ScrollState,
@@ -46,7 +46,7 @@ pub use components::{
     SortDirection, SortState, Spinner, SpinnerView, SpinnerWidget, TitleState, Tooltip,
     TooltipView, WithTitle, alert, button, button_group, colored_text_column, data_grid,
     dropdown_button, filtered_indices, group_box, h_resizable, h_resizable_panels, icon, label,
-    optional_text_column, popover, range_slider, read_only_text, scroll_container, separator,
+    list, optional_text_column, popover, range_slider, read_only_text, scroll_container, separator,
     sidebar_item, sidebar_nav, sidebar_panel, slider, spinner, text_column, toggle_button_group,
     tooltip, v_resizable, v_resizable_panels,
 };
