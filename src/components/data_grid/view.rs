@@ -39,7 +39,7 @@ use super::filter::FilterState;
 use super::header_click::clickable_header;
 use super::row_click::clickable_row;
 use super::scroll::{ScrollState, ScrollToView};
-use super::selection::SelectionState;
+use crate::collection::SelectionState;
 use super::sort::{SortDirection, SortState};
 use super::width::ColumnWidths;
 use crate::Theme;
@@ -1260,7 +1260,7 @@ const FILTER_ROW_HEIGHT: f64 = 30.0;
 mod tests {
     use super::{RowIdSource, decompose_columns, project_tsv, visual_range_ids};
     use crate::components::data_grid::column::{CellAlign, TextProjector, text_column};
-    use crate::components::data_grid::selection::SelectionState;
+    use crate::collection::SelectionState;
     use crate::components::data_grid::width::ColumnWidths;
     use std::sync::Arc;
 

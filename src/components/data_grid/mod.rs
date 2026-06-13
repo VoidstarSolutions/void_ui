@@ -28,7 +28,7 @@
 //!
 //! Entry points: [`view::data_grid`] for the xilem view,
 //! [`column::ColumnDef`] for the per-column contract,
-//! [`selection::SelectionState`] for the selection model,
+//! [`SelectionState`] for the selection model,
 //! [`sort::SortState`] for the sort model,
 //! [`scroll::ScrollState`] for programmatic scroll-to-row.
 //!
@@ -82,7 +82,7 @@
 //!
 //! ## Selection is keyed by stable row id
 //!
-//! Selection ([`selection::SelectionState`]) is keyed by a **stable row
+//! Selection ([`SelectionState`]) is keyed by a **stable row
 //! id** supplied via [`DataGrid::row_id`](view::DataGrid::row_id) — the
 //! `getRowId` contract from `TanStack`/AG Grid/Kendo — *not* by slice
 //! position. Because the host reorders the slice when sorting/filtering,
@@ -157,7 +157,6 @@ pub mod filter;
 pub mod header_click;
 pub mod row_click;
 pub mod scroll;
-pub mod selection;
 mod single_child;
 pub mod sort;
 pub mod view;
@@ -172,8 +171,8 @@ pub use copy_shortcut::CopyOnShortcut;
 pub use filter::{FilterState, filtered_indices};
 pub use header_click::{HeaderClickable, HeaderClicked};
 pub use row_click::{RowClickAction, RowClickable};
+pub use crate::collection::SelectionState;
 pub use scroll::ScrollState;
-pub use selection::SelectionState;
 pub use sort::{SortDirection, SortState, sort_indices};
 pub use view::{DataGrid, data_grid};
 pub use width::{ColumnWidths, MIN_COLUMN_WIDTH};

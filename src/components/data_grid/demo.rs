@@ -29,7 +29,7 @@ use super::column::{
 };
 use super::filter::{FilterState, filtered_indices};
 use super::scroll::ScrollState;
-use super::selection::SelectionState;
+use crate::collection::SelectionState;
 use super::sort::{SortState, sort_indices};
 use super::width::ColumnWidths;
 use crate::Theme;

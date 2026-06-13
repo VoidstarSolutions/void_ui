@@ -5,7 +5,7 @@
 //! events instead of keyboard events. The widget itself stays dumb —
 //! it just reports "primary click happened at these modifiers" — the
 //! grid's xilem view layer translates that into the right
-//! [`SelectionState`](super::selection::SelectionState) update for the
+//! [`SelectionState`](super::SelectionState) update for the
 //! affected row.
 //!
 //! `accepts_focus = true` so subsequent Ctrl/Cmd+C on the parent
@@ -186,7 +186,7 @@ use xilem::{Pod, ViewCtx, WidgetView};
 ///
 /// `on_click` runs synchronously against the host's app state during
 /// xilem's message-handling pass. Use it to apply the right
-/// [`SelectionState`](super::selection::SelectionState) op based on
+/// [`SelectionState`](super::SelectionState) op based on
 /// the [`RowClickAction`] modifier flags.
 #[must_use = "View values do nothing unless provided to Xilem."]
 pub struct ClickableRow<V, State, F> {

@@ -78,7 +78,7 @@ pub struct SortLevel {
 /// Columns are identified by stable [`ColumnId`], not position — so an
 /// active sort stays attached to its column when the host reorders or
 /// hides columns (the same identity contract as
-/// [`SelectionState`](super::selection::SelectionState) /
+/// [`SelectionState`](super::SelectionState) /
 /// [`FilterState`](super::filter::FilterState) /
 /// [`ColumnWidths`](super::width::ColumnWidths)). Held in the host's app
 /// state and read by the grid through a lens.

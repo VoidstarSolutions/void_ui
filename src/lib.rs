@@ -21,6 +21,7 @@ extern crate self as void_ui;
 
 pub mod anchored_overlay;
 pub mod animated_clip;
+mod collection;
 pub mod components;
 pub mod floating;
 pub mod focus_ring;
