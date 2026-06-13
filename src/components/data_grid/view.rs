@@ -44,6 +44,7 @@ use super::width::ColumnWidths;
 use crate::Theme;
 use crate::collection::ScrollState;
 use crate::collection::SelectionState;
+use crate::collection::{IdSource, scroll_idx_to_slice, scroll_range_end, visual_range_ids};
 use crate::components::scroll_container::scroll_container;
 
 /// Boxed row-data accessor (`Fn(&State) -> &[R]`), shared via `Arc`
@@ -64,40 +65,6 @@ type RowIdFn<R> = Arc<dyn Fn(&R) -> u64 + Send + Sync>;
 /// (the same host-side shape as [`FilterChange`]). Keyed by id so an
 /// active sort stays attached across reorder/hide.
 type SortChange<State> = Arc<dyn Fn(&mut State, ColumnId, bool) + Send + Sync>;
-
-/// How the body derives a row's stable id: either the host's projector,
-/// or a fallback to the row's slice position when none was supplied.
-///
-/// Resolving needs *both* candidates available — the explicit projector
-/// reads the row, the fallback uses the position — so [`Self::id_of`]
-/// takes both and picks. Clone is cheap (an `Arc` bump or a unit).
-enum RowIdSource<R> {
-    /// Host-supplied `getRowId`.
-    Explicit(RowIdFn<R>),
-    /// No projector: use the row's current slice position as its id.
-    Position,
-}
-
-// Hand-written so the bound is on the `Arc` (always `Clone`), not on `R`
-// — a derived `Clone` would wrongly require `R: Clone`.
-impl<R> Clone for RowIdSource<R> {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Explicit(f) => Self::Explicit(Arc::clone(f)),
-            Self::Position => Self::Position,
-        }
-    }
-}
-
-impl<R> RowIdSource<R> {
-    /// The stable id of `row`, which sits at slice position `pos`.
-    fn id_of(&self, pos: usize, row: &R) -> u64 {
-        match self {
-            Self::Explicit(f) => f(row),
-            Self::Position => position_fallback_id(pos),
-        }
-    }
-}
 
 /// One-shot warning that the grid is configured with selection + a
 /// reorder source but no stable `row_id`. Emitted at most once per
@@ -567,9 +534,9 @@ where
     // host doesn't supply one. Correct only for a static (unsorted,
     // unfiltered) grid; documented on `DataGrid::row_id`. Boxed once here
     // so the body closure captures a single uniform `RowIdFn`.
-    let row_id: RowIdSource<R> = match row_id {
-        Some(f) => RowIdSource::Explicit(f),
-        None => RowIdSource::Position,
+    let row_id: IdSource<R> = match row_id {
+        Some(f) => IdSource::Explicit(f),
+        None => IdSource::Position,
     };
 
     let DecomposedColumns {
@@ -683,7 +650,7 @@ where
 // Separately, a row's **stable id** is a `u64` ([`SelectionState`] is
 // keyed by it). Id and position are *different* quantities now that the
 // host owns order — they coincide only under the position fallback
-// ([`RowIdSource::Position`]), which is the one place `usize → u64`
+// ([`IdSource::Position`]), which is the one place `usize → u64`
 // happens (`position_fallback_id`). We never convert an id *back* to a
 // position by casting (an id isn't a position); the copy path resolves
 // id→row by scanning instead. (Column indices are a separate domain,
@@ -695,31 +662,15 @@ where
 // are lossless, but the checked form keeps us correct on 32-bit and
 // satisfies `clippy::pedantic` uniformly.
 
-/// `virtual_scroll` range bound: row count (`u64`) → `i64`. Saturates to
-/// `i64::MAX` (a ~9.2e18-row grid is not reachable in practice).
-fn scroll_range_end(row_count: u64) -> i64 {
-    i64::try_from(row_count).unwrap_or(i64::MAX)
-}
-
-/// `virtual_scroll` callback index (`i64`) → slice index (`usize`).
-/// Saturates so a stray negative/oversized index reads as past-the-end.
-fn scroll_idx_to_slice(idx: i64) -> usize {
-    usize::try_from(idx).unwrap_or(usize::MAX)
-}
-
-/// Slice position (`usize`) → row id (`u64`), used only by the
-/// position-fallback row id ([`RowIdSource::Position`]). Saturates to
-/// `u64::MAX`.
-fn position_fallback_id(idx: usize) -> u64 {
-    u64::try_from(idx).unwrap_or(u64::MAX)
-}
+// The integer-domain converters (`scroll_range_end`, `scroll_idx_to_slice`,
+// `position_fallback_id`) now live in `crate::collection::ids`.
 
 // --- MARK: TSV projection ----------------------------------------------
 
 /// Builds the clipboard TSV for the current selection.
 ///
 /// Iterates `data` **in its current (display) order** and emits a line
-/// for each row whose [`row_id`](RowIdSource)-derived id is selected.
+/// for each row whose [`row_id`](IdSource)-derived id is selected.
 /// Walking the data (rather than the selection set) means the copy comes
 /// out in the on-screen order the host arranged — not in id order — which
 /// is what a user pasting into a spreadsheet expects.
@@ -727,7 +678,7 @@ fn project_tsv<R>(
     text_projectors: &[Option<TextProjector<R>>],
     data: &[R],
     selection: &SelectionState,
-    row_id: &RowIdSource<R>,
+    row_id: &IdSource<R>,
 ) -> Option<String> {
     if selection.is_empty() {
         return None;
@@ -786,7 +737,7 @@ struct CopyOnShortcutView<V, R, State> {
     text_projectors: Arc<Vec<Option<TextProjector<R>>>>,
     rows: RowsFn<State, R>,
     selection_lens: Option<SelectionLens<State>>,
-    row_id: RowIdSource<R>,
+    row_id: IdSource<R>,
     phantom: PhantomData<fn() -> State>,
 }
 
@@ -1007,7 +958,7 @@ struct BodyParams<State, R> {
     render_slots: Arc<Vec<ColumnRender<R, State>>>,
     rows: RowsFn<State, R>,
     selection_lens: Option<SelectionLens<State>>,
-    row_id: RowIdSource<R>,
+    row_id: IdSource<R>,
     /// Pending programmatic-scroll request snapshot (see [`ScrollState`]).
     scroll: ScrollState,
 }
@@ -1015,7 +966,7 @@ struct BodyParams<State, R> {
 /// Builds the virtualized body. The host supplies rows **already in
 /// display order** (filtered then sorted host-side), so virtual position
 /// *is* slice position — the body does no reordering. Each row's stable
-/// id (via [`RowIdSource`]) drives selection styling and the click
+/// id (via [`IdSource`]) drives selection styling and the click
 /// handler, so a selection follows its rows across host reordering.
 fn build_body<State, R>(params: BodyParams<State, R>) -> impl WidgetView<State, ()> + use<State, R>
 where
@@ -1135,44 +1086,6 @@ where
     }
 }
 
-/// Resolves the stable ids of the rows spanning the **visual** range
-/// between `anchor_id` and `target_id` (inclusive), in the slice's
-/// current display order.
-///
-/// This is what makes shift-extend follow on-screen order regardless of
-/// sort/filter: it locates both rows' positions in the ordered slice and
-/// collects every id between them.
-///
-/// Returns `None` when either endpoint isn't present in the current view
-/// — most importantly when the anchor was filtered out. The range then
-/// has no on-screen start, so the caller falls back to a plain select on
-/// the target (which also *reseats* the anchor there); leaving the stale
-/// off-screen anchor in place would wedge every later shift-click on a
-/// single select.
-///
-/// O(n) over the slice, but only on a shift-click (never per frame).
-fn visual_range_ids<R>(
-    data: &[R],
-    row_id: &RowIdSource<R>,
-    anchor_id: u64,
-    target_id: u64,
-) -> Option<Vec<u64>> {
-    let mut anchor_pos = None;
-    let mut target_pos = None;
-    for (pos, row) in data.iter().enumerate() {
-        let id = row_id.id_of(pos, row);
-        if id == anchor_id {
-            anchor_pos = Some(pos);
-        }
-        if id == target_id {
-            target_pos = Some(pos);
-        }
-    }
-    let (a, t) = (anchor_pos?, target_pos?);
-    let (lo, hi) = if a <= t { (a, t) } else { (t, a) };
-    Some((lo..=hi).map(|pos| row_id.id_of(pos, &data[pos])).collect())
-}
-
 // --- MARK: STACK ASSEMBLY ----------------------------------------------
 
 /// Stacks header → (optional filter row) → body into the grid column.
@@ -1259,70 +1172,21 @@ const FILTER_ROW_HEIGHT: f64 = 30.0;
 
 #[cfg(test)]
 mod tests {
-    use super::{RowIdSource, decompose_columns, project_tsv, visual_range_ids};
-    use crate::collection::SelectionState;
+    use super::{decompose_columns, project_tsv};
+    use crate::collection::{IdSource, SelectionState};
     use crate::components::data_grid::column::{CellAlign, TextProjector, text_column};
     use crate::components::data_grid::width::ColumnWidths;
     use std::sync::Arc;
 
     /// Row id == the row value itself, so test slices read naturally:
     /// `[10, 20, 30]` are rows with ids 10/20/30 in that display order.
-    fn id_is_value() -> RowIdSource<u64> {
-        RowIdSource::Explicit(Arc::new(|r: &u64| *r))
+    fn id_is_value() -> IdSource<u64> {
+        IdSource::Explicit(Arc::new(|r: &u64| *r))
     }
 
     /// A single text projector that stringifies the `u64` row.
     fn value_projectors() -> Vec<Option<TextProjector<u64>>> {
         vec![Some(Box::new(|r: &u64| r.to_string()))]
-    }
-
-    #[test]
-    fn visual_range_spans_anchor_to_target_in_display_order() {
-        let data = [10_u64, 20, 30, 40, 50];
-        // Anchor at id 20 (pos 1), target id 40 (pos 3): inclusive span.
-        let ids = visual_range_ids(&data, &id_is_value(), 20, 40);
-        assert_eq!(ids, Some(vec![20, 30, 40]));
-    }
-
-    #[test]
-    fn visual_range_is_orientation_independent() {
-        let data = [10_u64, 20, 30, 40, 50];
-        // Target *above* the anchor yields the same span, in display order.
-        let ids = visual_range_ids(&data, &id_is_value(), 40, 20);
-        assert_eq!(ids, Some(vec![20, 30, 40]));
-    }
-
-    #[test]
-    fn visual_range_single_row_when_anchor_equals_target() {
-        let data = [10_u64, 20, 30];
-        assert_eq!(
-            visual_range_ids(&data, &id_is_value(), 20, 20),
-            Some(vec![20])
-        );
-    }
-
-    #[test]
-    fn visual_range_none_when_anchor_filtered_out() {
-        // Simulate a filtered view: id 20 (a prior anchor) is no longer
-        // present. The range can't be resolved → None, so the caller
-        // reseats the anchor with a plain select instead of wedging.
-        let data = [10_u64, 30, 40, 50];
-        assert_eq!(visual_range_ids(&data, &id_is_value(), 20, 40), None);
-    }
-
-    #[test]
-    fn visual_range_none_when_target_missing() {
-        let data = [10_u64, 20, 30];
-        assert_eq!(visual_range_ids(&data, &id_is_value(), 10, 99), None);
-    }
-
-    #[test]
-    fn visual_range_position_fallback_ids_are_slice_positions() {
-        // With no explicit projector, the id *is* the slice position.
-        // Anchor pos 1, target pos 3 → ids [1, 2, 3].
-        let data = ["a", "b", "c", "d", "e"];
-        let ids = visual_range_ids(&data, &RowIdSource::Position, 1, 3);
-        assert_eq!(ids, Some(vec![1, 2, 3]));
     }
 
     #[test]
