@@ -12,6 +12,8 @@ pub(crate) enum IdSource<Item> {
     Position,
 }
 
+// Hand-written so the bound is on the `Arc` (always `Clone`), not on `Item` —
+// a derived `Clone` would wrongly require `Item: Clone`.
 impl<Item> Clone for IdSource<Item> {
     fn clone(&self) -> Self {
         match self {
@@ -22,6 +24,8 @@ impl<Item> Clone for IdSource<Item> {
 }
 
 impl<Item> IdSource<Item> {
+    /// Resolving needs both candidates available — the explicit projector reads
+    /// the item, the fallback uses the position — so `id_of` takes both and picks.
     pub(crate) fn id_of(&self, pos: usize, item: &Item) -> u64 {
         match self {
             Self::Explicit(f) => f(item),

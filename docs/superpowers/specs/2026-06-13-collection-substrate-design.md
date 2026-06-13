@@ -122,6 +122,12 @@ widget. `data_grid` gains arrow-key row navigation (an approved behavior change
 
 ## Performance
 
+> DEFERRED: The opt-in memoization below (the `row_key` seam) is deferred to the
+> `list` rebuild branch, where `list` is a real consumer that can supply
+> `row_key` and the win can be measured against a real workload. `data_grid` on
+> this branch does not consume memoization; only the unconditional central-click
+> win is realized here.
+
 Both components today, per **visible** row, on **every rebuild** (every frame
 state changes): re-borrow the items slice, `get(pos)`, run the id closure, a
 `selection.contains(id)` lookup, then `Arc`-clone the selection lens + id source

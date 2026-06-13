@@ -964,8 +964,9 @@ struct BodyParams<State, R> {
 /// Builds the virtualized body. The host supplies rows **already in
 /// display order** (filtered then sorted host-side), so virtual position
 /// *is* slice position — the body does no reordering. Each row's stable
-/// id (via [`IdSource`]) drives selection styling and the click
-/// handler, so a selection follows its rows across host reordering.
+/// id (via [`IdSource`]) drives selection and click routing — now handled
+/// by the collection substrate's `collection_body` — so a selection follows
+/// its rows across host reordering.
 fn build_body<State, R>(params: BodyParams<State, R>) -> impl WidgetView<State, ()> + use<State, R>
 where
     State: 'static,

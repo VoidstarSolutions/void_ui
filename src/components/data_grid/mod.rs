@@ -13,7 +13,12 @@
 //! Backed by masonry's [`VirtualScroll`][masonry::widgets::VirtualScroll]
 //! for row virtualization, and wrapped in a horizontal-only
 //! [`scroll_container`](crate::components::scroll_container) so columns
-//! wider than the viewport are reachable. Each row (header, body, filter)
+//! wider than the viewport are reachable. That `VirtualScroll` wiring now
+//! lives one layer down in the crate-internal `collection` substrate: row
+//! virtualization, selection, scroll-to, and keyboard nav are provided by
+//! that substrate (the grid's body is a `collection_body`), while
+//! `data_grid` owns columns, the header, sort/filter, horizontal scroll,
+//! and copy. Each row (header, body, filter)
 //! is a [`column_strip::ColumnStrip`] — a multi-child widget that places
 //! cells at authoritative x-positions from a shared width list, so the
 //! three rows share column geometry *by construction* (independent

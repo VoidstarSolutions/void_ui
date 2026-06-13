@@ -985,6 +985,11 @@ git commit -m "collection: add per-row rebuild measurement + baseline"
 
 ## Task 9: Opt-in row memoization (prototype-gated)
 
+> DEFERRED: This task is deferred to the `list` rebuild branch, where `list` is a
+> real consumer that can supply `row_key` and the win can be measured against a
+> real workload. `data_grid` on this branch does not consume memoization — only
+> the unconditional central-click win (Task 8 baseline) is realized here.
+
 **Files:**
 - Modify: `src/collection/body.rs`, `src/collection/mod.rs`
 - Test: memoization behavior test in `body.rs`

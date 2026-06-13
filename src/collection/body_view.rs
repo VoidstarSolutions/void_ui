@@ -87,6 +87,8 @@ where
             let data = (*items)(state);
             let content: Box<AnyWidgetView<State>> = match data.get(pos) {
                 Some(item) => render_row(item, is_selected, &theme),
+                // pos past the end (a row scrolled past a shrinking dataset) —
+                // render an inert empty row.
                 None => Box::new(label("")),
             };
 
@@ -194,6 +196,9 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<()> {
+        // Only peek once the message has stopped routing to a child:
+        // maybe_take_message debug-asserts the path is empty, so probing
+        // mid-route would panic.
         if message.remaining_path().is_empty()
             && let Some(lazy) = self.lazy.as_ref()
         {
