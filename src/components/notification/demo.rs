@@ -15,7 +15,7 @@ use masonry::layout::Length;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::widgets::Passthrough;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, flex_col, flex_row, sized_box};
+use xilem::view::{CrossAxisAlignment, MainAxisAlignment, flex_col, flex_row, sized_box};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::{
@@ -117,6 +117,7 @@ fn position_row<S: NotificationDemoHost>(
         })
         .collect();
     flex_row(buttons)
+        .main_axis_alignment(MainAxisAlignment::Center)
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(6.0))
 }
@@ -135,10 +136,6 @@ fn trigger_button<S: NotificationDemoHost>(
 }
 
 fn triggers_row<S: NotificationDemoHost>(theme: &Theme) -> impl WidgetView<S, ()> + use<S> {
-    let dismiss_all = button(|s: &mut S| s.as_mut().toasts.clear())
-        .label("Dismiss All")
-        .render(theme);
-
     flex_wrap((
         trigger_button::<S>(
             theme,
@@ -189,8 +186,9 @@ fn triggers_row<S: NotificationDemoHost>(theme: &Theme) -> impl WidgetView<S, ()
             AlertVariant::Warning,
             None,
         ),
-        dismiss_all,
     ))
+    .main_axis_alignment(MainAxisAlignment::Center)
+    .cross_axis_alignment(CrossAxisAlignment::Center)
     .gap(8.0)
 }
 
@@ -198,10 +196,17 @@ fn live_demo_section<S: NotificationDemoHost>(
     theme: &Theme,
     demo: &NotificationDemoState,
 ) -> impl WidgetView<S, ()> + use<S> {
+    let dismiss_all = button(|s: &mut S| s.as_mut().toasts.clear())
+        .label("Dismiss All")
+        .render(theme);
     with_source!(theme, {
-        flex_col((position_row::<S>(theme, demo), triggers_row::<S>(theme)))
-            .cross_axis_alignment(CrossAxisAlignment::Stretch)
-            .gap(Length::px(8.0))
+        flex_col((
+            position_row::<S>(theme, demo),
+            triggers_row::<S>(theme),
+            dismiss_all,
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .gap(Length::px(8.0))
     })
 }
 
