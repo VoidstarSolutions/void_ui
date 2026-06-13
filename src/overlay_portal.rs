@@ -73,6 +73,7 @@ use xilem_masonry::core::{AnyView, Resource, View, ViewPathTracker};
 use xilem_masonry::{Pod, ViewCtx};
 
 use crate::Theme;
+use crate::components::popover::widget::SurfaceStyle;
 use crate::overlay_scope::OverlayScopeHandle;
 
 /// Erased popover-content view stored in the portal registry. Equivalent to
@@ -132,6 +133,7 @@ pub(crate) struct PortalEntry<State, Action> {
     pub(crate) content: Arc<PortalContentView<State, Action>>,
     pub(crate) theme: Theme,
     pub(crate) placement: PortalPlacement,
+    pub(crate) style: SurfaceStyle,
 }
 
 impl<State, Action> Clone for PortalEntry<State, Action> {
@@ -141,6 +143,7 @@ impl<State, Action> Clone for PortalEntry<State, Action> {
             content: self.content.clone(),
             theme: self.theme,
             placement: self.placement,
+            style: self.style,
         }
     }
 }
@@ -209,6 +212,7 @@ impl<State, Action> OverlayPortal<State, Action> {
         content: Arc<PortalContentView<State, Action>>,
         theme: &Theme,
         placement: PortalPlacement,
+        style: SurfaceStyle,
     ) -> u64 {
         let mut reg = self.inner.borrow_mut();
         let key = reg.next_key;
@@ -218,6 +222,7 @@ impl<State, Action> OverlayPortal<State, Action> {
             content,
             theme: *theme,
             placement,
+            style,
         });
         key
     }
@@ -229,12 +234,14 @@ impl<State, Action> OverlayPortal<State, Action> {
         content: Arc<PortalContentView<State, Action>>,
         theme: &Theme,
         placement: PortalPlacement,
+        style: SurfaceStyle,
     ) {
         let mut reg = self.inner.borrow_mut();
         if let Some(entry) = reg.entries.iter_mut().find(|e| e.key == key) {
             entry.content = content;
             entry.theme = *theme;
             entry.placement = placement;
+            entry.style = style;
         }
     }
 
@@ -296,12 +303,16 @@ use crate::components::dropdown_button::widget::ThemedDropdownButton;
 use crate::components::popover::PopoverAnchor;
 use crate::components::popover::widget::PopoverHost;
 
-/// Which widget type owns a portal child, so [`PortalSlot::dismiss_outside`]
-/// knows how to downcast `owner` when notifying it of an outside-press
-/// dismissal.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum PortalOwnerKind {
+/// What kind of widget owns a [`PortalChild`], and therefore how
+/// [`PortalSlot::dismiss_outside`] notifies it of an outside-press dismissal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OwnerKind {
+    /// A `PopoverHost`, notified via [`PopoverHost::mark_closed`].
     Popover,
+    /// A `DialogHost`, notified by submitting `DialogDismissed`.
+    Dialog,
+    /// A `ThemedDropdownButton`, notified via
+    /// [`crate::components::dropdown_button::widget::ThemedDropdownButton::mark_closed`].
     DropdownButton,
 }
 
@@ -309,11 +320,11 @@ pub(crate) enum PortalOwnerKind {
 struct PortalChild {
     key: u64,
     widget: WidgetPod<dyn Widget>,
-    /// Owner to sync (via [`PopoverHost::mark_closed`] or
-    /// [`ThemedDropdownButton::mark_closed`]) when an outside press dismisses
+    /// Owner to notify (via `owner_kind`) when an outside press dismisses
     /// this child. `None` in tests / ownerless pushes, and unused for
     /// [`PortalPlacement::Corner`] children.
-    owner: Option<(WidgetId, PortalOwnerKind)>,
+    owner: Option<WidgetId>,
+    owner_kind: OwnerKind,
     /// [`PortalPlacement::Trigger`] children start hidden and are shown via
     /// [`Self::set_visible`]; [`PortalPlacement::Corner`] children are always
     /// visible.
@@ -336,6 +347,7 @@ impl PortalChild {
             key,
             widget,
             owner: None,
+            owner_kind: OwnerKind::Popover,
             visible: matches!(mode, PortalPlacement::Corner(_)),
             placement: Rect::ZERO,
             anchor: PopoverAnchor::BottomStart,
@@ -375,7 +387,7 @@ impl PortalSlot {
     }
 
     /// Mount a new child for `key`. Called from the scope view's rebuild when
-    /// a popover or toast layer registers after initial build.
+    /// a popover, dialog, or toast layer registers after initial build.
     pub(crate) fn insert(
         this: &mut WidgetMut<'_, Self>,
         key: u64,
@@ -427,7 +439,8 @@ impl PortalSlot {
         this: &mut WidgetMut<'_, Self>,
         key: u64,
         visible: bool,
-        owner: Option<(WidgetId, PortalOwnerKind)>,
+        owner: Option<WidgetId>,
+        owner_kind: OwnerKind,
         placement: Rect,
         anchor: PopoverAnchor,
         gap: f64,
@@ -437,6 +450,7 @@ impl PortalSlot {
         };
         if child.visible == visible
             && child.owner == owner
+            && child.owner_kind == owner_kind
             && child.placement == placement
             && child.anchor == anchor
             && (child.gap - gap).abs() < f64::EPSILON
@@ -445,6 +459,7 @@ impl PortalSlot {
         }
         child.visible = visible;
         child.owner = owner;
+        child.owner_kind = owner_kind;
         child.placement = placement;
         child.anchor = anchor;
         child.gap = gap;
@@ -507,20 +522,21 @@ impl PortalSlot {
             }
             child.visible = false;
             dismissed = true;
-            if let Some((owner, kind)) = child.owner {
-                match kind {
-                    PortalOwnerKind::Popover => {
-                        this.ctx.mutate_later(owner, |mut w| {
-                            let mut host = w.downcast::<PopoverHost>();
-                            PopoverHost::mark_closed(&mut host);
-                        });
-                    }
-                    PortalOwnerKind::DropdownButton => {
-                        this.ctx.mutate_later(owner, |mut w| {
-                            let mut dropdown = w.downcast::<ThemedDropdownButton>();
-                            ThemedDropdownButton::mark_closed(&mut dropdown);
-                        });
-                    }
+            if let Some(owner) = child.owner {
+                match child.owner_kind {
+                    OwnerKind::Popover => this.ctx.mutate_later(owner, |mut w| {
+                        let mut host = w.downcast::<PopoverHost>();
+                        PopoverHost::mark_closed(&mut host);
+                    }),
+                    OwnerKind::Dialog => this.ctx.mutate_later(owner, |mut w| {
+                        w.ctx.submit_action::<crate::components::dialog::widget::DialogDismissed>(
+                            crate::components::dialog::widget::DialogDismissed,
+                        );
+                    }),
+                    OwnerKind::DropdownButton => this.ctx.mutate_later(owner, |mut w| {
+                        let mut dropdown = w.downcast::<ThemedDropdownButton>();
+                        ThemedDropdownButton::mark_closed(&mut dropdown);
+                    }),
                 }
             }
         }
@@ -585,10 +601,17 @@ impl Widget for PortalSlot {
                     let child_size =
                         ctx.compute_size(&mut child.widget, SizeDef::MIN, LayoutSize::from(size));
                     ctx.run_layout(&mut child.widget, child_size);
-                    let offset = child
-                        .anchor
-                        .child_offset(child.placement.size(), child_size)
-                        + child.placement.origin().to_vec2();
+                    // `ViewportQuarter` has no trigger to anchor to — center it
+                    // in the slot's own size (the scope's content box) instead
+                    // of `child.placement`.
+                    let container = match child.anchor {
+                        PopoverAnchor::ViewportQuarter => {
+                            Rect::from_origin_size(Point::ORIGIN, size)
+                        }
+                        _ => child.placement,
+                    };
+                    let offset = child.anchor.child_offset(container.size(), child_size)
+                        + container.origin().to_vec2();
                     let offset = match child.anchor {
                         PopoverAnchor::BottomStart
                         | PopoverAnchor::BottomCenter
@@ -596,6 +619,7 @@ impl Widget for PortalSlot {
                         PopoverAnchor::TopStart
                         | PopoverAnchor::TopCenter
                         | PopoverAnchor::TopEnd => Point::new(offset.x, offset.y - child.gap),
+                        PopoverAnchor::ViewportQuarter => offset,
                     };
                     ctx.place_child(&mut child.widget, offset);
                     child.placed = Rect::from_origin_size(offset, child_size);
@@ -652,8 +676,8 @@ mod tests {
     fn register_allocates_distinct_keys_starting_at_one() {
         let portal = OverlayPortal::<(), ()>::new(OverlayScopeHandle::new());
         let theme = Theme::default();
-        let a = portal.register(content(), &theme, PortalPlacement::Trigger);
-        let b = portal.register(content(), &theme, PortalPlacement::Trigger);
+        let a = portal.register(content(), &theme, PortalPlacement::Trigger, SurfaceStyle::Popover);
+        let b = portal.register(content(), &theme, PortalPlacement::Trigger, SurfaceStyle::Popover);
         assert_eq!(a, 1);
         assert_eq!(b, 2);
     }
@@ -662,8 +686,8 @@ mod tests {
     fn snapshot_returns_entries_in_registration_order() {
         let portal = OverlayPortal::<(), ()>::new(OverlayScopeHandle::new());
         let theme = Theme::default();
-        let a = portal.register(content(), &theme, PortalPlacement::Trigger);
-        let b = portal.register(content(), &theme, PortalPlacement::Trigger);
+        let a = portal.register(content(), &theme, PortalPlacement::Trigger, SurfaceStyle::Popover);
+        let b = portal.register(content(), &theme, PortalPlacement::Trigger, SurfaceStyle::Popover);
         let keys: Vec<u64> = portal.snapshot().iter().map(|e| e.key).collect();
         assert_eq!(keys, vec![a, b]);
     }
@@ -672,9 +696,15 @@ mod tests {
     fn update_replaces_content_for_an_existing_key() {
         let portal = OverlayPortal::<(), ()>::new(OverlayScopeHandle::new());
         let theme = Theme::default();
-        let key = portal.register(content(), &theme, PortalPlacement::Trigger);
+        let key = portal.register(content(), &theme, PortalPlacement::Trigger, SurfaceStyle::Popover);
         let replacement = content();
-        portal.update(key, replacement.clone(), &theme, PortalPlacement::Trigger);
+        portal.update(
+            key,
+            replacement.clone(),
+            &theme,
+            PortalPlacement::Trigger,
+            SurfaceStyle::Popover,
+        );
         let snap = portal.snapshot();
         assert_eq!(snap.len(), 1);
         assert!(Arc::ptr_eq(&snap[0].content, &replacement));
@@ -684,7 +714,7 @@ mod tests {
     fn deregister_removes_the_entry_and_tolerates_unknown_keys() {
         let portal = OverlayPortal::<(), ()>::new(OverlayScopeHandle::new());
         let theme = Theme::default();
-        let key = portal.register(content(), &theme, PortalPlacement::Trigger);
+        let key = portal.register(content(), &theme, PortalPlacement::Trigger, SurfaceStyle::Popover);
         portal.deregister(key);
         assert!(portal.snapshot().is_empty());
         portal.deregister(999); // must not panic
@@ -695,7 +725,7 @@ mod tests {
         let portal = OverlayPortal::<(), ()>::new(OverlayScopeHandle::new());
         let clone = portal.clone();
         let theme = Theme::default();
-        clone.register(content(), &theme, PortalPlacement::Trigger);
+        clone.register(content(), &theme, PortalPlacement::Trigger, SurfaceStyle::Popover);
         assert_eq!(portal.snapshot().len(), 1);
     }
 
@@ -703,10 +733,10 @@ mod tests {
     fn keys_are_never_reused_after_deregister() {
         let portal = OverlayPortal::<(), ()>::new(OverlayScopeHandle::new());
         let theme = Theme::default();
-        let first = portal.register(content(), &theme, PortalPlacement::Trigger);
+        let first = portal.register(content(), &theme, PortalPlacement::Trigger, SurfaceStyle::Popover);
         assert_eq!(first, 1);
         portal.deregister(first);
-        let second = portal.register(content(), &theme, PortalPlacement::Trigger);
+        let second = portal.register(content(), &theme, PortalPlacement::Trigger, SurfaceStyle::Popover);
         assert_eq!(second, 2, "key must not be recycled after deregister");
     }
 
@@ -715,9 +745,9 @@ mod tests {
         let portal = OverlayPortal::<(), ()>::new(OverlayScopeHandle::new());
         let theme = Theme::default();
         let original = content();
-        portal.register(original.clone(), &theme, PortalPlacement::Trigger);
+        portal.register(original.clone(), &theme, PortalPlacement::Trigger, SurfaceStyle::Popover);
         // update with a key that was never registered — must not panic
-        portal.update(999, content(), &theme, PortalPlacement::Trigger);
+        portal.update(999, content(), &theme, PortalPlacement::Trigger, SurfaceStyle::Popover);
         let snap = portal.snapshot();
         assert_eq!(snap.len(), 1);
         assert!(
@@ -729,7 +759,7 @@ mod tests {
     // --- PortalSlot tests ---
 
     use masonry::core::{EventCtx, PointerButton, PointerEvent, PropertiesMut};
-    use masonry::kurbo::{Point, Rect};
+    use masonry::kurbo::{Point, Rect, Size};
     use masonry::testing::TestHarness;
 
     use crate::components::popover::PopoverAnchor;
@@ -830,6 +860,7 @@ mod tests {
                 key,
                 true,
                 None,
+                OwnerKind::Popover,
                 placement,
                 PopoverAnchor::BottomStart,
                 4.0,
@@ -840,6 +871,32 @@ mod tests {
             // BottomStart: x flush with placement left, y = placement bottom + gap.
             assert!((placed.x0 - 10.0).abs() < 1e-9);
             assert!((placed.y0 - 44.0).abs() < 1e-9);
+        });
+    }
+
+    #[test]
+    fn set_visible_centers_a_viewport_quarter_child_in_the_slots_own_size() {
+        let (mut harness, key) = slot_with_one_child();
+        harness.edit_root_widget(|mut wm| {
+            PortalSlot::set_visible(
+                &mut wm,
+                key,
+                true,
+                None,
+                OwnerKind::Dialog,
+                Rect::ZERO,
+                PopoverAnchor::ViewportQuarter,
+                0.0,
+            );
+        });
+        harness.edit_root_widget(|wm| {
+            let placed = wm.widget.children[0].placed;
+            let window = Size::new(400.0, 400.0);
+            // Centered horizontally and sitting a quarter of the way down the
+            // slot's own size (== the scope's content box), not anchored to
+            // `placement` (which is `Rect::ZERO` here).
+            assert!((placed.x0 - (window.width - placed.width()) / 2.0).abs() < 1e-9);
+            assert!((placed.y0 - (window.height - placed.height()) * 0.25).abs() < 1e-9);
         });
     }
 
@@ -867,6 +924,7 @@ mod tests {
                 key,
                 true,
                 None,
+                OwnerKind::Popover,
                 placement,
                 PopoverAnchor::BottomStart,
                 0.0,
@@ -891,6 +949,7 @@ mod tests {
                 key,
                 true,
                 None,
+                OwnerKind::Popover,
                 placement,
                 PopoverAnchor::BottomStart,
                 0.0,
@@ -929,6 +988,7 @@ mod tests {
                 key,
                 true,
                 None,
+                OwnerKind::Popover,
                 placement,
                 PopoverAnchor::BottomStart,
                 0.0,

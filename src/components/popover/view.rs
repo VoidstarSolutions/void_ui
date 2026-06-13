@@ -27,7 +27,7 @@ use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
 use super::PopoverAnchor;
-use super::widget::{PopoverHost, PopoverSurface};
+use super::widget::{PopoverHost, PopoverSurface, SurfaceStyle};
 use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
 use crate::overlay_portal::{
@@ -140,7 +140,12 @@ where
         let portal = portal_from_env::<State, Action>(ctx);
         let (trigger_pod, trigger_vs) = self.trigger.build(ctx, app_state);
         if let Some(portal) = portal {
-            let key = portal.register(self.content.clone(), &self.theme, PortalPlacement::Trigger);
+            let key = portal.register(
+                self.content.clone(),
+                &self.theme,
+                PortalPlacement::Trigger,
+                SurfaceStyle::Popover,
+            );
             let widget = PopoverHost::new_portal(
                 trigger_pod.new_widget.erased(),
                 self.anchor,
@@ -203,6 +208,7 @@ where
                     self.content.clone(),
                     &self.theme,
                     PortalPlacement::Trigger,
+                    SurfaceStyle::Popover,
                 );
             }
             ContentBinding::InTree { content_vs } => {

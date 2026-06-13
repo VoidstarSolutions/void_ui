@@ -33,6 +33,7 @@ use super::widget::{
 };
 use crate::Theme;
 use crate::components::button::ButtonVariant;
+use crate::components::popover::widget::SurfaceStyle;
 use crate::overlay_portal::{OverlayPortal, PortalContentView, PortalPlacement, portal_from_env};
 
 type ItemCallback<State, Action> = Box<dyn Fn(&mut State) -> Action + Send + Sync>;
@@ -174,7 +175,7 @@ where
                 theme: self.theme,
             };
             let content: Arc<PortalContentView<State, Action>> = Arc::new(menu_view);
-            let key = portal.register(content, &self.theme, PortalPlacement::BareTrigger);
+            let key = portal.register(content, &self.theme, PortalPlacement::BareTrigger, SurfaceStyle::Popover);
             let widget = ThemedDropdownButton::new_portal(
                 DropdownButtonConfig {
                     label_text: self.label.clone(),
@@ -262,7 +263,7 @@ where
                     theme: self.theme,
                 };
                 let content: Arc<PortalContentView<State, Action>> = Arc::new(menu_view);
-                portal.update(*key, content, &self.theme, PortalPlacement::BareTrigger);
+                portal.update(*key, content, &self.theme, PortalPlacement::BareTrigger, SurfaceStyle::Popover);
             }
         }
     }

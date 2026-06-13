@@ -41,11 +41,10 @@ use super::PopoverAnchor;
 use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
 use crate::components::click::{self, ClickPhase};
-use crate::overlay_portal::PortalOwnerKind;
+use crate::overlay_portal::OwnerKind;
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
 /// Corner radius of the popover surface's chrome.
-const CORNER_RADIUS: f64 = 5.0;
 /// Border width of the popover surface's chrome.
 const BORDER_WIDTH: f64 = 1.0;
 
@@ -103,7 +102,9 @@ impl PopoverHost {
         content
             .properties
             .insert(Padding::all(Length::px(f64::from(theme.density.pad))));
-        let surface = NewWidget::new(PopoverSurface::new(content.erased(), theme)).erased();
+        let surface =
+            NewWidget::new(PopoverSurface::new(content.erased(), theme, SurfaceStyle::Popover))
+                .erased();
         let overlay_host =
             AnchoredOverlay::new(trigger, surface, false, anchor).with_gap(surface_gap(theme));
         Self {
@@ -202,7 +203,7 @@ impl PopoverHost {
             return;
         };
         let key = *key;
-        let owner = Some((this.ctx.widget_id(), PortalOwnerKind::Popover));
+        let owner_id = this.ctx.widget_id();
         let anchor = this.widget.anchor;
         let gap = surface_gap(&this.widget.theme).get();
         let rect = Rect::from_origin_size(
@@ -212,7 +213,16 @@ impl PopoverHost {
         *last_anchor_rect_window = Some(rect);
         this.ctx.mutate_later(scope_id, move |mut w| {
             let mut scope = w.downcast::<OverlayScope>();
-            OverlayScope::set_portal_visible(&mut scope, key, true, owner, rect, anchor, gap);
+            OverlayScope::set_portal_visible(
+                &mut scope,
+                key,
+                true,
+                Some(owner_id),
+                OwnerKind::Popover,
+                rect,
+                anchor,
+                gap,
+            );
         });
     }
 
@@ -291,7 +301,7 @@ macro_rules! push_open_state_body {
                     return;
                 };
                 let key = *key;
-                let owner = Some(($ctx.widget_id(), PortalOwnerKind::Popover));
+                let owner_id = $ctx.widget_id();
                 let anchor = $self.anchor;
                 let gap = surface_gap(&$self.theme).get();
                 let rect =
@@ -300,7 +310,14 @@ macro_rules! push_open_state_body {
                 $ctx.mutate_later(scope_id, move |mut w| {
                     let mut scope = w.downcast::<OverlayScope>();
                     OverlayScope::set_portal_visible(
-                        &mut scope, key, $open, owner, rect, anchor, gap,
+                        &mut scope,
+                        key,
+                        $open,
+                        Some(owner_id),
+                        OwnerKind::Popover,
+                        rect,
+                        anchor,
+                        gap,
                     );
                 });
                 if $open {
@@ -451,6 +468,7 @@ impl Widget for PopoverHost {
                                     key,
                                     false,
                                     None,
+                                    OwnerKind::Popover,
                                     Rect::ZERO,
                                     PopoverAnchor::BottomStart,
                                     0.0,
@@ -597,6 +615,24 @@ impl Widget for PopoverHost {
     }
 }
 
+/// Which corner radius a [`PopoverSurface`] paints, per
+/// [`crate::theme::Radii`]'s documented usage: `small` for "cards, pills,
+/// buttons" (popovers, dropdown menus), `large` for "large surfaces, dialogs".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SurfaceStyle {
+    Popover,
+    Dialog,
+}
+
+impl SurfaceStyle {
+    fn corner_radius(self, theme: &Theme) -> f64 {
+        match self {
+            Self::Popover => f64::from(theme.radius.small),
+            Self::Dialog => f64::from(theme.radius.large),
+        }
+    }
+}
+
 /// Transparent wrapper that paints rounded background/border chrome around
 /// arbitrary popover content. `AnchoredOverlay` is purely structural — it
 /// doesn't paint chrome — so whatever it hosts must paint its own (mirrors
@@ -606,24 +642,33 @@ pub(crate) struct PopoverSurface {
     bg: Color,
     border: Color,
     pad: f32,
+    style: SurfaceStyle,
+    corner_radius: f64,
 }
 
 impl PopoverSurface {
-    pub(crate) fn new(content: NewWidget<dyn Widget>, theme: &Theme) -> Self {
+    pub(crate) fn new(content: NewWidget<dyn Widget>, theme: &Theme, style: SurfaceStyle) -> Self {
         Self {
             content: content.to_pod(),
             bg: theme.palette.surface_hi,
             border: theme.palette.border_strong,
             pad: theme.density.pad,
+            style,
+            corner_radius: style.corner_radius(theme),
         }
     }
 
     pub(crate) fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
         let bg = theme.palette.surface_hi;
         let border = theme.palette.border_strong;
+        let corner_radius = this.widget.style.corner_radius(theme);
         if this.widget.bg != bg || this.widget.border != border {
             this.widget.bg = bg;
             this.widget.border = border;
+            this.ctx.request_paint_only();
+        }
+        if (this.widget.corner_radius - corner_radius).abs() > f64::EPSILON {
+            this.widget.corner_radius = corner_radius;
             this.ctx.request_paint_only();
         }
         if (this.widget.pad - theme.density.pad).abs() > f32::EPSILON {
@@ -669,8 +714,11 @@ impl Widget for PopoverSurface {
         _props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
-        let rrect =
-            RoundedRect::from_origin_size(Point::ORIGIN, ctx.border_box_size(), CORNER_RADIUS);
+        let rrect = RoundedRect::from_origin_size(
+            Point::ORIGIN,
+            ctx.border_box_size(),
+            self.corner_radius,
+        );
         if self.bg.components[3] > 0.0 {
             painter.fill(rrect, self.bg).draw();
         }
@@ -901,7 +949,7 @@ mod tests {
         let popover_body = masonry::widgets::Label::new("popover body")
             .prepare()
             .erased();
-        let surface = NewWidget::new(PopoverSurface::new(popover_body, &theme)).erased();
+        let surface = NewWidget::new(PopoverSurface::new(popover_body, &theme, SurfaceStyle::Popover)).erased();
 
         // The handle's `OnceLock` fills at the scope's `WidgetAdded`, so
         // `scope.widget_id()` resolves for every event after harness creation.
@@ -1077,7 +1125,8 @@ mod tests {
         let popover_body = masonry::widgets::Label::new("popover body")
             .prepare()
             .erased();
-        let surface = NewWidget::new(PopoverSurface::new(popover_body, &theme)).erased();
+        let surface =
+            NewWidget::new(PopoverSurface::new(popover_body, &theme, SurfaceStyle::Popover)).erased();
         let scope = OverlayScope::new(
             handle,
             content,

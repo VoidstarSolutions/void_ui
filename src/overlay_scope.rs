@@ -55,9 +55,9 @@ use xilem_masonry::{Pod, ViewCtx, WidgetView};
 
 use crate::Theme;
 use crate::components::popover::PopoverAnchor;
-use crate::components::popover::widget::PopoverSurface;
+use crate::components::popover::widget::{PopoverSurface, SurfaceStyle};
 use crate::overlay_portal::{
-    OverlayPortal, PortalContentView, PortalContentViewState, PortalOwnerKind, PortalPlacement,
+    OverlayPortal, OwnerKind, PortalContentView, PortalContentViewState, PortalPlacement,
     PortalSlot, portal_from_env,
 };
 
@@ -206,12 +206,16 @@ impl OverlayScope {
     /// Show/hide a portal child. `anchor_rect_window` is the trigger's box in
     /// *window* coordinates; converted here with `to_local` exactly like the
     /// dropdown's scope push (robust to scrolling/transforms between the
-    /// scope and the trigger).
+    /// scope and the trigger). For [`PopoverAnchor::ViewportQuarter`],
+    /// `anchor_rect_window` is ignored — pass [`Rect::ZERO`] — since
+    /// `PortalSlot::layout` centers that variant in its own size rather than
+    /// any placement rect.
     pub(crate) fn set_portal_visible(
         this: &mut WidgetMut<'_, Self>,
         key: u64,
         visible: bool,
-        owner: Option<(WidgetId, PortalOwnerKind)>,
+        owner: Option<WidgetId>,
+        owner_kind: OwnerKind,
         anchor_rect_window: Rect,
         anchor: PopoverAnchor,
         gap: f64,
@@ -219,7 +223,7 @@ impl OverlayScope {
         let local_origin = this.ctx.to_local(anchor_rect_window.origin());
         let placement = Rect::from_origin_size(local_origin, anchor_rect_window.size());
         let mut slot = Self::portal_slot_mut(this);
-        PortalSlot::set_visible(&mut slot, key, visible, owner, placement, anchor, gap);
+        PortalSlot::set_visible(&mut slot, key, visible, owner, owner_kind, placement, anchor, gap);
     }
 
     /// Re-anchor a visible portal child as its trigger moves.
@@ -457,6 +461,7 @@ fn wrap_portal_content(
     pod: Pod<masonry::widgets::Passthrough>,
     theme: &Theme,
     placement: PortalPlacement,
+    style: SurfaceStyle,
 ) -> NewWidget<dyn Widget> {
     match placement {
         PortalPlacement::Trigger => {
@@ -464,7 +469,7 @@ fn wrap_portal_content(
             content
                 .properties
                 .insert(Padding::all(Length::px(f64::from(theme.density.pad))));
-            NewWidget::new(PopoverSurface::new(content, theme)).erased()
+            NewWidget::new(PopoverSurface::new(content, theme, style)).erased()
         }
         PortalPlacement::BareTrigger | PortalPlacement::Corner(_) => pod.new_widget.erased(),
     }
@@ -556,7 +561,7 @@ where
                 let (pod, view_state) = ctx.with_id(ViewId::new(entry.key), |ctx| {
                     entry.content.build(ctx, app_state)
                 });
-                let wrapped = wrap_portal_content(pod, &entry.theme, entry.placement);
+                let wrapped = wrap_portal_content(pod, &entry.theme, entry.placement, entry.style);
                 slot_children.push((entry.key, wrapped, entry.placement));
                 mounted.push(MountedEntry {
                     key: entry.key,
@@ -713,7 +718,7 @@ where
                     let (pod, vs_new) = ctx.with_id(ViewId::new(entry.key), |ctx| {
                         entry.content.build(ctx, app_state)
                     });
-                    let wrapped = wrap_portal_content(pod, &entry.theme, entry.placement);
+                    let wrapped = wrap_portal_content(pod, &entry.theme, entry.placement, entry.style);
                     let mut slot = OverlayScope::portal_slot_mut(&mut element);
                     PortalSlot::insert(&mut slot, entry.key, wrapped, entry.placement);
                     view_state.mounted.push(MountedEntry {
@@ -895,6 +900,7 @@ mod tests {
                 key,
                 true,
                 None,
+                OwnerKind::Popover,
                 Rect::new(10.0, 10.0, 110.0, 40.0),
                 PopoverAnchor::BottomStart,
                 4.0,
@@ -987,6 +993,7 @@ mod tests {
                 key,
                 true,
                 None,
+                OwnerKind::Popover,
                 Rect::new(10.0, 10.0, 110.0, 40.0),
                 PopoverAnchor::BottomStart,
                 4.0,
@@ -1000,6 +1007,39 @@ mod tests {
             let placed = slot.widget.placed_rect(key).expect("child placed");
             assert!((placed.x0 - 10.0).abs() < 1e-9);
             assert!((placed.y0 - 44.0).abs() < 1e-9);
+        });
+    }
+
+    #[test]
+    fn set_portal_visible_centers_a_viewport_quarter_child_in_the_scope() {
+        let key = 3;
+        let content = masonry::widgets::Label::new("content").prepare().erased();
+        let popover = masonry::widgets::Label::new("popover").prepare().erased();
+        let scope = OverlayScope::new(OverlayScopeHandle::new(), content, vec![(key, popover)]);
+        let mut harness = TestHarness::create(
+            masonry::theme::default_property_set(),
+            NewWidget::new(scope),
+        );
+        harness.edit_root_widget(|mut wm| {
+            // `anchor_rect_window` is ignored for `ViewportQuarter` — pass `Rect::ZERO`.
+            OverlayScope::set_portal_visible(
+                &mut wm,
+                key,
+                true,
+                None,
+                OwnerKind::Dialog,
+                Rect::ZERO,
+                PopoverAnchor::ViewportQuarter,
+                0.0,
+            );
+        });
+        harness.mouse_move(masonry::kurbo::Point::ZERO);
+        harness.edit_root_widget(|mut wm| {
+            let slot = OverlayScope::portal_slot_mut(&mut wm);
+            let placed = slot.widget.placed_rect(key).expect("child placed");
+            let window = Size::new(400.0, 400.0);
+            assert!((placed.x0 - (window.width - placed.width()) / 2.0).abs() < 1e-9);
+            assert!((placed.y0 - (window.height - placed.height()) * 0.25).abs() < 1e-9);
         });
     }
 }

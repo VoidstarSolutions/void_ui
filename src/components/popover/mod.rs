@@ -18,7 +18,11 @@ pub mod widget;
 pub use view::{Popover, PopoverView, popover};
 pub use widget::PopoverHost;
 
-/// Where the popover content appears relative to the trigger widget.
+/// Where the popover content appears relative to the trigger widget — or,
+/// for [`Self::ViewportQuarter`], relative to the enclosing
+/// [`crate::overlay_scope`]'s own content box. This enum is shared placement
+/// infrastructure used by [`crate::overlay_portal::PortalSlot`] and
+/// [`crate::overlay_scope::OverlayScope`], not just `popover`.
 ///
 /// ```text
 /// TopStart    TopCenter    TopEnd
@@ -40,6 +44,12 @@ pub enum PopoverAnchor {
     TopCenter,
     /// Above the trigger, right-aligned.
     TopEnd,
+    /// Centered horizontally, top edge 25% down the *container* — used by
+    /// `dialog`, which has no trigger rect to anchor to.
+    /// [`Self::child_offset`]'s `trigger` parameter is the container's own
+    /// size for this variant (see `PortalSlot::layout`, which substitutes
+    /// its own size for the usual trigger placement).
+    ViewportQuarter,
 }
 
 impl PopoverAnchor {
@@ -59,6 +69,10 @@ impl PopoverAnchor {
             Self::TopStart => Point::new(0.0, -content.height),
             Self::TopCenter => Point::new((trigger.width - content.width) / 2.0, -content.height),
             Self::TopEnd => Point::new(trigger.width - content.width, -content.height),
+            Self::ViewportQuarter => Point::new(
+                (trigger.width - content.width) / 2.0,
+                (trigger.height - content.height) * 0.25,
+            ),
         }
     }
 }
@@ -166,6 +180,28 @@ mod tests {
         assert!(approx_point(
             PopoverAnchor::TopEnd.child_offset(trigger, content),
             Point::new(100.0, 0.0)
+        ));
+    }
+
+    #[test]
+    fn viewport_quarter_centers_horizontally_and_sits_a_quarter_down() {
+        let container = Size::new(400.0, 800.0);
+        let content = Size::new(200.0, 100.0);
+        assert!(approx_point(
+            PopoverAnchor::ViewportQuarter.child_offset(container, content),
+            // x: (400 - 200) / 2 = 100; y: (800 - 100) * 0.25 = 175
+            Point::new(100.0, 175.0)
+        ));
+    }
+
+    #[test]
+    fn viewport_quarter_overflows_symmetrically_when_content_is_larger() {
+        let container = Size::new(200.0, 200.0);
+        let content = Size::new(400.0, 400.0);
+        assert!(approx_point(
+            PopoverAnchor::ViewportQuarter.child_offset(container, content),
+            // x: (200 - 400) / 2 = -100; y: (200 - 400) * 0.25 = -50
+            Point::new(-100.0, -50.0)
         ));
     }
 }
