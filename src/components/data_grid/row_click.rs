@@ -13,10 +13,11 @@
 //! has a focused descendant inside the grid.
 
 use masonry::accesskit::{Node, Role};
+use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
-    AccessCtx, AccessEvent, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, PaintCtx,
-    PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx, Widget,
-    WidgetMut, WidgetPod,
+    AccessCtx, AccessEvent, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, Modifiers, NewWidget,
+    PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update,
+    UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, Size};
@@ -43,6 +44,21 @@ pub struct RowClickAction {
     /// Platform "action modifier" was held — Cmd on macOS, Ctrl
     /// elsewhere. Matches masonry's `TextArea` convention.
     pub action_mod: bool,
+}
+
+/// Builds a [`RowClickAction`] from a pointer or keyboard event's
+/// [`Modifiers`], applying the platform's action-modifier convention (Cmd on
+/// macOS, Ctrl elsewhere).
+fn row_click_action(modifiers: Modifiers) -> RowClickAction {
+    let action_mod = if cfg!(target_os = "macos") {
+        modifiers.meta()
+    } else {
+        modifiers.ctrl()
+    };
+    RowClickAction {
+        shift: modifiers.shift(),
+        action_mod,
+    }
 }
 
 /// Single-child wrapper that emits a [`RowClickAction`] on
@@ -112,15 +128,7 @@ impl Widget for RowClickable {
                 ctx.request_focus();
             }
             Some(ClickPhase::Up(Some(state))) => {
-                let action_mod = if cfg!(target_os = "macos") {
-                    state.modifiers.meta()
-                } else {
-                    state.modifiers.ctrl()
-                };
-                ctx.submit_action::<Self::Action>(RowClickAction {
-                    shift: state.modifiers.shift(),
-                    action_mod,
-                });
+                ctx.submit_action::<Self::Action>(row_click_action(state.modifiers));
             }
             _ => {}
         }
@@ -128,10 +136,23 @@ impl Widget for RowClickable {
 
     fn on_text_event(
         &mut self,
-        _ctx: &mut EventCtx<'_>,
+        ctx: &mut EventCtx<'_>,
         _props: &mut PropertiesMut<'_>,
-        _event: &TextEvent,
+        event: &TextEvent,
     ) {
+        let TextEvent::Keyboard(key) = event else {
+            return;
+        };
+        let is_activate = match &key.key {
+            Key::Named(NamedKey::Enter) => true,
+            Key::Character(s) => s == " ",
+            Key::Named(_) => false,
+        };
+        if key.state != KeyState::Down || !is_activate {
+            return;
+        }
+        ctx.submit_action::<Self::Action>(row_click_action(key.modifiers));
+        ctx.set_handled();
     }
 
     fn on_access_event(
