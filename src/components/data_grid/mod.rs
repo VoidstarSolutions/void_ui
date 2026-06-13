@@ -162,6 +162,8 @@ pub mod sort;
 pub mod view;
 pub mod width;
 
+pub use crate::collection::ScrollState;
+pub use crate::collection::SelectionState;
 pub use column::{
     CellAlign, ColumnDef, ColumnId, RowComparator, RowFilter, colored_text_column,
     optional_text_column, text_column,
@@ -171,8 +173,6 @@ pub use copy_shortcut::CopyOnShortcut;
 pub use filter::{FilterState, filtered_indices};
 pub use header_click::{HeaderClickable, HeaderClicked};
 pub use row_click::{RowClickAction, RowClickable};
-pub use crate::collection::SelectionState;
-pub use crate::collection::ScrollState;
 pub use sort::{SortDirection, SortState, sort_indices};
 pub use view::{DataGrid, data_grid};
 pub use width::{ColumnWidths, MIN_COLUMN_WIDTH};

@@ -39,11 +39,11 @@ use super::filter::FilterState;
 use super::header_click::clickable_header;
 use super::row_click::clickable_row;
 use super::scroll::ScrollToView;
-use crate::collection::ScrollState;
-use crate::collection::SelectionState;
 use super::sort::{SortDirection, SortState};
 use super::width::ColumnWidths;
 use crate::Theme;
+use crate::collection::ScrollState;
+use crate::collection::SelectionState;
 use crate::components::scroll_container::scroll_container;
 
 /// Boxed row-data accessor (`Fn(&State) -> &[R]`), shared via `Arc`
@@ -1260,8 +1260,8 @@ const FILTER_ROW_HEIGHT: f64 = 30.0;
 #[cfg(test)]
 mod tests {
     use super::{RowIdSource, decompose_columns, project_tsv, visual_range_ids};
-    use crate::components::data_grid::column::{CellAlign, TextProjector, text_column};
     use crate::collection::SelectionState;
+    use crate::components::data_grid::column::{CellAlign, TextProjector, text_column};
     use crate::components::data_grid::width::ColumnWidths;
     use std::sync::Arc;
 
