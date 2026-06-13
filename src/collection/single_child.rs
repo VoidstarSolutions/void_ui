@@ -26,9 +26,9 @@ use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 
 /// Transparent [`Widget::measure`]: report exactly the child's measurement
 /// along `axis` (the wrapper adds no size of its own).
-pub(crate) fn measure(
+pub(crate) fn measure<W: Widget + ?Sized>(
     ctx: &mut MeasureCtx<'_>,
-    child: &mut WidgetPod<dyn Widget>,
+    child: &mut WidgetPod<W>,
     axis: Axis,
     len_req: LenReq,
     cross_length: Option<Length>,
@@ -45,7 +45,11 @@ pub(crate) fn measure(
 
 /// Transparent [`Widget::layout`]: size the child to fill the wrapper,
 /// place it at the origin, and inherit its baselines.
-pub(crate) fn layout(ctx: &mut LayoutCtx<'_>, child: &mut WidgetPod<dyn Widget>, size: Size) {
+pub(crate) fn layout<W: Widget + ?Sized>(
+    ctx: &mut LayoutCtx<'_>,
+    child: &mut WidgetPod<W>,
+    size: Size,
+) {
     let child_size = ctx.compute_size(child, SizeDef::fixed(size), size.into());
     ctx.run_layout(child, child_size);
     ctx.place_child(child, Point::ORIGIN);
@@ -53,11 +57,14 @@ pub(crate) fn layout(ctx: &mut LayoutCtx<'_>, child: &mut WidgetPod<dyn Widget>,
 }
 
 /// [`Widget::register_children`] for a lone child.
-pub(crate) fn register_children(ctx: &mut RegisterCtx<'_>, child: &mut WidgetPod<dyn Widget>) {
+pub(crate) fn register_children<W: Widget + ?Sized>(
+    ctx: &mut RegisterCtx<'_>,
+    child: &mut WidgetPod<W>,
+) {
     ctx.register_child(child);
 }
 
 /// [`Widget::children_ids`] for a lone child.
-pub(crate) fn children_ids(child: &WidgetPod<dyn Widget>) -> ChildrenIds {
+pub(crate) fn children_ids<W: Widget + ?Sized>(child: &WidgetPod<W>) -> ChildrenIds {
     ChildrenIds::from_slice(&[child.id()])
 }

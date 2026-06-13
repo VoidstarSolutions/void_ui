@@ -12,6 +12,7 @@
 //! `ScrollState` are surfaced to consumers by re-export from the
 //! components and the crate root.
 
+mod body;
 mod click;
 mod ids;
 pub(crate) mod row_click;
@@ -19,6 +20,11 @@ mod scroll;
 mod selection;
 pub(crate) mod single_child;
 
+#[expect(
+    unused_imports,
+    reason = "consumed by collection_body in the next task"
+)]
+pub(crate) use body::CollectionBodyWidget;
 #[expect(
     unused_imports,
     reason = "consumed by data_grid migration in the next task"
