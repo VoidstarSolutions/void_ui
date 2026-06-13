@@ -350,7 +350,7 @@ fn build_row<State, Item>(
     state: &mut State,
     idx: i64,
     ctx: &RowContext<State, Item>,
-) -> Box<AnyWidgetView<State>>
+) -> impl WidgetView<State, ()> + use<State, Item>
 where
     State: 'static,
     Item: 'static,
@@ -387,7 +387,7 @@ where
     let selection_lens = ctx.selection_lens.cloned();
     let item_id_source = ctx.item_id_source.clone();
     let items = Arc::clone(ctx.items);
-    Box::new(clickable_row(
+    clickable_row(
         row_view,
         is_selected,
         ctx.theme,
@@ -401,7 +401,7 @@ where
                 &item_id_source,
             );
         },
-    ))
+    )
 }
 
 fn build_list_view<State, Item>(

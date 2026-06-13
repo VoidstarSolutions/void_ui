@@ -108,7 +108,9 @@ impl Widget for RowClickable {
         match click::primary_click(ctx, event) {
             // Rows take keyboard focus so a subsequent Ctrl/Cmd+C lands
             // inside the grid (see the module docs).
-            Some(ClickPhase::Down) => ctx.request_focus(),
+            Some(ClickPhase::Down) => {
+                ctx.request_focus();
+            }
             Some(ClickPhase::Up(Some(state))) => {
                 let action_mod = if cfg!(target_os = "macos") {
                     state.modifiers.meta()
@@ -149,7 +151,7 @@ impl Widget for RowClickable {
         // The focus ring drawn in `paint` depends on `ctx.is_focus_target()`;
         // without this, gaining/losing focus doesn't trigger a repaint and
         // the ring never appears.
-        if matches!(event, Update::FocusChanged(_)) {
+        if let Update::FocusChanged(_) = event {
             ctx.request_paint_only();
         }
     }
