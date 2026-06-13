@@ -529,9 +529,10 @@ impl PortalSlot {
                         PopoverHost::mark_closed(&mut host);
                     }),
                     OwnerKind::Dialog => this.ctx.mutate_later(owner, |mut w| {
-                        w.ctx.submit_action::<crate::components::dialog::widget::DialogDismissed>(
-                            crate::components::dialog::widget::DialogDismissed,
-                        );
+                        w.ctx
+                            .submit_action::<crate::components::dialog::widget::DialogDismissed>(
+                                crate::components::dialog::widget::DialogDismissed,
+                            );
                     }),
                     OwnerKind::DropdownButton => this.ctx.mutate_later(owner, |mut w| {
                         let mut dropdown = w.downcast::<ThemedDropdownButton>();

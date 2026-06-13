@@ -35,6 +35,8 @@
 //! [`xilem_masonry::core::Environment::get_slot_for_type`]. Consumers fall
 //! back to [`crate::AnchoredOverlay`] when no scope ancestor exists.
 
+use std::any::Any;
+use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::sync::{Arc, OnceLock};
 
@@ -94,6 +96,60 @@ impl OverlayScopeHandle {
     pub fn widget_id(&self) -> Option<WidgetId> {
         self.0.get().copied()
     }
+}
+
+thread_local! {
+    /// The [`OverlayPortal`] of the outermost `overlay_scope` currently being
+    /// built or rebuilt, valid for the duration of that scope's (and its
+    /// descendants') `build`/`rebuild` call — `None` outside of that window.
+    ///
+    /// `dialog` reads this via [`root_portal`] to always target the root
+    /// scope, unlike `popover` (and the legacy overlay slot), which use the
+    /// *nearest* scope's portal published through the Environment. A nested
+    /// `overlay_scope` leaves this untouched, so descendants — including
+    /// dialogs registered by a nested scope's content — see the outermost
+    /// scope's portal.
+    static ROOT_PORTAL: RefCell<Option<Box<dyn Any>>> = RefCell::new(None);
+}
+
+/// If no scope has yet claimed the root slot for this build/rebuild pass,
+/// claim it for `portal` and return `true` — the caller must call
+/// [`release_root_portal`] once its content subtree has finished
+/// building/rebuilding. Otherwise leave the existing claim untouched and
+/// return `false`.
+fn claim_root_portal<State: 'static, Action: 'static>(
+    portal: &OverlayPortal<State, Action>,
+) -> bool {
+    ROOT_PORTAL.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        if cell.is_some() {
+            return false;
+        }
+        *cell = Some(Box::new(portal.clone()));
+        true
+    })
+}
+
+/// Release a claim made by [`claim_root_portal`].
+fn release_root_portal() {
+    ROOT_PORTAL.with(|cell| *cell.borrow_mut() = None);
+}
+
+/// The [`OverlayPortal`] of the outermost `overlay_scope` ancestor currently
+/// being built or rebuilt, if any.
+///
+/// Returns `None` both when there is no `overlay_scope` ancestor at all and
+/// when the root scope was published for a different `State`/`Action` pair
+/// (e.g. a sub-tree rendered with different generic parameters than its
+/// enclosing scope) — callers should treat both cases the same way.
+pub(crate) fn root_portal<State: 'static, Action: 'static>() -> Option<OverlayPortal<State, Action>>
+{
+    ROOT_PORTAL.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .and_then(|boxed| boxed.downcast_ref::<OverlayPortal<State, Action>>())
+            .cloned()
+    })
 }
 
 /// Masonry widget that hosts a footprint-dictating `content` child plus two
@@ -223,7 +279,9 @@ impl OverlayScope {
         let local_origin = this.ctx.to_local(anchor_rect_window.origin());
         let placement = Rect::from_origin_size(local_origin, anchor_rect_window.size());
         let mut slot = Self::portal_slot_mut(this);
-        PortalSlot::set_visible(&mut slot, key, visible, owner, owner_kind, placement, anchor, gap);
+        PortalSlot::set_visible(
+            &mut slot, key, visible, owner, owner_kind, placement, anchor, gap,
+        );
     }
 
     /// Re-anchor a visible portal child as its trigger moves.
@@ -525,11 +583,18 @@ where
     type ViewState = OverlayScopeViewState<State, Action, V::ViewState>;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        let (content, content_state) =
-            ctx.with_id(CONTENT_VIEW_ID, |ctx| self.content.build(ctx, app_state));
-
         let portal = portal_from_env::<State, Action>(ctx)
             .expect("overlay_scope provides OverlayPortal for its own subtree");
+
+        // Claim the root-portal slot before descending into `content` (which
+        // may contain nested `overlay_scope`s and `dialog`s) — see
+        // `root_portal`.
+        let is_root = claim_root_portal(&portal);
+        let (content, content_state) =
+            ctx.with_id(CONTENT_VIEW_ID, |ctx| self.content.build(ctx, app_state));
+        if is_root {
+            release_root_portal();
+        }
 
         // Mount registered entries, iterating to a fixpoint: building an
         // entry can itself register nested popovers (a popover inside another
@@ -603,6 +668,11 @@ where
         //    during this call; the fixpoint diff below then converges on
         //    whatever the registry says, including registrations that happen
         //    mid-diff while entries themselves rebuild.
+        //
+        //    Claim the root-portal slot for the duration (see
+        //    `root_portal`) — `content` may contain nested `overlay_scope`s
+        //    and `dialog`s.
+        let is_root = claim_root_portal(&view_state.portal);
         {
             let mut content = OverlayScope::content_mut(&mut element);
             ctx.with_id(CONTENT_VIEW_ID, |ctx| {
@@ -614,6 +684,9 @@ where
                     app_state,
                 );
             });
+        }
+        if is_root {
+            release_root_portal();
         }
 
         // 2./3. Diff the registry against mounted entries, iterating to a
@@ -1041,5 +1114,31 @@ mod tests {
             assert!((placed.x0 - (window.width - placed.width()) / 2.0).abs() < 1e-9);
             assert!((placed.y0 - (window.height - placed.height()) * 0.25).abs() < 1e-9);
         });
+    }
+
+    /// [`root_portal`] surfaces the outermost claimed scope's portal — a
+    /// nested scope's `claim_root_portal` is a no-op while an outer claim is
+    /// active, so descendants of both (including a `dialog` registered from
+    /// the nested scope's content) see the outer scope's portal.
+    #[test]
+    fn root_portal_is_the_outermost_claimed_scope() {
+        let outer_handle = OverlayScopeHandle::new();
+        let inner_handle = OverlayScopeHandle::new();
+        outer_handle.set(WidgetPod::new(masonry::widgets::Label::new("outer")).id());
+        inner_handle.set(WidgetPod::new(masonry::widgets::Label::new("inner")).id());
+        let outer_portal = OverlayPortal::<(), ()>::new(outer_handle.clone());
+        let inner_portal = OverlayPortal::<(), ()>::new(inner_handle.clone());
+
+        assert!(root_portal::<(), ()>().is_none());
+
+        assert!(claim_root_portal(&outer_portal));
+        // A nested scope's claim is a no-op while the outer claim is active.
+        assert!(!claim_root_portal(&inner_portal));
+
+        let seen = root_portal::<(), ()>().expect("root portal claimed");
+        assert_eq!(seen.scope().widget_id(), outer_handle.widget_id());
+
+        release_root_portal();
+        assert!(root_portal::<(), ()>().is_none());
     }
 }

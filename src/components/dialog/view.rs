@@ -18,10 +18,13 @@
 //! [`crate::components::alert::Alert::on_close`]'s `CloseCallback` pattern.
 //!
 //! `render` erases the content view into an `Arc` and registers it with the
-//! nearest [`crate::overlay_scope`]'s [`OverlayPortal`], the same mechanism
-//! `popover` uses for its content. There is no in-tree fallback: a dialog has
-//! no trigger rect to anchor an `AnchoredOverlay` to, so an `overlay_scope`
-//! ancestor is required.
+//! ROOT [`crate::overlay_scope`]'s [`OverlayPortal`] — the outermost scope
+//! ancestor, regardless of how deeply nested the dialog's own scope ancestor
+//! is (see [`crate::overlay_scope::root_portal`]) — so the dialog is always
+//! centered on the whole region the app wrapped in `overlay_scope`, not just
+//! a smaller sub-region. `popover`, by contrast, uses the *nearest* scope.
+//! There is no in-tree fallback: a dialog has no trigger rect to anchor an
+//! `AnchoredOverlay` to, so an `overlay_scope` ancestor is required.
 
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -35,7 +38,8 @@ use crate::Theme;
 use crate::components::button::{ButtonVariant, button};
 use crate::components::icon::IconName;
 use crate::components::popover::widget::SurfaceStyle;
-use crate::overlay_portal::{OverlayPortal, PortalContentView, PortalPlacement, portal_from_env};
+use crate::overlay_portal::{OverlayPortal, PortalContentView, PortalPlacement};
+use crate::overlay_scope::root_portal;
 
 /// Implemented by `()` (no dismiss callback) and by `Fn(&mut State) ->
 /// Action` closures, so [`Dialog::on_dismiss`] is optional without boxing the
@@ -83,9 +87,10 @@ pub struct Dialog<State, Action, ContentV, D = ()> {
 
 /// Construct a dialog showing `content` when `open` is `true`.
 ///
-/// The dialog is mounted above everything else inside the nearest
-/// [`crate::overlay_scope`] ancestor, horizontally centered and a quarter of
-/// the way down that container.
+/// The dialog is mounted above everything else inside the ROOT
+/// [`crate::overlay_scope`] ancestor — the outermost scope, regardless of how
+/// deeply nested the dialog itself is — horizontally centered and a quarter
+/// of the way down that container.
 pub fn dialog<State, Action, ContentV>(
     open: bool,
     content: ContentV,
@@ -198,7 +203,7 @@ where
     type ViewState = DialogViewState<State, Action>;
 
     fn build(&self, ctx: &mut ViewCtx, _app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        let portal = portal_from_env::<State, Action>(ctx).expect(
+        let portal = root_portal::<State, Action>().expect(
             "dialog requires an overlay_scope ancestor — wrap the app root (or region) in overlay_scope(...)",
         );
         let key = portal.register(
