@@ -355,10 +355,7 @@ where
     Action: 'static,
 {
     type Element = Pod<SizedBox>;
-    type ViewState = (
-        crate::overlay_portal::OverlayPortal<State, Action>,
-        u64,
-    );
+    type ViewState = (crate::overlay_portal::OverlayPortal<State, Action>, u64);
 
     fn build(&self, ctx: &mut ViewCtx, _app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let portal = portal_from_env::<State, Action>(ctx)

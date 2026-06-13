@@ -878,7 +878,11 @@ mod tests {
         let key = 3;
         let content = NewWidget::new(EventProbe::default()).erased();
         let popover = masonry::widgets::Label::new("popover").prepare().erased();
-        let scope = OverlayScope::new(OverlayScopeHandle::new(), content, vec![(key, popover, PortalPlacement::Trigger)]);
+        let scope = OverlayScope::new(
+            OverlayScopeHandle::new(),
+            content,
+            vec![(key, popover, PortalPlacement::Trigger)],
+        );
         let mut harness = TestHarness::create(
             masonry::theme::default_property_set(),
             NewWidget::new(scope),
@@ -966,7 +970,11 @@ mod tests {
         let key = 3;
         let content = masonry::widgets::Label::new("content").prepare().erased();
         let popover = masonry::widgets::Label::new("popover").prepare().erased();
-        let scope = OverlayScope::new(OverlayScopeHandle::new(), content, vec![(key, popover, PortalPlacement::Trigger)]);
+        let scope = OverlayScope::new(
+            OverlayScopeHandle::new(),
+            content,
+            vec![(key, popover, PortalPlacement::Trigger)],
+        );
         let mut harness = TestHarness::create(
             masonry::theme::default_property_set(),
             NewWidget::new(scope),
