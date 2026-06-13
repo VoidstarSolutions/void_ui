@@ -52,6 +52,22 @@ pub(crate) fn scroll_idx_to_slice(idx: i64) -> usize {
     usize::try_from(idx).unwrap_or(usize::MAX)
 }
 
+/// Lazy-load trigger predicate: `true` when the active range's end
+/// (`active_end`, the exclusive end of the materialized window in the same
+/// `i64` domain as `scroll_range_end`) is within `threshold` items of the
+/// data's end. The body's `message` handler peeks each `VirtualScrollAction`
+/// and fires the host's lazy callback whenever this holds.
+///
+/// Saturating throughout: `item_count` past `i64::MAX` and an oversized
+/// `threshold` both clamp to `i64::MAX`, and the distance uses
+/// `saturating_sub` so an `active_end` past the (clamped) end reads as
+/// distance 0 — i.e. "at the end", which always triggers.
+pub(crate) fn nearing_end(item_count: u64, active_end: i64, threshold: u64) -> bool {
+    let end = scroll_range_end(item_count);
+    let threshold = i64::try_from(threshold).unwrap_or(i64::MAX);
+    end.saturating_sub(active_end) <= threshold
+}
+
 /// Resolves the stable ids spanning the visual range between `anchor_id`
 /// and `target_id` (inclusive) in current display order, or `None` when
 /// either endpoint is absent. O(n) over the slice; called only on a
@@ -84,7 +100,7 @@ pub(crate) fn visual_range_ids<Item>(
 
 #[cfg(test)]
 mod tests {
-    use super::{IdSource, visual_range_ids};
+    use super::{IdSource, nearing_end, visual_range_ids};
     use std::sync::Arc;
 
     /// Row id == the row value itself, so test slices read naturally:
@@ -140,5 +156,30 @@ mod tests {
         let data = ["a", "b", "c", "d", "e"];
         let ids = visual_range_ids(&data, &IdSource::Position, 1, 3);
         assert_eq!(ids, Some(vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn nearing_end_fires_only_within_threshold_of_the_end() {
+        // 1000 items, fire within 20 of the end. An active window ending at
+        // 979 is 21 away — too far. At 980 it's exactly 20 — fires.
+        assert!(!nearing_end(1000, 979, 20));
+        assert!(nearing_end(1000, 980, 20));
+        // At or past the end always fires (distance saturates to 0).
+        assert!(nearing_end(1000, 1000, 20));
+        assert!(nearing_end(1000, 1001, 20));
+    }
+
+    #[test]
+    fn nearing_end_with_zero_threshold_fires_only_at_the_very_end() {
+        assert!(!nearing_end(10, 9, 0));
+        assert!(nearing_end(10, 10, 0));
+    }
+
+    #[test]
+    fn nearing_end_saturates_for_huge_counts_and_thresholds() {
+        // item_count past i64::MAX clamps to i64::MAX; an active end near it
+        // is still "far" unless the threshold is also huge.
+        assert!(!nearing_end(u64::MAX, 0, 20));
+        assert!(nearing_end(u64::MAX, 0, u64::MAX));
     }
 }

@@ -104,15 +104,26 @@ not part of the seam.
 horizontal-only `scroll_container`. The substrate owns only the `body` slot;
 vertical virtualization stays inside it.
 
-### Selection-click centralized
+### Selection-click logic centralized
 
 The shift/toggle/replace logic plus `visual_range_ids` move into the substrate
-as one generic function over `IdSource` + the items accessor. The substrate's
-**body widget owns the `clickable_row` wrapping and click handling centrally**
-— it knows which row id was hit. Individual rows therefore stop
-capturing-and-cloning the selection lens / id source / items slice and stop
-boxing a fresh per-row closure each rebuild. Rows become pure content. This
-removes today's per-row allocation independent of memoization.
+as one generic function (`apply_row_click`) over `IdSource` + the items
+accessor — a single source of truth both components call.
+
+**What is *not* centralized (and why):** the original design called for the
+body *widget* to own click routing so individual rows would stop capturing the
+selection lens / id source / items slice and stop boxing a per-row closure.
+That was not implemented. `collection_body` still wraps each visible row in
+`clickable_row` with a per-row closure that captures three `Arc` clones and
+invokes the shared `apply_row_click`. Routing clicks centrally would require
+`CollectionBodyView` to recover the clicked row's index by decoding
+`virtual_scroll`'s **private** child-id encoding (`view_id_for_index` /
+`index_for_view_id` are not exported) — fragile coupling to an upstream
+internal that can change under `cargo update` (we track `main`; see
+`CLAUDE.md`). So the per-row allocation is unchanged from today; this is
+behavior-preserving, not a regression. Eliminating it folds into the deferred
+memoization work, which restructures the per-row builder anyway (see
+Performance).
 
 ### Keyboard navigation unified
 
@@ -122,25 +133,25 @@ widget. `data_grid` gains arrow-key row navigation (an approved behavior change
 
 ## Performance
 
-> DEFERRED: The opt-in memoization below (the `row_key` seam) is deferred to the
-> `list` rebuild branch, where `list` is a real consumer that can supply
-> `row_key` and the win can be measured against a real workload. `data_grid` on
-> this branch does not consume memoization; only the unconditional central-click
-> win is realized here.
+> DEFERRED: The opt-in memoization below (the `row_key` seam) is deferred to a
+> follow-up, where the win can be measured against a real workload. Neither
+> `data_grid` nor `list` consumes memoization yet, so the per-row allocation
+> described below is **unchanged** on this branch — the once-hoped-for
+> "unconditional central-click win" was not delivered (see *Selection-click
+> logic centralized* for why). The `row_build_baseline` test captures today's
+> cost so the future memoization win can be measured against it.
 
 Both components today, per **visible** row, on **every rebuild** (every frame
 state changes): re-borrow the items slice, `get(pos)`, run the id closure, a
 `selection.contains(id)` lookup, then `Arc`-clone the selection lens + id source
 + items slice and **box a fresh per-row click closure**. This re-runs for all
 visible rows on any state change — changing one row's selection re-runs and
-re-allocates all ~40 visible row builders.
+re-allocates all ~40 visible row builders. The shared `apply_row_click` keeps
+that logic in one place, but does not by itself remove the per-row clones.
 
-Two levers, both enabled by the substrate:
+The lever the substrate actually realizes:
 
-1. **Central click handling (unconditional).** Moving click handling into the
-   body widget removes the per-row lens/id/slice clones and the boxed per-row
-   closure. No new bounds required.
-2. **Per-row memoization (opt-in).** xilem's `memoize(data, |data| view)`
+1. **Per-row memoization (opt-in).** xilem's `memoize(data, |data| view)`
    requires `Data: PartialEq + 'static` and gives the view closure only
    `&Data` — not `&mut State`. So a memoizable row's render inputs must be
    owned, comparable data, decoupled from the live `&State` borrow. The seam
@@ -149,10 +160,9 @@ Two levers, both enabled by the substrate:
    theme)`, so a selection change rebuilds only the rows whose
    key/selection/theme changed. When omitted, behavior matches today.
 
-**Discipline: measure, don't assert.** Add a before/after measurement on a wide
-grid (a small bench or an instrumented gallery frame) for per-row build cost.
-The central-click win and the memoization win are each only *claimed* once the
-measurement shows them.
+**Discipline: measure, don't assert.** The `row_build_baseline` test records a
+before measurement on a wide grid for per-row build cost. The memoization win is
+only *claimed* once an after-measurement shows it.
 
 ## Open risks (verify during planning, do not assume)
 
@@ -161,7 +171,7 @@ measurement shows them.
   `row_key`/`Data`. Prototype one memoized `data_grid` row before finalizing the
   seam's `row_key` shape.
 - **TSV/copy path.** `data_grid`'s copy path also re-borrows the slice per
-  rebuild. Confirm the central-click refactor does not disturb it.
+  rebuild. Confirm the substrate refactor does not disturb it.
 
 ## Success criteria
 
@@ -171,8 +181,8 @@ measurement shows them.
   index math, the scroll-to wrapper, and selection-click each exist exactly
   once.
 - `list` no longer imports from `data_grid`.
-- Measurement shows per-row rebuild cost reduced (central clicks always;
-  memoization where `row_key` is supplied).
+- `row_build_baseline` records today's per-row cost; the memoization follow-up
+  measures its win against that baseline.
 - Public API names unchanged (re-exports preserve `SelectionState` /
   `ScrollState` and the component entry points).
 

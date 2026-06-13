@@ -19,7 +19,7 @@ use super::body::CollectionBodyWidget;
 use super::row_click::{RowClickAction, clickable_row};
 use super::{
     IdSource, ItemsFn, ScrollState, SelectionLens, apply_row_click, clamp_scroll_index,
-    scroll_idx_to_slice, scroll_range_end,
+    nearing_end, scroll_idx_to_slice, scroll_range_end,
 };
 use crate::Theme;
 
@@ -202,12 +202,10 @@ where
         if message.remaining_path().is_empty()
             && let Some(lazy) = self.lazy.as_ref()
         {
-            let end = scroll_range_end(self.item_count);
-            let threshold = i64::try_from(lazy.threshold).unwrap_or(i64::MAX);
             // Peek without consuming (`false`): the `VirtualScrollAction`
             // still routes onward to the child so virtualization handles it.
             message.maybe_take_message::<VirtualScrollAction>(|action| {
-                if end - action.target.end <= threshold {
+                if nearing_end(self.item_count, action.target.end, lazy.threshold) {
                     (lazy.callback)(app_state);
                 }
                 false
@@ -316,9 +314,10 @@ mod tests {
     /// `is_selected` through the selection lens, build the per-row content
     /// view, wrap it in the selection-background `sized_box`, and set up
     /// the `clickable_row` click closure (which clones the items accessor,
-    /// id source, and selection lens `Arc`s). This is the cost a future
-    /// memoization optimization (deferred to the list rebuild branch) would
-    /// reduce.
+    /// id source, and selection lens `Arc`s). The shared `apply_row_click`
+    /// centralizes the click *logic* but not this per-row wiring, so the
+    /// clones remain; this is the cost a future opt-in memoization (deferred,
+    /// see the design spec) would reduce.
     ///
     /// Honest scope: this replicates the *body* of `collection_body`'s
     /// per-row closure rather than driving the closure through the View

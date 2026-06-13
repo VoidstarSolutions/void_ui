@@ -42,15 +42,15 @@ use super::width::ColumnWidths;
 use crate::Theme;
 use crate::collection::ScrollState;
 use crate::collection::SelectionState;
-use crate::collection::{CollectionBodyParams, IdSource, RenderRow, collection_body};
+use crate::collection::{
+    CollectionBodyParams, IdSource, ItemsFn, RenderRow, SelectionLens, collection_body,
+};
 use crate::components::scroll_container::scroll_container;
 
-/// Boxed row-data accessor (`Fn(&State) -> &[R]`), shared via `Arc`
-/// across the body and clipboard closures.
-type RowsFn<State, R> = Arc<dyn for<'a> Fn(&'a State) -> &'a [R] + Send + Sync>;
-/// Boxed selection lens (`Fn(&mut State) -> &mut SelectionState`).
-type SelectionLens<State> =
-    Arc<dyn for<'a> Fn(&'a mut State) -> &'a mut SelectionState + Send + Sync>;
+/// Boxed row-data accessor, shared via `Arc` across the body and clipboard
+/// closures. Aliases the substrate's [`ItemsFn`] — same `Fn(&State) -> &[R]`
+/// shape — so the grid and the collection body name one type, not two.
+type RowsFn<State, R> = ItemsFn<State, R>;
 /// Boxed stable row-id projector (`Fn(&R) -> u64`). Supplied by the host
 /// (the `getRowId` contract); selection is keyed by this id rather than
 /// by slice position, so it follows rows across host-side sort/filter.
