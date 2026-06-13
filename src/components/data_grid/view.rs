@@ -34,7 +34,7 @@ use xilem::{AnyWidgetView, Pod, ViewCtx};
 
 use super::column::{CellAlign, CellRenderer, ColumnDef, ColumnId, TextProjector};
 use super::column_strip::{SeparatorStyle, column_strip};
-use super::copy_shortcut::CopyOnShortcut;
+use super::copy_shortcut::{CopyOnShortcut, CopyRequested};
 use super::filter::FilterState;
 use super::header_click::clickable_header;
 use super::sort::{SortDirection, SortState};
@@ -726,10 +726,10 @@ fn project_tsv<R>(
 
 // --- MARK: CopyOnShortcutView ------------------------------------------
 
-/// Internal wrapper view that pushes a TSV payload into a
-/// [`CopyOnShortcut`] widget on every rebuild. Stores the boxed row
-/// accessor and the optional selection lens so it can recompute the
-/// clipboard payload from the current selection each frame.
+/// Internal wrapper view for the [`CopyOnShortcut`] widget. Holds the row
+/// accessor, text projectors, and selection lens so it can project the
+/// clipboard TSV from the current selection — **lazily**, only when the
+/// widget emits [`CopyRequested`] (an actual Ctrl/Cmd+C), never per rebuild.
 struct CopyOnShortcutView<V, R, State> {
     child: V,
     text_projectors: Arc<Vec<Option<TextProjector<R>>>>,
@@ -751,10 +751,12 @@ where
     type ViewState = V::ViewState;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        let payload = self.compute_payload(app_state);
         let (child_pod, child_state) = self.child.build(ctx, app_state);
-        let widget = CopyOnShortcut::new(child_pod.new_widget).with_payload(payload);
-        (ctx.create_pod(widget), child_state)
+        let widget = CopyOnShortcut::new(child_pod.new_widget);
+        // Register as an action source so the widget's `CopyRequested`
+        // routes back to `message` below (mirrors `ClickableRow`).
+        let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
+        (element, child_state)
     }
 
     fn rebuild(
@@ -765,8 +767,9 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) {
-        let payload = self.compute_payload(app_state);
-        CopyOnShortcut::set_payload(&mut element, payload);
+        // No per-rebuild payload work: the TSV is projected lazily, only when
+        // a `CopyRequested` action arrives (see `message`). This is what keeps
+        // the O(rows) selection scan off the per-frame path.
         let mut child = CopyOnShortcut::child_mut(&mut element);
         self.child
             .rebuild(&prev.child, view_state, ctx, child.downcast(), app_state);
@@ -778,8 +781,11 @@ where
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
     ) {
-        let mut child = CopyOnShortcut::child_mut(&mut element);
-        self.child.teardown(view_state, ctx, child.downcast());
+        {
+            let mut child = CopyOnShortcut::child_mut(&mut element);
+            self.child.teardown(view_state, ctx, child.downcast());
+        }
+        ctx.teardown_action_source(element);
     }
 
     fn message(
@@ -789,6 +795,25 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<()> {
+        // `CopyRequested` is addressed to *this* wrapper's widget, so it
+        // arrives fully routed (empty remaining path). Every other message —
+        // header clicks, filter edits, row clicks, `VirtualScrollAction` —
+        // is bound for a descendant and passes through here with a non-empty
+        // path; it must be forwarded untouched. Probing it with
+        // `take_message` would panic ("message has not reached its target"),
+        // so we gate on the empty path first (same guard as
+        // `CollectionBodyView::message`).
+        if message.remaining_path().is_empty() {
+            // Our widget's only action is the copy request. Project the TSV
+            // from the *current* selection now — the only place this O(rows)
+            // scan runs — and write it via the widget's `MutateCtx`.
+            if message.take_message::<CopyRequested>().is_some()
+                && let Some(payload) = self.compute_payload(app_state)
+            {
+                CopyOnShortcut::write_clipboard(&mut element, payload);
+            }
+            return MessageResult::Action(());
+        }
         let mut child = CopyOnShortcut::child_mut(&mut element);
         self.child
             .message(view_state, message, child.downcast(), app_state)
@@ -801,15 +826,10 @@ where
     State: 'static,
 {
     fn compute_payload(&self, app_state: &mut State) -> Option<String> {
-        // PERF (tracked, deliberately deferred — see DATA_GRID_ROADMAP.md
-        // "Clipboard TSV recomputed every rebuild"): this runs on every
-        // rebuild, but the payload is only consumed on Ctrl/Cmd+C. The
-        // empty-selection early return below keeps the common case cheap;
-        // the populated case clones the selection and scans all rows (in
-        // `project_tsv`). Make it lazy only if a release-build profile
-        // shows it matters.
-        //
-        // No selection lens → nothing to copy.
+        // Called only when the widget emits `CopyRequested` (an actual
+        // Ctrl/Cmd+C) — never per rebuild — so the O(rows) scan in
+        // `project_tsv` is off the hot path. No selection lens → nothing to
+        // copy.
         let selection_lens = self.selection_lens.as_ref()?;
         // Cheap borrow first: with nothing selected (the common case
         // during scroll / data-tick rebuilds) skip the snapshot clone
@@ -1137,6 +1157,59 @@ mod tests {
     /// A single text projector that stringifies the `u64` row.
     fn value_projectors() -> Vec<Option<TextProjector<u64>>> {
         vec![Some(Box::new(|r: &u64| r.to_string()))]
+    }
+
+    /// EVIDENCE (not a correctness check): the clipboard TSV projection scans
+    /// the entire dataset, so its cost scales with total row count — a single
+    /// selected row is enough to make it O(rows). This *used* to run on every
+    /// rebuild whenever a selection existed (the cause of the grid getting
+    /// slower with more rows); it now runs only when the user actually presses
+    /// Ctrl/Cmd+C (see `CopyOnShortcutView::message`). This measures that
+    /// per-copy cost — the work that is no longer on the per-frame path.
+    ///
+    /// Run with:
+    /// `cargo test --all-features -- --ignored --nocapture project_tsv_scales_with_row_count`
+    #[test]
+    #[ignore = "timing evidence, not a correctness check; run with --ignored --nocapture"]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "informational timing print; ns/sample values are far below f64's exact-integer range"
+    )]
+    fn project_tsv_scales_with_row_count() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        // A wide-ish blotter: 8 text columns, like a real grid.
+        let projectors: Vec<Option<TextProjector<u64>>> = (0..8)
+            .map(|c| -> Option<TextProjector<u64>> {
+                Some(Box::new(move |r: &u64| format!("c{c}:{r}")))
+            })
+            .collect();
+
+        for &n in &[1_000_u64, 10_000, 100_000, 1_000_000] {
+            let data: Vec<u64> = (0..n).collect();
+            // Select exactly ONE row — the worst case for "wasted" work: the
+            // whole dataset is scanned to find it on every rebuild.
+            let mut sel = SelectionState::new();
+            sel.replace_with(0);
+
+            // Warm up, then take a median over a few iterations.
+            for _ in 0..3 {
+                black_box(project_tsv(&projectors, &data, &sel, &id_is_value()));
+            }
+            let mut samples: Vec<u128> = (0..9)
+                .map(|_| {
+                    let start = Instant::now();
+                    black_box(project_tsv(&projectors, &data, &sel, &id_is_value()));
+                    start.elapsed().as_nanos()
+                })
+                .collect();
+            samples.sort_unstable();
+            let median_us = samples[samples.len() / 2] as f64 / 1_000.0;
+            println!(
+                "project_tsv: rows={n:>9} selected=1 → {median_us:>8.1}µs per copy"
+            );
+        }
     }
 
     #[test]
