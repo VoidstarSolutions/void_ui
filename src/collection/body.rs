@@ -1,7 +1,7 @@
 //! Unified virtualized body: a masonry widget that adds Up/Down row
-//! navigation over `VirtualScroll`, plus the xilem `View`
+//! navigation over `VirtualScroll`. The xilem `View`
 //! (`collection_body`) that drives scroll-to-anchor, lazy-load, and
-//! central click routing. (The `View` lands in the next task.)
+//! central click routing lives in the sibling `body_view` module.
 
 use masonry::accesskit::Role;
 use masonry::core::keyboard::{Key, KeyState, NamedKey};
@@ -22,10 +22,6 @@ pub(crate) struct CollectionBodyWidget {
     child: WidgetPod<VirtualScrollWidget>,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "consumed by collection_body in the next task")
-)]
 impl CollectionBodyWidget {
     pub(crate) fn new(child: NewWidget<VirtualScrollWidget>) -> Self {
         Self {

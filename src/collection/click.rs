@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use super::row_click::RowClickAction;
 use crate::collection::{IdSource, SelectionState, visual_range_ids};
 
 /// Item-data accessor (`Fn(&State) -> &[Item]`).
@@ -11,23 +12,12 @@ pub(crate) type ItemsFn<State, Item> = Arc<dyn for<'a> Fn(&'a State) -> &'a [Ite
 pub(crate) type SelectionLens<State> =
     Arc<dyn for<'a> Fn(&'a mut State) -> &'a mut SelectionState + Send + Sync>;
 
-/// A row click's resolved modifiers (mirrors `data_grid`'s `RowClickAction`).
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct RowClick {
-    pub(crate) shift: bool,
-    pub(crate) action_mod: bool,
-}
-
 /// Applies a row click at slice position `pos` to the host's
 /// `SelectionState`: shift extends the visual range from the anchor, the
 /// action modifier toggles membership, a plain click replaces.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "consumed by data_grid migration in the next task")
-)]
 pub(crate) fn apply_row_click<State, Item>(
     state: &mut State,
-    click: RowClick,
+    action: RowClickAction,
     pos: usize,
     items: &ItemsFn<State, Item>,
     selection_lens: Option<&SelectionLens<State>>,
@@ -43,7 +33,7 @@ pub(crate) fn apply_row_click<State, Item>(
         return;
     };
 
-    if click.shift {
+    if action.shift {
         let anchor = (**sel_lens)(state).anchor();
         let range = anchor.and_then(|anchor_id| {
             let data = (*items)(state);
@@ -53,7 +43,7 @@ pub(crate) fn apply_row_click<State, Item>(
             Some(ids) => (**sel_lens)(state).extend_range(ids),
             None => (**sel_lens)(state).replace_with(target_id),
         }
-    } else if click.action_mod {
+    } else if action.action_mod {
         (**sel_lens)(state).toggle(target_id);
     } else {
         (**sel_lens)(state).replace_with(target_id);
@@ -64,7 +54,8 @@ pub(crate) fn apply_row_click<State, Item>(
 mod tests {
     use std::sync::Arc;
 
-    use super::{ItemsFn, RowClick, SelectionLens, apply_row_click};
+    use super::{ItemsFn, SelectionLens, apply_row_click};
+    use crate::collection::row_click::RowClickAction;
     use crate::collection::{IdSource, SelectionState};
 
     struct S {
@@ -88,7 +79,7 @@ mod tests {
         let (items, lens, id_source) = fixtures();
         apply_row_click(
             &mut s,
-            RowClick {
+            RowClickAction {
                 shift: false,
                 action_mod: false,
             },
@@ -109,12 +100,12 @@ mod tests {
             sel: SelectionState::new(),
         };
         let (items, lens, id_source) = fixtures();
-        let click = RowClick {
+        let action = RowClickAction {
             shift: false,
             action_mod: true,
         };
-        apply_row_click(&mut s, click, 0, &items, Some(&lens), &id_source);
-        apply_row_click(&mut s, click, 0, &items, Some(&lens), &id_source);
+        apply_row_click(&mut s, action, 0, &items, Some(&lens), &id_source);
+        apply_row_click(&mut s, action, 0, &items, Some(&lens), &id_source);
         assert!(!s.sel.contains(10));
     }
 
@@ -127,7 +118,7 @@ mod tests {
         let (items, lens, id_source) = fixtures();
         apply_row_click(
             &mut s,
-            RowClick {
+            RowClickAction {
                 shift: false,
                 action_mod: false,
             },
@@ -138,7 +129,7 @@ mod tests {
         );
         apply_row_click(
             &mut s,
-            RowClick {
+            RowClickAction {
                 shift: true,
                 action_mod: false,
             },
@@ -160,7 +151,7 @@ mod tests {
         let (items, _lens, id_source) = fixtures();
         apply_row_click(
             &mut s,
-            RowClick {
+            RowClickAction {
                 shift: false,
                 action_mod: false,
             },

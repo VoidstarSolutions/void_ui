@@ -13,6 +13,7 @@
 //! components and the crate root.
 
 mod body;
+mod body_view;
 mod click;
 mod ids;
 pub(crate) mod row_click;
@@ -22,14 +23,15 @@ pub(crate) mod single_child;
 
 #[expect(
     unused_imports,
-    reason = "consumed by collection_body in the next task"
+    reason = "consumed by the data_grid migration in the next task"
 )]
 pub(crate) use body::CollectionBodyWidget;
 #[expect(
     unused_imports,
-    reason = "consumed by data_grid migration in the next task"
+    reason = "consumed by the data_grid migration in the next task"
 )]
-pub(crate) use click::{ItemsFn, RowClick, SelectionLens, apply_row_click};
+pub(crate) use body_view::{CollectionBodyParams, Lazy, RenderRow, collection_body};
+pub(crate) use click::{ItemsFn, SelectionLens, apply_row_click};
 pub(crate) use ids::{IdSource, scroll_idx_to_slice, scroll_range_end, visual_range_ids};
 pub(crate) use row_click::clickable_row;
 pub use scroll::ScrollState;
