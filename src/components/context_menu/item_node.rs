@@ -69,13 +69,8 @@ pub(crate) fn reserves_gutter(spec: &MenuRowSpec) -> bool {
         MenuRowSpec::Action {
             checked: Some(_),
             ..
-        } | MenuRowSpec::Action {
-            icon: Some(_),
-            ..
-        } | MenuRowSpec::Submenu {
-            icon: Some(_),
-            ..
-        }
+        } | MenuRowSpec::Action { icon: Some(_), .. }
+            | MenuRowSpec::Submenu { icon: Some(_), .. }
     )
 }
 
@@ -174,7 +169,8 @@ impl MenuItemNode {
                 MenuItemNode {
                     gutter,
                     label: Some(make_text(&label, size, label_color(disabled, theme))),
-                    subtitle: subtitle.map(|s| make_text(&s, caption, muted_color(disabled, theme))),
+                    subtitle: subtitle
+                        .map(|s| make_text(&s, caption, muted_color(disabled, theme))),
                     shortcut: shortcut.map(|s| make_text(&s, size, muted_color(disabled, theme))),
                     kind: RowKind::Action,
                     name: label,
@@ -225,8 +221,10 @@ impl MenuItemNode {
                 icon: leading,
                 children,
             } => {
-                // The fly-out is its own MenuPanel, stashed until hovered.
-                let panel = NewWidget::new(MenuPanel::new(children, theme)).to_pod();
+                // The fly-out is its own MenuPanel, stashed until hovered. It's
+                // host-driven (its parent forwards keys), so it doesn't grab
+                // focus on click.
+                let panel = NewWidget::new(MenuPanel::new(children, theme).hosted()).to_pod();
                 MenuItemNode {
                     gutter: leading.map(|name| make_icon(name, false, theme)),
                     label: Some(make_text(&label, size, label_color(false, theme))),
@@ -282,6 +280,17 @@ impl MenuItemNode {
         }
         this.ctx.request_layout();
         this.ctx.request_paint_only();
+    }
+
+    /// Mutable access to the fly-out panel (Submenu rows only) — used by the
+    /// parent panel's keyboard handler to recurse into it.
+    pub(crate) fn flyout_mut<'t>(
+        this: &'t mut WidgetMut<'_, Self>,
+    ) -> Option<WidgetMut<'t, MenuPanel>> {
+        this.widget
+            .submenu
+            .as_mut()
+            .map(|panel| this.ctx.get_mut(panel))
     }
 
     /// Show/hide the fly-out (Submenu rows only), driven by the parent panel's
@@ -384,10 +393,7 @@ impl Widget for MenuItemNode {
     ) {
         // An AT "invoke" on an enabled action behaves like a click — re-emit as
         // a `NodeActivated` so the panel turns it into a `MenuAction::Selected`.
-        if matches!(self.kind, RowKind::Action)
-            && !self.disabled
-            && event.action == Action::Click
-        {
+        if matches!(self.kind, RowKind::Action) && !self.disabled && event.action == Action::Click {
             ctx.submit_action::<Self::Action>(NodeActivated(self.index));
             ctx.set_handled();
         }
@@ -460,7 +466,10 @@ impl Widget for MenuItemNode {
                 let sub_size =
                     ctx.compute_size(subtitle, SizeDef::fit(label_avail), label_avail.into());
                 ctx.run_layout(subtitle, sub_size);
-                ctx.place_child(subtitle, Point::new(gutter, label_y + label_size.height + SUBTITLE_GAP));
+                ctx.place_child(
+                    subtitle,
+                    Point::new(gutter, label_y + label_size.height + SUBTITLE_GAP),
+                );
             }
         }
 
@@ -526,7 +535,11 @@ impl Widget for MenuItemNode {
             RowKind::Action => {
                 node.set_label(self.name.to_string());
                 if let Some(checked) = self.checked {
-                    node.set_toggled(if checked { Toggled::True } else { Toggled::False });
+                    node.set_toggled(if checked {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    });
                 }
                 if let Some((pos, size)) = self.set_pos {
                     node.set_position_in_set(pos);
@@ -587,7 +600,10 @@ mod tests {
     #[test]
     fn checkable_or_icon_rows_reserve_the_gutter() {
         assert!(reserves_gutter(&action(Some(true), None)), "checked");
-        assert!(reserves_gutter(&action(Some(false), None)), "unchecked still reserves");
+        assert!(
+            reserves_gutter(&action(Some(false), None)),
+            "unchecked still reserves"
+        );
         assert!(reserves_gutter(&action(None, Some(IconName::Copy))), "icon");
         assert!(!reserves_gutter(&action(None, None)), "plain action");
         assert!(!reserves_gutter(&MenuRowSpec::Separator));

@@ -21,7 +21,7 @@
 //! stays inside the area's box.
 
 use masonry::accesskit::{Node, Role};
-use masonry::core::keyboard::{Key, KeyState, NamedKey};
+use masonry::core::keyboard::KeyState;
 use masonry::core::{
     AccessCtx, ActionCtx, ChildrenIds, ErasedAction, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
     PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef,
@@ -31,7 +31,7 @@ use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Size};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 
-use super::widget::{MenuAction, MenuPanel};
+use super::widget::{MenuAction, MenuPanel, menu_key_from};
 
 /// Action emitted when the user selects the menu row at index `0` (its position
 /// in the original item list — same indexing as [`MenuAction::Selected`]).
@@ -48,29 +48,16 @@ pub struct ContextMenuArea {
     open: bool,
     /// Cursor point (local coords) where the menu was opened.
     cursor: Point,
-    /// `(row index, leaf id)` for the top-level rows that can receive the
-    /// keyboard highlight, supplied by the view. We own keyboard navigation
-    /// while focused, highlight by row index, and emit the leaf id (mirrors
-    /// `ThemedDropdownButton`).
-    selectable: Vec<(usize, usize)>,
-    /// Currently highlighted row index (into the full row list), or `None`.
-    highlighted: Option<usize>,
 }
 
 impl ContextMenuArea {
     #[must_use]
-    pub fn new(
-        content: NewWidget<dyn Widget>,
-        menu: NewWidget<MenuPanel>,
-        selectable: Vec<(usize, usize)>,
-    ) -> Self {
+    pub fn new(content: NewWidget<dyn Widget>, menu: NewWidget<MenuPanel>) -> Self {
         Self {
             content: content.to_pod(),
             menu: menu.to_pod(),
             open: false,
             cursor: Point::ZERO,
-            selectable,
-            highlighted: None,
         }
     }
 
@@ -84,56 +71,9 @@ impl ContextMenuArea {
         this.ctx.get_mut(&mut this.widget.menu)
     }
 
-    /// Replace the `(row index, leaf id)` list (on a live item-set change).
-    pub fn set_selectable(this: &mut WidgetMut<'_, Self>, selectable: Vec<(usize, usize)>) {
-        this.widget.selectable = selectable;
-    }
-
     fn to_local(ctx: &EventCtx<'_>, window_pos: Point) -> Point {
         let origin = ctx.to_window(Point::ZERO);
         window_pos - origin.to_vec2()
-    }
-
-    /// Set the highlight and push it into the menu for painting.
-    fn set_highlight(&mut self, ctx: &mut EventCtx<'_>, index: Option<usize>) {
-        self.highlighted = index;
-        ctx.mutate_child_later(&mut self.menu, move |mut w| {
-            MenuPanel::set_highlighted(&mut w, index);
-        });
-    }
-
-    /// Move the highlight by `dir` (+1 down, -1 up) over the selectable rows,
-    /// wrapping at the ends.
-    fn move_highlight(&mut self, ctx: &mut EventCtx<'_>, dir: isize) {
-        if self.selectable.is_empty() {
-            return;
-        }
-        let pos = self
-            .highlighted
-            .and_then(|cur| self.selectable.iter().position(|&(row, _)| row == cur));
-        let len = self.selectable.len().cast_signed();
-        let next = match pos {
-            Some(p) => (p.cast_signed() + dir).rem_euclid(len),
-            None if dir >= 0 => 0,
-            None => len - 1,
-        };
-        let (row, _) = self.selectable[next.cast_unsigned()];
-        self.set_highlight(ctx, Some(row));
-    }
-
-    /// Select the highlighted row (keyboard activation): close and emit its leaf
-    /// id. No-op when nothing is highlighted.
-    fn activate_highlighted(&mut self, ctx: &mut EventCtx<'_>) {
-        let leaf = self
-            .highlighted
-            .and_then(|cur| self.selectable.iter().find(|&&(row, _)| row == cur))
-            .map(|&(_, leaf)| leaf);
-        if let Some(leaf) = leaf {
-            self.open = false;
-            ctx.submit_action::<ContextMenuAction>(ContextMenuAction::ItemSelected(leaf));
-            ctx.request_layout();
-            ctx.request_paint_only();
-        }
     }
 
     /// Place the menu's top-left at `cursor`, shifted back inside `container`
@@ -173,17 +113,21 @@ impl Widget for ContextMenuArea {
         {
             self.cursor = Self::to_local(ctx, state.logical_point());
             self.open = true;
-            // We hold focus ourselves while open so we own keyboard navigation
-            // (the menu just paints the highlight we push it) and so a click
-            // outside clears our focus — our `FocusChanged(false)` dismissal.
+            // We hold focus ourselves while open (the menu can't take focus
+            // while it's still stashing on open). A later click outside clears
+            // our focus — our `FocusChanged(false)` dismissal — and we forward
+            // navigation keys into the menu (`on_text_event`).
             ctx.request_focus();
-            self.set_highlight(ctx, None);
             ctx.request_layout();
             ctx.request_paint_only();
             ctx.set_handled();
         }
     }
 
+    /// We hold focus while open, so navigation keys land here; forward them to
+    /// the menu's own [`MenuPanel::handle_menu_key`], which owns highlight
+    /// movement, submenu open/close, and selection/dismissal (emitted as a
+    /// `MenuAction` that bubbles back to our `on_action`).
     fn on_text_event(
         &mut self,
         ctx: &mut EventCtx<'_>,
@@ -199,41 +143,11 @@ impl Widget for ContextMenuArea {
         if key.state != KeyState::Down {
             return;
         }
-        let is_space = matches!(&key.key, Key::Character(c) if c.as_str() == " ");
-        match &key.key {
-            Key::Named(NamedKey::ArrowDown) => {
-                self.move_highlight(ctx, 1);
-                ctx.set_handled();
-            }
-            Key::Named(NamedKey::ArrowUp) => {
-                self.move_highlight(ctx, -1);
-                ctx.set_handled();
-            }
-            Key::Named(NamedKey::Home) => {
-                let first = self.selectable.first().map(|&(row, _)| row);
-                self.set_highlight(ctx, first);
-                ctx.set_handled();
-            }
-            Key::Named(NamedKey::End) => {
-                let last = self.selectable.last().map(|&(row, _)| row);
-                self.set_highlight(ctx, last);
-                ctx.set_handled();
-            }
-            Key::Named(NamedKey::Enter) => {
-                self.activate_highlighted(ctx);
-                ctx.set_handled();
-            }
-            Key::Character(_) if is_space => {
-                self.activate_highlighted(ctx);
-                ctx.set_handled();
-            }
-            Key::Named(NamedKey::Escape) => {
-                self.open = false;
-                ctx.request_layout();
-                ctx.request_paint_only();
-                ctx.set_handled();
-            }
-            _ => {}
+        if let Some(menu_key) = menu_key_from(&key.key) {
+            ctx.mutate_child_later(&mut self.menu, move |mut w| {
+                MenuPanel::handle_menu_key(&mut w, menu_key);
+            });
+            ctx.set_handled();
         }
     }
 
@@ -244,27 +158,33 @@ impl Widget for ContextMenuArea {
         action: &ErasedAction,
         _source: WidgetId,
     ) {
-        // A pointer click inside the menu emits `MenuAction::Selected` — close
-        // and re-emit it to the view layer. (Keyboard selection is handled in
-        // `on_text_event`, where we own focus.)
-        if let Some(&MenuAction::Selected(index)) = action.downcast_ref::<MenuAction>() {
-            self.open = false;
-            ctx.submit_action::<Self::Action>(ContextMenuAction::ItemSelected(index));
-            ctx.set_handled();
-            ctx.request_layout();
-            ctx.request_paint_only();
+        // The menu emits `MenuAction` from a pointer click or a forwarded key.
+        // Either way: a selection closes us and re-emits to the view layer; a
+        // dismissal (Escape) just closes.
+        match action.downcast_ref::<MenuAction>() {
+            Some(&MenuAction::Selected(index)) => {
+                self.open = false;
+                ctx.submit_action::<Self::Action>(ContextMenuAction::ItemSelected(index));
+                ctx.set_handled();
+                ctx.request_layout();
+                ctx.request_paint_only();
+            }
+            Some(MenuAction::Dismissed) => {
+                self.open = false;
+                ctx.set_handled();
+                ctx.request_layout();
+                ctx.request_paint_only();
+            }
+            None => {}
         }
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        // Two ways an open menu must close itself:
-        // - `FocusChanged(false)`: we hold focus while open, so a click outside
-        //   clears it — the standard "click outside to dismiss" path. Clicks on
-        //   the menu don't move focus (the menu isn't focusable), so this only
-        //   fires for genuine outside clicks.
-        // - `StashedChanged(true)`: a tab/panel container hid us mid-open; the
-        //   menu can no longer be clicked away, so close eagerly (mirrors
-        //   `PopoverHost`'s `StashedChanged` handling).
+        // We hold focus while open and forward keys into the menu; the menu is
+        // built non-self-focusing (`hosted`) so clicking it doesn't steal our
+        // focus. So `FocusChanged(false)` only fires for a genuine click
+        // outside — the "click outside to dismiss" path. Also close if stashed
+        // mid-open (a tab/panel hid us).
         let should_close = matches!(
             event,
             Update::FocusChanged(false) | Update::StashedChanged(true)
@@ -425,9 +345,8 @@ mod tests {
             .height(120.0.px())
             .prepare()
             .erased();
-        let menu = MenuPanel::new(vec![row(0, "Copy"), row(1, "Paste")], &theme);
-        // Both rows selectable: (row index, leaf id) pairs.
-        let area = ContextMenuArea::new(content, NewWidget::new(menu), vec![(0, 0), (1, 1)]);
+        let menu = MenuPanel::new(vec![row(0, "Copy"), row(1, "Paste")], &theme).hosted();
+        let area = ContextMenuArea::new(content, NewWidget::new(menu));
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(area));
 
         // Right-click inside the area opens the menu.

@@ -158,6 +158,41 @@ impl PartialEq for MenuRowSpec {
     }
 }
 
+/// A normalized menu navigation key, so the keyboard owner (the inline panel or
+/// the [`ContextMenuArea`](super::area::ContextMenuArea)) forwards intent rather
+/// than raw `winit` keys into [`MenuPanel::handle_menu_key`].
+#[derive(Clone, Copy)]
+pub(crate) enum MenuKey {
+    Up,
+    Down,
+    Home,
+    End,
+    /// Enter a submenu / open the highlighted submenu.
+    Right,
+    /// Leave the current submenu, back to its parent.
+    Left,
+    /// Enter / Space — select the highlighted row (or open a submenu).
+    Activate,
+    Escape,
+}
+
+/// What the recursive key walk produced at one menu level, propagated up so the
+/// *outermost* panel can emit. Selection/dismissal are returned (not submitted
+/// deep down) because actions submitted from a nested `MutateCtx` don't bubble
+/// through ancestors' `on_action` during a mutate pass — only the outermost
+/// panel's submit routes correctly.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KeyOutcome {
+    Handled,
+    Ignored,
+    /// Left at this (fly-out) level — the parent should collapse us.
+    Close,
+    /// A leaf was activated this deep; the outermost panel emits `Selected`.
+    Select(usize),
+    /// Escape — the outermost panel emits `Dismissed`.
+    Dismiss,
+}
+
 /// The action a [`MenuPanel`] emits. A masonry widget can only submit its single
 /// declared `Action` type, so selection and dismissal share one enum.
 #[derive(Debug)]
@@ -204,6 +239,14 @@ pub struct MenuPanel {
     highlighted: Option<usize>,
     /// The submenu row whose fly-out is currently open, if any.
     open_submenu: Option<usize>,
+    /// The submenu row whose fly-out currently has *keyboard* focus (so keys are
+    /// delegated into it), if any.
+    kbd_submenu: Option<usize>,
+    /// Whether this panel takes focus on click. `true` for a standalone/inline
+    /// menu (so clicking re-arms its keyboard); `false` when a host owns focus
+    /// and forwards keys (the right-click area and every fly-out — see
+    /// [`Self::hosted`]).
+    self_focus: bool,
     theme: Theme,
 }
 
@@ -215,8 +258,19 @@ impl MenuPanel {
             hover_index: None,
             highlighted: None,
             open_submenu: None,
+            kbd_submenu: None,
+            self_focus: true,
             theme: *theme,
         }
+    }
+
+    /// Mark this panel as host-driven: it won't grab focus on click (its host —
+    /// the right-click area, or a parent menu for a fly-out — owns focus and
+    /// forwards navigation keys into it).
+    #[must_use]
+    pub fn hosted(mut self) -> Self {
+        self.self_focus = false;
+        self
     }
 
     fn pad_h(&self) -> f64 {
@@ -258,19 +312,19 @@ impl MenuPanel {
         self.set_node_submenu_open(ctx, row, true);
     }
 
-    /// Row indices that can receive the keyboard highlight (selectable actions),
-    /// in order — separators, section headers, and disabled rows are skipped.
-    fn selectable_indices(&self) -> Vec<usize> {
+    /// Row indices the keyboard highlight can land on (selectable actions *and*
+    /// submenu rows, which open on Right/Enter).
+    fn hoverable_indices(&self) -> Vec<usize> {
         (0..self.rows.len())
-            .filter(|&i| self.rows[i].selectable)
+            .filter(|&i| self.rows[i].hoverable())
             .collect()
     }
 
     /// The next highlight position when moving by `dir` (+1 down, -1 up),
-    /// wrapping at the ends and skipping non-selectable rows. `None` when there
-    /// is nothing selectable.
+    /// wrapping at the ends and skipping non-hoverable rows. `None` when there
+    /// is nothing to land on.
     fn step_highlight(&self, dir: isize) -> Option<usize> {
-        let sel = self.selectable_indices();
+        let sel = self.hoverable_indices();
         if sel.is_empty() {
             return None;
         }
@@ -293,15 +347,26 @@ impl MenuPanel {
         window_pos - origin.to_vec2()
     }
 
-    /// Emit the highlighted row's selection (keyboard activation); no-op when
-    /// nothing is highlighted.
-    fn activate_highlighted(&mut self, ctx: &mut EventCtx<'_>) {
-        if let Some(i) = self.highlighted.take()
-            && let Some(id) = self.rows[i].leaf_id
-        {
-            ctx.submit_action::<MenuAction>(MenuAction::Selected(id));
-            ctx.request_paint_only();
-        }
+    #[cfg(test)]
+    pub(crate) fn dbg_kbd_submenu(&self) -> Option<usize> {
+        self.kbd_submenu
+    }
+}
+
+/// Map a raw key to a normalized [`MenuKey`], or `None` for keys the menu
+/// ignores. Shared by the inline panel and the right-click area.
+pub(crate) fn menu_key_from(key: &Key) -> Option<MenuKey> {
+    match key {
+        Key::Named(NamedKey::ArrowDown) => Some(MenuKey::Down),
+        Key::Named(NamedKey::ArrowUp) => Some(MenuKey::Up),
+        Key::Named(NamedKey::Home) => Some(MenuKey::Home),
+        Key::Named(NamedKey::End) => Some(MenuKey::End),
+        Key::Named(NamedKey::ArrowRight) => Some(MenuKey::Right),
+        Key::Named(NamedKey::ArrowLeft) => Some(MenuKey::Left),
+        Key::Named(NamedKey::Enter) => Some(MenuKey::Activate),
+        Key::Character(c) if c.as_str() == " " => Some(MenuKey::Activate),
+        Key::Named(NamedKey::Escape) => Some(MenuKey::Escape),
+        _ => None,
     }
 }
 
@@ -376,6 +441,134 @@ impl MenuPanel {
         }
     }
 
+    /// Handle one navigation key for this menu and its open fly-out chain. Owns
+    /// highlight movement, submenu open/close, and selection/dismissal emission
+    /// (`MutateCtx::submit_action`). Recurses into the active fly-out so the
+    /// deepest open submenu receives the key; returns [`KeyOutcome::Close`] when
+    /// Left is pressed at this level so a parent collapses us.
+    ///
+    /// The keyboard owner (the focused inline panel via `mutate_self_later`, or
+    /// the focused [`ContextMenuArea`](super::area::ContextMenuArea) via
+    /// `mutate_child_later`) forwards keys here.
+    pub(crate) fn handle_menu_key(this: &mut WidgetMut<'_, Self>, key: MenuKey) {
+        // Only the outermost panel (this one) submits — emitting from a nested
+        // fly-out's `MutateCtx` wouldn't bubble through `on_action`.
+        match Self::nav_key(this, key) {
+            KeyOutcome::Select(id) => {
+                this.ctx
+                    .submit_action::<MenuAction>(MenuAction::Selected(id));
+                this.ctx.request_paint_only();
+            }
+            KeyOutcome::Dismiss => {
+                this.ctx.submit_action::<MenuAction>(MenuAction::Dismissed);
+                this.ctx.request_paint_only();
+            }
+            _ => {}
+        }
+    }
+
+    /// Recursive key walk: moves highlight / opens-closes submenus at the active
+    /// level (delegating into an open fly-out), and *returns* selection or
+    /// dismissal up to [`Self::handle_menu_key`] rather than submitting.
+    fn nav_key(this: &mut WidgetMut<'_, Self>, key: MenuKey) -> KeyOutcome {
+        // Delegate to the active fly-out first, if any.
+        if let Some(srow) = this.widget.kbd_submenu {
+            let outcome = {
+                let mut node = this.ctx.get_mut(&mut this.widget.rows[srow].node);
+                match MenuItemNode::flyout_mut(&mut node) {
+                    Some(mut flyout) => Self::nav_key(&mut flyout, key),
+                    None => KeyOutcome::Ignored,
+                }
+            };
+            if outcome == KeyOutcome::Close {
+                // The fly-out asked to be closed (Left at its top level):
+                // collapse it and return the highlight to its parent row.
+                {
+                    let mut node = this.ctx.get_mut(&mut this.widget.rows[srow].node);
+                    MenuItemNode::set_submenu_open(&mut node, false);
+                }
+                this.widget.kbd_submenu = None;
+                this.widget.open_submenu = None;
+                this.widget.highlighted = Some(srow);
+                this.ctx.request_paint_only();
+                return KeyOutcome::Handled;
+            }
+            // Select / Dismiss / Handled / Ignored propagate to the outermost.
+            return outcome;
+        }
+
+        match key {
+            MenuKey::Down => {
+                this.widget.highlighted = this.widget.step_highlight(1);
+                this.ctx.request_paint_only();
+                KeyOutcome::Handled
+            }
+            MenuKey::Up => {
+                this.widget.highlighted = this.widget.step_highlight(-1);
+                this.ctx.request_paint_only();
+                KeyOutcome::Handled
+            }
+            MenuKey::Home => {
+                this.widget.highlighted = this.widget.hoverable_indices().first().copied();
+                this.ctx.request_paint_only();
+                KeyOutcome::Handled
+            }
+            MenuKey::End => {
+                this.widget.highlighted = this.widget.hoverable_indices().last().copied();
+                this.ctx.request_paint_only();
+                KeyOutcome::Handled
+            }
+            MenuKey::Right => match this.widget.highlighted {
+                Some(row) if this.widget.rows[row].is_submenu => {
+                    Self::enter_submenu(this, row);
+                    KeyOutcome::Handled
+                }
+                _ => KeyOutcome::Ignored,
+            },
+            // Left collapses *this* panel when it's a fly-out (the parent acts
+            // on `Close`); at the top level there's no parent, so it's a no-op.
+            MenuKey::Left => KeyOutcome::Close,
+            MenuKey::Activate => match this.widget.highlighted {
+                Some(row) if this.widget.rows[row].is_submenu => {
+                    Self::enter_submenu(this, row);
+                    KeyOutcome::Handled
+                }
+                Some(row) => match this.widget.rows[row].leaf_id {
+                    Some(id) => {
+                        this.widget.highlighted = None;
+                        this.ctx.request_paint_only();
+                        KeyOutcome::Select(id)
+                    }
+                    None => KeyOutcome::Handled,
+                },
+                None => KeyOutcome::Handled,
+            },
+            MenuKey::Escape => {
+                this.widget.highlighted = None;
+                this.ctx.request_paint_only();
+                KeyOutcome::Dismiss
+            }
+        }
+    }
+
+    /// Open row `srow`'s submenu, give it keyboard focus, and highlight its
+    /// first item.
+    fn enter_submenu(this: &mut WidgetMut<'_, Self>, srow: usize) {
+        {
+            let mut node = this.ctx.get_mut(&mut this.widget.rows[srow].node);
+            MenuItemNode::set_submenu_open(&mut node, true);
+            if let Some(mut flyout) = MenuItemNode::flyout_mut(&mut node) {
+                let first = flyout.widget.hoverable_indices().first().copied();
+                flyout.widget.highlighted = first;
+                flyout.ctx.request_paint_only();
+            }
+        }
+        this.widget.kbd_submenu = Some(srow);
+        this.widget.open_submenu = Some(srow);
+        this.widget.highlighted = Some(srow);
+        this.ctx.request_paint_only();
+    }
+
     /// Replace the row list — the panel persists across rebuilds, so a changed
     /// item set must be applied in place.
     pub fn set_rows(this: &mut WidgetMut<'_, Self>, specs: impl IntoIterator<Item = MenuRowSpec>) {
@@ -387,6 +580,7 @@ impl MenuPanel {
         this.widget.hover_index = None;
         this.widget.highlighted = None;
         this.widget.open_submenu = None;
+        this.widget.kbd_submenu = None;
         this.ctx.children_changed();
         this.ctx.request_layout();
         this.ctx.request_paint_only();
@@ -452,6 +646,12 @@ impl Widget for MenuPanel {
                 ..
             }) => {
                 ctx.capture_pointer();
+                // A standalone/inline menu takes focus on click so its keyboard
+                // re-arms; a host-driven menu (right-click area / fly-out) does
+                // NOT, leaving focus with its host (which forwards keys).
+                if self.self_focus {
+                    ctx.request_focus();
+                }
                 // Consume so an ancestor `MenuPanel` (when we're a fly-out)
                 // doesn't also capture and swallow the release — which would
                 // drop the selection.
@@ -481,6 +681,10 @@ impl Widget for MenuPanel {
         }
     }
 
+    /// When focused (the inline / standalone case), forward navigation keys to
+    /// [`Self::handle_menu_key`] — run via `mutate_self_later` so it can recurse
+    /// into open fly-outs and emit through a `MutateCtx`. (A right-click menu is
+    /// driven the same way by `ContextMenuArea`, which holds focus.)
     fn on_text_event(
         &mut self,
         ctx: &mut EventCtx<'_>,
@@ -493,44 +697,12 @@ impl Widget for MenuPanel {
         if key.state != KeyState::Down {
             return;
         }
-        let is_space = matches!(&key.key, Key::Character(c) if c.as_str() == " ");
-        match &key.key {
-            Key::Named(NamedKey::ArrowDown) => {
-                self.highlighted = self.step_highlight(1);
-                ctx.request_paint_only();
-                ctx.set_handled();
-            }
-            Key::Named(NamedKey::ArrowUp) => {
-                self.highlighted = self.step_highlight(-1);
-                ctx.request_paint_only();
-                ctx.set_handled();
-            }
-            Key::Named(NamedKey::Home) => {
-                self.highlighted = self.selectable_indices().first().copied();
-                ctx.request_paint_only();
-                ctx.set_handled();
-            }
-            Key::Named(NamedKey::End) => {
-                self.highlighted = self.selectable_indices().last().copied();
-                ctx.request_paint_only();
-                ctx.set_handled();
-            }
-            // Activate the highlighted row (no-op if nothing is highlighted).
-            Key::Named(NamedKey::Enter) => {
-                self.activate_highlighted(ctx);
-                ctx.set_handled();
-            }
-            Key::Character(_) if is_space => {
-                self.activate_highlighted(ctx);
-                ctx.set_handled();
-            }
-            Key::Named(NamedKey::Escape) => {
-                self.highlighted = None;
-                ctx.submit_action::<Self::Action>(MenuAction::Dismissed);
-                ctx.request_paint_only();
-                ctx.set_handled();
-            }
-            _ => {}
+        if let Some(menu_key) = menu_key_from(&key.key) {
+            ctx.mutate_self_later(move |mut w| {
+                let mut w = w.downcast::<MenuPanel>();
+                MenuPanel::handle_menu_key(&mut w, menu_key);
+            });
+            ctx.set_handled();
         }
     }
 
@@ -552,13 +724,14 @@ impl Widget for MenuPanel {
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
-            // Stash state flipping (a right-click menu opening/closing) resets
-            // the highlight and forgets any open submenu so neither lingers
-            // across opens (each submenu node closes itself on stash too). The
-            // host area transfers focus to us on open (`ContextMenuArea`).
-            Update::StashedChanged(_) => {
+            // Being hidden (menu closed, or a fly-out collapsed) resets the
+            // highlight and forgets any open submenu so nothing lingers across
+            // re-opens. Only on *stash* (true), not un-stash — un-stashing a
+            // fly-out must NOT wipe the highlight that keyboard-open just set.
+            Update::StashedChanged(true) => {
                 self.highlighted = None;
                 self.open_submenu = None;
+                self.kbd_submenu = None;
             }
             // Focus left us (e.g. an outside click): clear the keyboard
             // highlight so the focus ring doesn't paint while unfocused.
@@ -815,9 +988,18 @@ mod tests {
         }];
         let panel = MenuPanel::new(specs, &theme);
         assert!(panel.rows[0].is_submenu);
-        assert!(!panel.rows[0].selectable, "a submenu row isn't click-selectable");
-        assert!(panel.rows[0].hoverable(), "but it is hoverable (opens on hover)");
-        assert!(panel.rows[0].leaf_id.is_none(), "and carries no leaf id of its own");
+        assert!(
+            !panel.rows[0].selectable,
+            "a submenu row isn't click-selectable"
+        );
+        assert!(
+            panel.rows[0].hoverable(),
+            "but it is hoverable (opens on hover)"
+        );
+        assert!(
+            panel.rows[0].leaf_id.is_none(),
+            "and carries no leaf id of its own"
+        );
     }
 
     #[test]
@@ -833,7 +1015,7 @@ mod tests {
         );
         assert!(!panel.rows[0].selectable);
         assert!(!panel.rows[1].selectable);
-        assert_eq!(panel.selectable_indices(), Vec::<usize>::new());
+        assert!(panel.hoverable_indices().is_empty());
     }
 
     // --- keyboard navigation (TestHarness) ---
@@ -869,13 +1051,25 @@ mod tests {
             action("c"),
         ]);
         press(&mut h, NamedKey::ArrowDown);
-        assert_eq!(highlight(&mut h), Some(0), "down enters at the first selectable");
+        assert_eq!(
+            highlight(&mut h),
+            Some(0),
+            "down enters at the first selectable"
+        );
         press(&mut h, NamedKey::ArrowDown);
-        assert_eq!(highlight(&mut h), Some(3), "skips the separator and disabled row");
+        assert_eq!(
+            highlight(&mut h),
+            Some(3),
+            "skips the separator and disabled row"
+        );
         press(&mut h, NamedKey::ArrowDown);
         assert_eq!(highlight(&mut h), Some(0), "wraps past the end to the top");
         press(&mut h, NamedKey::ArrowUp);
-        assert_eq!(highlight(&mut h), Some(3), "up from the top wraps to the bottom");
+        assert_eq!(
+            highlight(&mut h),
+            Some(3),
+            "up from the top wraps to the bottom"
+        );
     }
 
     #[test]
@@ -906,6 +1100,34 @@ mod tests {
         let mut h = harness(vec![action("a")]);
         assert_eq!(press(&mut h, NamedKey::Enter), Handled::Yes);
         assert!(h.pop_action::<MenuAction>().is_none());
+    }
+
+    #[test]
+    fn right_arrow_enters_submenu_then_enter_selects_a_child() {
+        // top: [ submenu "S" -> [ leaf id 7 ] ]
+        let theme = Theme::default();
+        let sub = MenuRowSpec::Submenu {
+            label: "S".into(),
+            icon: None,
+            children: vec![action_id(7, "child")],
+        };
+        let widget = MenuPanel::new(vec![sub], &theme);
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+        h.focus_on(Some(h.root_id()));
+
+        press(&mut h, NamedKey::ArrowDown); // highlight the submenu row
+        assert_eq!(highlight(&mut h), Some(0));
+        press(&mut h, NamedKey::ArrowRight); // enter the fly-out (highlights its first item)
+        assert_eq!(
+            h.edit_root_widget(|wm| wm.widget.dbg_kbd_submenu()),
+            Some(0),
+            "Right should give the fly-out keyboard focus"
+        );
+        press(&mut h, NamedKey::Enter); // select the fly-out's leaf
+        let (action, _) = h
+            .pop_action::<MenuAction>()
+            .expect("Enter in the fly-out selects its child");
+        assert!(matches!(action, MenuAction::Selected(7)));
     }
 
     #[test]

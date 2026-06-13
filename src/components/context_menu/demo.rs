@@ -81,14 +81,11 @@ fn basic_menu(theme: &Theme) -> impl WidgetView<ContextMenuDemo> + use<> {
                             s.last_action = "Copy".into();
                         }),
                 )
-                .item(
-                    item("Paste")
-                        .shortcut("Ctrl+V")
-                        .disabled(true)
-                        .on_select(|s: &mut ContextMenuDemo| {
-                            s.last_action = "Paste".into();
-                        }),
-                )
+                .item(item("Paste").shortcut("Ctrl+V").disabled(true).on_select(
+                    |s: &mut ContextMenuDemo| {
+                        s.last_action = "Paste".into();
+                    },
+                ))
                 .separator()
                 .section("View")
                 .item(
@@ -123,13 +120,27 @@ fn right_click_area(
                     .color(theme.palette.text_muted)
                     .render(theme),
             )
-            .width(Length::px(320.0))
-            .height(Length::px(140.0))
+            // Sized to comfortably fit the whole menu (and a fly-out) when it
+            // opens at the cursor — the menu is clamped inside this box.
+            .width(Length::px(380.0))
+            .height(Length::px(300.0))
             .background_color(theme.palette.surface_2)
             .border_color(theme.palette.border)
             .border_width(Length::px(1.0)),
         )
         .section("Edit")
+        // Near the top so its fly-out has room down-and-right inside the box.
+        .submenu(
+            submenu("Open Recent")
+                .icon(IconName::Copy)
+                .item(item("project-a").on_select(|s: &mut ContextMenuDemo| {
+                    s.last_action = "Recent: project-a".into();
+                }))
+                .item(item("project-b").on_select(|s: &mut ContextMenuDemo| {
+                    s.last_action = "Recent: project-b".into();
+                })),
+        )
+        .separator()
         .item(
             item("Cut")
                 .shortcut("Ctrl+X")
@@ -145,14 +156,11 @@ fn right_click_area(
                     s.last_action = "Copy".into();
                 }),
         )
-        .item(
-            item("Paste")
-                .shortcut("Ctrl+V")
-                .disabled(true)
-                .on_select(|s: &mut ContextMenuDemo| {
-                    s.last_action = "Paste".into();
-                }),
-        )
+        .item(item("Paste").shortcut("Ctrl+V").disabled(true).on_select(
+            |s: &mut ContextMenuDemo| {
+                s.last_action = "Paste".into();
+            },
+        ))
         .separator()
         .section("View")
         // Live checkable: toggles on each selection so the gutter check
@@ -169,10 +177,7 @@ fn right_click_area(
     })
 }
 
-fn build_inner(
-    theme: &Theme,
-    state: &ContextMenuDemo,
-) -> impl WidgetView<ContextMenuDemo> + use<> {
+fn build_inner(theme: &Theme, state: &ContextMenuDemo) -> impl WidgetView<ContextMenuDemo> + use<> {
     let header = |text: &'static str| {
         label(text)
             .text_size(theme.typography.size_caption)

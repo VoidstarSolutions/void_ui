@@ -27,7 +27,7 @@ use masonry::core::{ArcStr, NewWidget};
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
-use super::area::{ContextMenuArea, ContextMenuAction};
+use super::area::{ContextMenuAction, ContextMenuArea};
 use super::widget::{MenuAction, MenuPanel, MenuRowSpec};
 use crate::Theme;
 use crate::components::icon::IconName;
@@ -232,24 +232,6 @@ fn build_menu<State, Action>(
     (rows, callbacks)
 }
 
-/// The top-level rows a keyboard highlight can land on, as `(row index, leaf
-/// id)` — the [`context_menu_area`] widget highlights by row index but emits
-/// the leaf id. (Submenu rows open fly-outs; they aren't keyboard-selectable
-/// at this level.)
-fn selectable_rows(rows: &[MenuRowSpec]) -> Vec<(usize, usize)> {
-    rows.iter()
-        .enumerate()
-        .filter_map(|(i, r)| match r {
-            MenuRowSpec::Action {
-                id,
-                disabled: false,
-                ..
-            } => Some((i, *id)),
-            _ => None,
-        })
-        .collect()
-}
-
 /// Route a selected leaf id to its callback, shared by both consumers.
 fn dispatch_selection<State, Action>(
     callbacks: &[Option<SelectCallback<State, Action>>],
@@ -425,9 +407,7 @@ pub struct ContextMenuAreaBuilder<State, Action, V> {
 }
 
 /// Wrap `content` so a right-click opens a context menu over it.
-pub fn context_menu_area<State, Action, V>(
-    content: V,
-) -> ContextMenuAreaBuilder<State, Action, V> {
+pub fn context_menu_area<State, Action, V>(content: V) -> ContextMenuAreaBuilder<State, Action, V> {
     ContextMenuAreaBuilder {
         content,
         entries: Vec::new(),
@@ -500,12 +480,10 @@ where
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let (content_pod, content_vs) = self.content.build(ctx, app_state);
-        let menu = MenuPanel::new(self.rows.iter().cloned(), &self.theme);
-        let widget = ContextMenuArea::new(
-            content_pod.new_widget.erased(),
-            NewWidget::new(menu),
-            selectable_rows(&self.rows),
-        );
+        // Host-driven: the area owns focus and forwards keys, so the menu
+        // doesn't grab focus on click.
+        let menu = MenuPanel::new(self.rows.iter().cloned(), &self.theme).hosted();
+        let widget = ContextMenuArea::new(content_pod.new_widget.erased(), NewWidget::new(menu));
         // Register as an action source so the area's `ContextMenuAction` routes
         // to this view's `message`.
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
@@ -522,19 +500,21 @@ where
     ) {
         {
             let mut content = ContextMenuArea::content_mut(&mut element);
-            self.content
-                .rebuild(&prev.content, view_state, ctx, content.downcast(), app_state);
+            self.content.rebuild(
+                &prev.content,
+                view_state,
+                ctx,
+                content.downcast(),
+                app_state,
+            );
         }
         if self.theme != prev.theme {
             let mut menu = ContextMenuArea::menu_mut(&mut element);
             MenuPanel::set_theme(&mut menu, &self.theme);
         }
         if self.rows != prev.rows {
-            {
-                let mut menu = ContextMenuArea::menu_mut(&mut element);
-                MenuPanel::set_rows(&mut menu, self.rows.iter().cloned());
-            }
-            ContextMenuArea::set_selectable(&mut element, selectable_rows(&self.rows));
+            let mut menu = ContextMenuArea::menu_mut(&mut element);
+            MenuPanel::set_rows(&mut menu, self.rows.iter().cloned());
         }
     }
 
