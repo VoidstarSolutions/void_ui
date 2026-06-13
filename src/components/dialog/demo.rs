@@ -99,9 +99,13 @@ fn build_inner(theme: &Theme, open: bool) -> impl WidgetView<DialogDemo> + use<>
     .cross_axis_alignment(CrossAxisAlignment::Start)
     .gap(Length::px(4.0));
 
-    let inner = flex_col((title_block, separator().render(theme), basic_row(theme, open)))
-        .cross_axis_alignment(CrossAxisAlignment::Start)
-        .gap(Length::px(16.0));
+    let inner = flex_col((
+        title_block,
+        separator().render(theme),
+        basic_row(theme, open),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Start)
+    .gap(Length::px(16.0));
     overlay_scope(inner)
 }
 

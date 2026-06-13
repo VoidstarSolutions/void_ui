@@ -102,9 +102,12 @@ impl PopoverHost {
         content
             .properties
             .insert(Padding::all(Length::px(f64::from(theme.density.pad))));
-        let surface =
-            NewWidget::new(PopoverSurface::new(content.erased(), theme, SurfaceStyle::Popover))
-                .erased();
+        let surface = NewWidget::new(PopoverSurface::new(
+            content.erased(),
+            theme,
+            SurfaceStyle::Popover,
+        ))
+        .erased();
         let overlay_host =
             AnchoredOverlay::new(trigger, surface, false, anchor).with_gap(surface_gap(theme));
         Self {
@@ -714,11 +717,8 @@ impl Widget for PopoverSurface {
         _props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
-        let rrect = RoundedRect::from_origin_size(
-            Point::ORIGIN,
-            ctx.border_box_size(),
-            self.corner_radius,
-        );
+        let rrect =
+            RoundedRect::from_origin_size(Point::ORIGIN, ctx.border_box_size(), self.corner_radius);
         if self.bg.components[3] > 0.0 {
             painter.fill(rrect, self.bg).draw();
         }
@@ -949,7 +949,12 @@ mod tests {
         let popover_body = masonry::widgets::Label::new("popover body")
             .prepare()
             .erased();
-        let surface = NewWidget::new(PopoverSurface::new(popover_body, &theme, SurfaceStyle::Popover)).erased();
+        let surface = NewWidget::new(PopoverSurface::new(
+            popover_body,
+            &theme,
+            SurfaceStyle::Popover,
+        ))
+        .erased();
 
         // The handle's `OnceLock` fills at the scope's `WidgetAdded`, so
         // `scope.widget_id()` resolves for every event after harness creation.
@@ -1125,8 +1130,12 @@ mod tests {
         let popover_body = masonry::widgets::Label::new("popover body")
             .prepare()
             .erased();
-        let surface =
-            NewWidget::new(PopoverSurface::new(popover_body, &theme, SurfaceStyle::Popover)).erased();
+        let surface = NewWidget::new(PopoverSurface::new(
+            popover_body,
+            &theme,
+            SurfaceStyle::Popover,
+        ))
+        .erased();
         let scope = OverlayScope::new(
             handle,
             content,

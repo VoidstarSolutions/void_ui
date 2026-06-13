@@ -155,10 +155,12 @@ where
                 .accessible_name("Close")
                 .render(theme)
         });
-        let header = close_button
-            .map(|close_button| flex_row((close_button,)).main_axis_alignment(MainAxisAlignment::End));
+        let header = close_button.map(|close_button| {
+            flex_row((close_button,)).main_axis_alignment(MainAxisAlignment::End)
+        });
 
-        let composed = flex_col((header, self.content)).cross_axis_alignment(CrossAxisAlignment::Stretch);
+        let composed =
+            flex_col((header, self.content)).cross_axis_alignment(CrossAxisAlignment::Stretch);
         let content: Arc<PortalContentView<State, Action>> = Arc::new(composed);
 
         DialogView {
