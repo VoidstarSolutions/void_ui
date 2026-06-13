@@ -3,8 +3,8 @@
 //! A themed message card — built on [`crate::components::alert::Alert`] —
 //! that can auto-dismiss after a configurable timeout in addition to its
 //! close (X) button. There is no positioning or stacking host here: place
-//! the rendered card(s) yourself, e.g. via [`notification_stack`] inside a
-//! `zstack` aligned with [`NotificationPosition`].
+//! the rendered card(s) yourself, e.g. via [`notification_stack`], then
+//! register the stack as a corner-anchored overlay with [`notification_layer`].
 //!
 //! ```ignore
 //! use std::time::Duration;
@@ -38,6 +38,9 @@ use crate::{AlertVariant, IconName, Theme};
 
 /// Default auto-dismiss delay, matching gpui-component's notification default.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Default fixed width for a [`notification_overlay`]'s toast stack, in px.
+pub const DEFAULT_NOTIFICATION_WIDTH: f64 = 280.0;
 
 /// Marker trait for [`Notification::on_close`] callbacks.
 ///
@@ -292,10 +295,9 @@ impl From<NotificationPosition> for UnitPoint {
 
 /// Stack a column of notification cards with consistent spacing.
 ///
-/// Place the result inside a `zstack` and pair it with
-/// `sized_box(...).alignment(position.into())` to anchor it to one of the 6
-/// [`NotificationPosition`] corners — the active list of toasts, dismissal,
-/// width, and the surrounding `zstack` are all the host application's
+/// Pass the result to [`notification_layer`] to anchor it to one of the 6
+/// [`NotificationPosition`] corners as a portal overlay — the active list of
+/// toasts, dismissal, and sizing are all the host application's
 /// responsibility.
 #[must_use]
 pub fn notification_stack<State: 'static, Action: 'static>(
@@ -403,6 +405,34 @@ where
     ) -> MessageResult<Action> {
         MessageResult::Stale
     }
+}
+
+/// Build a corner-anchored toast overlay from rendered notification views in
+/// one call: stacks `items` with [`notification_stack`], wraps the stack in
+/// a fixed-width, padded [`sized_box`], and registers it via
+/// [`notification_layer`] anchored to `position`.
+///
+/// This is the one-call entry point for the common case. Consumers needing a
+/// different width/padding/wrapper should compose [`notification_stack`] and
+/// [`notification_layer`] directly instead.
+///
+/// # Panics
+///
+/// Panics at `build` if there is no ancestor [`crate::overlay_scope`] (see
+/// [`notification_layer`]).
+pub fn notification_overlay<State, Action>(
+    theme: &Theme,
+    position: NotificationPosition,
+    items: Vec<Box<AnyWidgetView<State, Action>>>,
+) -> NotificationLayerView<State, Action>
+where
+    State: 'static,
+    Action: 'static,
+{
+    let stack = sized_box(notification_stack(theme, items))
+        .fixed_width(Length::px(DEFAULT_NOTIFICATION_WIDTH))
+        .padding(Length::px(f64::from(theme.density.pad)));
+    notification_layer(stack, theme, position)
 }
 
 #[cfg(test)]

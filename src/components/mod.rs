@@ -62,8 +62,9 @@ pub use input::{
 pub use label::{Label, LabelAlignment, label};
 pub use list::{List, list};
 pub use notification::{
-    DEFAULT_TIMEOUT, Notification, NotificationLayerView, NotificationPosition, NotificationView,
-    notification, notification_layer, notification_stack,
+    DEFAULT_NOTIFICATION_WIDTH, DEFAULT_TIMEOUT, Notification, NotificationLayerView,
+    NotificationPosition, NotificationView, notification, notification_layer, notification_overlay,
+    notification_stack,
 };
 pub use popover::{Popover, PopoverAnchor, PopoverHost, PopoverView, popover};
 pub use resizable::{

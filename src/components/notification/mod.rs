@@ -19,6 +19,7 @@ mod view;
 pub mod widget;
 
 pub use view::{
-    DEFAULT_TIMEOUT, DismissCallback, Notification, NotificationLayerView, NotificationPosition,
-    NotificationView, notification, notification_layer, notification_stack,
+    DEFAULT_NOTIFICATION_WIDTH, DEFAULT_TIMEOUT, DismissCallback, Notification,
+    NotificationLayerView, NotificationPosition, NotificationView, notification,
+    notification_layer, notification_overlay, notification_stack,
 };

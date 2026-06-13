@@ -15,12 +15,10 @@ use masonry::layout::Length;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::widgets::Passthrough;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, MainAxisAlignment, flex_col, flex_row, sized_box};
+use xilem::view::{CrossAxisAlignment, MainAxisAlignment, flex_col, flex_row};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
-use super::{
-    DEFAULT_TIMEOUT, NotificationPosition, notification, notification_layer, notification_stack,
-};
+use super::{DEFAULT_TIMEOUT, NotificationPosition, notification, notification_overlay};
 use crate::components::ScrollBarVisibility;
 use crate::layout::flex_wrap;
 use crate::{AlertVariant, ButtonVariant, Theme, button, label, scroll_container};
@@ -250,7 +248,7 @@ fn build_inner<S: NotificationDemoHost>(
 ///
 /// Registers the stack with the nearest ancestor [`crate::overlay_scope`]'s
 /// portal, anchored to [`NotificationDemoState::position`] (see
-/// [`notification_layer`]). Place the result anywhere inside an
+/// [`notification_overlay`]). Place the result anywhere inside an
 /// `overlay_scope`-wrapped tree (see `examples/gallery.rs`) so toasts float
 /// over the whole window, not just the notification demo panel.
 #[must_use]
@@ -275,11 +273,7 @@ pub fn overlay<S: NotificationDemoHost>(
         })
         .collect();
 
-    let stack = sized_box(notification_stack(theme, items))
-        .fixed_width(Length::px(280.0))
-        .padding(Length::px(8.0));
-
-    Box::new(notification_layer(stack, theme, demo.position))
+    Box::new(notification_overlay(theme, demo.position, items))
 }
 
 type InnerView<S> = Box<AnyWidgetView<S, ()>>;

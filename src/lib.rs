@@ -86,6 +86,9 @@ pub use components::{
     GroupBox, Icon, IconName, Label, LabelAlignment, MIN_COLUMN_WIDTH, MIN_PANEL_SIZE, NoTitle,
     Notification, NotificationLayerView, NotificationPosition, NotificationView, Orientation,
     Popover, PopoverAnchor, PopoverHost, PopoverView, RangeSlider, RangeSliderView, ReadOnlyText,
+    IconName, Label, LabelAlignment, MIN_COLUMN_WIDTH, MIN_PANEL_SIZE, NoTitle, Notification,
+    NotificationLayerView, NotificationPosition, NotificationView, Orientation, Popover,
+    PopoverAnchor, PopoverHost, PopoverView, RangeSlider, RangeSliderView, ReadOnlyText,
     ReadOnlyTextView, Resizable, ResizablePanel, ResizablePanels, ResizablePanelsView,
     ResizableView, RustHighlighter, ScrollContainer, ScrollContainerView, ScrollState,
     SelectionState, Separator, SeparatorStyle, SidebarItem, SidebarItemView, SidebarNav,
@@ -93,10 +96,10 @@ pub use components::{
     SortDirection, SortState, Spinner, SpinnerView, SpinnerWidget, TitleState, Tooltip,
     TooltipView, WithTitle, alert, button, button_group, colored_text_column, data_grid,
     dropdown_button, filtered_indices, group_box, h_resizable, h_resizable_panels, icon, label,
-    notification, notification_layer, notification_stack, optional_text_column, popover,
-    range_slider, read_only_text, scroll_container, separator, sidebar_item, sidebar_nav,
-    sidebar_panel, slider, spinner, text_column, toggle_button_group, tooltip, v_resizable,
-    v_resizable_panels,
+    notification, notification_layer, notification_overlay, notification_stack,
+    optional_text_column, popover, range_slider, read_only_text, scroll_container, separator,
+    sidebar_item, sidebar_nav, sidebar_panel, slider, spinner, text_column, toggle_button_group,
+    tooltip, v_resizable, v_resizable_panels,
 };
 pub use floating::{FloatingOverlay, FloatingOverlayView, floating, interactive_floating};
 #[cfg(feature = "gallery")]
