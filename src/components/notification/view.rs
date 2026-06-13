@@ -22,6 +22,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use masonry::accesskit::Live;
 use masonry::core::ArcStr;
 use masonry::layout::UnitPoint;
 use masonry::widgets::SizedBox;
@@ -203,6 +204,14 @@ impl<C> Notification<C> {
              so its host can run the countdown independent of flex_col positional reuse"
         );
         let armed_at = timeout.and(self.created_at);
+        // Errors interrupt assistive technology immediately (`Role::Alert` +
+        // `Live::Assertive`); other variants announce politely once the user
+        // is idle (`Role::Status` + `Live::Polite`) so routine toasts don't
+        // talk over whatever the user is currently doing.
+        let live = match self.variant {
+            AlertVariant::Error => Live::Assertive,
+            _ => Live::Polite,
+        };
         let on_close = self.on_close.clone();
 
         let mut a = alert(self.message).variant(self.variant);
@@ -227,6 +236,7 @@ impl<C> Notification<C> {
             content,
             timeout,
             armed_at,
+            live,
             on_close,
             phantom: PhantomData,
         }
@@ -241,6 +251,7 @@ pub struct NotificationView<V, C, State, Action> {
     content: V,
     timeout: Option<Duration>,
     armed_at: Option<Instant>,
+    live: Live,
     on_close: C,
     phantom: PhantomData<fn(State) -> Action>,
 }
@@ -259,7 +270,12 @@ where
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let (child, child_state) = self.content.build(ctx, app_state);
-        let widget = NotificationHost::new(child.new_widget.erased(), self.timeout, self.armed_at);
+        let widget = NotificationHost::new(
+            child.new_widget.erased(),
+            self.timeout,
+            self.armed_at,
+            self.live,
+        );
         // `with_action_widget` registers the widget as an action source so
         // `NotificationTimeout` bubbles up to this view's `message` handler.
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));

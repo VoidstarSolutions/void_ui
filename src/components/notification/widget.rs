@@ -9,7 +9,7 @@
 
 use std::time::Duration;
 
-use masonry::accesskit::{Node, Role};
+use masonry::accesskit::{Live, Node, Role};
 use masonry::core::{
     AccessCtx, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, PaintCtx, PropertiesMut,
     PropertiesRef, RegisterCtx, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
@@ -33,6 +33,7 @@ pub struct NotificationHost {
     child: WidgetPod<dyn Widget>,
     timeout: Option<Duration>,
     armed_at: Option<Instant>,
+    live: Live,
 }
 
 impl NotificationHost {
@@ -42,16 +43,23 @@ impl NotificationHost {
     /// `armed_at` is the toast's own creation/appearance time, owned by the
     /// host application (e.g. stored on its toast entry); see
     /// [`Self::set_timeout`].
+    ///
+    /// `live` controls how assistive technology announces this toast when it
+    /// appears: [`Live::Assertive`] interrupts immediately (for errors),
+    /// [`Live::Polite`] announces once the user is idle (for routine
+    /// toasts).
     #[must_use]
     pub fn new(
         child: NewWidget<impl Widget + ?Sized>,
         timeout: Option<Duration>,
         armed_at: Option<Instant>,
+        live: Live,
     ) -> Self {
         Self {
             child: child.erased().to_pod(),
             timeout,
             armed_at,
+            live,
         }
     }
 
@@ -141,15 +149,19 @@ impl Widget for NotificationHost {
     }
 
     fn accessibility_role(&self) -> Role {
-        Role::GenericContainer
+        match self.live {
+            Live::Assertive => Role::Alert,
+            Live::Polite | Live::Off => Role::Status,
+        }
     }
 
     fn accessibility(
         &mut self,
         _ctx: &mut AccessCtx<'_>,
         _props: &PropertiesRef<'_>,
-        _node: &mut Node,
+        node: &mut Node,
     ) {
+        node.set_live(self.live);
     }
 
     fn children_ids(&self) -> ChildrenIds {
@@ -171,7 +183,7 @@ mod tests {
         armed_at: Option<Instant>,
     ) -> TestHarness<NotificationHost> {
         let child = NewWidget::new(Label::new("toast")).erased();
-        let widget = NotificationHost::new(child, timeout, armed_at);
+        let widget = NotificationHost::new(child, timeout, armed_at, Live::Polite);
         TestHarness::create(default_property_set(), NewWidget::new(widget))
     }
 
