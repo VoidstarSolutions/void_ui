@@ -316,6 +316,27 @@ pub(crate) enum OwnerKind {
     DropdownButton,
 }
 
+/// Visibility placement for a portal child: who owns it (for outside-press
+/// notification), where it's anchored, and how far to offset it. Grouped
+/// into one struct so [`PortalSlot::set_visible`] /
+/// [`crate::overlay_scope::OverlayScope::set_portal_visible`] stay under
+/// clippy's `too_many_arguments`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PortalPlacement {
+    /// Owner to notify when an outside press dismisses this child. `None` in
+    /// tests / ownerless pushes.
+    pub owner: Option<WidgetId>,
+    pub owner_kind: OwnerKind,
+    /// Trigger's anchor rect. In window coordinates for
+    /// [`crate::overlay_scope::OverlayScope::set_portal_visible`], converted
+    /// to the scope's local coordinates before reaching
+    /// [`PortalSlot::set_visible`]. Ignored for
+    /// [`PopoverAnchor::ViewportQuarter`] — pass [`Rect::ZERO`].
+    pub rect: Rect,
+    pub anchor: PopoverAnchor,
+    pub gap: f64,
+}
+
 /// One permanently-mounted popover surface inside the slot.
 struct PortalChild {
     key: u64,
@@ -439,30 +460,26 @@ impl PortalSlot {
         this: &mut WidgetMut<'_, Self>,
         key: u64,
         visible: bool,
-        owner: Option<WidgetId>,
-        owner_kind: OwnerKind,
-        placement: Rect,
-        anchor: PopoverAnchor,
-        gap: f64,
+        placement: PortalPlacement,
     ) {
         let Some(child) = this.widget.children.iter_mut().find(|c| c.key == key) else {
             return;
         };
         if child.visible == visible
-            && child.owner == owner
-            && child.owner_kind == owner_kind
-            && child.placement == placement
-            && child.anchor == anchor
-            && (child.gap - gap).abs() < f64::EPSILON
+            && child.owner == placement.owner
+            && child.owner_kind == placement.owner_kind
+            && child.placement == placement.rect
+            && child.anchor == placement.anchor
+            && (child.gap - placement.gap).abs() < f64::EPSILON
         {
             return;
         }
         child.visible = visible;
-        child.owner = owner;
-        child.owner_kind = owner_kind;
-        child.placement = placement;
-        child.anchor = anchor;
-        child.gap = gap;
+        child.owner = placement.owner;
+        child.owner_kind = placement.owner_kind;
+        child.placement = placement.rect;
+        child.anchor = placement.anchor;
+        child.gap = placement.gap;
         this.ctx.request_layout();
     }
 
@@ -860,11 +877,13 @@ mod tests {
                 &mut wm,
                 key,
                 true,
-                None,
-                OwnerKind::Popover,
-                placement,
-                PopoverAnchor::BottomStart,
-                4.0,
+                PortalPlacement {
+                    owner: None,
+                    owner_kind: OwnerKind::Popover,
+                    rect: placement,
+                    anchor: PopoverAnchor::BottomStart,
+                    gap: 4.0,
+                },
             );
         });
         harness.edit_root_widget(|wm| {
@@ -883,11 +902,13 @@ mod tests {
                 &mut wm,
                 key,
                 true,
-                None,
-                OwnerKind::Dialog,
-                Rect::ZERO,
-                PopoverAnchor::ViewportQuarter,
-                0.0,
+                PortalPlacement {
+                    owner: None,
+                    owner_kind: OwnerKind::Dialog,
+                    rect: Rect::ZERO,
+                    anchor: PopoverAnchor::ViewportQuarter,
+                    gap: 0.0,
+                },
             );
         });
         harness.edit_root_widget(|wm| {
@@ -924,11 +945,13 @@ mod tests {
                 &mut wm,
                 key,
                 true,
-                None,
-                OwnerKind::Popover,
-                placement,
-                PopoverAnchor::BottomStart,
-                0.0,
+                PortalPlacement {
+                    owner: None,
+                    owner_kind: OwnerKind::Popover,
+                    rect: placement,
+                    anchor: PopoverAnchor::BottomStart,
+                    gap: 0.0,
+                },
             );
         });
         // A press far away from both the placed content and the trigger rect.
@@ -949,11 +972,13 @@ mod tests {
                 &mut wm,
                 key,
                 true,
-                None,
-                OwnerKind::Popover,
-                placement,
-                PopoverAnchor::BottomStart,
-                0.0,
+                PortalPlacement {
+                    owner: None,
+                    owner_kind: OwnerKind::Popover,
+                    rect: placement,
+                    anchor: PopoverAnchor::BottomStart,
+                    gap: 0.0,
+                },
             );
         });
         let inside_content = harness.edit_root_widget(|wm| wm.widget.children[0].placed.center());
@@ -988,11 +1013,13 @@ mod tests {
                 &mut wm,
                 key,
                 true,
-                None,
-                OwnerKind::Popover,
-                placement,
-                PopoverAnchor::BottomStart,
-                0.0,
+                PortalPlacement {
+                    owner: None,
+                    owner_kind: OwnerKind::Popover,
+                    rect: placement,
+                    anchor: PopoverAnchor::BottomStart,
+                    gap: 0.0,
+                },
             );
         });
         let inside = harness.edit_root_widget(|wm| wm.widget.children[0].placed.center());

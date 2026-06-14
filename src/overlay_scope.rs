@@ -270,18 +270,12 @@ impl OverlayScope {
         this: &mut WidgetMut<'_, Self>,
         key: u64,
         visible: bool,
-        owner: Option<WidgetId>,
-        owner_kind: OwnerKind,
-        anchor_rect_window: Rect,
-        anchor: PopoverAnchor,
-        gap: f64,
+        placement: PortalPlacement,
     ) {
-        let local_origin = this.ctx.to_local(anchor_rect_window.origin());
-        let placement = Rect::from_origin_size(local_origin, anchor_rect_window.size());
+        let local_origin = this.ctx.to_local(placement.rect.origin());
+        let rect = Rect::from_origin_size(local_origin, placement.rect.size());
         let mut slot = Self::portal_slot_mut(this);
-        PortalSlot::set_visible(
-            &mut slot, key, visible, owner, owner_kind, placement, anchor, gap,
-        );
+        PortalSlot::set_visible(&mut slot, key, visible, PortalPlacement { rect, ..placement });
     }
 
     /// Re-anchor a visible portal child as its trigger moves.
@@ -972,11 +966,13 @@ mod tests {
                 &mut wm,
                 key,
                 true,
-                None,
-                OwnerKind::Popover,
-                Rect::new(10.0, 10.0, 110.0, 40.0),
-                PopoverAnchor::BottomStart,
-                4.0,
+                PortalPlacement {
+                    owner: None,
+                    owner_kind: OwnerKind::Popover,
+                    rect: Rect::new(10.0, 10.0, 110.0, 40.0),
+                    anchor: PopoverAnchor::BottomStart,
+                    gap: 4.0,
+                },
             );
         });
         (harness, key)
@@ -1065,11 +1061,13 @@ mod tests {
                 &mut wm,
                 key,
                 true,
-                None,
-                OwnerKind::Popover,
-                Rect::new(10.0, 10.0, 110.0, 40.0),
-                PopoverAnchor::BottomStart,
-                4.0,
+                PortalPlacement {
+                    owner: None,
+                    owner_kind: OwnerKind::Popover,
+                    rect: Rect::new(10.0, 10.0, 110.0, 40.0),
+                    anchor: PopoverAnchor::BottomStart,
+                    gap: 4.0,
+                },
             );
         });
         // The scope sits at the window origin, so window == local coords and
