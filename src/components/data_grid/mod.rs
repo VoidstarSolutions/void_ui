@@ -13,7 +13,12 @@
 //! Backed by masonry's [`VirtualScroll`][masonry::widgets::VirtualScroll]
 //! for row virtualization, and wrapped in a horizontal-only
 //! [`scroll_container`](crate::components::scroll_container) so columns
-//! wider than the viewport are reachable. Each row (header, body, filter)
+//! wider than the viewport are reachable. That `VirtualScroll` wiring now
+//! lives one layer down in the crate-internal `collection` substrate: row
+//! virtualization, selection, scroll-to, and keyboard nav are provided by
+//! that substrate (the grid's body is a `collection_body`), while
+//! `data_grid` owns columns, the header, sort/filter, horizontal scroll,
+//! and copy. Each row (header, body, filter)
 //! is a [`column_strip::ColumnStrip`] — a multi-child widget that places
 //! cells at authoritative x-positions from a shared width list, so the
 //! three rows share column geometry *by construction* (independent
@@ -21,16 +26,16 @@
 //! also owns its column-boundary drag zones, like masonry's `Split` owns
 //! its bar. The rest is xilem stock plus three small custom masonry
 //! wrappers: [`copy_shortcut::CopyOnShortcut`] (catches Ctrl/Cmd+C and
-//! dumps a TSV payload to the clipboard), [`row_click::RowClickable`]
+//! dumps a TSV payload to the clipboard), [`RowClickable`]
 //! (emits modifier-aware row clicks for selection), and
 //! [`header_click::HeaderClickable`] (emits a plain click on a column
 //! header to emit a sort-cycle request).
 //!
 //! Entry points: [`view::data_grid`] for the xilem view,
 //! [`column::ColumnDef`] for the per-column contract,
-//! [`selection::SelectionState`] for the selection model,
+//! [`SelectionState`] for the selection model,
 //! [`sort::SortState`] for the sort model,
-//! [`scroll::ScrollState`] for programmatic scroll-to-row.
+//! [`ScrollState`] for programmatic scroll-to-row.
 //!
 //! ## The host owns row order (sorting *and* filtering)
 //!
@@ -82,7 +87,7 @@
 //!
 //! ## Selection is keyed by stable row id
 //!
-//! Selection ([`selection::SelectionState`]) is keyed by a **stable row
+//! Selection ([`SelectionState`]) is keyed by a **stable row
 //! id** supplied via [`DataGrid::row_id`](view::DataGrid::row_id) — the
 //! `getRowId` contract from `TanStack`/AG Grid/Kendo — *not* by slice
 //! position. Because the host reorders the slice when sorting/filtering,
@@ -155,14 +160,13 @@ pub mod copy_shortcut;
 pub mod demo;
 pub mod filter;
 pub mod header_click;
-pub mod row_click;
-pub mod scroll;
-pub mod selection;
-mod single_child;
 pub mod sort;
 pub mod view;
 pub mod width;
 
+pub use crate::collection::ScrollState;
+pub use crate::collection::SelectionState;
+pub use crate::collection::row_click::{RowClickAction, RowClickable};
 pub use column::{
     CellAlign, ColumnDef, ColumnId, RowComparator, RowFilter, colored_text_column,
     optional_text_column, text_column,
@@ -171,9 +175,6 @@ pub use column_strip::{ColumnResize, ColumnStrip, SeparatorStyle};
 pub use copy_shortcut::CopyOnShortcut;
 pub use filter::{FilterState, filtered_indices};
 pub use header_click::{HeaderClickable, HeaderClicked};
-pub use row_click::{RowClickAction, RowClickable};
-pub use scroll::ScrollState;
-pub use selection::SelectionState;
 pub use sort::{SortDirection, SortState, sort_indices};
 pub use view::{DataGrid, data_grid};
 pub use width::{ColumnWidths, MIN_COLUMN_WIDTH};

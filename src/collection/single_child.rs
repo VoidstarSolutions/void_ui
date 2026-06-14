@@ -1,8 +1,8 @@
 //! Shared plumbing for the grid's single-child pass-through widgets.
 //!
 //! [`RowClickable`](super::row_click::RowClickable),
-//! [`HeaderClickable`](super::header_click::HeaderClickable), and
-//! [`CopyOnShortcut`](super::copy_shortcut::CopyOnShortcut) each wrap one
+//! [`HeaderClickable`](crate::components::data_grid::header_click::HeaderClickable), and
+//! [`CopyOnShortcut`](crate::components::data_grid::copy_shortcut::CopyOnShortcut) each wrap one
 //! child and exist only to intercept an event (a pointer click, a copy
 //! shortcut) — their measure / layout / child-registration are *identical*
 //! transparent delegations to that child. Rather than copy those four
@@ -16,7 +16,7 @@
 //! "delegate to child" with no hidden control flow.
 //!
 //! Scope is the *single*-child wrappers only.
-//! [`ColumnStrip`](super::column_strip::ColumnStrip) is a multi-child
+//! [`ColumnStrip`](crate::components::data_grid::column_strip::ColumnStrip) is a multi-child
 //! widget with authoritative-x layout, so it shares none of this and is
 //! intentionally left out.
 
@@ -26,9 +26,9 @@ use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 
 /// Transparent [`Widget::measure`]: report exactly the child's measurement
 /// along `axis` (the wrapper adds no size of its own).
-pub(super) fn measure(
+pub(crate) fn measure<W: Widget + ?Sized>(
     ctx: &mut MeasureCtx<'_>,
-    child: &mut WidgetPod<dyn Widget>,
+    child: &mut WidgetPod<W>,
     axis: Axis,
     len_req: LenReq,
     cross_length: Option<Length>,
@@ -45,7 +45,11 @@ pub(super) fn measure(
 
 /// Transparent [`Widget::layout`]: size the child to fill the wrapper,
 /// place it at the origin, and inherit its baselines.
-pub(super) fn layout(ctx: &mut LayoutCtx<'_>, child: &mut WidgetPod<dyn Widget>, size: Size) {
+pub(crate) fn layout<W: Widget + ?Sized>(
+    ctx: &mut LayoutCtx<'_>,
+    child: &mut WidgetPod<W>,
+    size: Size,
+) {
     let child_size = ctx.compute_size(child, SizeDef::fixed(size), size.into());
     ctx.run_layout(child, child_size);
     ctx.place_child(child, Point::ORIGIN);
@@ -53,11 +57,14 @@ pub(super) fn layout(ctx: &mut LayoutCtx<'_>, child: &mut WidgetPod<dyn Widget>,
 }
 
 /// [`Widget::register_children`] for a lone child.
-pub(super) fn register_children(ctx: &mut RegisterCtx<'_>, child: &mut WidgetPod<dyn Widget>) {
+pub(crate) fn register_children<W: Widget + ?Sized>(
+    ctx: &mut RegisterCtx<'_>,
+    child: &mut WidgetPod<W>,
+) {
     ctx.register_child(child);
 }
 
 /// [`Widget::children_ids`] for a lone child.
-pub(super) fn children_ids(child: &WidgetPod<dyn Widget>) -> ChildrenIds {
+pub(crate) fn children_ids<W: Widget + ?Sized>(child: &WidgetPod<W>) -> ChildrenIds {
     ChildrenIds::from_slice(&[child.id()])
 }

@@ -13,7 +13,7 @@
 //! or hides columns (the same stable-identity contract as
 //! [`SortState`](super::sort::SortState) /
 //! [`FilterState`](super::filter::FilterState) /
-//! [`SelectionState`](super::selection::SelectionState)). Held in host
+//! [`SelectionState`](super::SelectionState)). Held in host
 //! state and read by the grid through a snapshot: the grid never owns the
 //! data, it owns the *interaction* state via a lens.
 //!

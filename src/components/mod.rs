@@ -26,6 +26,7 @@ pub mod group_box;
 pub mod icon;
 pub mod input;
 pub mod label;
+pub mod list;
 pub mod popover;
 pub mod radio;
 pub mod resizable;
@@ -58,6 +59,7 @@ pub use input::{
     format_currency, format_mask, input, masked_input, number_input,
 };
 pub use label::{Label, LabelAlignment, label};
+pub use list::{List, list};
 pub use popover::{Popover, PopoverAnchor, PopoverHost, PopoverView, popover};
 pub use resizable::{
     MIN_PANEL_SIZE, Resizable, ResizablePanel, ResizablePanels, ResizablePanelsView, ResizableView,
@@ -99,6 +101,7 @@ pub enum ComponentKind {
     Icon,
     Input,
     Label,
+    List,
     Popover,
     Radio,
     Resizable,
@@ -131,6 +134,7 @@ impl ComponentKind {
             Self::Icon => "Icon",
             Self::Input => "Input",
             Self::Label => "Label",
+            Self::List => "List",
             Self::Popover => "Popover",
             Self::Radio => "Radio",
             Self::Resizable => "Resizable",
@@ -163,6 +167,7 @@ impl ComponentKind {
             Self::Icon,
             Self::Input,
             Self::Label,
+            Self::List,
             Self::Popover,
             Self::Radio,
             Self::Resizable,

@@ -3,7 +3,7 @@
 //! Filtering follows the grid's "host owns the data, the grid owns the
 //! UI + state" split. The grid never mutates or hides rows itself:
 //! instead it exposes a [`FilterState`] (held by the host, read/written
-//! through a lens like [`super::selection::SelectionState`]) plus the
+//! through a lens like [`super::SelectionState`]) plus the
 //! pure [`filtered_indices`] helper. The host calls that helper where it
 //! has its data in hand, materializes the surviving rows, and passes
 //! their count + accessor back to the grid — so virtualization and

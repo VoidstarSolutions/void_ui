@@ -28,11 +28,11 @@ use super::column::{
     CellAlign, ColumnDef, ColumnId, colored_text_column, optional_text_column, text_column,
 };
 use super::filter::{FilterState, filtered_indices};
-use super::scroll::ScrollState;
-use super::selection::SelectionState;
 use super::sort::{SortState, sort_indices};
 use super::width::ColumnWidths;
 use crate::Theme;
+use crate::collection::ScrollState;
+use crate::collection::SelectionState;
 
 const START_PRICE_UNITS: i64 = 100_000_000_000; // $100.00 in 1e-9 units.
 const TICK_INTERVAL_NS: i64 = 100_000_000; // 100 ms between synthetic trades.

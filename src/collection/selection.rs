@@ -1,4 +1,4 @@
-//! Row-selection state for [`super::data_grid`].
+//! Row-selection state for the virtualized collection components.
 //!
 //! Selection is row-only in v1. The model is the standard "anchor +
 //! set" pattern used by every spreadsheet and file manager:
@@ -15,16 +15,14 @@
 //! ## Keyed by stable row id, not position
 //!
 //! Each selected row is identified by a **stable row id** (`u64`)
-//! supplied by the host via
-//! [`DataGrid::row_id`](super::view::DataGrid::row_id) — *not* by its
+//! supplied by the host's row-id projector — *not* by its
 //! position in the row slice. This is the same `getRowId` contract every
 //! production grid uses (`TanStack` Table, AG Grid, Kendo): because the
 //! host now owns row order (sorting and filtering both reorder or trim the
-//! slice — see [`super::sort`]/[`super::filter`]), a positional key would
-//! point at a *different* row after any sort or filter change. Keying on
-//! a stable id makes the selection **follow its rows** across reordering
-//! for free — the documented failure mode of index keying is exactly the
-//! bug this avoids.
+//! slice), a positional key would point at a *different* row after any sort
+//! or filter change. Keying on a stable id makes the selection **follow its
+//! rows** across reordering for free — the documented failure mode of index
+//! keying is exactly the bug this avoids.
 //!
 //! Ids are `u64` so 1M+ row grids fit; the underlying [`BTreeSet`] keeps
 //! them sorted and de-duplicated. (The de-dup order is *id* order, which
