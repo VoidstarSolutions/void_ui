@@ -152,6 +152,7 @@ impl<C> Notification<C> {
     /// Disable auto-dismiss; the card persists until the user clicks X.
     pub fn no_timeout(mut self) -> Self {
         self.timeout = None;
+        self.timeout_explicit = false;
         self
     }
 
@@ -531,6 +532,18 @@ mod tests {
         let theme = Theme::default();
         // No explicit .with_timeout() call — the default DEFAULT_TIMEOUT must not panic.
         let _ = notification("hi").render::<(), ()>(&theme);
+    }
+
+    #[test]
+    fn no_timeout_after_with_timeout_does_not_panic_without_on_close() {
+        let theme = Theme::default();
+        // .no_timeout() after .with_timeout() clears the explicit-timeout
+        // flag too, so this must not trigger the "with_timeout() has no
+        // effect without on_close()" panic.
+        let _ = notification("hi")
+            .with_timeout(std::time::Duration::from_secs(2))
+            .no_timeout()
+            .render::<(), ()>(&theme);
     }
 
     #[test]
