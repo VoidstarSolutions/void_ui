@@ -43,7 +43,7 @@ use crate::components::button::ButtonVariant;
 use crate::components::button::widget::ThemedButton;
 use crate::components::icon::IconName;
 use crate::components::popover::PopoverAnchor;
-use crate::overlay_portal::{OwnerKind, PortalSlot};
+use crate::overlay_portal::{OwnerKind, PortalSlot, PortalVisibility};
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
 /// Action type emitted by [`ThemedDropdownButton`].
@@ -129,11 +129,13 @@ macro_rules! close_menu_body {
                             &mut scope,
                             key,
                             false,
-                            None,
-                            OwnerKind::DropdownButton,
-                            Rect::ZERO,
-                            PopoverAnchor::BottomStart,
-                            0.0,
+                            PortalVisibility {
+                                owner: None,
+                                owner_kind: OwnerKind::DropdownButton,
+                                rect: Rect::ZERO,
+                                anchor: PopoverAnchor::BottomStart,
+                                gap: 0.0,
+                            },
                         );
                     });
                 }
@@ -171,11 +173,13 @@ macro_rules! open_menu_body {
                             &mut scope,
                             key,
                             true,
-                            Some(owner_id),
-                            OwnerKind::DropdownButton,
-                            rect,
-                            PopoverAnchor::BottomStart,
-                            0.0,
+                            PortalVisibility {
+                                owner: Some(owner_id),
+                                owner_kind: OwnerKind::DropdownButton,
+                                rect,
+                                anchor: PopoverAnchor::BottomStart,
+                                gap: 0.0,
+                            },
                         );
                     });
                     $ctx.request_compose();

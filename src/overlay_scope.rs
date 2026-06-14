@@ -59,8 +59,8 @@ use crate::Theme;
 use crate::components::popover::PopoverAnchor;
 use crate::components::popover::widget::{PopoverSurface, SurfaceStyle};
 use crate::overlay_portal::{
-    OverlayPortal, OwnerKind, PortalContentView, PortalContentViewState, PortalPlacement,
-    PortalSlot, portal_from_env,
+    OverlayPortal, PortalContentView, PortalContentViewState, PortalPlacement, PortalSlot, PortalVisibility,
+    portal_from_env,
 };
 
 /// Resource published into the Xilem [`Environment`](xilem_masonry::core::Environment)
@@ -270,12 +270,17 @@ impl OverlayScope {
         this: &mut WidgetMut<'_, Self>,
         key: u64,
         visible: bool,
-        placement: PortalPlacement,
+        placement: PortalVisibility,
     ) {
         let local_origin = this.ctx.to_local(placement.rect.origin());
         let rect = Rect::from_origin_size(local_origin, placement.rect.size());
         let mut slot = Self::portal_slot_mut(this);
-        PortalSlot::set_visible(&mut slot, key, visible, PortalPlacement { rect, ..placement });
+        PortalSlot::set_visible(
+            &mut slot,
+            key,
+            visible,
+            PortalVisibility { rect, ..placement },
+        );
     }
 
     /// Re-anchor a visible portal child as its trigger moves.
@@ -877,6 +882,7 @@ mod tests {
     use masonry::testing::TestHarness;
 
     use super::*;
+    use crate::overlay_portal::OwnerKind;
 
     /// Scope content standing in for "the app under the popover": records
     /// every pointer Down and Scroll delivered to it, so tests can assert
@@ -966,7 +972,7 @@ mod tests {
                 &mut wm,
                 key,
                 true,
-                PortalPlacement {
+                PortalVisibility {
                     owner: None,
                     owner_kind: OwnerKind::Popover,
                     rect: Rect::new(10.0, 10.0, 110.0, 40.0),
@@ -1061,7 +1067,7 @@ mod tests {
                 &mut wm,
                 key,
                 true,
-                PortalPlacement {
+                PortalVisibility {
                     owner: None,
                     owner_kind: OwnerKind::Popover,
                     rect: Rect::new(10.0, 10.0, 110.0, 40.0),
@@ -1097,11 +1103,13 @@ mod tests {
                 &mut wm,
                 key,
                 true,
-                None,
-                OwnerKind::Dialog,
-                Rect::ZERO,
-                PopoverAnchor::ViewportQuarter,
-                0.0,
+                PortalVisibility {
+                    owner: None,
+                    owner_kind: OwnerKind::Dialog,
+                    rect: Rect::ZERO,
+                    anchor: PopoverAnchor::ViewportQuarter,
+                    gap: 0.0,
+                },
             );
         });
         harness.mouse_move(masonry::kurbo::Point::ZERO);

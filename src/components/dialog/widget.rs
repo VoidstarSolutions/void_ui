@@ -17,7 +17,7 @@ use masonry::kurbo::{Axis, Rect, Size};
 use masonry::layout::{LenReq, Length};
 
 use crate::components::popover::PopoverAnchor;
-use crate::overlay_portal::OwnerKind;
+use crate::overlay_portal::{OwnerKind, PortalVisibility};
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
 /// Action submitted by [`DialogHost`] when the portal slot dismisses the
@@ -65,11 +65,13 @@ macro_rules! push_visibility_body {
                 &mut scope,
                 key,
                 open,
-                Some(owner),
-                OwnerKind::Dialog,
-                Rect::ZERO,
-                PopoverAnchor::ViewportQuarter,
-                0.0,
+                PortalVisibility {
+                    owner: Some(owner),
+                    owner_kind: OwnerKind::Dialog,
+                    rect: Rect::ZERO,
+                    anchor: PopoverAnchor::ViewportQuarter,
+                    gap: 0.0,
+                },
             );
         });
     }};

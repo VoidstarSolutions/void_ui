@@ -41,7 +41,7 @@ use super::PopoverAnchor;
 use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
 use crate::components::click::{self, ClickPhase};
-use crate::overlay_portal::OwnerKind;
+use crate::overlay_portal::{OwnerKind, PortalVisibility};
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
 /// Corner radius of the popover surface's chrome.
@@ -220,11 +220,13 @@ impl PopoverHost {
                 &mut scope,
                 key,
                 true,
-                Some(owner_id),
-                OwnerKind::Popover,
-                rect,
-                anchor,
-                gap,
+                PortalVisibility {
+                    owner: Some(owner_id),
+                    owner_kind: OwnerKind::Popover,
+                    rect,
+                    anchor,
+                    gap,
+                },
             );
         });
     }
@@ -316,11 +318,13 @@ macro_rules! push_open_state_body {
                         &mut scope,
                         key,
                         $open,
-                        Some(owner_id),
-                        OwnerKind::Popover,
-                        rect,
-                        anchor,
-                        gap,
+                        PortalVisibility {
+                            owner: Some(owner_id),
+                            owner_kind: OwnerKind::Popover,
+                            rect,
+                            anchor,
+                            gap,
+                        },
                     );
                 });
                 if $open {
@@ -470,11 +474,13 @@ impl Widget for PopoverHost {
                                     &mut scope,
                                     key,
                                     false,
-                                    None,
-                                    OwnerKind::Popover,
-                                    Rect::ZERO,
-                                    PopoverAnchor::BottomStart,
-                                    0.0,
+                                    PortalVisibility {
+                                        owner: None,
+                                        owner_kind: OwnerKind::Popover,
+                                        rect: Rect::ZERO,
+                                        anchor: PopoverAnchor::BottomStart,
+                                        gap: 0.0,
+                                    },
                                 );
                             });
                         }
