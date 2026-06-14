@@ -48,24 +48,6 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Default fixed width for a [`notification_overlay`]'s toast stack, in px.
 pub const DEFAULT_NOTIFICATION_WIDTH: f64 = 280.0;
 
-/// Marker trait for [`Notification::on_close`] callbacks.
-///
-/// In addition to [`CloseCallback`] (shared with [`crate::components::alert::Alert`]),
-/// a [`Notification`] needs its close callback in two places — the close
-/// button (via the inner [`Alert`](crate::components::alert::Alert)) and the
-/// auto-dismiss timer — so it must be [`Clone`]. `()` is `Clone`, and
-/// closures with no captures (or `Clone` captures, e.g. a `Copy` toast id)
-/// are `Clone` automatically, so this is rarely a real constraint.
-pub trait DismissCallback<State, Action>:
-    CloseCallback<State, Action> + Clone + Send + Sync + 'static
-{
-}
-
-impl<T, State, Action> DismissCallback<State, Action> for T where
-    T: CloseCallback<State, Action> + Clone + Send + Sync + 'static
-{
-}
-
 /// Builder for a notification (toast) card.
 ///
 /// Created with [`notification`]. Configure with builder methods; materialize
@@ -202,7 +184,12 @@ impl<C> Notification<C> {
     where
         State: 'static,
         Action: 'static,
-        C: DismissCallback<State, Action>,
+        // `Clone` because the close callback is needed in two places — the
+        // close button (via the inner Alert) and the auto-dismiss timer. `()`
+        // is `Clone`, and closures with no captures (or `Clone` captures,
+        // e.g. a `Copy` toast id) are `Clone` automatically, so this is
+        // rarely a real constraint.
+        C: CloseCallback<State, Action> + Clone + Send + Sync + 'static,
     {
         assert!(
             !self.timeout_explicit || C::enabled(),
