@@ -25,6 +25,16 @@
 //! a smaller sub-region. `popover`, by contrast, uses the *nearest* scope.
 //! There is no in-tree fallback: a dialog has no trigger rect to anchor an
 //! `AnchoredOverlay` to, so an `overlay_scope` ancestor is required.
+//!
+//! Because the root portal is looked up by downcasting a type-erased
+//! `OverlayPortal<State, Action>`, a `dialog(...)` view's `State`/`Action`
+//! must match the root `overlay_scope`'s exactly — typically the host
+//! application's own state type. A `dialog` should not be wrapped in its own
+//! (differently-typed) nested `overlay_scope`; demo panels or other
+//! components with their own local state should instead embed their
+//! open/closed flag in the host's state via an `AsMut<...>` host trait, the
+//! way [`crate::components::notification::demo`] and
+//! [`crate::components::dialog::demo`] do.
 
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -205,8 +215,12 @@ where
     type ViewState = DialogViewState<State, Action>;
 
     fn build(&self, ctx: &mut ViewCtx, _app_state: &mut State) -> (Self::Element, Self::ViewState) {
+        // `root_portal` targets the outermost scope ancestor; it only
+        // succeeds if that scope was published for the same `State`/`Action`
+        // pair as this dialog, so dialogs must be rendered with the host
+        // app's own state type (see module docs).
         let portal = root_portal::<State, Action>().expect(
-            "dialog requires an overlay_scope ancestor — wrap the app root (or region) in overlay_scope(...)",
+            "dialog requires a root overlay_scope of matching State/Action — wrap the app root in overlay_scope(...) and render the dialog with the app's own State type",
         );
         let key = portal.register(
             self.content.clone(),
@@ -268,5 +282,38 @@ where
             Some(_) => MessageResult::Nop,
             None => MessageResult::Stale,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use xilem::ViewCtx;
+    use xilem::core::View;
+
+    use super::dialog;
+    use crate::Theme;
+    use crate::label::label;
+    use crate::overlay_scope::overlay_scope;
+    use crate::test_support;
+
+    #[derive(Default)]
+    struct AppState;
+
+    /// A `dialog` rendered with the same `State`/`Action` pair as the root
+    /// `overlay_scope` ancestor registers successfully — this is the only
+    /// supported arrangement (see module docs): the dialog targets the
+    /// outermost scope directly, so its types must match that scope's.
+    #[test]
+    fn dialog_builds_under_a_same_typed_root_overlay_scope() {
+        let theme = Theme::default();
+        let runtime = test_support::current_thread_runtime();
+        let proxy = test_support::noop_proxy();
+
+        let content = label("content").render::<AppState, ()>(&theme);
+        let scope = overlay_scope(dialog(true, content).render(&theme));
+
+        let mut ctx = ViewCtx::new(proxy, runtime);
+        let mut state = AppState;
+        let _ = scope.build(&mut ctx, &mut state);
     }
 }

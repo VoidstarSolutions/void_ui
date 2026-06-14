@@ -1,4 +1,12 @@
 //! Dialog demo panel used by the void-ui gallery.
+//!
+//! A dialog registers with the *root* [`crate::overlay_scope`] (see
+//! [`crate::overlay_scope::root_portal`]) so it's centered over the whole
+//! window, not just this panel — which means it needs `State`/`Action` type
+//! parameters matching that root scope's. So, like the notification demo (see
+//! `project_xilem_local_state` in memory), this panel's open/closed flag
+//! lives in the host application's state rather than being owned locally: the
+//! host's state must implement [`AsMut<DialogDemoState>`].
 
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::layout::Length;
@@ -12,37 +20,24 @@ use crate::Theme;
 use crate::components::ButtonVariant;
 use crate::components::button::button;
 use crate::label;
-use crate::overlay_scope::overlay_scope;
 use crate::separator;
 use crate::with_source;
 
-#[derive(Debug, Default)]
-struct DialogDemo {
-    open: bool,
+/// Open/closed flag for the dialog demo.
+///
+/// Owned by the host application's state (e.g. `examples/gallery.rs`'s
+/// `State`) so the dialog can register with the root `overlay_scope`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DialogDemoState {
+    pub open: bool,
 }
 
-type InnerView = Box<AnyWidgetView<DialogDemo>>;
-type InnerViewState = <InnerView as View<DialogDemo, (), ViewCtx>>::ViewState;
+/// Implemented by host state types that embed a [`DialogDemoState`].
+pub trait DialogDemoHost: AsMut<DialogDemoState> + 'static {}
 
-/// Opaque state owned by the dialog demo panel.
-pub struct DialogDemoPanel {
-    theme: Theme,
-}
+impl<S: AsMut<DialogDemoState> + 'static> DialogDemoHost for S {}
 
-#[doc(hidden)]
-pub struct DialogDemoPanelState {
-    state: DialogDemo,
-    inner_view: InnerView,
-    inner_state: InnerViewState,
-}
-
-/// Renders the Dialog demo panel.
-#[must_use]
-pub fn panel(theme: &Theme) -> DialogDemoPanel {
-    DialogDemoPanel { theme: *theme }
-}
-
-fn dialog_content(theme: &Theme) -> impl WidgetView<DialogDemo> + use<> {
+fn dialog_content<S: DialogDemoHost>(theme: &Theme) -> impl WidgetView<S, ()> + use<S> {
     flex_col((
         label("Dialog title")
             .text_size(theme.typography.size_title)
@@ -54,11 +49,11 @@ fn dialog_content(theme: &Theme) -> impl WidgetView<DialogDemo> + use<> {
             .render(theme),
         separator().render(theme),
         flex_row((
-            button(|state: &mut DialogDemo| state.open = false)
+            button(|s: &mut S| s.as_mut().open = false)
                 .label("Cancel")
                 .variant(ButtonVariant::Secondary)
                 .render(theme),
-            button(|state: &mut DialogDemo| state.open = false)
+            button(|s: &mut S| s.as_mut().open = false)
                 .label("Confirm")
                 .render(theme),
         ))
@@ -69,15 +64,15 @@ fn dialog_content(theme: &Theme) -> impl WidgetView<DialogDemo> + use<> {
     .gap(Length::px(12.0))
 }
 
-fn basic_row(theme: &Theme, open: bool) -> impl WidgetView<DialogDemo> + use<> {
+fn basic_row<S: DialogDemoHost>(theme: &Theme, open: bool) -> impl WidgetView<S, ()> + use<S> {
     with_source!(theme, {
         flex_col((
-            button(|state: &mut DialogDemo| state.open = true)
+            button(|s: &mut S| s.as_mut().open = true)
                 .label("Open Dialog")
                 .render(theme),
-            dialog(open, dialog_content(theme))
+            dialog(open, dialog_content::<S>(theme))
                 .show_close_button()
-                .on_dismiss(|state: &mut DialogDemo| state.open = false)
+                .on_dismiss(|s: &mut S| s.as_mut().open = false)
                 .render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
@@ -85,7 +80,7 @@ fn basic_row(theme: &Theme, open: bool) -> impl WidgetView<DialogDemo> + use<> {
     })
 }
 
-fn build_inner(theme: &Theme, open: bool) -> impl WidgetView<DialogDemo> + use<> {
+fn build_inner<S: DialogDemoHost>(theme: &Theme, open: bool) -> impl WidgetView<S, ()> + use<S> {
     let title_block = flex_col((
         label("Dialog")
             .text_size(theme.typography.size_title)
@@ -99,30 +94,52 @@ fn build_inner(theme: &Theme, open: bool) -> impl WidgetView<DialogDemo> + use<>
     .cross_axis_alignment(CrossAxisAlignment::Start)
     .gap(Length::px(4.0));
 
-    let inner = flex_col((
+    flex_col((
         title_block,
         separator().render(theme),
-        basic_row(theme, open),
+        basic_row::<S>(theme, open),
     ))
     .cross_axis_alignment(CrossAxisAlignment::Start)
-    .gap(Length::px(16.0));
-    overlay_scope(inner)
+    .gap(Length::px(16.0))
+}
+
+type InnerView<S> = Box<AnyWidgetView<S, ()>>;
+type InnerViewState<S> = <InnerView<S> as View<S, (), ViewCtx>>::ViewState;
+
+/// Opaque state owned by the dialog demo panel.
+pub struct DialogDemoPanel {
+    theme: Theme,
+}
+
+#[doc(hidden)]
+pub struct DialogDemoPanelState<S: DialogDemoHost> {
+    inner_view: InnerView<S>,
+    inner_state: InnerViewState<S>,
+}
+
+/// Renders the Dialog demo panel.
+///
+/// `S` must implement [`AsMut<DialogDemoState>`]; the registered dialog
+/// content is centered over the whole window via the root `overlay_scope`
+/// (see [`crate::overlay_scope::root_portal`]).
+#[must_use]
+pub fn panel(theme: &Theme) -> DialogDemoPanel {
+    DialogDemoPanel { theme: *theme }
 }
 
 impl ViewMarker for DialogDemoPanel {}
 
-impl<S: 'static> View<S, (), ViewCtx> for DialogDemoPanel {
-    type ViewState = DialogDemoPanelState;
+impl<S: DialogDemoHost> View<S, (), ViewCtx> for DialogDemoPanel {
+    type ViewState = DialogDemoPanelState<S>;
     type Element = Pod<Passthrough>;
 
-    fn build(&self, ctx: &mut ViewCtx, _: &mut S) -> (Self::Element, Self::ViewState) {
-        let mut state = DialogDemo::default();
-        let inner_view: InnerView = Box::new(build_inner(&self.theme, state.open));
-        let (element, inner_state) = inner_view.build(ctx, &mut state);
+    fn build(&self, ctx: &mut ViewCtx, app_state: &mut S) -> (Self::Element, Self::ViewState) {
+        let open = app_state.as_mut().open;
+        let inner_view: InnerView<S> = Box::new(build_inner::<S>(&self.theme, open));
+        let (element, inner_state) = inner_view.build(ctx, app_state);
         (
             element,
             DialogDemoPanelState {
-                state,
                 inner_view,
                 inner_state,
             },
@@ -132,25 +149,20 @@ impl<S: 'static> View<S, (), ViewCtx> for DialogDemoPanel {
     fn rebuild(
         &self,
         _prev: &Self,
-        vs: &mut DialogDemoPanelState,
+        vs: &mut DialogDemoPanelState<S>,
         ctx: &mut ViewCtx,
         element: Mut<'_, Pod<Passthrough>>,
-        _: &mut S,
+        app_state: &mut S,
     ) {
-        let new_inner: InnerView = Box::new(build_inner(&self.theme, vs.state.open));
-        new_inner.rebuild(
-            &vs.inner_view,
-            &mut vs.inner_state,
-            ctx,
-            element,
-            &mut vs.state,
-        );
+        let open = app_state.as_mut().open;
+        let new_inner: InnerView<S> = Box::new(build_inner::<S>(&self.theme, open));
+        new_inner.rebuild(&vs.inner_view, &mut vs.inner_state, ctx, element, app_state);
         vs.inner_view = new_inner;
     }
 
     fn teardown(
         &self,
-        vs: &mut DialogDemoPanelState,
+        vs: &mut DialogDemoPanelState<S>,
         ctx: &mut ViewCtx,
         element: Mut<'_, Pod<Passthrough>>,
     ) {
@@ -159,12 +171,12 @@ impl<S: 'static> View<S, (), ViewCtx> for DialogDemoPanel {
 
     fn message(
         &self,
-        vs: &mut DialogDemoPanelState,
+        vs: &mut DialogDemoPanelState<S>,
         message: &mut MessageCtx,
         element: Mut<'_, Pod<Passthrough>>,
-        _: &mut S,
+        app_state: &mut S,
     ) -> MessageResult<()> {
         vs.inner_view
-            .message(&mut vs.inner_state, message, element, &mut vs.state)
+            .message(&mut vs.inner_state, message, element, app_state)
     }
 }

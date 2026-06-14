@@ -464,7 +464,7 @@ mod tests {
     use xilem::ViewCtx;
     use xilem::core::{DynMessage, Environment, MessageCtx, MessageResult, View};
 
-    use super::super::test_support;
+    use crate::test_support;
     use super::super::widget::InputCleared;
     use super::{InputView, byte_pos_after_n_digits, caret_after_edit};
     use crate::Theme;

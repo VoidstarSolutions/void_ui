@@ -59,8 +59,8 @@ use crate::Theme;
 use crate::components::popover::PopoverAnchor;
 use crate::components::popover::widget::{PopoverSurface, SurfaceStyle};
 use crate::overlay_portal::{
-    OverlayPortal, PortalContentView, PortalContentViewState, PortalPlacement, PortalSlot, PortalVisibility,
-    portal_from_env,
+    OverlayPortal, PortalContentView, PortalContentViewState, PortalEntry, PortalPlacement,
+    PortalSlot, PortalVisibility, portal_from_env,
 };
 
 /// Resource published into the Xilem [`Environment`](xilem_masonry::core::Environment)
@@ -556,6 +556,47 @@ fn with_portal_content<R>(
     }
 }
 
+/// Unmount entries in `mounted` whose portal registration is gone from
+/// `entries` (including nested deregistrations discovered on later
+/// iterations of the caller's fixpoint loop — without this, a nested popover
+/// removed while open would linger painted until the next app-state change).
+/// Returns whether anything was unmounted, since teardown can itself
+/// deregister nested entries (after `entries` was snapshotted), so unmounting
+/// counts as progress in the caller's loop — otherwise a cascade of removals
+/// could stall before fully unmounting.
+fn unmount_stale_entries<State: 'static, Action: 'static>(
+    ctx: &mut ViewCtx,
+    element: &mut Mut<'_, Pod<OverlayScope>>,
+    mounted: &mut Vec<MountedEntry<State, Action>>,
+    entries: &[PortalEntry<State, Action>],
+) -> bool {
+    let mut progressed = false;
+    let mut idx = 0;
+    while idx < mounted.len() {
+        let key = mounted[idx].key;
+        if entries.iter().any(|e| e.key == key) {
+            idx += 1;
+            continue;
+        }
+        let mut gone = mounted.remove(idx);
+        progressed = true;
+        {
+            let mut slot = OverlayScope::portal_slot_mut(element);
+            let child = PortalSlot::child_mut(&mut slot, key)
+                .expect("mounted entry must have a slot child");
+            with_portal_content(child, gone.placement, |mut content| {
+                ctx.with_id(ViewId::new(key), |ctx| {
+                    gone.view
+                        .teardown(&mut gone.view_state, ctx, content.downcast());
+                });
+            });
+        }
+        let mut slot = OverlayScope::portal_slot_mut(element);
+        PortalSlot::remove_by_key(&mut slot, key);
+    }
+    progressed
+}
+
 /// The `View` actually wrapped by the nested `provides` in [`overlay_scope`].
 /// Two-part job: it builds the [`OverlayScope`] widget around `content`'s pod
 /// (threading `build`/`rebuild`/`teardown`/`message` through
@@ -712,29 +753,8 @@ where
             // entries (after this pass's snapshot), so unmounting counts as
             // progress — otherwise a cascade of removals could stall before
             // fully unmounting.
-            let mut idx = 0;
-            while idx < view_state.mounted.len() {
-                let key = view_state.mounted[idx].key;
-                if entries.iter().any(|e| e.key == key) {
-                    idx += 1;
-                    continue;
-                }
-                let mut gone = view_state.mounted.remove(idx);
-                progressed = true;
-                {
-                    let mut slot = OverlayScope::portal_slot_mut(&mut element);
-                    let child = PortalSlot::child_mut(&mut slot, key)
-                        .expect("mounted entry must have a slot child");
-                    with_portal_content(child, gone.placement, |mut content| {
-                        ctx.with_id(ViewId::new(key), |ctx| {
-                            gone.view
-                                .teardown(&mut gone.view_state, ctx, content.downcast());
-                        });
-                    });
-                }
-                let mut slot = OverlayScope::portal_slot_mut(&mut element);
-                PortalSlot::remove_by_key(&mut slot, key);
-            }
+            progressed |=
+                unmount_stale_entries(ctx, &mut element, &mut view_state.mounted, &entries);
 
             // Rebuild kept entries, mount new ones — only keys not yet
             // processed this pass. The snapshot supplies only the ORDER and
@@ -790,7 +810,8 @@ where
                     let (pod, vs_new) = ctx.with_id(ViewId::new(entry.key), |ctx| {
                         entry.content.build(ctx, app_state)
                     });
-                    let wrapped = wrap_portal_content(pod, &entry.theme, entry.placement, entry.style);
+                    let wrapped =
+                        wrap_portal_content(pod, &entry.theme, entry.placement, entry.style);
                     let mut slot = OverlayScope::portal_slot_mut(&mut element);
                     PortalSlot::insert(&mut slot, entry.key, wrapped, entry.placement);
                     view_state.mounted.push(MountedEntry {
@@ -1092,7 +1113,11 @@ mod tests {
         let key = 3;
         let content = masonry::widgets::Label::new("content").prepare().erased();
         let popover = masonry::widgets::Label::new("popover").prepare().erased();
-        let scope = OverlayScope::new(OverlayScopeHandle::new(), content, vec![(key, popover)]);
+        let scope = OverlayScope::new(
+            OverlayScopeHandle::new(),
+            content,
+            vec![(key, popover, PortalPlacement::Trigger)],
+        );
         let mut harness = TestHarness::create(
             masonry::theme::default_property_set(),
             NewWidget::new(scope),

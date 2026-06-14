@@ -44,7 +44,6 @@ use crate::components::click::{self, ClickPhase};
 use crate::overlay_portal::{OwnerKind, PortalVisibility};
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
-/// Corner radius of the popover surface's chrome.
 /// Border width of the popover surface's chrome.
 const BORDER_WIDTH: f64 = 1.0;
 
@@ -206,7 +205,7 @@ impl PopoverHost {
             return;
         };
         let key = *key;
-        let owner_id = this.ctx.widget_id();
+        let owner = Some(this.ctx.widget_id());
         let anchor = this.widget.anchor;
         let gap = surface_gap(&this.widget.theme).get();
         let rect = Rect::from_origin_size(
@@ -221,7 +220,7 @@ impl PopoverHost {
                 key,
                 true,
                 PortalVisibility {
-                    owner: Some(owner_id),
+                    owner,
                     owner_kind: OwnerKind::Popover,
                     rect,
                     anchor,
@@ -306,7 +305,7 @@ macro_rules! push_open_state_body {
                     return;
                 };
                 let key = *key;
-                let owner_id = $ctx.widget_id();
+                let owner = Some($ctx.widget_id());
                 let anchor = $self.anchor;
                 let gap = surface_gap(&$self.theme).get();
                 let rect =
@@ -319,7 +318,7 @@ macro_rules! push_open_state_body {
                         key,
                         $open,
                         PortalVisibility {
-                            owner: Some(owner_id),
+                            owner,
                             owner_kind: OwnerKind::Popover,
                             rect,
                             anchor,
