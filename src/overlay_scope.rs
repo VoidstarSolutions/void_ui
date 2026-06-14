@@ -57,7 +57,8 @@ use crate::Theme;
 use crate::components::popover::PopoverAnchor;
 use crate::components::popover::widget::PopoverSurface;
 use crate::overlay_portal::{
-    OverlayPortal, PortalContentView, PortalContentViewState, PortalSlot, portal_from_env,
+    OverlayPortal, PortalContentView, PortalContentViewState, PortalPlacement, PortalSlot,
+    portal_from_env,
 };
 
 /// Resource published into the Xilem [`Environment`](xilem_masonry::core::Environment)
@@ -122,7 +123,7 @@ impl OverlayScope {
     pub(crate) fn new(
         handle: OverlayScopeHandle,
         content: NewWidget<dyn Widget>,
-        portal_children: Vec<(u64, NewWidget<dyn Widget>)>,
+        portal_children: Vec<(u64, NewWidget<dyn Widget>, PortalPlacement)>,
     ) -> Self {
         Self {
             handle,
@@ -427,6 +428,7 @@ struct MountedEntry<State: 'static, Action: 'static> {
     view: Arc<PortalContentView<State, Action>>,
     view_state: PortalContentViewState<State, Action>,
     theme: Theme,
+    placement: PortalPlacement,
 }
 
 #[doc(hidden)]
@@ -440,19 +442,55 @@ pub struct OverlayScopeViewState<State: 'static, Action: 'static, ContentVS> {
 /// (keys start at 1, so 0 is never a portal key).
 const CONTENT_VIEW_ID: ViewId = ViewId::new(0);
 
-/// Wrap freshly-built portal content in the popover chrome: density padding
-/// on the content, [`PopoverSurface`] for background/border. Mirrors
-/// `PopoverHost::new`'s in-tree wrapping so portal and fallback popovers
-/// look identical.
-fn wrap_in_surface(
+/// Wrap freshly-built portal content for mounting in the [`PortalSlot`].
+///
+/// [`PortalPlacement::Trigger`] entries (popovers) get the popover chrome:
+/// density padding on the content, [`PopoverSurface`] for background/border.
+/// Mirrors `PopoverHost::new`'s in-tree wrapping so portal and fallback
+/// popovers look identical.
+///
+/// [`PortalPlacement::Corner`] entries (toast layers) are mounted as-is — the
+/// registered content already carries its own surface/background, and adding
+/// popover chrome would double it up.
+fn wrap_portal_content(
     pod: Pod<masonry::widgets::Passthrough>,
     theme: &Theme,
+    placement: PortalPlacement,
 ) -> NewWidget<dyn Widget> {
-    let mut content = pod.new_widget.erased();
-    content
-        .properties
-        .insert(Padding::all(Length::px(f64::from(theme.density.pad))));
-    NewWidget::new(PopoverSurface::new(content, theme)).erased()
+    match placement {
+        PortalPlacement::Trigger => {
+            let mut content = pod.new_widget.erased();
+            content
+                .properties
+                .insert(Padding::all(Length::px(f64::from(theme.density.pad))));
+            NewWidget::new(PopoverSurface::new(content, theme)).erased()
+        }
+        PortalPlacement::Corner(_) => pod.new_widget.erased(),
+    }
+}
+
+/// Access a mounted portal entry's content widget, i.e. the
+/// `Pod<Passthrough>` that `entry.content` (an `Arc<dyn AnyView<..,
+/// Pod<Passthrough>>>`) builds/rebuilds/tears down directly.
+///
+/// [`PortalPlacement::Trigger`] slot children are that `Passthrough` wrapped
+/// in [`PopoverSurface`] chrome, so unwrap one layer first.
+/// [`PortalPlacement::Corner`] slot children mount the `Passthrough` bare
+/// (see [`wrap_portal_content`]), so `child` (itself type-erased to `dyn
+/// Widget`) already *is* it — the caller's subsequent `.downcast()` resolves
+/// it to `Pod<Passthrough>`.
+fn with_portal_content<R>(
+    mut child: WidgetMut<'_, dyn Widget>,
+    placement: PortalPlacement,
+    f: impl FnOnce(WidgetMut<'_, dyn Widget>) -> R,
+) -> R {
+    match placement {
+        PortalPlacement::Trigger => {
+            let mut surface = child.downcast::<PopoverSurface>();
+            f(PopoverSurface::content_mut(&mut surface))
+        }
+        PortalPlacement::Corner(_) => f(child),
+    }
 }
 
 /// The `View` actually wrapped by the nested `provides` in [`overlay_scope`].
@@ -517,12 +555,14 @@ where
                 let (pod, view_state) = ctx.with_id(ViewId::new(entry.key), |ctx| {
                     entry.content.build(ctx, app_state)
                 });
-                slot_children.push((entry.key, wrap_in_surface(pod, &entry.theme)));
+                let wrapped = wrap_portal_content(pod, &entry.theme, entry.placement);
+                slot_children.push((entry.key, wrapped, entry.placement));
                 mounted.push(MountedEntry {
                     key: entry.key,
                     view: entry.content.clone(),
                     view_state,
                     theme: entry.theme,
+                    placement: entry.placement,
                 });
             }
             if !progressed {
@@ -605,13 +645,13 @@ where
                 progressed = true;
                 {
                     let mut slot = OverlayScope::portal_slot_mut(&mut element);
-                    let mut child = PortalSlot::child_mut(&mut slot, key)
+                    let child = PortalSlot::child_mut(&mut slot, key)
                         .expect("mounted entry must have a slot child");
-                    let mut surface = child.downcast::<PopoverSurface>();
-                    let mut content = PopoverSurface::content_mut(&mut surface);
-                    ctx.with_id(ViewId::new(key), |ctx| {
-                        gone.view
-                            .teardown(&mut gone.view_state, ctx, content.downcast());
+                    with_portal_content(child, gone.placement, |mut content| {
+                        ctx.with_id(ViewId::new(key), |ctx| {
+                            gone.view
+                                .teardown(&mut gone.view_state, ctx, content.downcast());
+                        });
                     });
                 }
                 let mut slot = OverlayScope::portal_slot_mut(&mut element);
@@ -638,36 +678,48 @@ where
                 };
                 if let Some(m) = view_state.mounted.iter_mut().find(|m| m.key == entry.key) {
                     let mut slot = OverlayScope::portal_slot_mut(&mut element);
-                    let mut child = PortalSlot::child_mut(&mut slot, entry.key)
-                        .expect("mounted entry must have a slot child");
-                    let mut surface = child.downcast::<PopoverSurface>();
-                    if m.theme != entry.theme {
-                        PopoverSurface::set_theme(&mut surface, &entry.theme);
-                        m.theme = entry.theme;
+                    match entry.placement {
+                        PortalPlacement::Trigger => {
+                            if m.theme != entry.theme {
+                                let mut child = PortalSlot::child_mut(&mut slot, entry.key)
+                                    .expect("mounted entry must have a slot child");
+                                let mut surface = child.downcast::<PopoverSurface>();
+                                PopoverSurface::set_theme(&mut surface, &entry.theme);
+                            }
+                        }
+                        PortalPlacement::Corner(unit_point) => {
+                            PortalSlot::set_corner(&mut slot, entry.key, unit_point);
+                        }
                     }
-                    let mut content = PopoverSurface::content_mut(&mut surface);
-                    ctx.with_id(ViewId::new(entry.key), |ctx| {
-                        entry.content.rebuild(
-                            &m.view,
-                            &mut m.view_state,
-                            ctx,
-                            content.downcast(),
-                            app_state,
-                        );
+                    let child = PortalSlot::child_mut(&mut slot, entry.key)
+                        .expect("mounted entry must have a slot child");
+                    with_portal_content(child, entry.placement, |mut content| {
+                        ctx.with_id(ViewId::new(entry.key), |ctx| {
+                            entry.content.rebuild(
+                                &m.view,
+                                &mut m.view_state,
+                                ctx,
+                                content.downcast(),
+                                app_state,
+                            );
+                        });
                     });
+                    m.theme = entry.theme;
+                    m.placement = entry.placement;
                     m.view = entry.content.clone();
                 } else {
                     let (pod, vs_new) = ctx.with_id(ViewId::new(entry.key), |ctx| {
                         entry.content.build(ctx, app_state)
                     });
-                    let surface = wrap_in_surface(pod, &entry.theme);
+                    let wrapped = wrap_portal_content(pod, &entry.theme, entry.placement);
                     let mut slot = OverlayScope::portal_slot_mut(&mut element);
-                    PortalSlot::insert(&mut slot, entry.key, surface);
+                    PortalSlot::insert(&mut slot, entry.key, wrapped, entry.placement);
                     view_state.mounted.push(MountedEntry {
                         key: entry.key,
                         view: entry.content.clone(),
                         view_state: vs_new,
                         theme: entry.theme,
+                        placement: entry.placement,
                     });
                 }
             }
@@ -696,11 +748,11 @@ where
             // Tolerant `if let` (not `expect`): the whole widget tree is being
             // dropped wholesale here, so a missing slot child is not an
             // invariant violation worth panicking over.
-            if let Some(mut child) = PortalSlot::child_mut(&mut slot, m.key) {
-                let mut surface = child.downcast::<PopoverSurface>();
-                let mut content = PopoverSurface::content_mut(&mut surface);
-                ctx.with_id(ViewId::new(m.key), |ctx| {
-                    m.view.teardown(&mut m.view_state, ctx, content.downcast());
+            if let Some(child) = PortalSlot::child_mut(&mut slot, m.key) {
+                with_portal_content(child, m.placement, |mut content| {
+                    ctx.with_id(ViewId::new(m.key), |ctx| {
+                        m.view.teardown(&mut m.view_state, ctx, content.downcast());
+                    });
                 });
             }
         }
@@ -734,13 +786,13 @@ where
             return MessageResult::Stale;
         };
         let mut slot = OverlayScope::portal_slot_mut(&mut element);
-        let Some(mut child) = PortalSlot::child_mut(&mut slot, m.key) else {
+        let Some(child) = PortalSlot::child_mut(&mut slot, m.key) else {
             return MessageResult::Stale;
         };
-        let mut surface = child.downcast::<PopoverSurface>();
-        let mut content = PopoverSurface::content_mut(&mut surface);
-        m.view
-            .message(&mut m.view_state, message, content.downcast(), app_state)
+        with_portal_content(child, m.placement, |mut content| {
+            m.view
+                .message(&mut m.view_state, message, content.downcast(), app_state)
+        })
     }
 }
 
@@ -826,7 +878,11 @@ mod tests {
         let key = 3;
         let content = NewWidget::new(EventProbe::default()).erased();
         let popover = masonry::widgets::Label::new("popover").prepare().erased();
-        let scope = OverlayScope::new(OverlayScopeHandle::new(), content, vec![(key, popover)]);
+        let scope = OverlayScope::new(
+            OverlayScopeHandle::new(),
+            content,
+            vec![(key, popover, PortalPlacement::Trigger)],
+        );
         let mut harness = TestHarness::create(
             masonry::theme::default_property_set(),
             NewWidget::new(scope),
@@ -914,7 +970,11 @@ mod tests {
         let key = 3;
         let content = masonry::widgets::Label::new("content").prepare().erased();
         let popover = masonry::widgets::Label::new("popover").prepare().erased();
-        let scope = OverlayScope::new(OverlayScopeHandle::new(), content, vec![(key, popover)]);
+        let scope = OverlayScope::new(
+            OverlayScopeHandle::new(),
+            content,
+            vec![(key, popover, PortalPlacement::Trigger)],
+        );
         let mut harness = TestHarness::create(
             masonry::theme::default_property_set(),
             NewWidget::new(scope),

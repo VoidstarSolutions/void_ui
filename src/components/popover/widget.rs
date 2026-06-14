@@ -904,7 +904,15 @@ mod tests {
 
         // The handle's `OnceLock` fills at the scope's `WidgetAdded`, so
         // `scope.widget_id()` resolves for every event after harness creation.
-        let scope = OverlayScope::new(handle, content, vec![(key, surface)]);
+        let scope = OverlayScope::new(
+            handle,
+            content,
+            vec![(
+                key,
+                surface,
+                crate::overlay_portal::PortalPlacement::Trigger,
+            )],
+        );
         TestHarness::create(
             masonry::theme::default_property_set(),
             NewWidget::new(scope),
@@ -1069,7 +1077,15 @@ mod tests {
             .prepare()
             .erased();
         let surface = NewWidget::new(PopoverSurface::new(popover_body, &theme)).erased();
-        let scope = OverlayScope::new(handle, content, vec![(key, surface)]);
+        let scope = OverlayScope::new(
+            handle,
+            content,
+            vec![(
+                key,
+                surface,
+                crate::overlay_portal::PortalPlacement::Trigger,
+            )],
+        );
         let mut harness = TestHarness::create(
             masonry::theme::default_property_set(),
             NewWidget::new(scope),

@@ -8,18 +8,20 @@
 //! the current palette, text samples, and density numbers.
 
 use void_ui::components::ScrollBarVisibility::OnActivity;
+use void_ui::components::notification::demo::NotificationDemoState;
 use xilem::masonry::layout::Length;
 use xilem::peniko::Color;
 use xilem::style::Style as _;
 use xilem::view::{
     CrossAxisAlignment, FlexExt as _, FlexSpacer, MainAxisAlignment, flex_col, flex_row, portal,
-    sized_box,
+    sized_box, zstack,
 };
 use xilem::winit::error::EventLoopError;
 use xilem::{AnyWidgetView, EventLoop, WidgetView, WindowOptions, Xilem};
 
 use void_ui::components::{ComponentKind, SidebarNavItem, button, sidebar_nav, sidebar_panel};
 use void_ui::layout::flex_wrap;
+use void_ui::overlay_scope::overlay_scope;
 use void_ui::theme::{Density, Theme};
 use void_ui::{label, scroll_container};
 
@@ -28,6 +30,7 @@ struct State {
     focused: ComponentKind,
     theme_panel_open: bool,
     sidebar_collapsed: bool,
+    notification_demo: NotificationDemoState,
 }
 
 impl State {
@@ -37,7 +40,14 @@ impl State {
             focused: ComponentKind::Button,
             theme_panel_open: false,
             sidebar_collapsed: false,
+            notification_demo: NotificationDemoState::default(),
         }
+    }
+}
+
+impl AsMut<NotificationDemoState> for State {
+    fn as_mut(&mut self) -> &mut NotificationDemoState {
+        &mut self.notification_demo
     }
 }
 
@@ -46,6 +56,7 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
     let focused = state.focused;
     let theme_panel_open = state.theme_panel_open;
     let sidebar_collapsed = state.sidebar_collapsed;
+    let notification_demo = state.notification_demo.clone();
 
     let workspace = workspace_row(focused, theme_panel_open, sidebar_collapsed, &theme);
 
@@ -53,7 +64,11 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .main_axis_alignment(MainAxisAlignment::Start);
 
-    sized_box(outer).background_color(theme.palette.bg_deep)
+    let content = sized_box(outer).background_color(theme.palette.bg_deep);
+    let toast_layer =
+        void_ui::components::notification::demo::overlay::<State>(&theme, &notification_demo);
+
+    overlay_scope(zstack((content, toast_layer)))
 }
 
 fn workspace_row(
@@ -164,6 +179,10 @@ fn main_pane(focused: ComponentKind, theme: &Theme) -> Box<AnyWidgetView<State>>
         ComponentKind::Input => Box::new(void_ui::components::input::demo::panel(theme)),
         ComponentKind::Label => Box::new(void_ui::components::label::demo::panel(theme)),
         ComponentKind::List => Box::new(void_ui::components::list::demo::panel(theme)),
+        ComponentKind::Notification => {
+            Box::new(void_ui::components::notification::demo::panel(theme))
+        }
+
         ComponentKind::Radio => Box::new(void_ui::components::radio::demo::panel(theme)),
         ComponentKind::ScrollContainer => {
             Box::new(void_ui::components::scroll_container::demo::panel(theme))
