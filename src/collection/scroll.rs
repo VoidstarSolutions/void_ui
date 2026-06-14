@@ -2,10 +2,10 @@
 //! components.
 //!
 //! `ScrollState` is a host-owned request token: the host keeps one in
-//! its app state, calls [`ScrollState::scroll_to_index`] from any
-//! callback, and passes a snapshot to the grid via `DataGrid::scroll_to`.
-//! The grid's body wrapper (`ScrollToView`) compares the snapshot's
-//! generation against the last one it applied and, when they differ,
+//! its app state, calls [`ScrollState::scroll_to_index`] from any callback,
+//! and passes a snapshot to a virtualized component via its `scroll_to` setter
+//! (e.g. `DataGrid::scroll_to` / `List::scroll_to`). The collection substrate
+//! applies requests by re-anchoring masonry's `VirtualScroll` when generation changes.
 //! re-anchors masonry's `VirtualScroll` so the requested row's top aligns
 //! with the top of the viewport.
 //!
@@ -38,9 +38,9 @@ impl ScrollState {
     }
 
     /// Requests that row `index` (display position) be scrolled to the
-    /// top of the viewport on the grid's next rebuild. Re-calling with
+    /// top of the viewport on the component's next rebuild. Re-calling with
     /// the same index re-triggers. An out-of-range index clamps to the
-    /// last row at apply time; a request against an empty grid is a
+    /// last row at apply time; a request against an empty collection is a
     /// no-op.
     pub fn scroll_to_index(&mut self, index: u64) {
         self.generation = self.generation.wrapping_add(1);
