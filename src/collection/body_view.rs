@@ -104,6 +104,8 @@ where
             let selection_lens = selection_lens.clone();
             clickable_row(
                 row_view,
+                is_selected,
+                &theme,
                 move |state: &mut State, action: RowClickAction| {
                     apply_row_click(
                         state,
@@ -402,16 +404,21 @@ mod tests {
                 let items_fn = Arc::clone(items_fn);
                 let id_source = id_source.clone();
                 let selection_lens = Some(Arc::clone(lens));
-                let row = clickable_row(row_view, move |state: &mut S, action: RowClickAction| {
-                    apply_row_click(
-                        state,
-                        action,
-                        pos,
-                        &items_fn,
-                        selection_lens.as_ref(),
-                        &id_source,
-                    );
-                });
+                let row = clickable_row(
+                    row_view,
+                    is_selected,
+                    theme,
+                    move |state: &mut S, action: RowClickAction| {
+                        apply_row_click(
+                            state,
+                            action,
+                            pos,
+                            &items_fn,
+                            selection_lens.as_ref(),
+                            &id_source,
+                        );
+                    },
+                );
                 black_box(&row);
             }
         }
