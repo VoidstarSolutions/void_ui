@@ -13,10 +13,15 @@
 //!
 //! notification("Saved successfully.")
 //!     .variant(AlertVariant::Success)
-//!     .timeout(Duration::from_secs(3))
+//!     .with_timeout(Duration::from_secs(3))
 //!     .on_close(|s: &mut State| s.dismiss_toast(id))
 //!     .render(&theme)
 //! ```
+//!
+//! If this card's host widget can be reused for a *different* toast across
+//! rebuilds (e.g. a `flex_col` stack where dismissing one toast shifts the
+//! rest into its slot), store each toast's own creation time and pass it via
+//! [`Notification::created_at`] — see that method's docs.
 
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -74,7 +79,7 @@ pub struct Notification<C = ()> {
     show_icon: bool,
     timeout: Option<Duration>,
     timeout_explicit: bool,
-    created_at: Option<Instant>,
+    created_at: Instant,
     on_close: C,
 }
 
@@ -82,7 +87,11 @@ pub struct Notification<C = ()> {
 ///
 /// Defaults to [`AlertVariant::Default`] (no accent color, no icon) and a
 /// [`DEFAULT_TIMEOUT`] auto-dismiss countdown (only takes effect once
-/// [`Notification::on_close`] is set — see [`Self::timeout`]).
+/// [`Notification::on_close`] is set — see [`Self::with_timeout`]).
+/// `created_at` defaults to [`Instant::now`] at the point this builder is
+/// constructed — override with [`Self::created_at`] if this notification's
+/// host widget may be reused for a different toast across rebuilds (see that
+/// method's docs).
 pub fn notification(message: impl Into<ArcStr>) -> Notification {
     Notification {
         message: message.into(),
@@ -92,7 +101,7 @@ pub fn notification(message: impl Into<ArcStr>) -> Notification {
         show_icon: true,
         timeout: Some(DEFAULT_TIMEOUT),
         timeout_explicit: false,
-        created_at: None,
+        created_at: Instant::now(),
         on_close: (),
     }
 }
@@ -126,10 +135,15 @@ impl<C> Notification<C> {
 
     /// Auto-dismiss after `duration` of being shown.
     ///
+    /// The countdown starts from [`Self::created_at`] (which defaults to
+    /// [`Instant::now`] at the time [`notification`] was called) —
+    /// override it explicitly if this card's host widget may be reused for
+    /// a different toast across rebuilds, e.g. in a `flex_col` stack.
+    ///
     /// Requires [`Self::on_close`] — with no callback there is nothing to
     /// notify when the timeout elapses, so [`Self::render`] panics if this
     /// is called without one.
-    pub fn timeout(mut self, duration: Duration) -> Self {
+    pub fn with_timeout(mut self, duration: Duration) -> Self {
         self.timeout = Some(duration);
         self.timeout_explicit = true;
         self
@@ -141,18 +155,19 @@ impl<C> Notification<C> {
         self
     }
 
-    /// The instant this toast was created (became visible).
+    /// Override the instant this toast was created (became visible), used as
+    /// the starting point for its auto-dismiss countdown.
     ///
-    /// Required when this notification has an active auto-dismiss timeout
-    /// (the default, or set via [`Self::timeout`]) — the auto-dismiss
-    /// countdown runs for [`Self::timeout`] starting from `created_at`,
-    /// regardless of `flex_col` positional reuse of this card's host widget
-    /// (e.g. when an earlier toast is dismissed and the stack shifts). Store
-    /// this on your toast entry when it's created (e.g.
-    /// `Instant::now()`) and pass the same value on every render. See
-    /// [`Self::render`]'s panic.
+    /// Defaults to [`Instant::now`] at the time [`notification`] was called,
+    /// which is correct for a toast that's only ever built once. If
+    /// `flex_col` positional diffing can reuse this card's host widget for a
+    /// *different* toast (e.g. a notification stack where an earlier toast
+    /// is dismissed and the list shifts), the default is recomputed on every
+    /// rebuild and the countdown never advances — store this toast's own
+    /// creation time on its entry (e.g. `Instant::now()` when it's pushed)
+    /// and pass the same value here on every render.
     pub fn created_at(mut self, created_at: Instant) -> Self {
-        self.created_at = Some(created_at);
+        self.created_at = created_at;
         self
     }
 
@@ -176,13 +191,8 @@ impl<C> Notification<C> {
     ///
     /// # Panics
     ///
-    /// Panics if [`Self::timeout`] was called without [`Self::on_close`] —
-    /// such a timeout can never fire, since there is no callback to notify.
-    ///
-    /// Panics if an auto-dismiss timeout is active (explicitly set, or the
-    /// default) without [`Self::created_at`] — the host needs this toast's
-    /// own creation time to run its countdown independent of `flex_col`
-    /// positional reuse (see [`NotificationHost::set_timeout`]).
+    /// Panics if [`Self::with_timeout`] was called without [`Self::on_close`]
+    /// — such a timeout can never fire, since there is no callback to notify.
     #[must_use = "View values do nothing unless provided to Xilem."]
     pub fn render<State, Action>(
         self,
@@ -195,15 +205,10 @@ impl<C> Notification<C> {
     {
         assert!(
             !self.timeout_explicit || C::enabled(),
-            "Notification::timeout() has no effect without Notification::on_close()"
+            "Notification::with_timeout() has no effect without Notification::on_close()"
         );
         let timeout = if C::enabled() { self.timeout } else { None };
-        assert!(
-            timeout.is_none() || self.created_at.is_some(),
-            "Notification with an active timeout requires Notification::created_at() \
-             so its host can run the countdown independent of flex_col positional reuse"
-        );
-        let armed_at = timeout.and(self.created_at);
+        let armed_at = timeout.map(|_| self.created_at);
         // Errors interrupt assistive technology immediately (`Role::Alert` +
         // `Live::Assertive`); other variants announce politely once the user
         // is idle (`Role::Status` + `Live::Polite`) so routine toasts don't
@@ -498,19 +503,17 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
-
     use super::{NotificationPosition, UnitPoint, notification};
     use crate::Theme;
 
     #[test]
     #[should_panic(
-        expected = "Notification::timeout() has no effect without Notification::on_close()"
+        expected = "Notification::with_timeout() has no effect without Notification::on_close()"
     )]
     fn render_panics_on_explicit_timeout_without_on_close() {
         let theme = Theme::default();
         let _ = notification("hi")
-            .timeout(std::time::Duration::from_secs(2))
+            .with_timeout(std::time::Duration::from_secs(2))
             .render::<(), ()>(&theme);
     }
 
@@ -518,8 +521,7 @@ mod tests {
     fn render_allows_explicit_timeout_with_on_close() {
         let theme = Theme::default();
         let _ = notification("hi")
-            .timeout(std::time::Duration::from_secs(2))
-            .created_at(Instant::now())
+            .with_timeout(std::time::Duration::from_secs(2))
             .on_close(|(): &mut ()| {})
             .render::<(), ()>(&theme);
     }
@@ -527,7 +529,7 @@ mod tests {
     #[test]
     fn render_allows_default_timeout_without_on_close() {
         let theme = Theme::default();
-        // No explicit .timeout() call — the default DEFAULT_TIMEOUT must not panic.
+        // No explicit .with_timeout() call — the default DEFAULT_TIMEOUT must not panic.
         let _ = notification("hi").render::<(), ()>(&theme);
     }
 

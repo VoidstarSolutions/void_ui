@@ -267,7 +267,7 @@ pub fn overlay<S: NotificationDemoHost>(
                 .variant(toast.variant)
                 .created_at(toast.created_at);
             n = match toast.timeout {
-                Some(timeout) => n.timeout(timeout),
+                Some(timeout) => n.with_timeout(timeout),
                 None => n.no_timeout(),
             };
             Box::new(

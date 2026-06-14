@@ -8,7 +8,7 @@
 //!
 //! notification("Saved successfully.")
 //!     .variant(AlertVariant::Success)
-//!     .timeout(Duration::from_secs(3))
+//!     .with_timeout(Duration::from_secs(3))
 //!     .on_close(|s: &mut State| s.dismiss())
 //!     .render(&theme)
 //! ```
