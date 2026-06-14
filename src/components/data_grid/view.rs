@@ -1206,9 +1206,7 @@ mod tests {
                 .collect();
             samples.sort_unstable();
             let median_us = samples[samples.len() / 2] as f64 / 1_000.0;
-            println!(
-                "project_tsv: rows={n:>9} selected=1 → {median_us:>8.1}µs per copy"
-            );
+            println!("project_tsv: rows={n:>9} selected=1 → {median_us:>8.1}µs per copy");
         }
     }
 

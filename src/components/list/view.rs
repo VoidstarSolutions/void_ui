@@ -304,7 +304,10 @@ where
     // background and owns click routing, so this stays content only.
     let render_row: RenderRow<State, Item> = Arc::new(
         move |item: &Item, selected: bool, theme: &Theme| -> Box<AnyWidgetView<State>> {
-            Box::new(sized_box((render_item)(item, selected, theme)).fixed_height(Length::px(item_height)))
+            Box::new(
+                sized_box((render_item)(item, selected, theme))
+                    .fixed_height(Length::px(item_height)),
+            )
         },
     );
 

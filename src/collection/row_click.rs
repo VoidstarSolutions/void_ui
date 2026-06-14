@@ -21,8 +21,8 @@ use masonry::accesskit::{Node, Role};
 use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
     AccessCtx, AccessEvent, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, Modifiers, NewWidget,
-    PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx,
-    Widget, WidgetMut, WidgetPod,
+    PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update,
+    UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, Size};
@@ -199,7 +199,12 @@ impl Widget for RowClickable {
         single_child::layout(ctx, &mut self.child, size);
     }
 
-    fn paint(&mut self, ctx: &mut PaintCtx<'_>, _props: &PropertiesRef<'_>, painter: &mut Painter<'_>) {
+    fn paint(
+        &mut self,
+        ctx: &mut PaintCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        painter: &mut Painter<'_>,
+    ) {
         if ctx.is_focus_target() {
             let size = ctx.border_box_size();
             let inset = FOCUS_RING_INSET;
@@ -218,7 +223,12 @@ impl Widget for RowClickable {
         Role::ListItem
     }
 
-    fn accessibility(&mut self, _ctx: &mut AccessCtx<'_>, _props: &PropertiesRef<'_>, node: &mut Node) {
+    fn accessibility(
+        &mut self,
+        _ctx: &mut AccessCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        node: &mut Node,
+    ) {
         node.set_selected(self.selected);
     }
 
@@ -388,7 +398,8 @@ mod tests {
         let root = harness.root_widget().id();
         harness.focus_on(Some(root));
 
-        let handled = harness.process_text_event(key_down(Key::Character(" ".into()), Modifiers::empty()));
+        let handled =
+            harness.process_text_event(key_down(Key::Character(" ".into()), Modifiers::empty()));
         assert!(handled.is_handled());
         assert_eq!(
             harness.pop_action::<RowClickAction>().map(|(a, _)| a),
@@ -403,7 +414,8 @@ mod tests {
         let root = harness.root_widget().id();
         harness.focus_on(Some(root));
 
-        let handled = harness.process_text_event(key_down(Key::Named(NamedKey::Enter), Modifiers::empty()));
+        let handled =
+            harness.process_text_event(key_down(Key::Named(NamedKey::Enter), Modifiers::empty()));
         assert!(handled.is_handled());
         assert!(harness.pop_action::<RowClickAction>().is_some());
     }
@@ -417,7 +429,13 @@ mod tests {
 
         harness.process_text_event(key_down(Key::Character(" ".into()), Modifiers::SHIFT));
         let action = harness.pop_action::<RowClickAction>().map(|(a, _)| a);
-        assert_eq!(action, Some(RowClickAction { shift: true, action_mod: false }));
+        assert_eq!(
+            action,
+            Some(RowClickAction {
+                shift: true,
+                action_mod: false
+            })
+        );
     }
 
     /// A non-activating key (a printable character other than space) leaves
