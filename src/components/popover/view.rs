@@ -106,6 +106,18 @@ pub struct PopoverView<TriggerV, State, Action> {
 
 impl<TriggerV, State, Action> ViewMarker for PopoverView<TriggerV, State, Action> {}
 
+/// Map an anchor for use with the in-tree `AnchoredOverlay` fallback (no
+/// scope ancestor). [`PopoverAnchor::ViewportQuarter`] is meaningless without
+/// an enclosing scope/viewport to center against — `AnchoredOverlay` would
+/// place it relative to the trigger's own (typically tiny) footprint instead,
+/// so it's mapped to the default trigger-relative anchor.
+fn in_tree_anchor(anchor: PopoverAnchor) -> PopoverAnchor {
+    match anchor {
+        PopoverAnchor::ViewportQuarter => PopoverAnchor::BottomStart,
+        other => other,
+    }
+}
+
 /// Where this popover's content is bound: the nearest scope's portal
 /// (registered by key; the scope's view mounts/rebuilds it), or in-tree under
 /// our own `PopoverHost` (fallback).
@@ -166,7 +178,7 @@ where
             let widget = PopoverHost::new(
                 trigger_pod.new_widget.erased(),
                 content_pod.new_widget.erased(),
-                self.anchor,
+                in_tree_anchor(self.anchor),
                 &self.theme,
             );
             let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
@@ -237,8 +249,16 @@ where
         if self.theme != prev.theme {
             PopoverHost::set_theme(&mut element, &self.theme);
         }
-        if self.anchor != prev.anchor {
-            PopoverHost::set_anchor(&mut element, self.anchor);
+        let anchor = match &view_state.binding {
+            ContentBinding::Portal { .. } => self.anchor,
+            ContentBinding::InTree { .. } => in_tree_anchor(self.anchor),
+        };
+        let prev_anchor = match &view_state.binding {
+            ContentBinding::Portal { .. } => prev.anchor,
+            ContentBinding::InTree { .. } => in_tree_anchor(prev.anchor),
+        };
+        if anchor != prev_anchor {
+            PopoverHost::set_anchor(&mut element, anchor);
         }
     }
 
