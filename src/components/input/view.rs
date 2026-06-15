@@ -464,10 +464,10 @@ mod tests {
     use xilem::ViewCtx;
     use xilem::core::{DynMessage, Environment, MessageCtx, MessageResult, View};
 
-    use crate::test_support;
     use super::super::widget::InputCleared;
     use super::{InputView, byte_pos_after_n_digits, caret_after_edit};
     use crate::Theme;
+    use crate::test_support;
 
     #[test]
     fn caret_after_insert_delete_append() {
