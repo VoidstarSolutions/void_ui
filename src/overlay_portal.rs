@@ -113,9 +113,16 @@ pub(crate) type PortalContentViewState<State, Action> =
 /// (`SizeDef::MIN`, exactly like [`Self::Trigger`]'s sizing — see
 /// [`PortalSlot::layout`]), with no added chrome since toast cards already
 /// carry their own surface.
+///
+/// [`crate::components::dropdown_button`] registers [`Self::BareTrigger`]
+/// entries: anchored and shown/hidden exactly like [`Self::Trigger`], but
+/// mounted without [`crate::components::popover::widget::PopoverSurface`]
+/// chrome — `MenuContent` already paints its own background/border, and
+/// wrapping it again would double up padding and chrome.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum PortalPlacement {
     Trigger,
+    BareTrigger,
     Corner(masonry::layout::UnitPoint),
 }
 
@@ -285,17 +292,28 @@ use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, Size};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef, UnitPoint};
 
+use crate::components::dropdown_button::widget::ThemedDropdownButton;
 use crate::components::popover::PopoverAnchor;
 use crate::components::popover::widget::PopoverHost;
+
+/// Which widget type owns a portal child, so [`PortalSlot::dismiss_outside`]
+/// knows how to downcast `owner` when notifying it of an outside-press
+/// dismissal.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum PortalOwnerKind {
+    Popover,
+    DropdownButton,
+}
 
 /// One permanently-mounted popover surface inside the slot.
 struct PortalChild {
     key: u64,
     widget: WidgetPod<dyn Widget>,
-    /// `PopoverHost` to sync (via [`PopoverHost::mark_closed`]) when an
-    /// outside press dismisses this child. `None` in tests / ownerless pushes,
-    /// and unused for [`PortalPlacement::Corner`] children.
-    owner: Option<WidgetId>,
+    /// Owner to sync (via [`PopoverHost::mark_closed`] or
+    /// [`ThemedDropdownButton::mark_closed`]) when an outside press dismisses
+    /// this child. `None` in tests / ownerless pushes, and unused for
+    /// [`PortalPlacement::Corner`] children.
+    owner: Option<(WidgetId, PortalOwnerKind)>,
     /// [`PortalPlacement::Trigger`] children start hidden and are shown via
     /// [`Self::set_visible`]; [`PortalPlacement::Corner`] children are always
     /// visible.
@@ -409,7 +427,7 @@ impl PortalSlot {
         this: &mut WidgetMut<'_, Self>,
         key: u64,
         visible: bool,
-        owner: Option<WidgetId>,
+        owner: Option<(WidgetId, PortalOwnerKind)>,
         placement: Rect,
         anchor: PopoverAnchor,
         gap: f64,
@@ -489,11 +507,21 @@ impl PortalSlot {
             }
             child.visible = false;
             dismissed = true;
-            if let Some(owner) = child.owner {
-                this.ctx.mutate_later(owner, |mut w| {
-                    let mut host = w.downcast::<PopoverHost>();
-                    PopoverHost::mark_closed(&mut host);
-                });
+            if let Some((owner, kind)) = child.owner {
+                match kind {
+                    PortalOwnerKind::Popover => {
+                        this.ctx.mutate_later(owner, |mut w| {
+                            let mut host = w.downcast::<PopoverHost>();
+                            PopoverHost::mark_closed(&mut host);
+                        });
+                    }
+                    PortalOwnerKind::DropdownButton => {
+                        this.ctx.mutate_later(owner, |mut w| {
+                            let mut dropdown = w.downcast::<ThemedDropdownButton>();
+                            ThemedDropdownButton::mark_closed(&mut dropdown);
+                        });
+                    }
+                }
             }
         }
         if dismissed {
@@ -551,7 +579,7 @@ impl Widget for PortalSlot {
                     ctx.place_child(&mut child.widget, offset);
                     child.placed = Rect::from_origin_size(offset, child_size);
                 }
-                PortalPlacement::Trigger if child.visible => {
+                PortalPlacement::Trigger | PortalPlacement::BareTrigger if child.visible => {
                     ctx.set_stashed(&mut child.widget, false);
                     // Snug to intrinsic content size — see `AnchoredOverlay::layout`.
                     let child_size =
@@ -572,7 +600,7 @@ impl Widget for PortalSlot {
                     ctx.place_child(&mut child.widget, offset);
                     child.placed = Rect::from_origin_size(offset, child_size);
                 }
-                PortalPlacement::Trigger => {
+                PortalPlacement::Trigger | PortalPlacement::BareTrigger => {
                     ctx.set_stashed(&mut child.widget, true);
                     child.placed = Rect::ZERO;
                 }

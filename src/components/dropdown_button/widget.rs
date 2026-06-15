@@ -1,13 +1,26 @@
 //! `ThemedDropdownButton` — a [`crate::components::button::widget::ThemedButton`]
 //! trigger (with a trailing chevron) that opens a floating menu on click.
 //!
-//! Composes a real `ThemedButton` as `AnchoredOverlay::primary` and delegates all
+//! Composes a real `ThemedButton` as its trigger and delegates all
 //! chrome/color/layout/focus/click handling to it — this widget owns only what's
-//! genuinely dropdown-shaped: menu hosting (`overlay_host` / `OverlayScope`
-//! integration), `items`, `open` state, and item-selection routing. Clicking
-//! anywhere on the wrapped button (label, leading icon, or chevron) toggles the
-//! menu — the inner `ThemedButton` submits a single `ButtonPress` for the whole
-//! surface, same as it would for a plain action button.
+//! genuinely dropdown-shaped: menu hosting, `items`, `open` state, and
+//! item-selection routing. Clicking anywhere on the wrapped button (label,
+//! leading icon, or chevron) toggles the menu — the inner `ThemedButton`
+//! submits a single `ButtonPress` for the whole surface, same as it would for
+//! a plain action button.
+//!
+//! Two hosting modes, mirroring [`crate::components::popover::widget::PopoverHost`]:
+//!
+//! - **Portal** (scope ancestor present): the menu is registered as a
+//!   [`super::view::MenuContentView`] in the scope's [`crate::overlay_portal::OverlayPortal`]
+//!   with [`crate::overlay_portal::PortalPlacement::BareTrigger`] — anchored
+//!   like a popover but unwrapped, since `MenuContent` paints its own chrome.
+//!   Open/close/highlight are pushed as plain data via `mutate_later`.
+//! - **In-tree** (fallback, no scope): `MenuContent` is permanently mounted in
+//!   an [`AnchoredOverlay`] below the trigger, toggled via
+//!   `AnchoredOverlay::set_overlay_visible`.
+
+use std::sync::{Arc, OnceLock};
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::keyboard::{Key, KeyState, NamedKey};
@@ -21,7 +34,7 @@ use masonry::kurbo::{Axis, Point, Rect, Size};
 use masonry::layout::{LenReq, Length};
 use masonry::peniko::Color;
 use masonry::properties::ContentColor;
-use masonry::widgets::{ButtonPress, Label};
+use masonry::widgets::{ButtonPress, Label, Passthrough};
 
 use super::menu_layer::{MenuContent, MenuItemSelected};
 use crate::Theme;
@@ -30,6 +43,7 @@ use crate::components::button::ButtonVariant;
 use crate::components::button::widget::ThemedButton;
 use crate::components::icon::IconName;
 use crate::components::popover::PopoverAnchor;
+use crate::overlay_portal::{PortalOwnerKind, PortalSlot};
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
 /// Action type emitted by [`ThemedDropdownButton`].
@@ -39,21 +53,167 @@ pub enum DropdownButtonAction {
     ItemSelected(usize),
 }
 
+/// Self-filling handle to a [`ThemedDropdownButton`]'s widget id, filled at
+/// `Update::WidgetAdded` — mirrors [`OverlayScopeHandle`]'s bootstrapping.
+///
+/// Given to a portal-mounted [`super::view::MenuContentView`] so an item
+/// selection can `mutate_later` back into the dropdown to close the menu and
+/// clear the keyboard highlight: in portal mode the menu is not a descendant
+/// of the dropdown, so normal action bubbling never reaches
+/// [`ThemedDropdownButton::on_action`].
+#[derive(Clone, Default)]
+pub(crate) struct DropdownButtonHandle(Arc<OnceLock<WidgetId>>);
+
+impl DropdownButtonHandle {
+    pub(crate) fn new() -> Self {
+        Self(Arc::new(OnceLock::new()))
+    }
+
+    pub(crate) fn widget_id(&self) -> Option<WidgetId> {
+        self.0.get().copied()
+    }
+
+    fn set(&self, id: WidgetId) {
+        let _ = self.0.set(id);
+    }
+}
+
+/// Trigger-construction inputs shared by [`ThemedDropdownButton::new`] and
+/// [`ThemedDropdownButton::new_portal`]; bundled to keep `new_portal`'s
+/// argument count under clippy's `too_many_arguments` threshold.
+pub(crate) struct DropdownButtonConfig {
+    pub(crate) label_text: ArcStr,
+    pub(crate) icon: Option<IconName>,
+    pub(crate) items: Vec<ArcStr>,
+    pub(crate) variant: ButtonVariant,
+    pub(crate) disabled: bool,
+    pub(crate) theme: Theme,
+}
+
+/// How this dropdown mounts its menu: permanently in-tree (fallback, no scope
+/// ancestor), or portal-mounted in the nearest scope's `PortalSlot` (the menu
+/// is a view child of the *scope*; we only hold the key).
+enum Hosting {
+    InTree {
+        overlay_host: WidgetPod<AnchoredOverlay>,
+    },
+    Portal {
+        trigger: WidgetPod<dyn Widget>,
+        scope: OverlayScopeHandle,
+        key: u64,
+        /// Last window-space anchor rect pushed to the slot; `compose` uses
+        /// it to re-anchor only when we actually moved (mirrors
+        /// `PopoverHost::compose`).
+        last_anchor_rect_window: Option<Rect>,
+    },
+}
+
+/// Body shared by every "close the menu" path (item selection, Escape,
+/// outside focus loss, disabled mid-open, stash). `$hosting` is `&mut
+/// Hosting`, `$ctx` any context type with `mutate_child_later`/`mutate_later`
+/// (`EventCtx`, `ActionCtx`, `UpdateCtx`, or a `WidgetMut`'s `MutateCtx`).
+macro_rules! close_menu_body {
+    ($hosting:expr, $ctx:expr) => {
+        match $hosting {
+            Hosting::InTree { overlay_host } => {
+                $ctx.mutate_child_later(overlay_host, |mut w| {
+                    AnchoredOverlay::set_overlay_visible(&mut w, false);
+                });
+            }
+            Hosting::Portal { scope, key, .. } => {
+                if let Some(scope_id) = scope.widget_id() {
+                    let key = *key;
+                    $ctx.mutate_later(scope_id, move |mut w| {
+                        let mut scope = w.downcast::<OverlayScope>();
+                        OverlayScope::set_portal_visible(
+                            &mut scope,
+                            key,
+                            false,
+                            None,
+                            Rect::ZERO,
+                            PopoverAnchor::BottomStart,
+                            0.0,
+                        );
+                    });
+                }
+            }
+        }
+    };
+}
+
+/// Body shared by every "open the menu" path (trigger toggle). `$hosting` is
+/// `&mut Hosting`, `$ctx` an `EventCtx`/`ActionCtx` (needs `to_window`,
+/// `border_box_size`, `widget_id`, `request_compose`, `request_anim_frame`).
+macro_rules! open_menu_body {
+    ($hosting:expr, $ctx:expr) => {
+        match $hosting {
+            Hosting::InTree { overlay_host } => {
+                $ctx.mutate_child_later(overlay_host, |mut w| {
+                    AnchoredOverlay::set_overlay_visible(&mut w, true);
+                });
+            }
+            Hosting::Portal {
+                scope,
+                key,
+                last_anchor_rect_window,
+                ..
+            } => {
+                if let Some(scope_id) = scope.widget_id() {
+                    let key = *key;
+                    let owner = Some(($ctx.widget_id(), PortalOwnerKind::DropdownButton));
+                    let rect = Rect::from_origin_size(
+                        $ctx.to_window(Point::ZERO),
+                        $ctx.border_box_size(),
+                    );
+                    *last_anchor_rect_window = Some(rect);
+                    $ctx.mutate_later(scope_id, move |mut w| {
+                        let mut scope = w.downcast::<OverlayScope>();
+                        OverlayScope::set_portal_visible(
+                            &mut scope,
+                            key,
+                            true,
+                            owner,
+                            rect,
+                            PopoverAnchor::BottomStart,
+                            0.0,
+                        );
+                    });
+                    $ctx.request_compose();
+                    $ctx.request_anim_frame();
+                }
+            }
+        }
+    };
+}
+
+/// Get the wrapped `ThemedButton` trigger as a `WidgetMut`, regardless of
+/// hosting mode — in-tree it's `AnchoredOverlay::primary`, in portal mode
+/// it's the lone hosted child.
+macro_rules! with_trigger {
+    ($this:ident, |$trigger:ident| $body:block) => {
+        match &mut $this.widget.hosting {
+            Hosting::InTree { overlay_host } => {
+                let mut overlay_host = $this.ctx.get_mut(overlay_host);
+                let mut primary = AnchoredOverlay::primary_mut(&mut overlay_host);
+                let mut $trigger = primary.downcast::<ThemedButton>();
+                $body
+            }
+            Hosting::Portal { trigger, .. } => {
+                let mut trigger = $this.ctx.get_mut(trigger);
+                let mut $trigger = trigger.downcast::<ThemedButton>();
+                $body
+            }
+        }
+    };
+}
+
 /// Button widget that opens a floating dropdown menu on click.
 ///
 /// Wraps a [`ThemedButton`] (label + optional leading icon + trailing chevron)
 /// as its trigger; toggles the menu in response to the trigger's `ButtonPress`.
 pub struct ThemedDropdownButton {
-    overlay_host: WidgetPod<AnchoredOverlay>,
-    /// Nearest `OverlayScope` ancestor, discovered at `View::build` time via
-    /// the Xilem `Environment` (see `crate::overlay_scope`). When present,
-    /// the menu is pushed into the scope's overlay slot instead of
-    /// `overlay_host` — see `push_into_scope`/`clear_from_scope`.
-    scope: Option<OverlayScopeHandle>,
-    /// Our anchor rect (window coords) as of the last scope-mode placement
-    /// push — used by `compose` to detect "did I move" during scrolling
-    /// without busy-looping (see `Widget::compose`).
-    last_anchor_rect_window: Option<Rect>,
+    hosting: Hosting,
+    handle: DropdownButtonHandle,
     label: ArcStr,
     icon: Option<IconName>,
     items: Vec<ArcStr>,
@@ -69,16 +229,13 @@ pub struct ThemedDropdownButton {
 
 // --- MARK: BUILDERS
 impl ThemedDropdownButton {
-    #[must_use]
-    pub fn new(
-        label_text: ArcStr,
+    fn build_trigger(
+        label_text: &ArcStr,
         icon: Option<IconName>,
-        items: Vec<ArcStr>,
         variant: ButtonVariant,
         disabled: bool,
         theme: &Theme,
-        scope: Option<OverlayScopeHandle>,
-    ) -> Self {
+    ) -> NewWidget<dyn Widget> {
         let text_color = Self::text_color_for(theme, variant, disabled);
         let icon_color = Self::icon_color_for(theme, disabled);
 
@@ -103,23 +260,77 @@ impl ThemedDropdownButton {
                     .build_widget(theme),
             );
         }
+        NewWidget::new(trigger).erased()
+    }
 
+    /// In-tree constructor (fallback, no scope ancestor): `MenuContent` is
+    /// permanently mounted in an `AnchoredOverlay` below the trigger.
+    #[must_use]
+    pub fn new(
+        label_text: ArcStr,
+        icon: Option<IconName>,
+        items: Vec<ArcStr>,
+        variant: ButtonVariant,
+        disabled: bool,
+        theme: &Theme,
+    ) -> Self {
+        let trigger = Self::build_trigger(&label_text, icon, variant, disabled, theme);
         let overlay_host = AnchoredOverlay::new(
-            NewWidget::new(trigger).erased(),
+            trigger,
             NewWidget::new(MenuContent::new(items.clone(), theme)),
             false,
             PopoverAnchor::BottomStart,
         );
         Self {
-            overlay_host: NewWidget::new(overlay_host).to_pod(),
-            scope,
-            last_anchor_rect_window: None,
+            hosting: Hosting::InTree {
+                overlay_host: NewWidget::new(overlay_host).to_pod(),
+            },
+            handle: DropdownButtonHandle::new(),
             label: label_text,
             icon,
             items,
             variant,
             disabled,
             theme: *theme,
+            open: false,
+            highlighted: None,
+        }
+    }
+
+    /// Portal-mode constructor: the menu lives in the scope's slot under
+    /// `key`, registered by the view layer as a `MenuContentView`; we host
+    /// only the trigger. `handle` is filled at `Update::WidgetAdded` and
+    /// given to the registered `MenuContentView` so it can notify us back.
+    #[must_use]
+    pub(crate) fn new_portal(
+        config: DropdownButtonConfig,
+        handle: DropdownButtonHandle,
+        scope: OverlayScopeHandle,
+        key: u64,
+    ) -> Self {
+        let DropdownButtonConfig {
+            label_text,
+            icon,
+            items,
+            variant,
+            disabled,
+            theme,
+        } = config;
+        let trigger = Self::build_trigger(&label_text, icon, variant, disabled, &theme);
+        Self {
+            hosting: Hosting::Portal {
+                trigger: trigger.to_pod(),
+                scope,
+                key,
+                last_anchor_rect_window: None,
+            },
+            handle,
+            label: label_text,
+            icon,
+            items,
+            variant,
+            disabled,
+            theme,
             open: false,
             highlighted: None,
         }
@@ -169,10 +380,7 @@ impl ThemedDropdownButton {
 
             let text_color = Self::text_color_for(theme, this.widget.variant, this.widget.disabled);
             let icon_color = Self::icon_color_for(theme, this.widget.disabled);
-            {
-                let mut overlay_host = this.ctx.get_mut(&mut this.widget.overlay_host);
-                let mut primary = AnchoredOverlay::primary_mut(&mut overlay_host);
-                let mut trigger = primary.downcast::<ThemedButton>();
+            with_trigger!(this, |trigger| {
                 ThemedButton::set_theme(&mut trigger, theme);
                 {
                     let mut child = ThemedButton::child_mut(&mut trigger);
@@ -184,9 +392,10 @@ impl ThemedDropdownButton {
                     );
                 }
                 Self::refresh_icon_props(&mut trigger, icon_color, theme);
-            }
-            {
-                let mut overlay_host = this.ctx.get_mut(&mut this.widget.overlay_host);
+            });
+
+            if let Hosting::InTree { overlay_host } = &mut this.widget.hosting {
+                let mut overlay_host = this.ctx.get_mut(overlay_host);
                 let mut menu = AnchoredOverlay::overlay_mut(&mut overlay_host);
                 let mut menu = menu.downcast::<MenuContent>();
                 MenuContent::set_theme(&mut menu, theme);
@@ -201,17 +410,16 @@ impl ThemedDropdownButton {
         this.widget.label = label.clone();
         let theme = this.widget.theme;
         let text_color = Self::text_color_for(&theme, this.widget.variant, this.widget.disabled);
-        let mut overlay_host = this.ctx.get_mut(&mut this.widget.overlay_host);
-        let mut primary = AnchoredOverlay::primary_mut(&mut overlay_host);
-        let mut trigger = primary.downcast::<ThemedButton>();
-        let mut child = ThemedButton::child_mut(&mut trigger);
-        child.insert_prop(ContentColor::new(text_color));
-        let mut child = child.downcast::<Label>();
-        Label::insert_style(
-            &mut child,
-            StyleProperty::FontSize(theme.density.ui_font_size),
-        );
-        Label::set_text(&mut child, label);
+        with_trigger!(this, |trigger| {
+            let mut child = ThemedButton::child_mut(&mut trigger);
+            child.insert_prop(ContentColor::new(text_color));
+            let mut child = child.downcast::<Label>();
+            Label::insert_style(
+                &mut child,
+                StyleProperty::FontSize(theme.density.ui_font_size),
+            );
+            Label::set_text(&mut child, label);
+        });
     }
 
     pub fn set_disabled(this: &mut WidgetMut<'_, Self>, disabled: bool) {
@@ -223,44 +431,24 @@ impl ThemedDropdownButton {
             // Disabling mid-open must close the menu — a disabled trigger
             // can no longer be clicked to dismiss it, and a stale open menu
             // would stay interactable (selections could still fire). Mirrors
-            // `close_dropdown`/the `Update::ChildFocusChanged(false)` path.
+            // `PopoverHost`'s `Update::StashedChanged(true)` path.
             if disabled && this.widget.open {
                 this.widget.open = false;
-                match this
-                    .widget
-                    .scope
-                    .as_ref()
-                    .and_then(OverlayScopeHandle::widget_id)
-                {
-                    Some(scope_id) => this.ctx.mutate_later(scope_id, |mut w| {
-                        let mut scope = w.downcast::<OverlayScope>();
-                        OverlayScope::set_overlay(
-                            &mut scope,
-                            None,
-                            Rect::ZERO,
-                            PopoverAnchor::BottomStart,
-                        );
-                    }),
-                    None => this
-                        .ctx
-                        .mutate_child_later(&mut this.widget.overlay_host, |mut w| {
-                            AnchoredOverlay::set_overlay_visible(&mut w, false);
-                        }),
-                }
+                this.widget.highlighted = None;
+                close_menu_body!(&mut this.widget.hosting, this.ctx);
             }
 
             let theme = this.widget.theme;
             let text_color = Self::text_color_for(&theme, this.widget.variant, disabled);
             let icon_color = Self::icon_color_for(&theme, disabled);
-            let mut overlay_host = this.ctx.get_mut(&mut this.widget.overlay_host);
-            let mut primary = AnchoredOverlay::primary_mut(&mut overlay_host);
-            let mut trigger = primary.downcast::<ThemedButton>();
-            ThemedButton::set_disabled(&mut trigger, disabled);
-            {
-                let mut child = ThemedButton::child_mut(&mut trigger);
-                child.insert_prop(ContentColor::new(text_color));
-            }
-            Self::refresh_icon_props(&mut trigger, icon_color, &theme);
+            with_trigger!(this, |trigger| {
+                ThemedButton::set_disabled(&mut trigger, disabled);
+                {
+                    let mut child = ThemedButton::child_mut(&mut trigger);
+                    child.insert_prop(ContentColor::new(text_color));
+                }
+                Self::refresh_icon_props(&mut trigger, icon_color, &theme);
+            });
         }
     }
 
@@ -272,137 +460,96 @@ impl ThemedDropdownButton {
 
             let theme = this.widget.theme;
             let disabled = this.widget.disabled;
-            let mut overlay_host = this.ctx.get_mut(&mut this.widget.overlay_host);
-            let mut primary = AnchoredOverlay::primary_mut(&mut overlay_host);
-            let mut trigger = primary.downcast::<ThemedButton>();
-            ThemedButton::set_variant(&mut trigger, variant);
-            // Link gains/loses teal text; other variants share the default color.
-            if !disabled && (variant == ButtonVariant::Link || prev_variant == ButtonVariant::Link)
-            {
-                let text_color = Self::text_color_for(&theme, variant, disabled);
-                let mut child = ThemedButton::child_mut(&mut trigger);
-                child.insert_prop(ContentColor::new(text_color));
-            }
+            with_trigger!(this, |trigger| {
+                ThemedButton::set_variant(&mut trigger, variant);
+                // Link gains/loses teal text; other variants share the default color.
+                if !disabled
+                    && (variant == ButtonVariant::Link || prev_variant == ButtonVariant::Link)
+                {
+                    let text_color = Self::text_color_for(&theme, variant, disabled);
+                    let mut child = ThemedButton::child_mut(&mut trigger);
+                    child.insert_prop(ContentColor::new(text_color));
+                }
+            });
         }
     }
 
+    /// Replace the item list. In-tree this updates the permanently-mounted
+    /// `MenuContent` directly; in portal mode the registered
+    /// `MenuContentView` rebuilds its own `MenuContent` via the scope's
+    /// registry diff, so only our copy of `items` (used for Home/End bounds
+    /// checks) is updated here.
     pub fn set_items(this: &mut WidgetMut<'_, Self>, items: Vec<ArcStr>) {
         this.widget.items.clone_from(&items);
-        let mut overlay_host = this.ctx.get_mut(&mut this.widget.overlay_host);
-        let mut menu = AnchoredOverlay::overlay_mut(&mut overlay_host);
-        let mut menu = menu.downcast::<MenuContent>();
-        MenuContent::set_items(&mut menu, items);
+        if let Hosting::InTree { overlay_host } = &mut this.widget.hosting {
+            let mut overlay_host = this.ctx.get_mut(overlay_host);
+            let mut menu = AnchoredOverlay::overlay_mut(&mut overlay_host);
+            let mut menu = menu.downcast::<MenuContent>();
+            MenuContent::set_items(&mut menu, items);
+        }
     }
 
     pub fn set_icon(this: &mut WidgetMut<'_, Self>, icon: Option<IconName>) {
         this.widget.icon = icon;
         let theme = this.widget.theme;
         let icon_color = Self::icon_color_for(&theme, this.widget.disabled);
-        let mut overlay_host = this.ctx.get_mut(&mut this.widget.overlay_host);
-        let mut primary = AnchoredOverlay::primary_mut(&mut overlay_host);
-        let mut trigger = primary.downcast::<ThemedButton>();
-        match icon {
-            Some(name) => ThemedButton::attach_icon(
-                &mut trigger,
-                crate::components::icon::icon(name)
-                    .color(icon_color)
-                    .build_widget(&theme),
-            ),
-            None => ThemedButton::detach_icon(&mut trigger),
+        with_trigger!(this, |trigger| {
+            match icon {
+                Some(name) => ThemedButton::attach_icon(
+                    &mut trigger,
+                    crate::components::icon::icon(name)
+                        .color(icon_color)
+                        .build_widget(&theme),
+                ),
+                None => ThemedButton::detach_icon(&mut trigger),
+            }
+        });
+    }
+
+    /// Sync `open`/`highlighted` after the menu closed without going through
+    /// our own event handlers — either the portal slot dismissed it (outside
+    /// press; `PortalSlot::dismiss_outside`) or a portal-mounted
+    /// `MenuContentView` handled an item selection directly (see
+    /// `super::view::MenuContentView::message`). Both call this via
+    /// `mutate_later(handle)`. Also pushes the closed state to the slot —
+    /// idempotent if it's already hidden.
+    pub(crate) fn mark_closed(this: &mut WidgetMut<'_, Self>) {
+        if this.widget.open {
+            this.widget.open = false;
+            this.widget.highlighted = None;
+            close_menu_body!(&mut this.widget.hosting, this.ctx);
+            this.ctx.request_paint_only();
         }
     }
 }
 
 // --- MARK: INTERNAL HELPERS
 impl ThemedDropdownButton {
-    fn set_overlay_visible(&mut self, ctx: &mut ActionCtx<'_>, visible: bool) {
-        ctx.mutate_child_later(&mut self.overlay_host, move |mut w| {
-            AnchoredOverlay::set_overlay_visible(&mut w, visible);
-        });
-    }
-
-    /// Our anchor rect — the full button's chrome+padding+icon+chevron box —
-    /// in window coordinates. `ctx.to_window(Point::ZERO)` is *our* origin
-    /// (not the inner button's), which is what fixes the old `AnchoredOverlay`
-    /// misalignment: the menu now anchors flush to the whole button.
-    fn anchor_rect_window(ctx: &ActionCtx<'_>) -> Rect {
-        Rect::from_origin_size(ctx.to_window(Point::ZERO), ctx.border_box_size())
-    }
-
-    /// Push a freshly built `MenuContent` into the scope's overlay slot,
-    /// anchored to our own box. The menu is ephemeral in scope-mode —
-    /// created on open, cleared on close (see `clear_from_scope`) — since
-    /// the slot is shared, transient infrastructure that may host different
-    /// triggers' menus over its lifetime (never "owned" by one button).
-    fn push_into_scope(&mut self, ctx: &mut ActionCtx<'_>, scope_id: WidgetId) {
-        let anchor_rect_window = Self::anchor_rect_window(ctx);
-        self.last_anchor_rect_window = Some(anchor_rect_window);
-        let items = self.items.clone();
-        let theme = self.theme;
-        ctx.request_compose();
-        ctx.mutate_later(scope_id, move |mut w| {
-            let mut scope = w.downcast::<OverlayScope>();
-            // `to_local` is the literal inverse of `window_transform`,
-            // correctly handling the full chain of transforms/scroll/origin
-            // between the scope and this trigger — robust to scrolling.
-            let local_origin = scope.ctx.to_local(anchor_rect_window.origin());
-            let placement = Rect::from_origin_size(local_origin, anchor_rect_window.size());
-            let menu = NewWidget::new(MenuContent::new(items, &theme)).erased();
-            OverlayScope::set_overlay(
-                &mut scope,
-                Some(menu),
-                placement,
-                PopoverAnchor::BottomStart,
-            );
-        });
-    }
-
-    /// Clear our menu from the scope's overlay slot (no-op if some other
-    /// trigger has since claimed it — last-writer-wins, see `OverlayScope::set_overlay`).
-    fn clear_from_scope(ctx: &mut ActionCtx<'_>, scope_id: WidgetId) {
-        ctx.mutate_later(scope_id, move |mut w| {
-            let mut scope = w.downcast::<OverlayScope>();
-            OverlayScope::set_overlay(&mut scope, None, Rect::ZERO, PopoverAnchor::BottomStart);
-        });
-    }
-
-    fn open_dropdown(&mut self, ctx: &mut ActionCtx<'_>) {
-        self.open = true;
-        match self.scope.as_ref().and_then(OverlayScopeHandle::widget_id) {
-            Some(scope_id) => self.push_into_scope(ctx, scope_id),
-            None => self.set_overlay_visible(ctx, true),
-        }
-        ctx.request_paint_only();
-    }
-
-    fn close_dropdown(&mut self, ctx: &mut ActionCtx<'_>) {
-        self.open = false;
-        self.highlighted = None;
-        match self.scope.as_ref().and_then(OverlayScopeHandle::widget_id) {
-            Some(scope_id) => Self::clear_from_scope(ctx, scope_id),
-            None => self.set_overlay_visible(ctx, false),
-        }
-        ctx.request_paint_only();
-    }
-
     /// Push `index` into the `MenuContent` widget for painting, then store it.
     fn set_highlight(&mut self, ctx: &mut EventCtx<'_>, index: Option<usize>) {
         self.highlighted = index;
-        match self.scope.as_ref().and_then(OverlayScopeHandle::widget_id) {
-            Some(scope_id) => {
-                ctx.mutate_later(scope_id, move |mut w| {
-                    let mut scope = w.downcast::<OverlayScope>();
-                    if let Some(mut overlay) = OverlayScope::overlay_mut(&mut scope) {
-                        let mut menu = overlay.downcast::<MenuContent>();
-                        MenuContent::set_highlighted(&mut menu, index);
-                    }
-                });
-            }
-            None => {
-                ctx.mutate_child_later(&mut self.overlay_host, move |mut w| {
+        match &mut self.hosting {
+            Hosting::InTree { overlay_host } => {
+                ctx.mutate_child_later(overlay_host, move |mut w| {
                     let mut menu = AnchoredOverlay::overlay_mut(&mut w);
                     let mut menu = menu.downcast::<MenuContent>();
                     MenuContent::set_highlighted(&mut menu, index);
+                });
+            }
+            Hosting::Portal { scope, key, .. } => {
+                let Some(scope_id) = scope.widget_id() else {
+                    return;
+                };
+                let key = *key;
+                ctx.mutate_later(scope_id, move |mut w| {
+                    let mut scope = w.downcast::<OverlayScope>();
+                    let mut slot = OverlayScope::portal_slot_mut(&mut scope);
+                    if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
+                        let mut pass = child.downcast::<Passthrough>();
+                        let mut menu = Passthrough::child_mut(&mut pass);
+                        let mut menu = menu.downcast::<MenuContent>();
+                        MenuContent::set_highlighted(&mut menu, index);
+                    }
                 });
             }
         }
@@ -430,25 +577,20 @@ impl ThemedDropdownButton {
         };
         self.set_highlight(ctx, Some(next));
     }
-
-    fn toggle_dropdown(&mut self, ctx: &mut ActionCtx<'_>) {
-        if self.open {
-            self.close_dropdown(ctx);
-        } else {
-            self.open_dropdown(ctx);
-        }
-    }
 }
 
 // --- MARK: IMPL WIDGET
 impl Widget for ThemedDropdownButton {
     type Action = DropdownButtonAction;
 
-    /// Routes actions bubbling up from our two children: a `ButtonPress` from
-    /// the wrapped `ThemedButton` trigger (any click on the button surface, or
-    /// Space/Enter while it's focused) toggles the menu; a `MenuItemSelected`
-    /// from `MenuContent` (nested inside `overlay_host`) closes the menu and
-    /// re-emits the selection as our own [`DropdownButtonAction::ItemSelected`].
+    /// Routes actions bubbling up from our children: a `ButtonPress` from the
+    /// wrapped `ThemedButton` trigger (any click on the button surface, or
+    /// Space/Enter while it's focused) toggles the menu, or — if the menu is
+    /// open with a keyboard highlight — selects that item directly (Enter
+    /// goes to the focused trigger, not the menu, regardless of hosting
+    /// mode). A `MenuItemSelected` from `MenuContent` only bubbles here in
+    /// in-tree mode (the menu is our descendant); in portal mode it's handled
+    /// by `MenuContentView::message` instead.
     fn on_action(
         &mut self,
         ctx: &mut ActionCtx<'_>,
@@ -458,34 +600,26 @@ impl Widget for ThemedDropdownButton {
     ) {
         if let Some(press) = action.downcast_ref::<ButtonPress>() {
             if !self.disabled {
-                // Keyboard activation (Enter/Space) while the menu is open and
-                // an item is highlighted → select that item; otherwise toggle.
                 if self.open
                     && press.button.is_none()
                     && let Some(index) = self.highlighted
                 {
                     self.open = false;
                     self.highlighted = None;
-                    match self.scope.as_ref().and_then(OverlayScopeHandle::widget_id) {
-                        Some(scope_id) => ctx.mutate_later(scope_id, |mut w| {
-                            let mut scope = w.downcast::<OverlayScope>();
-                            OverlayScope::set_overlay(
-                                &mut scope,
-                                None,
-                                Rect::ZERO,
-                                PopoverAnchor::BottomStart,
-                            );
-                        }),
-                        None => ctx.mutate_child_later(&mut self.overlay_host, |mut w| {
-                            AnchoredOverlay::set_overlay_visible(&mut w, false);
-                        }),
-                    }
+                    close_menu_body!(&mut self.hosting, ctx);
                     ctx.submit_action::<Self::Action>(DropdownButtonAction::ItemSelected(index));
                     ctx.set_handled();
                     ctx.request_paint_only();
                     return;
                 }
-                self.toggle_dropdown(ctx);
+                if self.open {
+                    self.open = false;
+                    self.highlighted = None;
+                    close_menu_body!(&mut self.hosting, ctx);
+                } else {
+                    self.open = true;
+                    open_menu_body!(&mut self.hosting, ctx);
+                }
             }
             ctx.set_handled();
             ctx.request_paint_only();
@@ -494,20 +628,7 @@ impl Widget for ThemedDropdownButton {
         if let Some(&MenuItemSelected(index)) = action.downcast_ref::<MenuItemSelected>() {
             self.open = false;
             self.highlighted = None;
-            match self.scope.as_ref().and_then(OverlayScopeHandle::widget_id) {
-                Some(scope_id) => ctx.mutate_later(scope_id, |mut w| {
-                    let mut scope = w.downcast::<OverlayScope>();
-                    OverlayScope::set_overlay(
-                        &mut scope,
-                        None,
-                        Rect::ZERO,
-                        PopoverAnchor::BottomStart,
-                    );
-                }),
-                None => ctx.mutate_child_later(&mut self.overlay_host, |mut w| {
-                    AnchoredOverlay::set_overlay_visible(&mut w, false);
-                }),
-            }
+            close_menu_body!(&mut self.hosting, ctx);
             ctx.submit_action::<Self::Action>(DropdownButtonAction::ItemSelected(index));
             ctx.set_handled();
             ctx.request_paint_only();
@@ -551,24 +672,7 @@ impl Widget for ThemedDropdownButton {
                 // naturally (it was always focused).
                 self.open = false;
                 self.highlighted = None;
-                match self.scope.as_ref().and_then(OverlayScopeHandle::widget_id) {
-                    Some(scope_id) => {
-                        ctx.mutate_later(scope_id, |mut w| {
-                            let mut scope = w.downcast::<OverlayScope>();
-                            OverlayScope::set_overlay(
-                                &mut scope,
-                                None,
-                                Rect::ZERO,
-                                PopoverAnchor::BottomStart,
-                            );
-                        });
-                    }
-                    None => {
-                        ctx.mutate_child_later(&mut self.overlay_host, |mut w| {
-                            AnchoredOverlay::set_overlay_visible(&mut w, false);
-                        });
-                    }
-                }
+                close_menu_body!(&mut self.hosting, ctx);
                 ctx.set_handled();
                 ctx.request_paint_only();
             }
@@ -580,81 +684,96 @@ impl Widget for ThemedDropdownButton {
         match event {
             Update::WidgetAdded => {
                 ctx.set_disabled(self.disabled);
+                self.handle.set(ctx.widget_id());
             }
             // The wrapped `ThemedButton` is the actual focus target now, so we
             // react to `ChildFocusChanged` — masonry's "focus entered/left my
-            // subtree" signal for ancestors — rather than `FocusChanged`. A
-            // click landing outside our subtree clears focus from the button,
-            // which is the standard "click outside to dismiss" path; the menu
-            // remains a *descendant* (clicks on the trigger or inside the menu
-            // keep our subtree focused), so this only fires for genuine
-            // outside clicks.
-            Update::ChildFocusChanged(false) if self.open => {
+            // subtree" signal for ancestors — rather than `FocusChanged`. Only
+            // meaningful in-tree: there the menu is a *descendant* (clicks on
+            // the trigger or inside the menu keep our subtree focused), so
+            // this only fires for genuine outside clicks. In portal mode the
+            // menu lives in the scope's slot, not under us — the slot's own
+            // outside-press dismissal handles it instead (see
+            // `PortalSlot::dismiss_outside`).
+            Update::ChildFocusChanged(false)
+                if self.open && matches!(self.hosting, Hosting::InTree { .. }) =>
+            {
                 self.open = false;
                 self.highlighted = None;
-                match self.scope.as_ref().and_then(OverlayScopeHandle::widget_id) {
-                    Some(scope_id) => ctx.mutate_later(scope_id, |mut w| {
-                        let mut scope = w.downcast::<OverlayScope>();
-                        OverlayScope::set_overlay(
-                            &mut scope,
-                            None,
-                            Rect::ZERO,
-                            PopoverAnchor::BottomStart,
-                        );
-                    }),
-                    None => ctx.mutate_child_later(&mut self.overlay_host, |mut w| {
-                        AnchoredOverlay::set_overlay_visible(&mut w, false);
-                    }),
-                }
+                close_menu_body!(&mut self.hosting, ctx);
+                ctx.request_paint_only();
+            }
+            // A trigger stashed mid-open (e.g. a tab/panel container hiding us
+            // without tearing us down) can no longer be clicked to dismiss its
+            // menu, and the menu would stay visible/painted once the host is
+            // unstashed even though `self.open` is now false. Close eagerly —
+            // mirrors `PopoverHost`'s `Update::StashedChanged(true)` path —
+            // for both hosting modes.
+            Update::StashedChanged(true) if self.open => {
+                self.open = false;
+                self.highlighted = None;
+                close_menu_body!(&mut self.hosting, ctx);
                 ctx.request_paint_only();
             }
             _ => {}
         }
     }
 
-    /// Re-anchors a still-open scope-mode menu as we move in window space —
-    /// e.g. while the user scrolls a `ScrollContainer` containing us. The
-    /// menu lives in a structurally separate subtree (the scope's overlay
-    /// slot), so — unlike `AnchoredOverlay`, which tracks for free as a
-    /// rigidly-attached descendant — nothing re-places it automatically.
-    ///
-    /// Self-renews only while we're actually moving: each call compares our
-    /// current window-space anchor rect to the last one we pushed, and only
-    /// re-arms (`mutate_self_later` → `request_compose`) when it changed.
-    /// `ComposeCtx` exposes neither `transform_has_changed` nor
-    /// `request_compose` (both are `MutateCtx`-only), hence the comparison —
-    /// it gives the same "stop cleanly once stable, no busy-loop" behavior.
+    /// Re-anchors a still-open portal-mode menu as we move in window space —
+    /// e.g. while the user scrolls a `ScrollContainer` containing us. The menu
+    /// lives in a structurally separate subtree (the scope's portal slot), so
+    /// — unlike `AnchoredOverlay`, which tracks for free as a rigidly-attached
+    /// descendant — nothing re-places it automatically. Mirrors
+    /// `PopoverHost::compose`; no-op in-tree.
     fn compose(&mut self, ctx: &mut ComposeCtx<'_>) {
         if !self.open {
             return;
         }
-        let Some(scope_id) = self.scope.as_ref().and_then(OverlayScopeHandle::widget_id) else {
+        let Hosting::Portal {
+            scope,
+            key,
+            last_anchor_rect_window,
+            ..
+        } = &mut self.hosting
+        else {
             return;
         };
-        let anchor_rect_window =
-            Rect::from_origin_size(ctx.to_window(Point::ZERO), ctx.border_box_size());
-        if self.last_anchor_rect_window == Some(anchor_rect_window) {
+        let Some(scope_id) = scope.widget_id() else {
+            return;
+        };
+        let rect = Rect::from_origin_size(ctx.to_window(Point::ZERO), ctx.border_box_size());
+        if *last_anchor_rect_window == Some(rect) {
             return;
         }
-        self.last_anchor_rect_window = Some(anchor_rect_window);
+        *last_anchor_rect_window = Some(rect);
+        let key = *key;
         ctx.mutate_later(scope_id, move |mut w| {
             let mut scope = w.downcast::<OverlayScope>();
-            let local_origin = scope.ctx.to_local(anchor_rect_window.origin());
-            let placement = Rect::from_origin_size(local_origin, anchor_rect_window.size());
-            OverlayScope::set_placement(&mut scope, placement, PopoverAnchor::BottomStart);
+            OverlayScope::set_portal_placement(&mut scope, key, rect);
         });
-        ctx.mutate_self_later(|mut w| {
-            w.ctx.request_compose();
-        });
+    }
+
+    /// Keeps a still-open portal-mode menu's [`Self::compose`] running every
+    /// frame so it re-anchors regardless of pointer position or which
+    /// ancestor scrolled. Mirrors `PopoverHost::on_anim_frame`; no-op in-tree.
+    fn on_anim_frame(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, _: u64) {
+        if !self.open || !matches!(self.hosting, Hosting::Portal { .. }) {
+            return;
+        }
+        ctx.request_compose();
+        ctx.request_anim_frame();
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.overlay_host);
+        match &mut self.hosting {
+            Hosting::InTree { overlay_host } => ctx.register_child(overlay_host),
+            Hosting::Portal { trigger, .. } => ctx.register_child(trigger),
+        }
     }
 
-    /// Pure transparent forward to `overlay_host` — `AnchoredOverlay` already
-    /// sizes itself to its `primary` (the wrapped `ThemedButton`), so there's
-    /// nothing dropdown-shaped to add here. Mirrors `pointer_inert`'s
+    /// Pure transparent forward to whichever child hosts the trigger —
+    /// `AnchoredOverlay` (in-tree) already sizes itself to its `primary`, and
+    /// in portal mode the trigger is our only child. Mirrors `pointer_inert`'s
     /// single-child passthrough.
     fn measure(
         &mut self,
@@ -664,13 +783,29 @@ impl Widget for ThemedDropdownButton {
         _len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        ctx.redirect_measurement(&mut self.overlay_host, axis, cross_length)
+        match &mut self.hosting {
+            Hosting::InTree { overlay_host } => {
+                ctx.redirect_measurement(overlay_host, axis, cross_length)
+            }
+            Hosting::Portal { trigger, .. } => {
+                ctx.redirect_measurement(trigger, axis, cross_length)
+            }
+        }
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        ctx.run_layout(&mut self.overlay_host, size);
-        ctx.place_child(&mut self.overlay_host, Point::ORIGIN);
-        ctx.derive_baselines(&self.overlay_host);
+        match &mut self.hosting {
+            Hosting::InTree { overlay_host } => {
+                ctx.run_layout(overlay_host, size);
+                ctx.place_child(overlay_host, Point::ORIGIN);
+                ctx.derive_baselines(overlay_host);
+            }
+            Hosting::Portal { trigger, .. } => {
+                ctx.run_layout(trigger, size);
+                ctx.place_child(trigger, Point::ORIGIN);
+                ctx.derive_baselines(trigger);
+            }
+        }
     }
 
     fn paint(
@@ -679,8 +814,7 @@ impl Widget for ThemedDropdownButton {
         _props: &PropertiesRef<'_>,
         _painter: &mut Painter<'_>,
     ) {
-        // Purely structural — `overlay_host` (and transitively the wrapped
-        // `ThemedButton`) paints itself.
+        // Purely structural — whichever child hosts the trigger paints itself.
     }
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
@@ -702,7 +836,10 @@ impl Widget for ThemedDropdownButton {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.overlay_host.id()])
+        match &self.hosting {
+            Hosting::InTree { overlay_host } => ChildrenIds::from_slice(&[overlay_host.id()]),
+            Hosting::Portal { trigger, .. } => ChildrenIds::from_slice(&[trigger.id()]),
+        }
     }
 }
 
