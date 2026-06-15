@@ -161,10 +161,8 @@ macro_rules! open_menu_body {
                 if let Some(scope_id) = scope.widget_id() {
                     let key = *key;
                     let owner = Some(($ctx.widget_id(), PortalOwnerKind::DropdownButton));
-                    let rect = Rect::from_origin_size(
-                        $ctx.to_window(Point::ZERO),
-                        $ctx.border_box_size(),
-                    );
+                    let rect =
+                        Rect::from_origin_size($ctx.to_window(Point::ZERO), $ctx.border_box_size());
                     *last_anchor_rect_window = Some(rect);
                     $ctx.mutate_later(scope_id, move |mut w| {
                         let mut scope = w.downcast::<OverlayScope>();

@@ -192,7 +192,11 @@ where
             (
                 element,
                 DropdownButtonViewState {
-                    binding: MenuBinding::Portal { portal, key, handle },
+                    binding: MenuBinding::Portal {
+                        portal,
+                        key,
+                        handle,
+                    },
                 },
             )
         } else {
@@ -241,7 +245,12 @@ where
             ThemedDropdownButton::set_items(&mut element, self.item_labels.clone());
         }
 
-        if let MenuBinding::Portal { portal, key, handle } = &mut view_state.binding {
+        if let MenuBinding::Portal {
+            portal,
+            key,
+            handle,
+        } = &mut view_state.binding
+        {
             // Content rebuild happens when the scope's view diffs the
             // registry (after our subtree's rebuild returns) — we only
             // refresh the registered view value here, mirroring
