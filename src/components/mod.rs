@@ -20,6 +20,7 @@ pub(crate) mod click;
 pub mod clipboard;
 pub mod code_view;
 pub mod collapsible;
+pub mod context_menu;
 pub mod data_grid;
 pub mod dropdown_button;
 pub mod group_box;
@@ -47,6 +48,10 @@ pub use checkbox::{Checkbox, CheckboxView, checkbox};
 pub use clipboard::{Clipboard, ClipboardView, clipboard};
 pub use code_view::{ReadOnlyText, ReadOnlyTextView, RustHighlighter, read_only_text};
 pub use collapsible::{Collapsible, CollapsibleView, collapsible};
+pub use context_menu::{
+    ContextMenuAreaBuilder, ContextMenuAreaView, Menu, MenuItem, MenuView, context_menu_area, item,
+    menu,
+};
 pub use data_grid::{
     CellAlign, ColumnDef, ColumnId, ColumnWidths, DataGrid, FilterState, MIN_COLUMN_WIDTH,
     ScrollState, SelectionState, SortDirection, SortState, colored_text_column, data_grid,
@@ -102,6 +107,7 @@ pub enum ComponentKind {
     GroupBox,
     CodeView,
     Collapsible,
+    ContextMenu,
     DataGrid,
     Icon,
     Input,
@@ -136,6 +142,7 @@ impl ComponentKind {
             Self::CodeView => "Code View",
             Self::GroupBox => "Group Box",
             Self::Collapsible => "Collapsible",
+            Self::ContextMenu => "Context Menu",
             Self::DataGrid => "Data Grid",
             Self::Icon => "Icon",
             Self::Input => "Input",
@@ -168,6 +175,7 @@ impl ComponentKind {
             Self::Clipboard,
             Self::CodeView,
             Self::Collapsible,
+            Self::ContextMenu,
             Self::DataGrid,
             Self::DropdownButton,
             Self::GroupBox,
