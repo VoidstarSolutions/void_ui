@@ -135,6 +135,32 @@ fn release_root_portal() {
     ROOT_PORTAL.with(|cell| *cell.borrow_mut() = None);
 }
 
+/// RAII wrapper around [`claim_root_portal`]/[`release_root_portal`]: holds
+/// the claim (if this call won it) until dropped. `OverlayScopeRootView`
+/// keeps one of these alive for its whole `build`/`rebuild` — including the
+/// portal-entry fixpoint loop — so that portal-mounted content (e.g. a
+/// `dialog` nested inside a `popover`'s content) built *during* that loop can
+/// still see the root portal via [`root_portal`].
+struct RootPortalGuard {
+    is_root: bool,
+}
+
+impl RootPortalGuard {
+    fn claim<State: 'static, Action: 'static>(portal: &OverlayPortal<State, Action>) -> Self {
+        Self {
+            is_root: claim_root_portal(portal),
+        }
+    }
+}
+
+impl Drop for RootPortalGuard {
+    fn drop(&mut self) {
+        if self.is_root {
+            release_root_portal();
+        }
+    }
+}
+
 /// The [`OverlayPortal`] of the outermost `overlay_scope` ancestor currently
 /// being built or rebuilt, if any.
 ///
@@ -626,15 +652,15 @@ where
         let portal = portal_from_env::<State, Action>(ctx)
             .expect("overlay_scope provides OverlayPortal for its own subtree");
 
-        // Claim the root-portal slot before descending into `content` (which
-        // may contain nested `overlay_scope`s and `dialog`s) — see
-        // `root_portal`.
-        let is_root = claim_root_portal(&portal);
+        // Claim the root-portal slot for the rest of this `build` — both
+        // `content` (which may contain nested `overlay_scope`s and
+        // `dialog`s) and the portal-entry fixpoint loop below (which builds
+        // popover/dialog content that may itself contain nested `dialog`s)
+        // need `root_portal` to resolve. See `root_portal` and
+        // `RootPortalGuard`.
+        let _root_portal_guard = RootPortalGuard::claim(&portal);
         let (content, content_state) =
             ctx.with_id(CONTENT_VIEW_ID, |ctx| self.content.build(ctx, app_state));
-        if is_root {
-            release_root_portal();
-        }
 
         // Mount registered entries, iterating to a fixpoint: building an
         // entry can itself register nested popovers (a popover inside another
@@ -709,10 +735,13 @@ where
         //    whatever the registry says, including registrations that happen
         //    mid-diff while entries themselves rebuild.
         //
-        //    Claim the root-portal slot for the duration (see
-        //    `root_portal`) — `content` may contain nested `overlay_scope`s
-        //    and `dialog`s.
-        let is_root = claim_root_portal(&view_state.portal);
+        //    Claim the root-portal slot for the rest of this `rebuild` (see
+        //    `root_portal` and `RootPortalGuard`) — both `content` (which may
+        //    contain nested `overlay_scope`s and `dialog`s) and the
+        //    portal-entry fixpoint loop below (which builds/rebuilds
+        //    popover/dialog content that may itself contain nested
+        //    `dialog`s) need `root_portal` to resolve.
+        let _root_portal_guard = RootPortalGuard::claim(&view_state.portal);
         {
             let mut content = OverlayScope::content_mut(&mut element);
             ctx.with_id(CONTENT_VIEW_ID, |ctx| {
@@ -724,9 +753,6 @@ where
                     app_state,
                 );
             });
-        }
-        if is_root {
-            release_root_portal();
         }
 
         // 2./3. Diff the registry against mounted entries, iterating to a
