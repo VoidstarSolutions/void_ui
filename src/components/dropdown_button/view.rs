@@ -175,7 +175,12 @@ where
                 theme: self.theme,
             };
             let content: Arc<PortalContentView<State, Action>> = Arc::new(menu_view);
-            let key = portal.register(content, &self.theme, PortalPlacement::BareTrigger, SurfaceStyle::Popover);
+            let key = portal.register(
+                content,
+                &self.theme,
+                PortalPlacement::BareTrigger,
+                SurfaceStyle::Popover,
+            );
             let widget = ThemedDropdownButton::new_portal(
                 DropdownButtonConfig {
                     label_text: self.label.clone(),
@@ -263,7 +268,13 @@ where
                     theme: self.theme,
                 };
                 let content: Arc<PortalContentView<State, Action>> = Arc::new(menu_view);
-                portal.update(*key, content, &self.theme, PortalPlacement::BareTrigger, SurfaceStyle::Popover);
+                portal.update(
+                    *key,
+                    content,
+                    &self.theme,
+                    PortalPlacement::BareTrigger,
+                    SurfaceStyle::Popover,
+                );
             }
         }
     }
