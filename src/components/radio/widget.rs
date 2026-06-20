@@ -21,7 +21,7 @@ use masonry::peniko::Color;
 use masonry::widgets::ButtonPress;
 
 use crate::Theme;
-use crate::focus_ring::paint_focus_ring;
+use crate::focus_ring::{FOCUS_RING_OUTSET, paint_focus_ring};
 
 /// Diameter of the radio circle in logical pixels.
 const RADIO_DIAMETER: f64 = 14.0;
@@ -31,8 +31,6 @@ const RADIO_GAP: f64 = 6.0;
 const BORDER_WIDTH: f64 = 1.5;
 /// Radius of the inner selection dot (drawn when `active`).
 const DOT_RADIUS: f64 = 3.5;
-/// Focus-ring outset from the circle edge.
-const FOCUS_RING_OUTSET: f64 = 2.0;
 
 /// Themed radio button widget.
 ///

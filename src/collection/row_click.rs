@@ -30,13 +30,9 @@ use masonry::layout::{LenReq, Length};
 
 use super::single_child;
 use crate::Theme;
+use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 use crate::components::click::{self, ClickPhase};
 
-/// Inset of the focus ring from the row's border-box edge, in logical
-/// pixels. Matches the smaller end of the per-component insets used
-/// elsewhere (checkbox/toggle/collapsible use 1.5); a full-bleed row
-/// benefits from staying just inside its bounds.
-const FOCUS_RING_INSET: f64 = 1.5;
 
 /// Action emitted by [`RowClickable`] on primary-button release (or
 /// Enter/Space activation). The receiver inspects the modifiers to decide
@@ -215,7 +211,7 @@ impl Widget for RowClickable {
                     (size.height - 2.0 * inset).max(0.0),
                 ),
             );
-            crate::focus_ring::paint_focus_ring(painter, rect, &self.theme);
+            paint_focus_ring(painter, rect, &self.theme);
         }
     }
 

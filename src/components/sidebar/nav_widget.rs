@@ -25,7 +25,7 @@ use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use masonry::peniko::Color;
 
 use crate::Theme;
-use crate::focus_ring::paint_focus_ring;
+use crate::focus_ring::{FOCUS_RING_OUTSET, paint_focus_ring};
 
 /// Width of the active-state left accent bar.
 const ACCENT_WIDTH: f64 = 3.0;
@@ -36,7 +36,6 @@ const PAD_H: f64 = 8.0;
 /// Vertical padding above and below each item's label.
 const PAD_V: f64 = 6.0;
 /// Inset of the focus ring from an item's placed rect.
-const FOCUS_RING_INSET: f64 = 2.0;
 /// Gap between adjacent items.
 const GAP: f64 = 2.0;
 
@@ -516,7 +515,7 @@ impl Widget for ThemedSidebarNav {
             }
 
             if i == self.focused && ctx.is_focus_target() {
-                let inset = rect.inset(-FOCUS_RING_INSET);
+                let inset = rect.inset(-FOCUS_RING_OUTSET);
                 paint_focus_ring(painter, RoundedRect::from_rect(inset, 0.0), &self.theme);
             }
         }
