@@ -57,8 +57,8 @@ use crate::Theme;
 use crate::components::popover::PopoverAnchor;
 use crate::components::popover::widget::PopoverSurface;
 use crate::overlay_portal::{
-    OverlayPortal, PortalContentView, PortalContentViewState, PortalPlacement, PortalSlot,
-    portal_from_env,
+    OverlayPortal, PortalContentView, PortalContentViewState, PortalOwnerKind, PortalPlacement,
+    PortalSlot, portal_from_env,
 };
 
 /// Resource published into the Xilem [`Environment`](xilem_masonry::core::Environment)
@@ -207,11 +207,11 @@ impl OverlayScope {
     /// *window* coordinates; converted here with `to_local` exactly like the
     /// dropdown's scope push (robust to scrolling/transforms between the
     /// scope and the trigger).
-    pub fn set_portal_visible(
+    pub(crate) fn set_portal_visible(
         this: &mut WidgetMut<'_, Self>,
         key: u64,
         visible: bool,
-        owner: Option<WidgetId>,
+        owner: Option<(WidgetId, PortalOwnerKind)>,
         anchor_rect_window: Rect,
         anchor: PopoverAnchor,
         gap: f64,
@@ -449,6 +449,7 @@ const CONTENT_VIEW_ID: ViewId = ViewId::new(0);
 /// Mirrors `PopoverHost::new`'s in-tree wrapping so portal and fallback
 /// popovers look identical.
 ///
+/// [`PortalPlacement::BareTrigger`] entries (dropdown menus) and
 /// [`PortalPlacement::Corner`] entries (toast layers) are mounted as-is — the
 /// registered content already carries its own surface/background, and adding
 /// popover chrome would double it up.
@@ -465,7 +466,7 @@ fn wrap_portal_content(
                 .insert(Padding::all(Length::px(f64::from(theme.density.pad))));
             NewWidget::new(PopoverSurface::new(content, theme)).erased()
         }
-        PortalPlacement::Corner(_) => pod.new_widget.erased(),
+        PortalPlacement::BareTrigger | PortalPlacement::Corner(_) => pod.new_widget.erased(),
     }
 }
 
@@ -475,10 +476,10 @@ fn wrap_portal_content(
 ///
 /// [`PortalPlacement::Trigger`] slot children are that `Passthrough` wrapped
 /// in [`PopoverSurface`] chrome, so unwrap one layer first.
-/// [`PortalPlacement::Corner`] slot children mount the `Passthrough` bare
-/// (see [`wrap_portal_content`]), so `child` (itself type-erased to `dyn
-/// Widget`) already *is* it — the caller's subsequent `.downcast()` resolves
-/// it to `Pod<Passthrough>`.
+/// [`PortalPlacement::BareTrigger`] and [`PortalPlacement::Corner`] slot
+/// children mount the `Passthrough` bare (see [`wrap_portal_content`]), so
+/// `child` (itself type-erased to `dyn Widget`) already *is* it — the
+/// caller's subsequent `.downcast()` resolves it to `Pod<Passthrough>`.
 fn with_portal_content<R>(
     mut child: WidgetMut<'_, dyn Widget>,
     placement: PortalPlacement,
@@ -489,7 +490,7 @@ fn with_portal_content<R>(
             let mut surface = child.downcast::<PopoverSurface>();
             f(PopoverSurface::content_mut(&mut surface))
         }
-        PortalPlacement::Corner(_) => f(child),
+        PortalPlacement::BareTrigger | PortalPlacement::Corner(_) => f(child),
     }
 }
 
@@ -687,6 +688,7 @@ where
                                 PopoverSurface::set_theme(&mut surface, &entry.theme);
                             }
                         }
+                        PortalPlacement::BareTrigger => {}
                         PortalPlacement::Corner(unit_point) => {
                             PortalSlot::set_corner(&mut slot, entry.key, unit_point);
                         }
