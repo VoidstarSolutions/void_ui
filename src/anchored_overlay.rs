@@ -199,6 +199,9 @@ impl Widget for AnchoredOverlay {
                 PopoverAnchor::TopStart | PopoverAnchor::TopCenter | PopoverAnchor::TopEnd => {
                     Point::new(offset.x, offset.y - self.gap.get())
                 }
+                // `AnchoredOverlay` is never used with `ViewportQuarter` —
+                // that variant is only placed via `PortalSlot::layout`.
+                PopoverAnchor::ViewportQuarter => offset,
             };
             ctx.place_child(&mut self.overlay, offset);
             self.placed_overlay_rect = Rect::from_origin_size(offset, overlay_size);

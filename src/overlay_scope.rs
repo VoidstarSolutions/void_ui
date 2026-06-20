@@ -35,6 +35,8 @@
 //! [`xilem_masonry::core::Environment::get_slot_for_type`]. Consumers fall
 //! back to [`crate::AnchoredOverlay`] when no scope ancestor exists.
 
+use std::any::Any;
+use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::sync::{Arc, OnceLock};
 
@@ -55,10 +57,10 @@ use xilem_masonry::{Pod, ViewCtx, WidgetView};
 
 use crate::Theme;
 use crate::components::popover::PopoverAnchor;
-use crate::components::popover::widget::PopoverSurface;
+use crate::components::popover::widget::{PopoverSurface, SurfaceStyle};
 use crate::overlay_portal::{
-    OverlayPortal, PortalContentView, PortalContentViewState, PortalOwnerKind, PortalPlacement,
-    PortalSlot, portal_from_env,
+    OverlayPortal, PortalContentView, PortalContentViewState, PortalEntry, PortalPlacement,
+    PortalSlot, PortalVisibility, portal_from_env,
 };
 
 /// Resource published into the Xilem [`Environment`](xilem_masonry::core::Environment)
@@ -94,6 +96,86 @@ impl OverlayScopeHandle {
     pub fn widget_id(&self) -> Option<WidgetId> {
         self.0.get().copied()
     }
+}
+
+thread_local! {
+    /// The [`OverlayPortal`] of the outermost `overlay_scope` currently being
+    /// built or rebuilt, valid for the duration of that scope's (and its
+    /// descendants') `build`/`rebuild` call — `None` outside of that window.
+    ///
+    /// `dialog` reads this via [`root_portal`] to always target the root
+    /// scope, unlike `popover` (and the legacy overlay slot), which use the
+    /// *nearest* scope's portal published through the Environment. A nested
+    /// `overlay_scope` leaves this untouched, so descendants — including
+    /// dialogs registered by a nested scope's content — see the outermost
+    /// scope's portal.
+    static ROOT_PORTAL: RefCell<Option<Box<dyn Any>>> = RefCell::new(None);
+}
+
+/// If no scope has yet claimed the root slot for this build/rebuild pass,
+/// claim it for `portal` and return `true` — the caller must call
+/// [`release_root_portal`] once its content subtree has finished
+/// building/rebuilding. Otherwise leave the existing claim untouched and
+/// return `false`.
+fn claim_root_portal<State: 'static, Action: 'static>(
+    portal: &OverlayPortal<State, Action>,
+) -> bool {
+    ROOT_PORTAL.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        if cell.is_some() {
+            return false;
+        }
+        *cell = Some(Box::new(portal.clone()));
+        true
+    })
+}
+
+/// Release a claim made by [`claim_root_portal`].
+fn release_root_portal() {
+    ROOT_PORTAL.with(|cell| *cell.borrow_mut() = None);
+}
+
+/// RAII wrapper around [`claim_root_portal`]/[`release_root_portal`]: holds
+/// the claim (if this call won it) until dropped. `OverlayScopeRootView`
+/// keeps one of these alive for its whole `build`/`rebuild` — including the
+/// portal-entry fixpoint loop — so that portal-mounted content (e.g. a
+/// `dialog` nested inside a `popover`'s content) built *during* that loop can
+/// still see the root portal via [`root_portal`].
+struct RootPortalGuard {
+    is_root: bool,
+}
+
+impl RootPortalGuard {
+    fn claim<State: 'static, Action: 'static>(portal: &OverlayPortal<State, Action>) -> Self {
+        Self {
+            is_root: claim_root_portal(portal),
+        }
+    }
+}
+
+impl Drop for RootPortalGuard {
+    fn drop(&mut self) {
+        if self.is_root {
+            release_root_portal();
+        }
+    }
+}
+
+/// The [`OverlayPortal`] of the outermost `overlay_scope` ancestor currently
+/// being built or rebuilt, if any.
+///
+/// Returns `None` both when there is no `overlay_scope` ancestor at all and
+/// when the root scope was published for a different `State`/`Action` pair
+/// (e.g. a sub-tree rendered with different generic parameters than its
+/// enclosing scope) — callers should treat both cases the same way.
+pub(crate) fn root_portal<State: 'static, Action: 'static>() -> Option<OverlayPortal<State, Action>>
+{
+    ROOT_PORTAL.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .and_then(|boxed| boxed.downcast_ref::<OverlayPortal<State, Action>>())
+            .cloned()
+    })
 }
 
 /// Masonry widget that hosts a footprint-dictating `content` child plus two
@@ -206,20 +288,25 @@ impl OverlayScope {
     /// Show/hide a portal child. `anchor_rect_window` is the trigger's box in
     /// *window* coordinates; converted here with `to_local` exactly like the
     /// dropdown's scope push (robust to scrolling/transforms between the
-    /// scope and the trigger).
+    /// scope and the trigger). For [`PopoverAnchor::ViewportQuarter`],
+    /// `anchor_rect_window` is ignored — pass [`Rect::ZERO`] — since
+    /// `PortalSlot::layout` centers that variant in its own size rather than
+    /// any placement rect.
     pub(crate) fn set_portal_visible(
         this: &mut WidgetMut<'_, Self>,
         key: u64,
         visible: bool,
-        owner: Option<(WidgetId, PortalOwnerKind)>,
-        anchor_rect_window: Rect,
-        anchor: PopoverAnchor,
-        gap: f64,
+        placement: PortalVisibility,
     ) {
-        let local_origin = this.ctx.to_local(anchor_rect_window.origin());
-        let placement = Rect::from_origin_size(local_origin, anchor_rect_window.size());
+        let local_origin = this.ctx.to_local(placement.rect.origin());
+        let rect = Rect::from_origin_size(local_origin, placement.rect.size());
         let mut slot = Self::portal_slot_mut(this);
-        PortalSlot::set_visible(&mut slot, key, visible, owner, placement, anchor, gap);
+        PortalSlot::set_visible(
+            &mut slot,
+            key,
+            visible,
+            PortalVisibility { rect, ..placement },
+        );
     }
 
     /// Re-anchor a visible portal child as its trigger moves.
@@ -457,6 +544,7 @@ fn wrap_portal_content(
     pod: Pod<masonry::widgets::Passthrough>,
     theme: &Theme,
     placement: PortalPlacement,
+    style: SurfaceStyle,
 ) -> NewWidget<dyn Widget> {
     match placement {
         PortalPlacement::Trigger => {
@@ -464,7 +552,7 @@ fn wrap_portal_content(
             content
                 .properties
                 .insert(Padding::all(Length::px(f64::from(theme.density.pad))));
-            NewWidget::new(PopoverSurface::new(content, theme)).erased()
+            NewWidget::new(PopoverSurface::new(content, theme, style)).erased()
         }
         PortalPlacement::BareTrigger | PortalPlacement::Corner(_) => pod.new_widget.erased(),
     }
@@ -494,6 +582,47 @@ fn with_portal_content<R>(
     }
 }
 
+/// Unmount entries in `mounted` whose portal registration is gone from
+/// `entries` (including nested deregistrations discovered on later
+/// iterations of the caller's fixpoint loop — without this, a nested popover
+/// removed while open would linger painted until the next app-state change).
+/// Returns whether anything was unmounted, since teardown can itself
+/// deregister nested entries (after `entries` was snapshotted), so unmounting
+/// counts as progress in the caller's loop — otherwise a cascade of removals
+/// could stall before fully unmounting.
+fn unmount_stale_entries<State: 'static, Action: 'static>(
+    ctx: &mut ViewCtx,
+    element: &mut Mut<'_, Pod<OverlayScope>>,
+    mounted: &mut Vec<MountedEntry<State, Action>>,
+    entries: &[PortalEntry<State, Action>],
+) -> bool {
+    let mut progressed = false;
+    let mut idx = 0;
+    while idx < mounted.len() {
+        let key = mounted[idx].key;
+        if entries.iter().any(|e| e.key == key) {
+            idx += 1;
+            continue;
+        }
+        let mut gone = mounted.remove(idx);
+        progressed = true;
+        {
+            let mut slot = OverlayScope::portal_slot_mut(element);
+            let child = PortalSlot::child_mut(&mut slot, key)
+                .expect("mounted entry must have a slot child");
+            with_portal_content(child, gone.placement, |mut content| {
+                ctx.with_id(ViewId::new(key), |ctx| {
+                    gone.view
+                        .teardown(&mut gone.view_state, ctx, content.downcast());
+                });
+            });
+        }
+        let mut slot = OverlayScope::portal_slot_mut(element);
+        PortalSlot::remove_by_key(&mut slot, key);
+    }
+    progressed
+}
+
 /// The `View` actually wrapped by the nested `provides` in [`overlay_scope`].
 /// Two-part job: it builds the [`OverlayScope`] widget around `content`'s pod
 /// (threading `build`/`rebuild`/`teardown`/`message` through
@@ -520,11 +649,18 @@ where
     type ViewState = OverlayScopeViewState<State, Action, V::ViewState>;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        let (content, content_state) =
-            ctx.with_id(CONTENT_VIEW_ID, |ctx| self.content.build(ctx, app_state));
-
         let portal = portal_from_env::<State, Action>(ctx)
             .expect("overlay_scope provides OverlayPortal for its own subtree");
+
+        // Claim the root-portal slot for the rest of this `build` — both
+        // `content` (which may contain nested `overlay_scope`s and
+        // `dialog`s) and the portal-entry fixpoint loop below (which builds
+        // popover/dialog content that may itself contain nested `dialog`s)
+        // need `root_portal` to resolve. See `root_portal` and
+        // `RootPortalGuard`.
+        let _root_portal_guard = RootPortalGuard::claim(&portal);
+        let (content, content_state) =
+            ctx.with_id(CONTENT_VIEW_ID, |ctx| self.content.build(ctx, app_state));
 
         // Mount registered entries, iterating to a fixpoint: building an
         // entry can itself register nested popovers (a popover inside another
@@ -556,7 +692,7 @@ where
                 let (pod, view_state) = ctx.with_id(ViewId::new(entry.key), |ctx| {
                     entry.content.build(ctx, app_state)
                 });
-                let wrapped = wrap_portal_content(pod, &entry.theme, entry.placement);
+                let wrapped = wrap_portal_content(pod, &entry.theme, entry.placement, entry.style);
                 slot_children.push((entry.key, wrapped, entry.placement));
                 mounted.push(MountedEntry {
                     key: entry.key,
@@ -598,6 +734,14 @@ where
         //    during this call; the fixpoint diff below then converges on
         //    whatever the registry says, including registrations that happen
         //    mid-diff while entries themselves rebuild.
+        //
+        //    Claim the root-portal slot for the rest of this `rebuild` (see
+        //    `root_portal` and `RootPortalGuard`) — both `content` (which may
+        //    contain nested `overlay_scope`s and `dialog`s) and the
+        //    portal-entry fixpoint loop below (which builds/rebuilds
+        //    popover/dialog content that may itself contain nested
+        //    `dialog`s) need `root_portal` to resolve.
+        let _root_portal_guard = RootPortalGuard::claim(&view_state.portal);
         {
             let mut content = OverlayScope::content_mut(&mut element);
             ctx.with_id(CONTENT_VIEW_ID, |ctx| {
@@ -635,29 +779,8 @@ where
             // entries (after this pass's snapshot), so unmounting counts as
             // progress — otherwise a cascade of removals could stall before
             // fully unmounting.
-            let mut idx = 0;
-            while idx < view_state.mounted.len() {
-                let key = view_state.mounted[idx].key;
-                if entries.iter().any(|e| e.key == key) {
-                    idx += 1;
-                    continue;
-                }
-                let mut gone = view_state.mounted.remove(idx);
-                progressed = true;
-                {
-                    let mut slot = OverlayScope::portal_slot_mut(&mut element);
-                    let child = PortalSlot::child_mut(&mut slot, key)
-                        .expect("mounted entry must have a slot child");
-                    with_portal_content(child, gone.placement, |mut content| {
-                        ctx.with_id(ViewId::new(key), |ctx| {
-                            gone.view
-                                .teardown(&mut gone.view_state, ctx, content.downcast());
-                        });
-                    });
-                }
-                let mut slot = OverlayScope::portal_slot_mut(&mut element);
-                PortalSlot::remove_by_key(&mut slot, key);
-            }
+            progressed |=
+                unmount_stale_entries(ctx, &mut element, &mut view_state.mounted, &entries);
 
             // Rebuild kept entries, mount new ones — only keys not yet
             // processed this pass. The snapshot supplies only the ORDER and
@@ -713,7 +836,8 @@ where
                     let (pod, vs_new) = ctx.with_id(ViewId::new(entry.key), |ctx| {
                         entry.content.build(ctx, app_state)
                     });
-                    let wrapped = wrap_portal_content(pod, &entry.theme, entry.placement);
+                    let wrapped =
+                        wrap_portal_content(pod, &entry.theme, entry.placement, entry.style);
                     let mut slot = OverlayScope::portal_slot_mut(&mut element);
                     PortalSlot::insert(&mut slot, entry.key, wrapped, entry.placement);
                     view_state.mounted.push(MountedEntry {
@@ -805,6 +929,7 @@ mod tests {
     use masonry::testing::TestHarness;
 
     use super::*;
+    use crate::overlay_portal::OwnerKind;
 
     /// Scope content standing in for "the app under the popover": records
     /// every pointer Down and Scroll delivered to it, so tests can assert
@@ -894,10 +1019,13 @@ mod tests {
                 &mut wm,
                 key,
                 true,
-                None,
-                Rect::new(10.0, 10.0, 110.0, 40.0),
-                PopoverAnchor::BottomStart,
-                4.0,
+                PortalVisibility {
+                    owner: None,
+                    owner_kind: OwnerKind::Popover,
+                    rect: Rect::new(10.0, 10.0, 110.0, 40.0),
+                    anchor: PopoverAnchor::BottomStart,
+                    gap: 4.0,
+                },
             );
         });
         (harness, key)
@@ -986,10 +1114,13 @@ mod tests {
                 &mut wm,
                 key,
                 true,
-                None,
-                Rect::new(10.0, 10.0, 110.0, 40.0),
-                PopoverAnchor::BottomStart,
-                4.0,
+                PortalVisibility {
+                    owner: None,
+                    owner_kind: OwnerKind::Popover,
+                    rect: Rect::new(10.0, 10.0, 110.0, 40.0),
+                    anchor: PopoverAnchor::BottomStart,
+                    gap: 4.0,
+                },
             );
         });
         // The scope sits at the window origin, so window == local coords and
@@ -1001,5 +1132,70 @@ mod tests {
             assert!((placed.x0 - 10.0).abs() < 1e-9);
             assert!((placed.y0 - 44.0).abs() < 1e-9);
         });
+    }
+
+    #[test]
+    fn set_portal_visible_centers_a_viewport_quarter_child_in_the_scope() {
+        let key = 3;
+        let content = masonry::widgets::Label::new("content").prepare().erased();
+        let popover = masonry::widgets::Label::new("popover").prepare().erased();
+        let scope = OverlayScope::new(
+            OverlayScopeHandle::new(),
+            content,
+            vec![(key, popover, PortalPlacement::Trigger)],
+        );
+        let mut harness = TestHarness::create(
+            masonry::theme::default_property_set(),
+            NewWidget::new(scope),
+        );
+        harness.edit_root_widget(|mut wm| {
+            // `anchor_rect_window` is ignored for `ViewportQuarter` — pass `Rect::ZERO`.
+            OverlayScope::set_portal_visible(
+                &mut wm,
+                key,
+                true,
+                PortalVisibility {
+                    owner: None,
+                    owner_kind: OwnerKind::Dialog,
+                    rect: Rect::ZERO,
+                    anchor: PopoverAnchor::ViewportQuarter,
+                    gap: 0.0,
+                },
+            );
+        });
+        harness.mouse_move(masonry::kurbo::Point::ZERO);
+        harness.edit_root_widget(|mut wm| {
+            let slot = OverlayScope::portal_slot_mut(&mut wm);
+            let placed = slot.widget.placed_rect(key).expect("child placed");
+            let window = Size::new(400.0, 400.0);
+            assert!((placed.x0 - (window.width - placed.width()) / 2.0).abs() < 1e-9);
+            assert!((placed.y0 - (window.height - placed.height()) * 0.25).abs() < 1e-9);
+        });
+    }
+
+    /// [`root_portal`] surfaces the outermost claimed scope's portal — a
+    /// nested scope's `claim_root_portal` is a no-op while an outer claim is
+    /// active, so descendants of both (including a `dialog` registered from
+    /// the nested scope's content) see the outer scope's portal.
+    #[test]
+    fn root_portal_is_the_outermost_claimed_scope() {
+        let outer_handle = OverlayScopeHandle::new();
+        let inner_handle = OverlayScopeHandle::new();
+        outer_handle.set(WidgetPod::new(masonry::widgets::Label::new("outer")).id());
+        inner_handle.set(WidgetPod::new(masonry::widgets::Label::new("inner")).id());
+        let outer_portal = OverlayPortal::<(), ()>::new(outer_handle.clone());
+        let inner_portal = OverlayPortal::<(), ()>::new(inner_handle.clone());
+
+        assert!(root_portal::<(), ()>().is_none());
+
+        assert!(claim_root_portal(&outer_portal));
+        // A nested scope's claim is a no-op while the outer claim is active.
+        assert!(!claim_root_portal(&inner_portal));
+
+        let seen = root_portal::<(), ()>().expect("root portal claimed");
+        assert_eq!(seen.scope().widget_id(), outer_handle.widget_id());
+
+        release_root_portal();
+        assert!(root_portal::<(), ()>().is_none());
     }
 }

@@ -8,6 +8,7 @@
 //! the current palette, text samples, and density numbers.
 
 use void_ui::components::ScrollBarVisibility::OnActivity;
+use void_ui::components::dialog::demo::DialogDemoState;
 use void_ui::components::notification::demo::NotificationDemoState;
 use xilem::masonry::layout::Length;
 use xilem::peniko::Color;
@@ -31,6 +32,7 @@ struct State {
     theme_panel_open: bool,
     sidebar_collapsed: bool,
     notification_demo: NotificationDemoState,
+    dialog_demo: DialogDemoState,
 }
 
 impl State {
@@ -41,6 +43,7 @@ impl State {
             theme_panel_open: false,
             sidebar_collapsed: false,
             notification_demo: NotificationDemoState::default(),
+            dialog_demo: DialogDemoState::default(),
         }
     }
 }
@@ -48,6 +51,12 @@ impl State {
 impl AsMut<NotificationDemoState> for State {
     fn as_mut(&mut self) -> &mut NotificationDemoState {
         &mut self.notification_demo
+    }
+}
+
+impl AsMut<DialogDemoState> for State {
+    fn as_mut(&mut self) -> &mut DialogDemoState {
+        &mut self.dialog_demo
     }
 }
 
@@ -174,6 +183,7 @@ fn main_pane(focused: ComponentKind, theme: &Theme) -> Box<AnyWidgetView<State>>
             Box::new(void_ui::components::context_menu::demo::panel(theme))
         }
         ComponentKind::DataGrid => Box::new(void_ui::components::data_grid::demo::panel(theme)),
+        ComponentKind::Dialog => Box::new(void_ui::components::dialog::demo::panel(theme)),
         ComponentKind::DropdownButton => {
             Box::new(void_ui::components::dropdown_button::demo::panel(theme))
         }

@@ -378,7 +378,7 @@ mod tests {
         use crate::Theme;
         use crate::components::input::number::number_input;
         use crate::components::input::number::text_area_layout::measure_text_area;
-        use crate::components::input::test_support;
+        use crate::test_support;
 
         let runtime = test_support::current_thread_runtime();
         let proxy = test_support::noop_proxy();

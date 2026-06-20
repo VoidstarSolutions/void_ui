@@ -43,7 +43,7 @@ use crate::components::button::ButtonVariant;
 use crate::components::button::widget::ThemedButton;
 use crate::components::icon::IconName;
 use crate::components::popover::PopoverAnchor;
-use crate::overlay_portal::{PortalOwnerKind, PortalSlot};
+use crate::overlay_portal::{OwnerKind, PortalSlot, PortalVisibility};
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
 /// Action type emitted by [`ThemedDropdownButton`].
@@ -129,10 +129,13 @@ macro_rules! close_menu_body {
                             &mut scope,
                             key,
                             false,
-                            None,
-                            Rect::ZERO,
-                            PopoverAnchor::BottomStart,
-                            0.0,
+                            PortalVisibility {
+                                owner: None,
+                                owner_kind: OwnerKind::DropdownButton,
+                                rect: Rect::ZERO,
+                                anchor: PopoverAnchor::BottomStart,
+                                gap: 0.0,
+                            },
                         );
                     });
                 }
@@ -160,7 +163,7 @@ macro_rules! open_menu_body {
             } => {
                 if let Some(scope_id) = scope.widget_id() {
                     let key = *key;
-                    let owner = Some(($ctx.widget_id(), PortalOwnerKind::DropdownButton));
+                    let owner_id = $ctx.widget_id();
                     let rect =
                         Rect::from_origin_size($ctx.to_window(Point::ZERO), $ctx.border_box_size());
                     *last_anchor_rect_window = Some(rect);
@@ -170,10 +173,13 @@ macro_rules! open_menu_body {
                             &mut scope,
                             key,
                             true,
-                            owner,
-                            rect,
-                            PopoverAnchor::BottomStart,
-                            0.0,
+                            PortalVisibility {
+                                owner: Some(owner_id),
+                                owner_kind: OwnerKind::DropdownButton,
+                                rect,
+                                anchor: PopoverAnchor::BottomStart,
+                                gap: 0.0,
+                            },
                         );
                     });
                     $ctx.request_compose();

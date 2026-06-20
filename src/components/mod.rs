@@ -22,6 +22,7 @@ pub mod code_view;
 pub mod collapsible;
 pub mod context_menu;
 pub mod data_grid;
+pub mod dialog;
 pub mod dropdown_button;
 pub mod group_box;
 pub mod icon;
@@ -57,6 +58,7 @@ pub use data_grid::{
     ScrollState, SelectionState, SortDirection, SortState, colored_text_column, data_grid,
     filtered_indices, optional_text_column, text_column,
 };
+pub use dialog::{Dialog, DialogView, dialog};
 pub use dropdown_button::{DropdownButton, DropdownButtonView, dropdown_button};
 pub use group_box::{GroupBox, NoTitle, TitleState, WithTitle, group_box};
 pub use icon::{Icon, IconName, icon};
@@ -109,6 +111,7 @@ pub enum ComponentKind {
     Collapsible,
     ContextMenu,
     DataGrid,
+    Dialog,
     Icon,
     Input,
     Label,
@@ -144,6 +147,7 @@ impl ComponentKind {
             Self::Collapsible => "Collapsible",
             Self::ContextMenu => "Context Menu",
             Self::DataGrid => "Data Grid",
+            Self::Dialog => "Dialog",
             Self::Icon => "Icon",
             Self::Input => "Input",
             Self::Label => "Label",
@@ -177,6 +181,7 @@ impl ComponentKind {
             Self::Collapsible,
             Self::ContextMenu,
             Self::DataGrid,
+            Self::Dialog,
             Self::DropdownButton,
             Self::GroupBox,
             Self::Icon,

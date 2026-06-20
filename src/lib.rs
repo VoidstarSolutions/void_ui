@@ -31,6 +31,8 @@ pub mod layout;
 pub mod overlay_portal;
 pub mod overlay_scope;
 pub mod pointer_inert;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod theme;
 
 pub use animated_clip::AnimatedClip;

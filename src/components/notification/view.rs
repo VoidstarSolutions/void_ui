@@ -39,6 +39,7 @@ use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::widget::{NotificationHost, NotificationTimeout};
 use crate::components::alert::{CloseCallback, alert};
+use crate::components::popover::widget::SurfaceStyle;
 use crate::overlay_portal::{PortalContentView, PortalPlacement, portal_from_env};
 use crate::{AlertVariant, IconName, Theme};
 
@@ -420,6 +421,7 @@ where
             self.content.clone(),
             &self.theme,
             PortalPlacement::Corner(self.position.into()),
+            SurfaceStyle::Popover,
         );
         let element = ctx.create_pod(SizedBox::empty());
         (element, (portal, key))
@@ -438,6 +440,7 @@ where
             self.content.clone(),
             &self.theme,
             PortalPlacement::Corner(self.position.into()),
+            SurfaceStyle::Popover,
         );
     }
 
