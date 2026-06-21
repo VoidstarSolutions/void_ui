@@ -30,9 +30,8 @@ use masonry::layout::{LenReq, Length};
 
 use super::single_child;
 use crate::Theme;
-use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 use crate::components::click::{self, ClickPhase};
-
+use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 
 /// Action emitted by [`RowClickable`] on primary-button release (or
 /// Enter/Space activation). The receiver inspects the modifiers to decide
