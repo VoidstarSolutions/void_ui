@@ -194,12 +194,27 @@ impl Widget for TooltipHost {
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
-            // `HoveredChanged` fires only on the directly-hovered widget (the label
-            // or button inside us), not on TooltipHost itself. TooltipHost receives
-            // `ChildHoveredChanged` when no descendant is hovered — use that to
-            // disarm the timer so we don't accumulate live timers across siblings.
+            // When an *interactive* child (a button) is hovered, it — not
+            // TooltipHost — is the directly-hovered widget, so the host sees
+            // `ChildHoveredChanged` rather than `HoveredChanged`. Use the
+            // child signal to disarm the timer so we don't accumulate live
+            // timers across siblings.
             Update::ChildHoveredChanged(false) => {
                 self.last_pointer_move = None;
+            }
+            // Hover loss on the host itself. A non-interactive child (a plain
+            // label or icon) never becomes the hovered widget — the host does —
+            // so `ChildHoveredChanged` never fires for it, only `HoveredChanged`.
+            // Without this match arm the host's `layer_id` goes stale on leave,
+            // and the `on_anim_frame` guard (`if self.layer_id.is_none()`) then
+            // blocks *every* future tooltip — the glyph shows a tip once and
+            // never again. The visible layer self-dismisses via the leaving
+            // pointer move (`TooltipLayer::capture_pointer_event`), so we only
+            // clear our own tracking here; calling `remove_layer` on the
+            // already-gone layer would `debug_panic!`.
+            Update::HoveredChanged(false) => {
+                self.last_pointer_move = None;
+                self.layer_id = None;
             }
             // Keyboard users never produce pointer events, so focus is the
             // equivalent "arm the timer" signal: anchor the tooltip at the
@@ -351,5 +366,74 @@ mod tests {
 
         h.focus_on(None);
         assert!(h.edit_root_widget(|wm| wm.widget.layer_id.is_none()));
+    }
+
+    /// Builds a `TooltipHost` wrapping a NON-interactive child (a plain
+    /// `Label`). Such a child never becomes the hovered widget — `TooltipHost`
+    /// itself does — so the tooltip must arm/disarm off the host's own hovered
+    /// status, not the child's.
+    fn label_harness(delay: Duration) -> TestHarness<TooltipHost> {
+        let theme = Theme::dark();
+        let child = NewWidget::new(Label::new("plain")).erased();
+        let widget = TooltipHost::new(child, "Tip text".into(), &theme, delay);
+        TestHarness::create(default_property_set(), NewWidget::new(widget))
+    }
+
+    /// Number of overlay (non-root) layers actually painted — the
+    /// user-visible signal that a tooltip is on screen, independent of the
+    /// host's internal `layer_id` bookkeeping.
+    fn visible_overlay_layers(h: &mut TestHarness<TooltipHost>) -> usize {
+        h.redraw().0.overlay_layers().count()
+    }
+
+    /// Hovering an icon/label (non-interactive child) must still show the
+    /// tooltip — regression for backfill-error reasons that were invisible on
+    /// hover because the info glyph is a plain `Label`.
+    #[test]
+    fn hover_over_noninteractive_child_shows_layer_after_delay() {
+        let mut h = label_harness(Duration::ZERO);
+        let root = h.root_id();
+
+        h.mouse_move_to(root);
+        h.animate_ms(1);
+
+        assert!(
+            h.edit_root_widget(|wm| wm.widget.layer_id.is_some()),
+            "hovering a non-interactive child must show the tooltip"
+        );
+        assert_eq!(
+            visible_overlay_layers(&mut h),
+            1,
+            "the tooltip layer must actually be painted"
+        );
+    }
+
+    /// Leaving the host (pointer moves away entirely) must remove the layer —
+    /// a non-interactive child produces no `ChildHoveredChanged`, so the host's
+    /// own hover-loss is the only disarm signal.
+    #[test]
+    fn leaving_host_over_noninteractive_child_removes_layer() {
+        let mut h = label_harness(Duration::ZERO);
+        let root = h.root_id();
+
+        h.mouse_move_to(root);
+        h.animate_ms(1);
+        assert!(h.edit_root_widget(|wm| wm.widget.layer_id.is_some()));
+        assert_eq!(
+            visible_overlay_layers(&mut h),
+            1,
+            "precondition: the tooltip layer is painted before leaving"
+        );
+
+        h.mouse_move((10_000.0, 10_000.0));
+        assert!(
+            h.edit_root_widget(|wm| wm.widget.layer_id.is_none()),
+            "leaving the host must clear the host's layer tracking"
+        );
+        assert_eq!(
+            visible_overlay_layers(&mut h),
+            0,
+            "leaving the host must remove the visible tooltip layer"
+        );
     }
 }
