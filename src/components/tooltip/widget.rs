@@ -201,6 +201,20 @@ impl Widget for TooltipHost {
             Update::ChildHoveredChanged(false) => {
                 self.last_pointer_move = None;
             }
+            // Hover loss on the host itself. A non-interactive child (a plain
+            // label or icon) never becomes the hovered widget — the host does —
+            // so `ChildHoveredChanged` never fires for it. Without this arm the
+            // host's `layer_id` goes stale on leave, and the `on_anim_frame`
+            // guard (`if self.layer_id.is_none()`) then blocks *every* future
+            // tooltip — the glyph shows a tip once and never again. The visible
+            // layer self-dismisses via the leaving pointer move
+            // (`TooltipLayer::capture_pointer_event`), so we only clear our own
+            // tracking here; calling `remove_layer` on the already-gone layer
+            // would `debug_panic!`.
+            Update::HoveredChanged(false) => {
+                self.last_pointer_move = None;
+                self.layer_id = None;
+            }
             // Keyboard users never produce pointer events, so focus is the
             // equivalent "arm the timer" signal: anchor the tooltip at the
             // child's bottom-left corner and start the same idle countdown
@@ -351,5 +365,52 @@ mod tests {
 
         h.focus_on(None);
         assert!(h.edit_root_widget(|wm| wm.widget.layer_id.is_none()));
+    }
+
+    /// Builds a `TooltipHost` wrapping a NON-interactive child (a plain
+    /// `Label`). Such a child never becomes the hovered widget — `TooltipHost`
+    /// itself does — so the tooltip must arm/disarm off the host's own hovered
+    /// status, not the child's.
+    fn label_harness(delay: Duration) -> TestHarness<TooltipHost> {
+        let theme = Theme::dark();
+        let child = NewWidget::new(Label::new("plain")).erased();
+        let widget = TooltipHost::new(child, "Tip text".into(), &theme, delay);
+        TestHarness::create(default_property_set(), NewWidget::new(widget))
+    }
+
+    /// Hovering an icon/label (non-interactive child) must still show the
+    /// tooltip — regression for backfill-error reasons that were invisible on
+    /// hover because the info glyph is a plain `Label`.
+    #[test]
+    fn hover_over_noninteractive_child_shows_layer_after_delay() {
+        let mut h = label_harness(Duration::ZERO);
+        let root = h.root_id();
+
+        h.mouse_move_to(root);
+        h.animate_ms(1);
+
+        assert!(
+            h.edit_root_widget(|wm| wm.widget.layer_id.is_some()),
+            "hovering a non-interactive child must show the tooltip"
+        );
+    }
+
+    /// Leaving the host (pointer moves away entirely) must remove the layer —
+    /// a non-interactive child produces no `ChildHoveredChanged`, so the host's
+    /// own hover-loss is the only disarm signal.
+    #[test]
+    fn leaving_host_over_noninteractive_child_removes_layer() {
+        let mut h = label_harness(Duration::ZERO);
+        let root = h.root_id();
+
+        h.mouse_move_to(root);
+        h.animate_ms(1);
+        assert!(h.edit_root_widget(|wm| wm.widget.layer_id.is_some()));
+
+        h.mouse_move((10_000.0, 10_000.0));
+        assert!(
+            h.edit_root_widget(|wm| wm.widget.layer_id.is_none()),
+            "leaving the host must remove the tooltip"
+        );
     }
 }
