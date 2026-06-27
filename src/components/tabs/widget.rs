@@ -28,7 +28,7 @@ use masonry::peniko::Color;
 
 use super::TabsVariant;
 use crate::Theme;
-use crate::focus_ring::paint_focus_ring;
+use crate::focus_ring::{FOCUS_RING_OUTSET, paint_focus_ring};
 
 /// Border/underline stroke width.
 const BORDER_WIDTH: f64 = 1.0;
@@ -41,8 +41,6 @@ const HIGHLIGHT_INSET: f64 = 2.0;
 const UNDERLINE_ACCENT_WIDTH: f64 = 2.0;
 /// Alpha applied to the hover fill for variants with per-item chrome.
 const HOVER_ALPHA: f32 = 0.5;
-/// Outset of the keyboard focus ring from the selected item's placed rect.
-const FOCUS_RING_OUTSET: f64 = 2.0;
 
 /// Fills `rect` inset by [`HIGHLIGHT_INSET`] with `fill`, using the corner
 /// radius returned by `radius` for the inset rect.

@@ -19,7 +19,7 @@ use masonry::properties::ContentColor;
 use masonry::widgets::Label;
 
 use crate::Theme;
-use crate::focus_ring::paint_focus_ring;
+use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 
 /// Vertical padding above and below the item list.
 const MENU_PAD_V: f64 = 4.0;
@@ -28,7 +28,7 @@ const CORNER_RADIUS: f64 = 5.0;
 /// Border width of the menu's background chrome.
 const BORDER_WIDTH: f64 = 1.0;
 /// Inset of the keyboard-highlight ring from its item's bounds.
-const HIGHLIGHT_RING_INSET: f64 = 2.0;
+const HIGHLIGHT_RING_INSET: f64 = FOCUS_RING_INSET;
 /// Minimum menu width in logical pixels, ensuring a readable popup even when
 /// all item labels are very short.
 const MIN_MENU_WIDTH: f64 = 80.0;

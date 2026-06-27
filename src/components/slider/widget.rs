@@ -27,7 +27,7 @@ use masonry::layout::{LenReq, Length};
 use masonry::peniko::Color;
 
 use super::{SliderChanged, SliderValue};
-use crate::focus_ring::paint_focus_ring;
+use crate::focus_ring::{FOCUS_RING_OUTSET, FOCUS_RING_WIDTH, paint_focus_ring};
 use crate::{Orientation, Theme};
 
 /// Diameter of a draggable thumb circle, in logical pixels.
@@ -35,10 +35,9 @@ const THUMB_DIAMETER: f64 = 14.0;
 /// Thickness of the track and fill bar.
 const TRACK_HEIGHT: f64 = 4.0;
 /// Gap between the thumb edge and the focus ring.
-const FOCUS_RING_OUTSET: f64 = 2.0;
 /// Clearance from the widget edge to the thumbs' travel limits — keeps the
 /// thumbs and their focus rings from being clipped at the ends of the track.
-const EDGE_PAD: f64 = FOCUS_RING_OUTSET + crate::focus_ring::FOCUS_RING_WIDTH;
+const EDGE_PAD: f64 = FOCUS_RING_OUTSET + FOCUS_RING_WIDTH;
 
 /// Identifies which thumb a gesture or keyboard adjustment targets.
 ///

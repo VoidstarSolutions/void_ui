@@ -23,12 +23,11 @@ use masonry::widgets::Label;
 
 use super::TogglePress;
 use crate::Theme;
-use crate::focus_ring::paint_focus_ring;
+use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 
 /// Gap between the thumb edge and the track edge, in logical pixels.
 const THUMB_INSET: f64 = 2.0;
 /// Gap between the track edge and the focus ring.
-const FOCUS_RING_INSET: f64 = 1.5;
 /// Gap between the track and an optional text label.
 const LABEL_GAP: f64 = 6.0;
 /// Uniform padding around the widget — provides clearance for the focus ring.

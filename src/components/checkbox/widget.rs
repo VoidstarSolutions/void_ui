@@ -24,14 +24,13 @@ use masonry::widgets::Label;
 use super::CheckboxPress;
 use crate::Theme;
 use crate::components::icon::{IconName, icon};
-use crate::focus_ring::paint_focus_ring;
+use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 
 /// Corner radius of the checkbox box.
 const BOX_RADIUS: f64 = 3.0;
 /// Stroke width of the box border.
 const BOX_BORDER: f64 = 1.0;
 /// Gap between the box edge and the focus ring.
-const FOCUS_RING_INSET: f64 = 1.5;
 /// Gap between the box and an optional text label.
 const LABEL_GAP: f64 = 6.0;
 /// Uniform padding around the widget — provides clearance for the focus ring.
