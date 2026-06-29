@@ -314,6 +314,9 @@ pub enum OwnerKind {
     /// A `ThemedDropdownButton`, notified via
     /// [`crate::components::dropdown_button::widget::ThemedDropdownButton::mark_closed`].
     DropdownButton,
+    /// An `AutocompleteWidget`, notified via
+    /// [`crate::components::autocomplete::widget::AutocompleteWidget::mark_closed`].
+    Autocomplete,
 }
 
 /// Show/hide arguments for a portal child: who owns it (for outside-press
@@ -554,6 +557,10 @@ impl PortalSlot {
                     OwnerKind::DropdownButton => this.ctx.mutate_later(owner, |mut w| {
                         let mut dropdown = w.downcast::<ThemedDropdownButton>();
                         ThemedDropdownButton::mark_closed(&mut dropdown);
+                    }),
+                    OwnerKind::Autocomplete => this.ctx.mutate_later(owner, |mut w| {
+                        let mut ac = w.downcast::<crate::components::autocomplete::widget::AutocompleteWidget>();
+                        crate::components::autocomplete::widget::AutocompleteWidget::mark_closed(&mut ac);
                     }),
                 }
             }

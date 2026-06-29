@@ -16,6 +16,11 @@
 //! callback fires with the full updated string, and the host stores it and
 //! passes it back in on the next render (same contract as [`Input`]).
 //! Selecting a suggestion also fires `on_changed` with the selected text.
+//!
+//! When inside an [`crate::overlay_scope`] the suggestion dropdown is mounted
+//! in the scope's always-on-top portal slot so it paints above siblings
+//! (same pattern as [`crate::components::dropdown_button`]); otherwise it
+//! falls back to an in-tree [`crate::AnchoredOverlay`].
 
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -24,10 +29,15 @@ use masonry::core::ArcStr;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
-use super::widget::{AutocompleteAction, AutocompleteWidget};
+use super::widget::{
+    AutocompleteAction, AutocompleteHandle, AutocompleteWidget, SuggestionListView,
+    compute_filtered,
+};
+use crate::Theme;
+use crate::components::popover::widget::SurfaceStyle;
+use crate::overlay_portal::{OverlayPortal, PortalContentView, PortalPlacement, portal_from_env};
 
 type OnChanged<State, Action> = Arc<dyn Fn(&mut State, String) -> Action + Send + Sync + 'static>;
-use crate::Theme;
 
 /// Builder for an autocomplete text input.
 ///
@@ -122,6 +132,21 @@ pub(crate) struct AutocompleteView<State, Action> {
     phantom: PhantomData<fn(State) -> Action>,
 }
 
+/// Where this autocomplete's suggestion list is bound.
+enum ViewBinding<State: 'static, Action: 'static> {
+    Portal {
+        portal: OverlayPortal<State, Action>,
+        key: u64,
+    },
+    InTree,
+}
+
+/// View state for `AutocompleteView`.
+#[doc(hidden)]
+pub struct AutocompleteViewState<State: 'static, Action: 'static> {
+    binding: ViewBinding<State, Action>,
+}
+
 impl<State, Action> ViewMarker for AutocompleteView<State, Action> {}
 
 impl<State, Action> View<State, Action, ViewCtx> for AutocompleteView<State, Action>
@@ -130,33 +155,75 @@ where
     Action: 'static,
 {
     type Element = Pod<AutocompleteWidget>;
-    type ViewState = ();
+    type ViewState = AutocompleteViewState<State, Action>;
 
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
-        let widget = AutocompleteWidget::new(
-            &self.contents,
-            self.placeholder.clone(),
-            (*self.suggestions).clone(),
-            self.disabled,
-            &self.theme,
-        );
-        let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
-        (element, ())
+        let portal = portal_from_env::<State, Action>(ctx);
+        if let Some(portal) = portal {
+            let handle = AutocompleteHandle::new();
+            let filtered = Arc::new(compute_filtered(&self.suggestions, &self.contents));
+            let list_view = SuggestionListView {
+                filtered,
+                handle: handle.clone(),
+                theme: self.theme,
+            };
+            let content: Arc<PortalContentView<State, Action>> = Arc::new(list_view);
+            let key = portal.register(
+                content,
+                &self.theme,
+                PortalPlacement::BareTrigger,
+                SurfaceStyle::Popover,
+            );
+            let widget = AutocompleteWidget::new_portal(
+                &self.contents,
+                self.placeholder.clone(),
+                (*self.suggestions).clone(),
+                self.disabled,
+                &self.theme,
+                portal.scope().clone(),
+                key,
+                handle,
+            );
+            let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
+            (
+                element,
+                AutocompleteViewState {
+                    binding: ViewBinding::Portal { portal, key },
+                },
+            )
+        } else {
+            let widget = AutocompleteWidget::new(
+                &self.contents,
+                self.placeholder.clone(),
+                (*self.suggestions).clone(),
+                self.disabled,
+                &self.theme,
+            );
+            let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
+            (
+                element,
+                AutocompleteViewState {
+                    binding: ViewBinding::InTree,
+                },
+            )
+        }
     }
 
     fn rebuild(
         &self,
         prev: &Self,
-        _vs: &mut (),
+        view_state: &mut Self::ViewState,
         _ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
         _state: &mut State,
     ) {
-        // Diff only what changed to minimise widget tree mutations.
-        if self.contents != prev.contents {
+        let contents_changed = self.contents != prev.contents;
+        let suggestions_changed = !Arc::ptr_eq(&self.suggestions, &prev.suggestions);
+
+        if contents_changed {
             AutocompleteWidget::set_contents(&mut element, &self.contents);
         }
-        if !Arc::ptr_eq(&self.suggestions, &prev.suggestions) {
+        if suggestions_changed {
             AutocompleteWidget::set_all_suggestions(&mut element, (*self.suggestions).clone());
         }
         if self.placeholder != prev.placeholder {
@@ -168,20 +235,49 @@ where
         if self.theme != prev.theme {
             AutocompleteWidget::set_theme(&mut element, &self.theme);
         }
+
+        // In portal mode, refresh the registered view whenever filtered items
+        // or theme change so the scope's rebuild uses the latest items.
+        if let ViewBinding::Portal { portal, key } = &view_state.binding {
+            if contents_changed || suggestions_changed || self.theme != prev.theme {
+                let filtered = Arc::new(compute_filtered(&self.suggestions, &self.contents));
+                // Re-use the handle from the existing portal registration.
+                // We can't retrieve the original handle from the widget here,
+                // so we create a detached one — it only needs to be `Clone`
+                // compatible; the real handle (with the widget id) lives in
+                // the widget and is never used from this view-side copy.
+                let list_view = SuggestionListView {
+                    filtered,
+                    handle: AutocompleteHandle::default(),
+                    theme: self.theme,
+                };
+                let content: Arc<PortalContentView<State, Action>> = Arc::new(list_view);
+                portal.update(
+                    *key,
+                    content,
+                    &self.theme,
+                    PortalPlacement::BareTrigger,
+                    SurfaceStyle::Popover,
+                );
+            }
+        }
     }
 
     fn teardown(
         &self,
-        _vs: &mut (),
+        view_state: &mut Self::ViewState,
         ctx: &mut ViewCtx,
         element: Mut<'_, Self::Element>,
     ) {
+        if let ViewBinding::Portal { portal, key } = &view_state.binding {
+            portal.deregister(*key);
+        }
         ctx.teardown_action_source(element);
     }
 
     fn message(
         &self,
-        _vs: &mut (),
+        _vs: &mut Self::ViewState,
         message: &mut MessageCtx,
         _element: Mut<'_, Self::Element>,
         app_state: &mut State,

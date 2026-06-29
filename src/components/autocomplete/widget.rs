@@ -5,18 +5,21 @@
 //! - [`SuggestionList`] — item-list overlay, closely mirrors `MenuContent` from
 //!   the dropdown button. Handles hover, keyboard highlight painting, and fires
 //!   [`SuggestionSelected`] on click.
-//! - [`AutocompleteWidget`] — composite host: an [`AnchoredOverlay`] whose
-//!   primary is a chromed `InputFrame(TextInput(TextArea))` and whose overlay is
-//!   the `SuggestionList`. Intercepts `TextAction`, `InputCleared`, and
+//! - [`AutocompleteWidget`] — composite host: when inside an [`crate::overlay_scope`]
+//!   its input chrome is a standalone child and the suggestion list lives in the
+//!   scope's always-on-top portal slot; otherwise falls back to an [`AnchoredOverlay`]
+//!   exactly as before. Intercepts `TextAction`, `InputCleared`, and
 //!   `SuggestionSelected` actions from its descendants and re-emits the single
 //!   public [`AutocompleteAction::TextChanged`] that the view layer consumes.
+
+use std::sync::{Arc, OnceLock};
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
-    AccessCtx, ActionCtx, ArcStr, ChildrenIds, ErasedAction, EventCtx, LayoutCtx, MeasureCtx,
-    NewWidget, PaintCtx, PropertySet, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty,
-    TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, ActionCtx, ArcStr, ChildrenIds, ComposeCtx, ErasedAction, EventCtx, LayoutCtx,
+    MeasureCtx, NewWidget, PaintCtx, PropertySet, PropertiesMut, PropertiesRef, RegisterCtx,
+    StyleProperty, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, RoundedRect, Size, Stroke};
@@ -26,13 +29,17 @@ use masonry::properties::{
     Background, BorderColor, BorderWidth, CaretColor, ContentColor, CornerRadius, Padding,
     PlaceholderColor, SelectionColor,
 };
-use masonry::widgets::{self, Label, SizedBox, TextAction};
+use masonry::widgets::{self, Label, Passthrough, SizedBox, TextAction};
+use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
+use xilem::{Pod, ViewCtx};
 
 use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
 use crate::components::input::widget::{InputCleared, InputFrame};
 use crate::components::popover::PopoverAnchor;
 use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
+use crate::overlay_portal::{OwnerKind, PortalSlot, PortalVisibility};
+use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
 /// Fully transparent fill — strips the `TextInput`'s default masonry chrome.
 const TRANSPARENT: Color = Color::from_rgba8(0, 0, 0, 0);
@@ -48,8 +55,10 @@ const HIGHLIGHT_RING_INSET: f64 = FOCUS_RING_INSET;
 const MIN_LIST_WIDTH: f64 = 80.0;
 /// Max visible suggestions (prevents enormous lists on large datasets).
 const MAX_SUGGESTIONS: usize = 20;
-/// Gap between the input field and the suggestion list overlay.
-const OVERLAY_GAP: Length = Length::const_px(2.0);
+/// Gap between the input field and the suggestion list overlay, px.
+const OVERLAY_GAP_PX: f64 = 2.0;
+/// Gap as a [`Length`] (used by the in-tree `AnchoredOverlay`).
+const OVERLAY_GAP: Length = Length::const_px(OVERLAY_GAP_PX);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SuggestionSelected action
@@ -69,6 +78,31 @@ pub(crate) struct SuggestionSelected(pub usize);
 #[derive(Debug)]
 pub(crate) enum AutocompleteAction {
     TextChanged(String),
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AutocompleteHandle
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Self-filling handle to an [`AutocompleteWidget`]'s widget id, filled at
+/// `Update::WidgetAdded`. Given to portal-mounted [`SuggestionListView`] so
+/// an item selection can `mutate_later` back into the widget to close the
+/// suggestion list and emit the selected text.
+#[derive(Clone, Default)]
+pub(crate) struct AutocompleteHandle(Arc<OnceLock<WidgetId>>);
+
+impl AutocompleteHandle {
+    pub(crate) fn new() -> Self {
+        Self(Arc::new(OnceLock::new()))
+    }
+
+    pub(crate) fn widget_id(&self) -> Option<WidgetId> {
+        self.0.get().copied()
+    }
+
+    fn set(&self, id: WidgetId) {
+        let _ = self.0.set(id);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -327,6 +361,82 @@ impl Widget for SuggestionList {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SuggestionListView — portal content view
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Xilem view registered with the overlay scope's portal when a scope ancestor
+/// exists. Wraps [`SuggestionList`] and routes [`SuggestionSelected`] actions
+/// back to the owning [`AutocompleteWidget`] via [`AutocompleteHandle`].
+pub(crate) struct SuggestionListView {
+    pub(crate) filtered: Arc<Vec<ArcStr>>,
+    pub(crate) handle: AutocompleteHandle,
+    pub(crate) theme: Theme,
+}
+
+impl ViewMarker for SuggestionListView {}
+
+impl<State, Action> View<State, Action, ViewCtx> for SuggestionListView
+where
+    State: 'static,
+    Action: 'static,
+{
+    type Element = Pod<SuggestionList>;
+    type ViewState = ();
+
+    fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
+        let widget = SuggestionList::new((*self.filtered).iter().cloned(), &self.theme);
+        let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
+        (element, ())
+    }
+
+    fn rebuild(
+        &self,
+        prev: &Self,
+        _vs: &mut (),
+        _ctx: &mut ViewCtx,
+        mut element: Mut<'_, Self::Element>,
+        _state: &mut State,
+    ) {
+        if self.theme != prev.theme {
+            SuggestionList::set_theme(&mut element, &self.theme);
+        }
+        if !Arc::ptr_eq(&self.filtered, &prev.filtered) {
+            SuggestionList::set_items(&mut element, (*self.filtered).iter().cloned());
+        }
+    }
+
+    fn teardown(
+        &self,
+        _vs: &mut (),
+        ctx: &mut ViewCtx,
+        element: Mut<'_, Self::Element>,
+    ) {
+        ctx.teardown_action_source(element);
+    }
+
+    fn message(
+        &self,
+        _vs: &mut (),
+        message: &mut MessageCtx,
+        mut element: Mut<'_, Self::Element>,
+        _state: &mut State,
+    ) -> MessageResult<Action> {
+        if let Some(boxed) = message.take_message::<SuggestionSelected>() {
+            let SuggestionSelected(i) = *boxed;
+            if let Some(text) = self.filtered.get(i).cloned() {
+                if let Some(ac_id) = self.handle.widget_id() {
+                    element.ctx.mutate_later(ac_id, move |mut w| {
+                        let mut ac = w.downcast::<AutocompleteWidget>();
+                        AutocompleteWidget::portal_select(&mut ac, text.to_string());
+                    });
+                }
+            }
+        }
+        MessageResult::Nop
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -343,25 +453,112 @@ pub(crate) fn compute_filtered(all: &[ArcStr], query: &str) -> Vec<ArcStr> {
         .collect()
 }
 
+/// Navigate from a `SizedBox` `WidgetMut` down to the `TextArea` child and
+/// invoke `f`. Used by both hosting modes (in-tree navigates through
+/// `AnchoredOverlay::primary_mut` first; portal mode navigates directly).
+fn with_text_area_in_chrome<R>(
+    sb: &mut WidgetMut<'_, SizedBox>,
+    f: impl FnOnce(&mut WidgetMut<'_, widgets::TextArea<true>>) -> R,
+) -> R {
+    let mut child = SizedBox::child_mut(sb).expect("SizedBox has child");
+    let mut frame = child.downcast::<InputFrame>();
+    let mut inner = InputFrame::child_mut(&mut frame);
+    let mut ti = inner.downcast::<widgets::TextInput>();
+    let mut ta = widgets::TextInput::text_mut(&mut ti);
+    f(&mut ta)
+}
+
+/// Navigate from a `SizedBox` `WidgetMut` down to the `TextInput` child and
+/// invoke `f`.
+fn with_text_input_in_chrome<R>(
+    sb: &mut WidgetMut<'_, SizedBox>,
+    f: impl FnOnce(&mut WidgetMut<'_, widgets::TextInput>) -> R,
+) -> R {
+    let mut child = SizedBox::child_mut(sb).expect("SizedBox has child");
+    let mut frame = child.downcast::<InputFrame>();
+    let mut inner = InputFrame::child_mut(&mut frame);
+    let mut ti = inner.downcast::<widgets::TextInput>();
+    f(&mut ti)
+}
+
+/// Navigate to the `SuggestionList` in the in-tree overlay slot and invoke `f`.
+fn with_suggestion_list<R>(
+    w: &mut WidgetMut<'_, AnchoredOverlay>,
+    f: impl FnOnce(&mut WidgetMut<'_, SuggestionList>) -> R,
+) -> R {
+    let mut overlay = AnchoredOverlay::overlay_mut(w);
+    let mut list = overlay.downcast::<SuggestionList>();
+    f(&mut list)
+}
+
+/// Navigate to the `TextArea` via the in-tree `AnchoredOverlay` primary slot
+/// and invoke `f`.
+fn with_text_area<R>(
+    w: &mut WidgetMut<'_, AnchoredOverlay>,
+    f: impl FnOnce(&mut WidgetMut<'_, widgets::TextArea<true>>) -> R,
+) -> R {
+    let mut primary = AnchoredOverlay::primary_mut(w);
+    let mut sb = primary.downcast::<SizedBox>();
+    with_text_area_in_chrome(&mut sb, f)
+}
+
+/// Navigate to the `TextInput` via the in-tree `AnchoredOverlay` primary slot
+/// and invoke `f`.
+fn with_text_input<R>(
+    w: &mut WidgetMut<'_, AnchoredOverlay>,
+    f: impl FnOnce(&mut WidgetMut<'_, widgets::TextInput>) -> R,
+) -> R {
+    let mut primary = AnchoredOverlay::primary_mut(w);
+    let mut sb = primary.downcast::<SizedBox>();
+    with_text_input_in_chrome(&mut sb, f)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hosting enum
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Where the suggestion list lives: permanently in-tree (fallback, no scope
+/// ancestor), or portal-mounted in the nearest scope's `PortalSlot` (paints
+/// above all scope content, same as `dropdown_button`'s portal mode).
+enum Hosting {
+    InTree {
+        overlay_host: WidgetPod<AnchoredOverlay>,
+    },
+    Portal {
+        /// The input field chrome (`SizedBox` wrapping `InputFrame` → `TextInput` → `TextArea`).
+        chrome: WidgetPod<SizedBox>,
+        scope: OverlayScopeHandle,
+        key: u64,
+        handle: AutocompleteHandle,
+        /// Last window-space anchor rect pushed to the slot; `compose` uses
+        /// it to re-anchor only when we actually moved.
+        last_anchor_rect_window: Option<Rect>,
+    },
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // AutocompleteWidget
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Composite widget backing the autocomplete component.
 ///
-/// Hosts an [`AnchoredOverlay`] whose:
-/// - **primary** is `SizedBox(InputFrame(TextInput(TextArea)))` — a themed
-///   single-line text input with field chrome applied via masonry properties.
-/// - **overlay** is a [`SuggestionList`] — shown when the typed text matches
-///   at least one suggestion.
+/// Two hosting modes (see [`Hosting`]):
+///
+/// - **In-tree** (no scope ancestor, fallback): hosts an [`AnchoredOverlay`]
+///   whose primary is the chromed input and whose overlay is the
+///   [`SuggestionList`] — the original layout.
+/// - **Portal** (scope ancestor present): hosts only the input chrome as a
+///   direct child; the [`SuggestionList`] is registered with the scope's
+///   [`crate::overlay_portal::OverlayPortal`] via [`SuggestionListView`] and
+///   mounted in the always-on-top portal slot, so it paints above siblings.
 ///
 /// Intercepts actions from descendants and re-emits
 /// [`AutocompleteAction::TextChanged`] for the view layer.
 pub(crate) struct AutocompleteWidget {
-    overlay_host: WidgetPod<AnchoredOverlay>,
+    hosting: Hosting,
     all_suggestions: Vec<ArcStr>,
     /// Mirrors the host-controlled text, kept in sync via [`Self::set_contents`]
-    /// and updated eagerly in [`Self::on_action`] for keyboard nav and selection.
+    /// and updated eagerly in action handlers for keyboard nav and selection.
     contents: String,
     /// Pre-computed filtered slice of [`Self::all_suggestions`].
     filtered: Vec<ArcStr>,
@@ -372,14 +569,13 @@ pub(crate) struct AutocompleteWidget {
 }
 
 impl AutocompleteWidget {
-    #[must_use]
-    pub(crate) fn new(
+    /// Build the input chrome (`SizedBox(InputFrame(TextInput(TextArea)))`).
+    fn build_chrome(
         contents: &str,
         placeholder: ArcStr,
-        all_suggestions: Vec<ArcStr>,
         disabled: bool,
         theme: &Theme,
-    ) -> Self {
+    ) -> NewWidget<SizedBox> {
         // ── TextArea ──────────────────────────────────────────────────────────
         let text_area = widgets::TextArea::new_editable(contents)
             .with_style(StyleProperty::FontSize(theme.typography.size_body));
@@ -410,8 +606,6 @@ impl AutocompleteWidget {
         let input_frame = InputFrame::new(text_input_widget);
 
         // ── SizedBox — field chrome via masonry property system ───────────────
-        // SizedBox properly subtracts border+padding from the child's layout
-        // space (unlike InputFrame, which is a transparent passthrough).
         let mut chrome_box = NewWidget::new(SizedBox::new(NewWidget::new(input_frame)));
         chrome_box.properties.insert(Background::Color(theme.palette.surface));
         chrome_box.properties.insert(BorderWidth::all(Length::const_px(1.0)));
@@ -424,12 +618,23 @@ impl AutocompleteWidget {
             Length::px(f64::from(theme.density.button_pad_h)),
         ));
 
-        // ── SuggestionList ────────────────────────────────────────────────────
+        chrome_box
+    }
+
+    /// In-tree constructor (fallback, no scope ancestor).
+    #[must_use]
+    pub(crate) fn new(
+        contents: &str,
+        placeholder: ArcStr,
+        all_suggestions: Vec<ArcStr>,
+        disabled: bool,
+        theme: &Theme,
+    ) -> Self {
+        let chrome = Self::build_chrome(contents, placeholder, disabled, theme);
         let suggestion_list = SuggestionList::new([], theme);
 
-        // ── AnchoredOverlay ───────────────────────────────────────────────────
         let overlay = AnchoredOverlay::new(
-            chrome_box,
+            chrome,
             NewWidget::new(suggestion_list),
             false,
             PopoverAnchor::BottomStart,
@@ -439,7 +644,42 @@ impl AutocompleteWidget {
         let filtered = compute_filtered(&all_suggestions, contents);
 
         Self {
-            overlay_host: NewWidget::new(overlay).to_pod(),
+            hosting: Hosting::InTree {
+                overlay_host: NewWidget::new(overlay).to_pod(),
+            },
+            all_suggestions,
+            contents: contents.to_owned(),
+            filtered,
+            open: false,
+            highlighted: None,
+            theme: *theme,
+        }
+    }
+
+    /// Portal-mode constructor: the suggestion list lives in the scope's portal
+    /// slot under `key`. Only the input chrome is hosted here as a direct child.
+    #[must_use]
+    pub(crate) fn new_portal(
+        contents: &str,
+        placeholder: ArcStr,
+        all_suggestions: Vec<ArcStr>,
+        disabled: bool,
+        theme: &Theme,
+        scope: OverlayScopeHandle,
+        key: u64,
+        handle: AutocompleteHandle,
+    ) -> Self {
+        let chrome = Self::build_chrome(contents, placeholder, disabled, theme);
+        let filtered = compute_filtered(&all_suggestions, contents);
+
+        Self {
+            hosting: Hosting::Portal {
+                chrome: chrome.to_pod(),
+                scope,
+                key,
+                handle,
+                last_anchor_rect_window: None,
+            },
             all_suggestions,
             contents: contents.to_owned(),
             filtered,
@@ -451,62 +691,35 @@ impl AutocompleteWidget {
 }
 
 // --- MARK: INTERNAL HELPERS
-//
-// The WidgetMut chain (AnchoredOverlay → SizedBox → InputFrame → TextInput →
-// TextArea) cannot be returned from helper functions because each step borrows
-// the previous local. Closure-based helpers keep all the intermediates alive
-// for the duration of the callback, which the borrow checker accepts.
-
-/// Navigate to the `SuggestionList` in the overlay slot and invoke `f`.
-fn with_suggestion_list<R>(
-    w: &mut WidgetMut<'_, AnchoredOverlay>,
-    f: impl FnOnce(&mut WidgetMut<'_, SuggestionList>) -> R,
-) -> R {
-    let mut overlay = AnchoredOverlay::overlay_mut(w);
-    let mut list = overlay.downcast::<SuggestionList>();
-    f(&mut list)
-}
-
-/// Navigate to the `TextArea` in the primary slot and invoke `f`.
-fn with_text_area<R>(
-    w: &mut WidgetMut<'_, AnchoredOverlay>,
-    f: impl FnOnce(&mut WidgetMut<'_, widgets::TextArea<true>>) -> R,
-) -> R {
-    let mut primary = AnchoredOverlay::primary_mut(w);
-    let mut sb = primary.downcast::<SizedBox>();
-    let mut child = SizedBox::child_mut(&mut sb).expect("SizedBox has child");
-    let mut frame = child.downcast::<InputFrame>();
-    let mut inner = InputFrame::child_mut(&mut frame);
-    let mut ti = inner.downcast::<widgets::TextInput>();
-    let mut ta = widgets::TextInput::text_mut(&mut ti);
-    f(&mut ta)
-}
-
-/// Navigate to the `TextInput` in the primary slot and invoke `f`.
-fn with_text_input<R>(
-    w: &mut WidgetMut<'_, AnchoredOverlay>,
-    f: impl FnOnce(&mut WidgetMut<'_, widgets::TextInput>) -> R,
-) -> R {
-    let mut primary = AnchoredOverlay::primary_mut(w);
-    let mut sb = primary.downcast::<SizedBox>();
-    let mut child = SizedBox::child_mut(&mut sb).expect("SizedBox has child");
-    let mut frame = child.downcast::<InputFrame>();
-    let mut inner = InputFrame::child_mut(&mut frame);
-    let mut ti = inner.downcast::<widgets::TextInput>();
-    f(&mut ti)
-}
-
 impl AutocompleteWidget {
     fn set_highlight(&mut self, ctx: &mut EventCtx<'_>, index: Option<usize>) {
         if self.highlighted == index {
             return;
         }
         self.highlighted = index;
-        ctx.mutate_child_later(&mut self.overlay_host, move |mut w| {
-            with_suggestion_list(&mut w, |list| {
-                SuggestionList::set_highlighted(list, index);
-            });
-        });
+        match &mut self.hosting {
+            Hosting::InTree { overlay_host } => {
+                ctx.mutate_child_later(overlay_host, move |mut w| {
+                    with_suggestion_list(&mut w, |list| {
+                        SuggestionList::set_highlighted(list, index);
+                    });
+                });
+            }
+            Hosting::Portal { scope, key, .. } => {
+                let Some(scope_id) = scope.widget_id() else { return };
+                let key = *key;
+                ctx.mutate_later(scope_id, move |mut w| {
+                    let mut scope = w.downcast::<OverlayScope>();
+                    let mut slot = OverlayScope::portal_slot_mut(&mut scope);
+                    if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
+                        let mut pass = child.downcast::<Passthrough>();
+                        let mut inner = Passthrough::child_mut(&mut pass);
+                        let mut list = inner.downcast::<SuggestionList>();
+                        SuggestionList::set_highlighted(&mut list, index);
+                    }
+                });
+            }
+        }
     }
 
     fn move_highlight(&mut self, ctx: &mut EventCtx<'_>, delta: isize) {
@@ -522,10 +735,33 @@ impl AutocompleteWidget {
     }
 
     fn close_overlay_later(&mut self, ctx: &mut ActionCtx<'_>) {
-        ctx.mutate_child_later(&mut self.overlay_host, |mut w| {
-            with_suggestion_list(&mut w, |list| SuggestionList::set_items(list, []));
-            AnchoredOverlay::set_overlay_visible(&mut w, false);
-        });
+        match &mut self.hosting {
+            Hosting::InTree { overlay_host } => {
+                ctx.mutate_child_later(overlay_host, |mut w| {
+                    with_suggestion_list(&mut w, |list| SuggestionList::set_items(list, []));
+                    AnchoredOverlay::set_overlay_visible(&mut w, false);
+                });
+            }
+            Hosting::Portal { scope, key, .. } => {
+                let Some(scope_id) = scope.widget_id() else { return };
+                let key = *key;
+                ctx.mutate_later(scope_id, move |mut w| {
+                    let mut scope = w.downcast::<OverlayScope>();
+                    OverlayScope::set_portal_visible(
+                        &mut scope,
+                        key,
+                        false,
+                        PortalVisibility {
+                            owner: None,
+                            owner_kind: OwnerKind::Autocomplete,
+                            rect: Rect::ZERO,
+                            anchor: PopoverAnchor::BottomStart,
+                            gap: 0.0,
+                        },
+                    );
+                });
+            }
+        }
     }
 
     fn select_suggestion(&mut self, ctx: &mut ActionCtx<'_>, selected: String) {
@@ -534,11 +770,48 @@ impl AutocompleteWidget {
         self.filtered.clear();
         self.highlighted = None;
         self.open = false;
-        ctx.mutate_child_later(&mut self.overlay_host, move |mut w| {
-            with_suggestion_list(&mut w, |list| SuggestionList::set_items(list, []));
-            AnchoredOverlay::set_overlay_visible(&mut w, false);
-            with_text_area(&mut w, |ta| widgets::TextArea::reset_text(ta, &text));
-        });
+
+        match &mut self.hosting {
+            Hosting::InTree { overlay_host } => {
+                ctx.mutate_child_later(overlay_host, move |mut w| {
+                    with_suggestion_list(&mut w, |list| SuggestionList::set_items(list, []));
+                    AnchoredOverlay::set_overlay_visible(&mut w, false);
+                    with_text_area(&mut w, |ta| widgets::TextArea::reset_text(ta, &text));
+                });
+            }
+            Hosting::Portal { chrome, scope, key, .. } => {
+                let text_for_area = text.clone();
+                ctx.mutate_child_later(chrome, move |mut w| {
+                    let mut sb = w.downcast::<SizedBox>();
+                    with_text_area_in_chrome(&mut sb, |ta| {
+                        widgets::TextArea::reset_text(ta, &text_for_area);
+                    });
+                });
+                let Some(scope_id) = scope.widget_id() else {
+                    ctx.submit_action::<AutocompleteAction>(AutocompleteAction::TextChanged(selected));
+                    ctx.set_handled();
+                    ctx.request_paint_only();
+                    return;
+                };
+                let key = *key;
+                ctx.mutate_later(scope_id, move |mut w| {
+                    let mut scope = w.downcast::<OverlayScope>();
+                    OverlayScope::set_portal_visible(
+                        &mut scope,
+                        key,
+                        false,
+                        PortalVisibility {
+                            owner: None,
+                            owner_kind: OwnerKind::Autocomplete,
+                            rect: Rect::ZERO,
+                            anchor: PopoverAnchor::BottomStart,
+                            gap: 0.0,
+                        },
+                    );
+                });
+            }
+        }
+
         ctx.submit_action::<AutocompleteAction>(AutocompleteAction::TextChanged(selected));
         ctx.set_handled();
         ctx.request_paint_only();
@@ -565,18 +838,65 @@ impl AutocompleteWidget {
             this.widget.highlighted = None;
         }
 
-        let mut h = this.ctx.get_mut(&mut this.widget.overlay_host);
-        with_suggestion_list(&mut h, |list| SuggestionList::set_items(list, filtered));
-        if open_changed {
-            AnchoredOverlay::set_overlay_visible(&mut h, should_open);
-        }
-        // Sync text area if it diverged (e.g. programmatic update from host).
-        with_text_area(&mut h, |ta| {
-            let current = ta.widget.text().to_string();
-            if current != contents {
-                widgets::TextArea::reset_text(ta, contents);
+        match &mut this.widget.hosting {
+            Hosting::InTree { overlay_host } => {
+                let mut h = this.ctx.get_mut(overlay_host);
+                with_suggestion_list(&mut h, |list| SuggestionList::set_items(list, filtered));
+                if open_changed {
+                    AnchoredOverlay::set_overlay_visible(&mut h, should_open);
+                }
+                with_text_area(&mut h, |ta| {
+                    let current = ta.widget.text().to_string();
+                    if current != contents {
+                        widgets::TextArea::reset_text(ta, contents);
+                    }
+                });
             }
-        });
+            Hosting::Portal { chrome, scope, key, .. } => {
+                {
+                    let mut c = this.ctx.get_mut(chrome);
+                    let mut sb = c.downcast::<SizedBox>();
+                    with_text_area_in_chrome(&mut sb, |ta| {
+                        let current = ta.widget.text().to_string();
+                        if current != contents {
+                            widgets::TextArea::reset_text(ta, contents);
+                        }
+                    });
+                }
+                let scope_id = scope.widget_id();
+                let key = *key;
+                if let Some(scope_id) = scope_id {
+                    let items = filtered.clone();
+                    this.ctx.mutate_later(scope_id, move |mut w| {
+                        let mut scope = w.downcast::<OverlayScope>();
+                        let mut slot = OverlayScope::portal_slot_mut(&mut scope);
+                        if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
+                            let mut pass = child.downcast::<Passthrough>();
+                            let mut inner = Passthrough::child_mut(&mut pass);
+                            let mut list = inner.downcast::<SuggestionList>();
+                            SuggestionList::set_items(&mut list, items);
+                        }
+                    });
+                    if open_changed {
+                        this.ctx.mutate_later(scope_id, move |mut w| {
+                            let mut scope = w.downcast::<OverlayScope>();
+                            OverlayScope::set_portal_visible(
+                                &mut scope,
+                                key,
+                                should_open,
+                                PortalVisibility {
+                                    owner: None,
+                                    owner_kind: OwnerKind::Autocomplete,
+                                    rect: Rect::ZERO,
+                                    anchor: PopoverAnchor::BottomStart,
+                                    gap: OVERLAY_GAP_PX,
+                                },
+                            );
+                        });
+                    }
+                }
+            }
+        }
     }
 
     /// Replace the full suggestion list. Filtered suggestions are recomputed
@@ -596,17 +916,64 @@ impl AutocompleteWidget {
         this.widget.filtered.clone_from(&filtered);
         this.widget.open = should_open;
 
-        let mut h = this.ctx.get_mut(&mut this.widget.overlay_host);
-        with_suggestion_list(&mut h, |list| SuggestionList::set_items(list, filtered));
-        if open_changed {
-            AnchoredOverlay::set_overlay_visible(&mut h, should_open);
+        match &mut this.widget.hosting {
+            Hosting::InTree { overlay_host } => {
+                let mut h = this.ctx.get_mut(overlay_host);
+                with_suggestion_list(&mut h, |list| SuggestionList::set_items(list, filtered));
+                if open_changed {
+                    AnchoredOverlay::set_overlay_visible(&mut h, should_open);
+                }
+            }
+            Hosting::Portal { scope, key, .. } => {
+                let scope_id = scope.widget_id();
+                let key = *key;
+                if let Some(scope_id) = scope_id {
+                    let items = filtered.clone();
+                    this.ctx.mutate_later(scope_id, move |mut w| {
+                        let mut scope = w.downcast::<OverlayScope>();
+                        let mut slot = OverlayScope::portal_slot_mut(&mut scope);
+                        if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
+                            let mut pass = child.downcast::<Passthrough>();
+                            let mut inner = Passthrough::child_mut(&mut pass);
+                            let mut list = inner.downcast::<SuggestionList>();
+                            SuggestionList::set_items(&mut list, items);
+                        }
+                    });
+                    if open_changed {
+                        this.ctx.mutate_later(scope_id, move |mut w| {
+                            let mut scope = w.downcast::<OverlayScope>();
+                            OverlayScope::set_portal_visible(
+                                &mut scope,
+                                key,
+                                should_open,
+                                PortalVisibility {
+                                    owner: None,
+                                    owner_kind: OwnerKind::Autocomplete,
+                                    rect: Rect::ZERO,
+                                    anchor: PopoverAnchor::BottomStart,
+                                    gap: OVERLAY_GAP_PX,
+                                },
+                            );
+                        });
+                    }
+                }
+            }
         }
     }
 
     /// Update the placeholder text shown while the field is empty.
     pub(crate) fn set_placeholder(this: &mut WidgetMut<'_, Self>, placeholder: ArcStr) {
-        let mut h = this.ctx.get_mut(&mut this.widget.overlay_host);
-        with_text_input(&mut h, |ti| widgets::TextInput::set_placeholder(ti, placeholder));
+        match &mut this.widget.hosting {
+            Hosting::InTree { overlay_host } => {
+                let mut h = this.ctx.get_mut(overlay_host);
+                with_text_input(&mut h, |ti| widgets::TextInput::set_placeholder(ti, placeholder));
+            }
+            Hosting::Portal { chrome, .. } => {
+                let mut c = this.ctx.get_mut(chrome);
+                let mut sb = c.downcast::<SizedBox>();
+                with_text_input_in_chrome(&mut sb, |ti| widgets::TextInput::set_placeholder(ti, placeholder));
+            }
+        }
     }
 
     /// Enable or disable the field (stops input, mutes visuals).
@@ -616,9 +983,34 @@ impl AutocompleteWidget {
             this.widget.open = false;
             this.widget.highlighted = None;
             this.widget.filtered.clear();
-            let mut h = this.ctx.get_mut(&mut this.widget.overlay_host);
-            with_suggestion_list(&mut h, |list| SuggestionList::set_items(list, []));
-            AnchoredOverlay::set_overlay_visible(&mut h, false);
+            match &mut this.widget.hosting {
+                Hosting::InTree { overlay_host } => {
+                    let mut h = this.ctx.get_mut(overlay_host);
+                    with_suggestion_list(&mut h, |list| SuggestionList::set_items(list, []));
+                    AnchoredOverlay::set_overlay_visible(&mut h, false);
+                }
+                Hosting::Portal { scope, key, .. } => {
+                    let scope_id = scope.widget_id();
+                    let key = *key;
+                    if let Some(scope_id) = scope_id {
+                        this.ctx.mutate_later(scope_id, move |mut w| {
+                            let mut scope = w.downcast::<OverlayScope>();
+                            OverlayScope::set_portal_visible(
+                                &mut scope,
+                                key,
+                                false,
+                                PortalVisibility {
+                                    owner: None,
+                                    owner_kind: OwnerKind::Autocomplete,
+                                    rect: Rect::ZERO,
+                                    anchor: PopoverAnchor::BottomStart,
+                                    gap: 0.0,
+                                },
+                            );
+                        });
+                    }
+                }
+            }
         }
     }
 
@@ -629,40 +1021,161 @@ impl AutocompleteWidget {
         }
         this.widget.theme = *theme;
 
-        {
-            let mut h = this.ctx.get_mut(&mut this.widget.overlay_host);
+        match &mut this.widget.hosting {
+            Hosting::InTree { overlay_host } => {
+                let mut h = this.ctx.get_mut(overlay_host);
 
-            // Update SizedBox chrome properties.
-            {
-                let mut primary = AnchoredOverlay::primary_mut(&mut h);
-                let mut sb = primary.downcast::<SizedBox>();
-                sb.insert_prop(Background::Color(theme.palette.surface));
-                sb.insert_prop(BorderColor::new(theme.palette.border));
-                sb.insert_prop(CornerRadius::all(Length::px(f64::from(theme.radius.small))));
-                // Padding/BorderWidth don't change with theme.
+                {
+                    let mut primary = AnchoredOverlay::primary_mut(&mut h);
+                    let mut sb = primary.downcast::<SizedBox>();
+                    sb.insert_prop(Background::Color(theme.palette.surface));
+                    sb.insert_prop(BorderColor::new(theme.palette.border));
+                    sb.insert_prop(CornerRadius::all(Length::px(f64::from(theme.radius.small))));
 
-                // Update TextInput and TextArea properties (nested inside SizedBox).
-                if let Some(mut child) = SizedBox::child_mut(&mut sb) {
-                    let mut frame = child.downcast::<InputFrame>();
-                    let mut inner = InputFrame::child_mut(&mut frame);
-                    let mut ti = inner.downcast::<widgets::TextInput>();
-                    ti.insert_prop(PlaceholderColor::new(theme.palette.text_muted));
-                    let mut ta = widgets::TextInput::text_mut(&mut ti);
-                    ta.insert_prop(ContentColor::new(theme.palette.text));
-                    ta.insert_prop(CaretColor { color: theme.palette.teal });
-                    ta.insert_prop(SelectionColor { color: theme.palette.teal_soft });
-                    widgets::TextArea::insert_style(
-                        &mut ta,
-                        StyleProperty::FontSize(theme.typography.size_body),
-                    );
+                    if let Some(mut child) = SizedBox::child_mut(&mut sb) {
+                        let mut frame = child.downcast::<InputFrame>();
+                        let mut inner = InputFrame::child_mut(&mut frame);
+                        let mut ti = inner.downcast::<widgets::TextInput>();
+                        ti.insert_prop(PlaceholderColor::new(theme.palette.text_muted));
+                        let mut ta = widgets::TextInput::text_mut(&mut ti);
+                        ta.insert_prop(ContentColor::new(theme.palette.text));
+                        ta.insert_prop(CaretColor { color: theme.palette.teal });
+                        ta.insert_prop(SelectionColor { color: theme.palette.teal_soft });
+                        widgets::TextArea::insert_style(
+                            &mut ta,
+                            StyleProperty::FontSize(theme.typography.size_body),
+                        );
+                    }
+                }
+
+                with_suggestion_list(&mut h, |list| SuggestionList::set_theme(list, theme));
+            }
+            Hosting::Portal { chrome, scope, key, .. } => {
+                {
+                    let mut c = this.ctx.get_mut(chrome);
+                    let mut sb = c.downcast::<SizedBox>();
+                    sb.insert_prop(Background::Color(theme.palette.surface));
+                    sb.insert_prop(BorderColor::new(theme.palette.border));
+                    sb.insert_prop(CornerRadius::all(Length::px(f64::from(theme.radius.small))));
+
+                    if let Some(mut child) = SizedBox::child_mut(&mut sb) {
+                        let mut frame = child.downcast::<InputFrame>();
+                        let mut inner = InputFrame::child_mut(&mut frame);
+                        let mut ti = inner.downcast::<widgets::TextInput>();
+                        ti.insert_prop(PlaceholderColor::new(theme.palette.text_muted));
+                        let mut ta = widgets::TextInput::text_mut(&mut ti);
+                        ta.insert_prop(ContentColor::new(theme.palette.text));
+                        ta.insert_prop(CaretColor { color: theme.palette.teal });
+                        ta.insert_prop(SelectionColor { color: theme.palette.teal_soft });
+                        widgets::TextArea::insert_style(
+                            &mut ta,
+                            StyleProperty::FontSize(theme.typography.size_body),
+                        );
+                    }
+                }
+
+                let scope_id = scope.widget_id();
+                let key = *key;
+                let theme_copy = *theme;
+                if let Some(scope_id) = scope_id {
+                    this.ctx.mutate_later(scope_id, move |mut w| {
+                        let mut scope = w.downcast::<OverlayScope>();
+                        let mut slot = OverlayScope::portal_slot_mut(&mut scope);
+                        if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
+                            let mut pass = child.downcast::<Passthrough>();
+                            let mut inner = Passthrough::child_mut(&mut pass);
+                            let mut list = inner.downcast::<SuggestionList>();
+                            SuggestionList::set_theme(&mut list, &theme_copy);
+                        }
+                    });
                 }
             }
-
-            // Update suggestion list theme.
-            with_suggestion_list(&mut h, |list| SuggestionList::set_theme(list, theme));
-        } // h dropped here
+        }
 
         this.ctx.request_layout();
+        this.ctx.request_paint_only();
+    }
+
+    /// Notify that the portal slot was dismissed by an outside press. Syncs
+    /// `open`/`highlighted`/`filtered` — the slot has already hidden itself.
+    pub(crate) fn mark_closed(this: &mut WidgetMut<'_, Self>) {
+        if !this.widget.open {
+            return;
+        }
+        this.widget.open = false;
+        this.widget.highlighted = None;
+        this.widget.filtered.clear();
+
+        // Also tell the scope to hide (idempotent if already hidden).
+        let (scope_id, key) = match &this.widget.hosting {
+            Hosting::Portal { scope, key, .. } => (scope.widget_id(), *key),
+            Hosting::InTree { .. } => return,
+        };
+        if let Some(scope_id) = scope_id {
+            this.ctx.mutate_later(scope_id, move |mut w| {
+                let mut scope = w.downcast::<OverlayScope>();
+                OverlayScope::set_portal_visible(
+                    &mut scope,
+                    key,
+                    false,
+                    PortalVisibility {
+                        owner: None,
+                        owner_kind: OwnerKind::Autocomplete,
+                        rect: Rect::ZERO,
+                        anchor: PopoverAnchor::BottomStart,
+                        gap: 0.0,
+                    },
+                );
+            });
+        }
+        this.ctx.request_paint_only();
+    }
+
+    /// Handle a suggestion selection that arrived from the portal
+    /// [`SuggestionListView`] via `mutate_later`. Updates widget state, resets
+    /// the text area, closes the portal slot, and submits
+    /// [`AutocompleteAction::TextChanged`].
+    pub(crate) fn portal_select(this: &mut WidgetMut<'_, Self>, text: String) {
+        this.widget.contents.clone_from(&text);
+        this.widget.filtered.clear();
+        this.widget.highlighted = None;
+        this.widget.open = false;
+
+        let text_for_area = text.clone();
+
+        // Reset the text area in the chrome.
+        if let Hosting::Portal { chrome, .. } = &mut this.widget.hosting {
+            let mut c = this.ctx.get_mut(chrome);
+            let mut sb = c.downcast::<SizedBox>();
+            with_text_area_in_chrome(&mut sb, |ta| {
+                widgets::TextArea::reset_text(ta, &text_for_area);
+            });
+        }
+
+        // Close the portal slot.
+        let (scope_id, key) = match &this.widget.hosting {
+            Hosting::Portal { scope, key, .. } => (scope.widget_id(), *key),
+            Hosting::InTree { .. } => unreachable!("portal_select called in in-tree mode"),
+        };
+        if let Some(scope_id) = scope_id {
+            this.ctx.mutate_later(scope_id, move |mut w| {
+                let mut scope = w.downcast::<OverlayScope>();
+                OverlayScope::set_portal_visible(
+                    &mut scope,
+                    key,
+                    false,
+                    PortalVisibility {
+                        owner: None,
+                        owner_kind: OwnerKind::Autocomplete,
+                        rect: Rect::ZERO,
+                        anchor: PopoverAnchor::BottomStart,
+                        gap: 0.0,
+                    },
+                );
+            });
+        }
+
+        this.ctx.submit_action::<AutocompleteAction>(AutocompleteAction::TextChanged(text));
         this.ctx.request_paint_only();
     }
 }
@@ -690,13 +1203,65 @@ impl Widget for AutocompleteWidget {
                     let open_changed = self.open != should_open;
                     self.open = should_open;
 
-                    let items = self.filtered.clone();
-                    ctx.mutate_child_later(&mut self.overlay_host, move |mut w| {
-                        with_suggestion_list(&mut w, |list| SuggestionList::set_items(list, items));
-                        if open_changed {
-                            AnchoredOverlay::set_overlay_visible(&mut w, should_open);
+                    match &mut self.hosting {
+                        Hosting::InTree { overlay_host } => {
+                            let items = self.filtered.clone();
+                            ctx.mutate_child_later(overlay_host, move |mut w| {
+                                with_suggestion_list(&mut w, |list| SuggestionList::set_items(list, items));
+                                if open_changed {
+                                    AnchoredOverlay::set_overlay_visible(&mut w, should_open);
+                                }
+                            });
                         }
-                    });
+                        Hosting::Portal { scope, key, .. } => {
+                            let Some(scope_id) = scope.widget_id() else {
+                                ctx.submit_action::<Self::Action>(AutocompleteAction::TextChanged(text.clone()));
+                                ctx.set_handled();
+                                return;
+                            };
+                            let key = *key;
+                            let items = self.filtered.clone();
+                            ctx.mutate_later(scope_id, move |mut w| {
+                                let mut scope = w.downcast::<OverlayScope>();
+                                let mut slot = OverlayScope::portal_slot_mut(&mut scope);
+                                if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
+                                    let mut pass = child.downcast::<Passthrough>();
+                                    let mut inner = Passthrough::child_mut(&mut pass);
+                                    let mut list = inner.downcast::<SuggestionList>();
+                                    SuggestionList::set_items(&mut list, items);
+                                }
+                            });
+                            if open_changed {
+                                let owner_id = ctx.widget_id();
+                                let rect = Rect::from_origin_size(
+                                    ctx.to_window(Point::ZERO),
+                                    ctx.border_box_size(),
+                                );
+                                if let Hosting::Portal { last_anchor_rect_window, .. } = &mut self.hosting {
+                                    *last_anchor_rect_window = if should_open { Some(rect) } else { None };
+                                }
+                                ctx.mutate_later(scope_id, move |mut w| {
+                                    let mut scope = w.downcast::<OverlayScope>();
+                                    OverlayScope::set_portal_visible(
+                                        &mut scope,
+                                        key,
+                                        should_open,
+                                        PortalVisibility {
+                                            owner: Some(owner_id),
+                                            owner_kind: OwnerKind::Autocomplete,
+                                            rect,
+                                            anchor: PopoverAnchor::BottomStart,
+                                            gap: OVERLAY_GAP_PX,
+                                        },
+                                    );
+                                });
+                                if should_open {
+                                    ctx.request_compose();
+                                    ctx.request_anim_frame();
+                                }
+                            }
+                        }
+                    }
 
                     ctx.submit_action::<Self::Action>(AutocompleteAction::TextChanged(text.clone()));
                     ctx.set_handled();
@@ -728,7 +1293,7 @@ impl Widget for AutocompleteWidget {
             return;
         }
 
-        // ── Suggestion selected by click ──────────────────────────────────────
+        // ── Suggestion selected by click (in-tree mode only) ──────────────────
         if let Some(&SuggestionSelected(i)) = action.downcast_ref::<SuggestionSelected>()
             && let Some(selected) = self.filtered.get(i).cloned()
         {
@@ -772,34 +1337,109 @@ impl Widget for AutocompleteWidget {
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
-            // Close when widget is stashed mid-open (e.g. hidden by a tab container).
+            Update::WidgetAdded => {
+                if let Hosting::Portal { handle, .. } = &self.hosting {
+                    handle.set(ctx.widget_id());
+                }
+            }
+            // Close when stashed mid-open.
             Update::StashedChanged(true) if self.open => {
                 self.open = false;
                 self.highlighted = None;
                 self.filtered.clear();
-                ctx.mutate_child_later(&mut self.overlay_host, |mut w| {
-                    with_suggestion_list(&mut w, |list| SuggestionList::set_items(list, []));
-                    AnchoredOverlay::set_overlay_visible(&mut w, false);
-                });
+                match &mut self.hosting {
+                    Hosting::InTree { overlay_host } => {
+                        ctx.mutate_child_later(overlay_host, |mut w| {
+                            with_suggestion_list(&mut w, |list| SuggestionList::set_items(list, []));
+                            AnchoredOverlay::set_overlay_visible(&mut w, false);
+                        });
+                    }
+                    Hosting::Portal { scope, key, .. } => {
+                        let Some(scope_id) = scope.widget_id() else { return };
+                        let key = *key;
+                        ctx.mutate_later(scope_id, move |mut w| {
+                            let mut scope = w.downcast::<OverlayScope>();
+                            OverlayScope::set_portal_visible(
+                                &mut scope,
+                                key,
+                                false,
+                                PortalVisibility {
+                                    owner: None,
+                                    owner_kind: OwnerKind::Autocomplete,
+                                    rect: Rect::ZERO,
+                                    anchor: PopoverAnchor::BottomStart,
+                                    gap: 0.0,
+                                },
+                            );
+                        });
+                    }
+                }
                 ctx.request_paint_only();
             }
-            // Close when focus leaves the autocomplete's entire widget subtree.
-            Update::ChildFocusChanged(false) if self.open => {
+            // In-tree: close when focus leaves our subtree (the suggestion list IS
+            // our descendant, so focus moving into it keeps us focused).
+            // Portal: the slot's own outside-press dismissal handles this.
+            Update::ChildFocusChanged(false)
+                if self.open && matches!(self.hosting, Hosting::InTree { .. }) =>
+            {
                 self.open = false;
                 self.highlighted = None;
                 self.filtered.clear();
-                ctx.mutate_child_later(&mut self.overlay_host, |mut w| {
-                    with_suggestion_list(&mut w, |list| SuggestionList::set_items(list, []));
-                    AnchoredOverlay::set_overlay_visible(&mut w, false);
-                });
+                if let Hosting::InTree { overlay_host } = &mut self.hosting {
+                    ctx.mutate_child_later(overlay_host, |mut w| {
+                        with_suggestion_list(&mut w, |list| SuggestionList::set_items(list, []));
+                        AnchoredOverlay::set_overlay_visible(&mut w, false);
+                    });
+                }
                 ctx.request_paint_only();
             }
             _ => {}
         }
     }
 
+    /// Re-anchors a still-open portal-mode suggestion list as we move in
+    /// window space (e.g. scrolling). No-op in-tree.
+    fn compose(&mut self, ctx: &mut ComposeCtx<'_>) {
+        if !self.open {
+            return;
+        }
+        let Hosting::Portal {
+            scope,
+            key,
+            last_anchor_rect_window,
+            ..
+        } = &mut self.hosting
+        else {
+            return;
+        };
+        let Some(scope_id) = scope.widget_id() else { return };
+        let rect = Rect::from_origin_size(ctx.to_window(Point::ZERO), ctx.border_box_size());
+        if *last_anchor_rect_window == Some(rect) {
+            return;
+        }
+        *last_anchor_rect_window = Some(rect);
+        let key = *key;
+        ctx.mutate_later(scope_id, move |mut w| {
+            let mut scope = w.downcast::<OverlayScope>();
+            OverlayScope::set_portal_placement(&mut scope, key, rect);
+        });
+    }
+
+    /// Keeps compose running every frame while portal-mode is open, so the
+    /// list re-anchors regardless of pointer position or which ancestor scrolled.
+    fn on_anim_frame(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, _: u64) {
+        if !self.open || !matches!(self.hosting, Hosting::Portal { .. }) {
+            return;
+        }
+        ctx.request_compose();
+        ctx.request_anim_frame();
+    }
+
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.overlay_host);
+        match &mut self.hosting {
+            Hosting::InTree { overlay_host } => ctx.register_child(overlay_host),
+            Hosting::Portal { chrome, .. } => ctx.register_child(chrome),
+        }
     }
 
     fn measure(
@@ -810,13 +1450,29 @@ impl Widget for AutocompleteWidget {
         _len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        ctx.redirect_measurement(&mut self.overlay_host, axis, cross_length)
+        match &mut self.hosting {
+            Hosting::InTree { overlay_host } => {
+                ctx.redirect_measurement(overlay_host, axis, cross_length)
+            }
+            Hosting::Portal { chrome, .. } => {
+                ctx.redirect_measurement(chrome, axis, cross_length)
+            }
+        }
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        ctx.run_layout(&mut self.overlay_host, size);
-        ctx.place_child(&mut self.overlay_host, Point::ORIGIN);
-        ctx.derive_baselines(&self.overlay_host);
+        match &mut self.hosting {
+            Hosting::InTree { overlay_host } => {
+                ctx.run_layout(overlay_host, size);
+                ctx.place_child(overlay_host, Point::ORIGIN);
+                ctx.derive_baselines(overlay_host);
+            }
+            Hosting::Portal { chrome, .. } => {
+                ctx.run_layout(chrome, size);
+                ctx.place_child(chrome, Point::ORIGIN);
+                ctx.derive_baselines(chrome);
+            }
+        }
     }
 
     fn paint(
@@ -825,7 +1481,7 @@ impl Widget for AutocompleteWidget {
         _props: &PropertiesRef<'_>,
         _painter: &mut Painter<'_>,
     ) {
-        // Purely structural — the SizedBox chrome and SuggestionList paint themselves.
+        // Purely structural — children paint themselves.
     }
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
@@ -847,6 +1503,9 @@ impl Widget for AutocompleteWidget {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.overlay_host.id()])
+        match &self.hosting {
+            Hosting::InTree { overlay_host } => ChildrenIds::from_slice(&[overlay_host.id()]),
+            Hosting::Portal { chrome, .. } => ChildrenIds::from_slice(&[chrome.id()]),
+        }
     }
 }
