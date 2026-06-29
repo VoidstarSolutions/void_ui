@@ -3,3 +3,4 @@ target/
 
 docs/superpowers/plans/
 .omniscient/
+.DS_Store
