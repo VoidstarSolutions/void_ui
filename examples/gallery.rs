@@ -170,6 +170,9 @@ fn sidebar_items(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State
 fn main_pane(focused: ComponentKind, theme: &Theme) -> Box<AnyWidgetView<State>> {
     match focused {
         ComponentKind::Alert => Box::new(void_ui::components::alert::demo::panel(theme)),
+        ComponentKind::Autocomplete => {
+            Box::new(void_ui::components::autocomplete::demo::panel(theme))
+        }
         ComponentKind::Button => Box::new(void_ui::components::button::demo::panel(theme)),
         ComponentKind::ButtonGroup => {
             Box::new(void_ui::components::button_group::demo::panel(theme))

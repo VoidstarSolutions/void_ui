@@ -16,7 +16,7 @@ mod masked;
 mod number;
 mod numeric;
 mod view;
-mod widget;
+pub(crate) mod widget;
 
 pub use currency::{CurrencyFormat, CurrencyInput, currency_input, format_currency};
 pub use masked::{MaskedInput, format_mask, masked_input};
