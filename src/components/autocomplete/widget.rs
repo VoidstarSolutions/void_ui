@@ -249,6 +249,29 @@ impl SuggestionList {
 impl Widget for SuggestionList {
     type Action = SuggestionSelected;
 
+    fn on_action(
+        &mut self,
+        ctx: &mut ActionCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        action: &ErasedAction,
+        _source: WidgetId,
+    ) {
+        // Re-emit from our own widget id so the xilem driver can route the action.
+        //
+        // The driver maps widget ids to view paths (registered by `with_action_widget`
+        // in `SuggestionListView::build`). In portal mode, `LabelList` is deep inside
+        // a `PortalSlot` subtree that is separate from `AutocompleteWidget`'s subtree,
+        // so the action from `LabelList.id` has no registered view path and is dropped
+        // with an "unknown widget" error. Re-emitting here promotes the action to
+        // `SuggestionList.id`, which IS registered, so it reaches `SuggestionListView::message`.
+        // In in-tree mode the re-emitted action bubbles to `AutocompleteWidget::on_action`
+        // which handles it — so it never reaches the driver at all.
+        if let Some(&SuggestionSelected(i)) = action.downcast_ref::<SuggestionSelected>() {
+            ctx.submit_action::<Self::Action>(SuggestionSelected(i));
+            ctx.set_handled();
+        }
+    }
+
     fn update(&mut self, _ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, _event: &Update) {}
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
@@ -516,6 +539,8 @@ impl Widget for LabelList {
                 let local = Self::to_local(ctx, state.logical_point());
                 if let Some(i) = self.hit_item(local) {
                     ctx.submit_action::<Self::Action>(SuggestionSelected(i));
+                    // Return focus to the input so the user can keep typing.
+                    self.refocus_input(ctx);
                     ctx.set_handled();
                 }
             }
@@ -992,6 +1017,14 @@ pub(crate) struct AutocompleteWidget {
     open: bool,
     /// Index into [`Self::filtered`] for roving keyboard highlight.
     highlighted: Option<usize>,
+    /// Suppresses the next [`Self::open_on_focus`] call so that click-based
+    /// selection does not reopen the dropdown when focus returns to the input.
+    ///
+    /// Click creates a focus gap (`TextArea` → `None` → `TextArea`) that fires
+    /// `ChildFocusChanged(true)` on this widget, which would normally reopen
+    /// the list. Set by [`Self::select_suggestion`] / [`Self::portal_select`]
+    /// and cleared by the first [`Self::open_on_focus`] that sees it.
+    suppress_focus_open: bool,
     theme: Theme,
     /// Resolves to the listbox's widget id once mounted, for `aria-controls`
     /// and for Tab-to-navigate (see [`Self::on_text_event`]).
@@ -1099,6 +1132,7 @@ impl AutocompleteWidget {
             filtered,
             open: false,
             highlighted: None,
+            suppress_focus_open: false,
             theme: *theme,
             listbox_handle,
             handle,
@@ -1133,6 +1167,7 @@ impl AutocompleteWidget {
             filtered,
             open: false,
             highlighted: None,
+            suppress_focus_open: false,
             theme,
             listbox_handle,
             handle,
@@ -1143,6 +1178,10 @@ impl AutocompleteWidget {
 // --- MARK: INTERNAL HELPERS
 impl AutocompleteWidget {
     fn open_on_focus(&mut self, ctx: &mut UpdateCtx<'_>) {
+        if self.suppress_focus_open {
+            self.suppress_focus_open = false;
+            return;
+        }
         self.filtered = compute_filtered(&self.all_suggestions, &self.contents);
         if self.filtered.is_empty() {
             return;
@@ -1234,6 +1273,7 @@ impl AutocompleteWidget {
         self.filtered.clear();
         self.highlighted = None;
         self.open = false;
+        self.suppress_focus_open = true;
 
         match &mut self.hosting {
             Hosting::InTree { overlay_host } => {
@@ -1279,6 +1319,7 @@ impl AutocompleteWidget {
         ctx.submit_action::<AutocompleteAction>(AutocompleteAction::TextChanged(selected));
         ctx.set_handled();
         ctx.request_paint_only();
+        ctx.request_accessibility_update();
     }
 }
 
@@ -1604,6 +1645,11 @@ impl AutocompleteWidget {
         this.widget.filtered.clear();
         this.widget.highlighted = None;
         this.widget.open = false;
+        // Do NOT set suppress_focus_open here. In portal mode, ChildFocusChanged(true)
+        // fires while self.open is still true (portal_select is deferred via mutate_later),
+        // so open_on_focus is never called and the flag would never be consumed — leaving it
+        // stuck and silently preventing the dropdown from opening on the next focus event.
+        // The self.open == true guard already prevents the reopen without the flag.
 
         let text_for_area = text.clone();
 
@@ -1835,11 +1881,19 @@ impl Widget for AutocompleteWidget {
                 }
                 ctx.request_paint_only();
             }
-            // In-tree: close when focus leaves our subtree (the suggestion list IS
-            // our descendant, so focus moving into it keeps us focused).
-            // Portal: the slot's own outside-press dismissal handles this.
+            // In-tree: close when focus truly leaves our subtree (Tab-out,
+            // clicking elsewhere, etc.).  Portal: the slot's own
+            // outside-press dismissal handles this instead.
+            //
+            // Skip if a pointer-capture is active — that means the user
+            // pressed Down on a list item and the pointer-Up (click-select)
+            // hasn't fired yet.  Closing here would clear `self.filtered`
+            // and prevent the subsequent `SuggestionSelected` action from
+            // finding the item, so the text field never auto-fills.
             Update::ChildFocusChanged(false)
-                if self.open && matches!(self.hosting, Hosting::InTree { .. }) =>
+                if self.open
+                    && matches!(self.hosting, Hosting::InTree { .. })
+                    && ctx.pointer_capture_target_id().is_none() =>
             {
                 self.open = false;
                 self.highlighted = None;
@@ -2185,5 +2239,52 @@ mod accessibility_tests {
         harness.render();
         let node = harness.access_node(autocomplete_id).expect("combobox node");
         assert_eq!(node.data().is_expanded(), Some(false), "closed after Escape");
+    }
+
+    /// Clicking an item in the open list auto-fills the text field even
+    /// though the pointer-down clears keyboard focus before pointer-up fires.
+    /// Previously, `ChildFocusChanged(false)` would close the dropdown and
+    /// clear `filtered` between the two half-events, so `SuggestionSelected`
+    /// arrived with no matching item and the field was never updated.
+    #[test]
+    fn click_selection_fills_the_text_field() {
+        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit();
+
+        // Focus the input — opens the dropdown.
+        harness.focus_on(Some(text_area_id));
+        harness.render();
+        {
+            let node = harness.access_node(autocomplete_id).expect("combobox");
+            assert_eq!(node.data().is_expanded(), Some(true));
+        }
+
+        // Find the first SuggestionItem (ListBoxOption) in the widget tree.
+        let mut first_item_id = None;
+        harness.inspect_widgets(|w| {
+            if first_item_id.is_none() && w.accessibility_role() == Role::ListBoxOption {
+                first_item_id = Some(w.id());
+            }
+        });
+
+        let item_id = first_item_id.expect("dropdown should have rendered list items");
+
+        // Use unchecked move + manual press/release to bypass the harness's
+        // "widget must be visible in the render layer" constraint (the item
+        // lives inside a clipped ScrollView, which confuses the bounding-box
+        // check even though it is genuinely hittable).
+        harness.mouse_move_to_unchecked(item_id);
+        harness.mouse_button_press(Some(masonry::core::PointerButton::Primary));
+        harness.mouse_button_release(Some(masonry::core::PointerButton::Primary));
+
+        let area = find_text_area(harness.root_widget().as_dyn()).expect("TextArea");
+        assert_eq!(area.text().to_string(), "Apple", "click should auto-fill the text field");
+        assert_eq!(
+            harness.focused_widget_id(),
+            Some(text_area_id),
+            "focus returns to input after click"
+        );
+        harness.render();
+        let node = harness.access_node(autocomplete_id).expect("combobox");
+        assert_eq!(node.data().is_expanded(), Some(false), "closed after click-select");
     }
 }
