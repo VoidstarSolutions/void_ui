@@ -535,6 +535,16 @@ impl<W: Widget + ?Sized> ScrollView<W> {
         this.widget.always_hide_scrollbars = v;
         this.ctx.request_layout();
     }
+
+    /// Resets the scroll position to the top-left corner. Useful when content
+    /// is replaced wholesale (e.g. a filtered list) and any prior scroll
+    /// offset no longer makes sense.
+    pub fn scroll_to_origin(this: &mut WidgetMut<'_, Self>) {
+        if this.widget.viewport_pos != Point::ORIGIN {
+            this.widget.viewport_pos = Point::ORIGIN;
+            this.ctx.request_compose();
+        }
+    }
 }
 
 // Helpers

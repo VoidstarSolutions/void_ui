@@ -23,7 +23,7 @@ use masonry::core::{
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, RoundedRect, Size, Stroke};
-use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
+use masonry::layout::{LayoutSize, LenDef, LenReq, Length, SizeDef};
 use masonry::peniko::Color;
 use masonry::properties::{
     Background, BorderColor, BorderWidth, CaretColor, ContentColor, CornerRadius, Padding,
@@ -37,6 +37,7 @@ use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
 use crate::components::input::widget::{InputCleared, InputFrame};
 use crate::components::popover::PopoverAnchor;
+use crate::components::scroll_container::widget::{ContentClip, ScrollView};
 use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 use crate::overlay_portal::{OwnerKind, PortalSlot, PortalVisibility};
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
@@ -53,7 +54,11 @@ const LIST_BORDER: f64 = 1.0;
 const HIGHLIGHT_RING_INSET: f64 = FOCUS_RING_INSET;
 /// Minimum suggestion list width in logical pixels.
 const MIN_LIST_WIDTH: f64 = 80.0;
-/// Max visible suggestions (prevents enormous lists on large datasets).
+/// Maximum visible height for the suggestion list before it scrolls, px.
+const MAX_LIST_HEIGHT: f64 = 200.0;
+/// Max results for a typed-prefix match. Browsing the unfiltered list (empty
+/// query) isn't capped — the list scrolls — but typing should narrow to a
+/// short, scannable set rather than every match in a huge dataset.
 const MAX_SUGGESTIONS: usize = 20;
 /// Gap between the input field and the suggestion list overlay, px.
 const OVERLAY_GAP_PX: f64 = 2.0;
@@ -111,11 +116,140 @@ impl AutocompleteHandle {
 
 /// Filtered suggestion list overlay for the autocomplete.
 ///
-/// Paints its own rounded-rect chrome (background + border), tracks hover,
-/// draws a focus-ring for keyboard navigation, and fires [`SuggestionSelected`]
-/// on click. Closely mirrors `MenuContent` from the dropdown button.
+/// Paints its own rounded-rect chrome (background + border) and hosts a
+/// [`ScrollView`] wrapping [`LabelList`], which holds the actual item widgets
+/// and handles hover/highlight/click. Split this way because `AnchoredOverlay`
+/// and `PortalSlot` both size their overlay with `SizeDef::MIN`, and
+/// `ScrollView` reports zero size for `MinContent` — `SuggestionList` is the
+/// thing that reports a sensible (capped) size; `ScrollView` only sees
+/// `MaxContent` requests forwarded from `SuggestionList::measure`.
 pub(crate) struct SuggestionList {
+    scroll: WidgetPod<ScrollView<LabelList>>,
+    theme: Theme,
+}
+
+impl SuggestionList {
+    pub(crate) fn new(items: impl IntoIterator<Item = ArcStr>, theme: &Theme) -> Self {
+        let label_list = LabelList::new(items, theme);
+        let scroll = ScrollView::new(NewWidget::new(label_list));
+        Self {
+            scroll: NewWidget::new(scroll).to_pod(),
+            theme: *theme,
+        }
+    }
+}
+
+/// Navigate from a `ScrollView<LabelList>` `WidgetMut` down to the `LabelList`
+/// and invoke `f`.
+fn with_label_list<R>(
+    scroll: &mut WidgetMut<'_, ScrollView<LabelList>>,
+    f: impl FnOnce(&mut WidgetMut<'_, LabelList>) -> R,
+) -> R {
+    let mut clip = ScrollView::child_mut(scroll);
+    let mut list = ContentClip::child_mut(&mut clip);
+    f(&mut list)
+}
+
+// --- MARK: WIDGETMUT SETTERS
+impl SuggestionList {
+    pub(crate) fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
+        if this.widget.theme == *theme {
+            return;
+        }
+        this.widget.theme = *theme;
+        {
+            let mut scroll = this.ctx.get_mut(&mut this.widget.scroll);
+            with_label_list(&mut scroll, |list| LabelList::set_theme(list, theme));
+        }
+        this.ctx.request_layout();
+        this.ctx.request_paint_only();
+    }
+
+    pub(crate) fn set_items(
+        this: &mut WidgetMut<'_, Self>,
+        items: impl IntoIterator<Item = ArcStr>,
+    ) {
+        let mut scroll = this.ctx.get_mut(&mut this.widget.scroll);
+        with_label_list(&mut scroll, |list| LabelList::set_items(list, items));
+        ScrollView::scroll_to_origin(&mut scroll);
+    }
+
+    pub(crate) fn set_highlighted(this: &mut WidgetMut<'_, Self>, index: Option<usize>) {
+        let mut scroll = this.ctx.get_mut(&mut this.widget.scroll);
+        with_label_list(&mut scroll, |list| LabelList::set_highlighted(list, index));
+    }
+}
+
+// --- MARK: IMPL WIDGET
+impl Widget for SuggestionList {
+    type Action = SuggestionSelected;
+
+    fn update(&mut self, _ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, _event: &Update) {}
+
+    fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
+
+    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
+        ctx.register_child(&mut self.scroll);
+    }
+
+    fn measure(
+        &mut self,
+        ctx: &mut MeasureCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        axis: Axis,
+        _len_req: LenReq,
+        cross_length: Option<Length>,
+    ) -> Length {
+        // Always request the scroll view's *natural* (unconstrained) size —
+        // `ScrollView` reports zero for `MinContent`, so we can't forward
+        // whatever `len_req` we were given. Vertical gets capped below;
+        // horizontal (the list's width) is left as-is.
+        let context_size = LayoutSize::maybe(axis.cross(), cross_length);
+        let natural = ctx
+            .compute_length(&mut self.scroll, LenDef::MaxContent, context_size, axis, cross_length)
+            .get();
+        match axis {
+            Axis::Vertical => Length::px(natural.min(MAX_LIST_HEIGHT)),
+            Axis::Horizontal => Length::px(natural),
+        }
+    }
+
+    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
+        ctx.run_layout(&mut self.scroll, size);
+        ctx.place_child(&mut self.scroll, Point::ORIGIN);
+    }
+
+    fn paint(&mut self, ctx: &mut PaintCtx<'_>, _props: &PropertiesRef<'_>, painter: &mut Painter<'_>) {
+        let p = &self.theme.palette;
+        let bg_rect = RoundedRect::from_origin_size(Point::ORIGIN, ctx.border_box_size(), LIST_CORNER);
+        painter.fill(bg_rect, p.surface_hi).draw();
+        painter.stroke(bg_rect, &Stroke::new(LIST_BORDER), p.border_strong).draw();
+    }
+
+    fn accessibility_role(&self) -> Role {
+        Role::GenericContainer
+    }
+
+    fn accessibility(&mut self, _ctx: &mut AccessCtx<'_>, _props: &PropertiesRef<'_>, _node: &mut Node) {}
+
+    fn children_ids(&self) -> ChildrenIds {
+        ChildrenIds::from_slice(&[self.scroll.id()])
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LabelList
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The actual suggestion item widgets, scrolled by [`SuggestionList`]'s
+/// [`ScrollView`]. Tracks hover, draws a focus-ring for keyboard navigation,
+/// and fires [`SuggestionSelected`] on click. Closely mirrors `MenuContent`
+/// from the dropdown button.
+pub(crate) struct LabelList {
     labels: Vec<WidgetPod<dyn Widget>>,
+    /// Item rects in this widget's local (natural, un-scrolled) coordinate
+    /// space — `ScrollView` applies the scroll offset via a transform, so
+    /// `EventCtx::to_window`/`to_local` already account for it.
     item_rects: Vec<Rect>,
     hover_index: Option<usize>,
     /// Keyboard-highlighted row index, driven by [`AutocompleteWidget`].
@@ -123,8 +257,8 @@ pub(crate) struct SuggestionList {
     theme: Theme,
 }
 
-impl SuggestionList {
-    pub(crate) fn new(items: impl IntoIterator<Item = ArcStr>, theme: &Theme) -> Self {
+impl LabelList {
+    fn new(items: impl IntoIterator<Item = ArcStr>, theme: &Theme) -> Self {
         let labels = items.into_iter().map(|t| Self::make_label(&t, theme)).collect();
         Self {
             labels,
@@ -162,7 +296,7 @@ impl SuggestionList {
 }
 
 // --- MARK: WIDGETMUT SETTERS
-impl SuggestionList {
+impl LabelList {
     pub(crate) fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
         if this.widget.theme == *theme {
             return;
@@ -207,7 +341,7 @@ impl SuggestionList {
 }
 
 // --- MARK: IMPL WIDGET
-impl Widget for SuggestionList {
+impl Widget for LabelList {
     type Action = SuggestionSelected;
 
     fn accepts_pointer_interaction(&self) -> bool {
@@ -327,11 +461,8 @@ impl Widget for SuggestionList {
         }
     }
 
-    fn paint(&mut self, ctx: &mut PaintCtx<'_>, _props: &PropertiesRef<'_>, painter: &mut Painter<'_>) {
+    fn paint(&mut self, _ctx: &mut PaintCtx<'_>, _props: &PropertiesRef<'_>, painter: &mut Painter<'_>) {
         let p = &self.theme.palette;
-        let bg_rect = RoundedRect::from_origin_size(Point::ORIGIN, ctx.border_box_size(), LIST_CORNER);
-        painter.fill(bg_rect, p.surface_hi).draw();
-        painter.stroke(bg_rect, &Stroke::new(LIST_BORDER), p.border_strong).draw();
 
         if let Some(i) = self.hover_index
             && let Some(&rect) = self.item_rects.get(i)
@@ -441,11 +572,12 @@ where
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Case-insensitive prefix match, capped at [`MAX_SUGGESTIONS`].
-/// When `query` is empty the full list (up to the cap) is returned so the
-/// dropdown shows all suggestions when the field first receives focus.
+/// When `query` is empty, the **full, uncapped** list is returned — the
+/// dropdown shows everything when the field first receives focus, and the
+/// list scrolls to reach entries beyond the visible window.
 pub(crate) fn compute_filtered(all: &[ArcStr], query: &str) -> Vec<ArcStr> {
     if query.is_empty() {
-        return all.iter().take(MAX_SUGGESTIONS).cloned().collect();
+        return all.to_vec();
     }
     let q = query.to_lowercase();
     all.iter()
@@ -1569,5 +1701,50 @@ impl Widget for AutocompleteWidget {
             Hosting::InTree { overlay_host } => ChildrenIds::from_slice(&[overlay_host.id()]),
             Hosting::Portal { chrome, .. } => ChildrenIds::from_slice(&[chrome.id()]),
         }
+    }
+}
+
+#[cfg(test)]
+mod scroll_tests {
+    use masonry::kurbo::Vec2;
+    use masonry::testing::TestHarness;
+
+    use super::*;
+
+    /// Real rendering proof that the `ScrollView`-backed `SuggestionList`
+    /// actually scrolls: more items than fit in `MAX_LIST_HEIGHT`, drive a
+    /// real wheel event through `TestHarness`, and compare painted pixels —
+    /// not internal state — before and after.
+    #[test]
+    fn wheel_scroll_changes_painted_content() {
+        let theme = Theme::default();
+        let items: Vec<ArcStr> = (0..30).map(|i| ArcStr::from(format!("Item {i}"))).collect();
+        let list = SuggestionList::new(items, &theme);
+
+        let mut harness = TestHarness::create_with_size(
+            masonry::theme::default_property_set(),
+            NewWidget::new(list),
+            (200, 200),
+        );
+
+        // Hover a point inside the top padding (above any item rect) so the
+        // wheel events below don't also toggle hover-highlight paint.
+        harness.mouse_move((100.0, 1.0));
+        let top = harness.render().clone();
+
+        harness.mouse_wheel(Vec2::new(0.0, -1_000_000.0));
+        let scrolled_one_way = harness.render().clone();
+
+        harness.mouse_wheel(Vec2::new(0.0, 2_000_000.0));
+        let scrolled_other_way = harness.render().clone();
+
+        assert_ne!(
+            top, scrolled_one_way,
+            "wheel scroll did not change painted content at all"
+        );
+        assert_ne!(
+            scrolled_one_way, scrolled_other_way,
+            "scrolling to the opposite extreme produced identical pixels"
+        );
     }
 }
