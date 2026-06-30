@@ -18,8 +18,9 @@ use masonry::accesskit::{Node, Role};
 use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
     AccessCtx, ActionCtx, ArcStr, ChildrenIds, ComposeCtx, ErasedAction, EventCtx, LayoutCtx,
-    MeasureCtx, NewWidget, PaintCtx, PropertySet, PropertiesMut, PropertiesRef, RegisterCtx,
-    StyleProperty, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    MeasureCtx, NewWidget, NoAction, PaintCtx, PropertySet, PropertiesMut, PropertiesRef,
+    RegisterCtx, StyleProperty, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
+    WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, RoundedRect, Size, Stroke};
@@ -111,6 +112,63 @@ impl AutocompleteHandle {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// LabelListHandle
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Self-filling handle to a [`LabelList`]'s widget id, filled at
+/// `Update::WidgetAdded`. Lets [`AutocompleteWidget`] expose `aria-controls`
+/// pointing at the listbox. The active-descendant relationship is set
+/// directly by [`LabelList`] itself (see its `accessibility` impl), since it
+/// always has immediate, local access to which item is highlighted.
+#[derive(Clone, Default)]
+pub(crate) struct LabelListHandle(Arc<OnceLock<WidgetId>>);
+
+impl LabelListHandle {
+    pub(crate) fn new() -> Self {
+        Self(Arc::new(OnceLock::new()))
+    }
+
+    pub(crate) fn widget_id(&self) -> Option<WidgetId> {
+        self.0.get().copied()
+    }
+
+    fn set(&self, id: WidgetId) {
+        let _ = self.0.set(id);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TextAreaHandle
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Handle to the autocomplete's editable `TextArea`'s widget id. Unlike the
+/// other handles here, this is filled *eagerly* at [`AutocompleteWidget`]
+/// construction — `build_chrome` already reads the id synchronously off the
+/// `NewWidget` it builds, no need to wait for `Update::WidgetAdded`. Lets
+/// [`LabelList`] call `ctx.set_focus()` directly to return focus to the input
+/// after Enter-selection or Escape, in both hosting modes — see the module
+/// docs for why arrow-key navigation moved from "focus stays in the textbox"
+/// (blocked: `TextArea` unconditionally claims arrow keys for cursor
+/// movement, even on a single line, so an ancestor never sees them) to
+/// "Tab moves focus into the open listbox".
+#[derive(Clone, Default)]
+pub(crate) struct TextAreaHandle(Arc<OnceLock<WidgetId>>);
+
+impl TextAreaHandle {
+    pub(crate) fn new() -> Self {
+        Self(Arc::new(OnceLock::new()))
+    }
+
+    pub(crate) fn widget_id(&self) -> Option<WidgetId> {
+        self.0.get().copied()
+    }
+
+    fn set(&self, id: WidgetId) {
+        let _ = self.0.set(id);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SuggestionList
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -129,8 +187,20 @@ pub(crate) struct SuggestionList {
 }
 
 impl SuggestionList {
-    pub(crate) fn new(items: impl IntoIterator<Item = ArcStr>, theme: &Theme) -> Self {
-        let label_list = LabelList::new(items, theme);
+    pub(crate) fn new(
+        items: impl IntoIterator<Item = ArcStr>,
+        theme: &Theme,
+        listbox_handle: LabelListHandle,
+        autocomplete_handle: AutocompleteHandle,
+        text_area_handle: TextAreaHandle,
+    ) -> Self {
+        let label_list = LabelList::new(
+            items,
+            theme,
+            listbox_handle,
+            autocomplete_handle,
+            text_area_handle,
+        );
         let scroll = ScrollView::new(NewWidget::new(label_list));
         Self {
             scroll: NewWidget::new(scroll).to_pod(),
@@ -172,11 +242,6 @@ impl SuggestionList {
         let mut scroll = this.ctx.get_mut(&mut this.widget.scroll);
         with_label_list(&mut scroll, |list| LabelList::set_items(list, items));
         ScrollView::scroll_to_origin(&mut scroll);
-    }
-
-    pub(crate) fn set_highlighted(this: &mut WidgetMut<'_, Self>, index: Option<usize>) {
-        let mut scroll = this.ctx.get_mut(&mut this.widget.scroll);
-        with_label_list(&mut scroll, |list| LabelList::set_highlighted(list, index));
     }
 }
 
@@ -245,36 +310,53 @@ impl Widget for SuggestionList {
 /// [`ScrollView`]. Tracks hover, draws a focus-ring for keyboard navigation,
 /// and fires [`SuggestionSelected`] on click. Closely mirrors `MenuContent`
 /// from the dropdown button.
+///
+/// `Role::ListBox`. Reports its own widget id via [`LabelListHandle`] (read by
+/// [`AutocompleteWidget`] for `aria-controls`) and, since it always has direct
+/// access to which item is highlighted, sets `aria-activedescendant` on its
+/// own node — accesskit's `ActiveDescendant` is documented for exactly this
+/// "composite widget whose active item changes while focus stays elsewhere"
+/// case, so no cross-widget id plumbing is needed for that part.
 pub(crate) struct LabelList {
-    labels: Vec<WidgetPod<dyn Widget>>,
+    labels: Vec<WidgetPod<SuggestionItem>>,
     /// Item rects in this widget's local (natural, un-scrolled) coordinate
     /// space — `ScrollView` applies the scroll offset via a transform, so
     /// `EventCtx::to_window`/`to_local` already account for it.
     item_rects: Vec<Rect>,
     hover_index: Option<usize>,
-    /// Keyboard-highlighted row index, driven by [`AutocompleteWidget`].
+    /// Keyboard-highlighted row index. Driven by this widget's own
+    /// `on_text_event` once it has real focus (see [`Self::accepts_focus`]).
     highlighted: Option<usize>,
     theme: Theme,
+    handle: LabelListHandle,
+    /// Lets Enter/Escape return focus to the input — see [`TextAreaHandle`].
+    autocomplete_handle: AutocompleteHandle,
+    text_area_handle: TextAreaHandle,
 }
 
 impl LabelList {
-    fn new(items: impl IntoIterator<Item = ArcStr>, theme: &Theme) -> Self {
-        let labels = items.into_iter().map(|t| Self::make_label(&t, theme)).collect();
+    fn new(
+        items: impl IntoIterator<Item = ArcStr>,
+        theme: &Theme,
+        handle: LabelListHandle,
+        autocomplete_handle: AutocompleteHandle,
+        text_area_handle: TextAreaHandle,
+    ) -> Self {
+        let labels = items.into_iter().map(|t| Self::make_item(t, theme)).collect();
         Self {
             labels,
             item_rects: Vec::new(),
             hover_index: None,
             highlighted: None,
             theme: *theme,
+            handle,
+            autocomplete_handle,
+            text_area_handle,
         }
     }
 
-    fn make_label(text: &ArcStr, theme: &Theme) -> WidgetPod<dyn Widget> {
-        let mut lbl = Label::new(text.clone())
-            .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
-            .prepare();
-        lbl.properties.insert(ContentColor::new(theme.palette.text));
-        lbl.erased().to_pod()
+    fn make_item(text: ArcStr, theme: &Theme) -> WidgetPod<SuggestionItem> {
+        NewWidget::new(SuggestionItem::new(text, theme)).to_pod()
     }
 
     fn item_height(&self) -> f64 {
@@ -293,6 +375,58 @@ impl LabelList {
         let origin = ctx.to_window(Point::ZERO);
         window_pos - origin.to_vec2()
     }
+
+    /// Returns focus to the input field, if its id is known yet.
+    fn refocus_input(&self, ctx: &mut EventCtx<'_>) {
+        if let Some(id) = self.text_area_handle.widget_id() {
+            ctx.set_focus(id);
+        }
+    }
+
+    /// Closes the dropdown via the same back-channel `portal_select`/outside-
+    /// press dismissal already use — works identically in both hosting modes.
+    fn request_close(&self, ctx: &mut EventCtx<'_>) {
+        if let Some(ac_id) = self.autocomplete_handle.widget_id() {
+            ctx.mutate_later(ac_id, |mut w| {
+                let mut ac = w.downcast::<AutocompleteWidget>();
+                AutocompleteWidget::mark_closed(&mut ac);
+            });
+        }
+    }
+
+    /// Moves the keyboard highlight by `delta` positions (wrapping), pushing
+    /// the `aria-selected` flag to the affected items and repainting.
+    fn move_highlight(&mut self, ctx: &mut EventCtx<'_>, delta: isize) {
+        let n = self.labels.len();
+        if n == 0 {
+            return;
+        }
+        let next = match self.highlighted {
+            None => if delta >= 0 { 0 } else { n - 1 },
+            Some(i) => (i.cast_signed() + delta).rem_euclid(n.cast_signed()).cast_unsigned(),
+        };
+        self.set_highlight(ctx, Some(next));
+    }
+
+    fn set_highlight(&mut self, ctx: &mut EventCtx<'_>, index: Option<usize>) {
+        if self.highlighted == index {
+            return;
+        }
+        let prev = self.highlighted;
+        self.highlighted = index;
+        if let Some(i) = prev
+            && let Some(label) = self.labels.get_mut(i)
+        {
+            ctx.mutate_child_later(label, |mut item| SuggestionItem::set_selected(&mut item, false));
+        }
+        if let Some(i) = index
+            && let Some(label) = self.labels.get_mut(i)
+        {
+            ctx.mutate_child_later(label, |mut item| SuggestionItem::set_selected(&mut item, true));
+        }
+        ctx.request_paint_only();
+        ctx.request_accessibility_update();
+    }
 }
 
 // --- MARK: WIDGETMUT SETTERS
@@ -303,10 +437,8 @@ impl LabelList {
         }
         this.widget.theme = *theme;
         for label in &mut this.widget.labels {
-            let mut lbl = this.ctx.get_mut(label);
-            lbl.insert_prop(ContentColor::new(theme.palette.text));
-            let mut lbl = lbl.downcast::<Label>();
-            Label::insert_style(&mut lbl, StyleProperty::FontSize(theme.density.ui_font_size));
+            let mut item = this.ctx.get_mut(label);
+            SuggestionItem::set_theme(&mut item, theme);
         }
         this.ctx.request_layout();
         this.ctx.request_paint_only();
@@ -322,7 +454,7 @@ impl LabelList {
         let theme = this.widget.theme;
         this.widget.labels = items
             .into_iter()
-            .map(|t| Self::make_label(&t, &theme))
+            .map(|t| Self::make_item(t, &theme))
             .collect();
         this.widget.item_rects.clear();
         this.widget.hover_index = None;
@@ -330,13 +462,7 @@ impl LabelList {
         this.ctx.children_changed();
         this.ctx.request_layout();
         this.ctx.request_paint_only();
-    }
-
-    pub(crate) fn set_highlighted(this: &mut WidgetMut<'_, Self>, index: Option<usize>) {
-        if this.widget.highlighted != index {
-            this.widget.highlighted = index;
-            this.ctx.request_paint_only();
-        }
+        this.ctx.request_accessibility_update();
     }
 }
 
@@ -350,6 +476,14 @@ impl Widget for LabelList {
 
     fn propagates_pointer_interaction(&self) -> bool {
         false
+    }
+
+    /// Lets keyboard focus move here via Tab while the dropdown is open (see
+    /// [`AutocompleteWidget::on_text_event`]'s Tab handling) — once focus is
+    /// here, arrow keys navigate without any conflict, since this widget has
+    /// no competing key bindings the way `TextArea` does.
+    fn accepts_focus(&self) -> bool {
+        true
     }
 
     fn on_pointer_event(
@@ -393,7 +527,49 @@ impl Widget for LabelList {
         }
     }
 
-    fn update(&mut self, _ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, _event: &Update) {}
+    fn on_text_event(&mut self, ctx: &mut EventCtx<'_>, _props: &mut PropertiesMut<'_>, event: &TextEvent) {
+        let TextEvent::Keyboard(key) = event else { return };
+        if key.state != KeyState::Down {
+            return;
+        }
+        match &key.key {
+            Key::Named(NamedKey::ArrowDown) => {
+                self.move_highlight(ctx, 1);
+                ctx.set_handled();
+            }
+            Key::Named(NamedKey::ArrowUp) => {
+                self.move_highlight(ctx, -1);
+                ctx.set_handled();
+            }
+            Key::Named(NamedKey::Home) if !self.labels.is_empty() => {
+                self.set_highlight(ctx, Some(0));
+                ctx.set_handled();
+            }
+            Key::Named(NamedKey::End) if !self.labels.is_empty() => {
+                self.set_highlight(ctx, Some(self.labels.len() - 1));
+                ctx.set_handled();
+            }
+            Key::Named(NamedKey::Enter) => {
+                if let Some(i) = self.highlighted {
+                    ctx.submit_action::<Self::Action>(SuggestionSelected(i));
+                }
+                self.refocus_input(ctx);
+                ctx.set_handled();
+            }
+            Key::Named(NamedKey::Escape) => {
+                self.refocus_input(ctx);
+                self.request_close(ctx);
+                ctx.set_handled();
+            }
+            _ => {}
+        }
+    }
+
+    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        if let Update::WidgetAdded = event {
+            self.handle.set(ctx.widget_id());
+        }
+    }
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
 
@@ -483,11 +659,111 @@ impl Widget for LabelList {
         Role::ListBox
     }
 
-    fn accessibility(&mut self, _ctx: &mut AccessCtx<'_>, _props: &PropertiesRef<'_>, _node: &mut Node) {}
+    fn accessibility(&mut self, _ctx: &mut AccessCtx<'_>, _props: &PropertiesRef<'_>, node: &mut Node) {
+        if let Some(i) = self.highlighted
+            && let Some(label) = self.labels.get(i)
+        {
+            node.set_active_descendant(label.id().into());
+        }
+    }
 
     fn children_ids(&self) -> ChildrenIds {
         let ids: Vec<_> = self.labels.iter().map(WidgetPod::id).collect();
         ChildrenIds::from_slice(&ids)
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SuggestionItem
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Thin accessibility wrapper around a [`Label`]: exposes the item as
+/// `Role::ListBoxOption` with an explicit accessible name and `aria-selected`
+/// state, since `Label`'s own role can't be overridden from outside. Painting,
+/// hover, and the focus ring stay on [`LabelList`] — this widget adds no
+/// visuals of its own, just identity + state for assistive tech.
+pub(crate) struct SuggestionItem {
+    label: WidgetPod<Label>,
+    text: ArcStr,
+    selected: bool,
+}
+
+impl SuggestionItem {
+    fn new(text: ArcStr, theme: &Theme) -> Self {
+        let mut lbl = Label::new(text.clone())
+            .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
+            .prepare();
+        lbl.properties.insert(ContentColor::new(theme.palette.text));
+        Self {
+            label: lbl.to_pod(),
+            text,
+            selected: false,
+        }
+    }
+}
+
+// --- MARK: WIDGETMUT SETTERS
+impl SuggestionItem {
+    pub(crate) fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
+        let mut lbl = this.ctx.get_mut(&mut this.widget.label);
+        lbl.insert_prop(ContentColor::new(theme.palette.text));
+        Label::insert_style(&mut lbl, StyleProperty::FontSize(theme.density.ui_font_size));
+    }
+
+    pub(crate) fn set_selected(this: &mut WidgetMut<'_, Self>, selected: bool) {
+        if this.widget.selected != selected {
+            this.widget.selected = selected;
+            this.ctx.request_accessibility_update();
+        }
+    }
+}
+
+// --- MARK: IMPL WIDGET
+impl Widget for SuggestionItem {
+    type Action = NoAction;
+
+    fn update(&mut self, _ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, _event: &Update) {}
+
+    fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
+
+    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
+        ctx.register_child(&mut self.label);
+    }
+
+    fn measure(
+        &mut self,
+        ctx: &mut MeasureCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        axis: Axis,
+        len_req: LenReq,
+        cross_length: Option<Length>,
+    ) -> Length {
+        let context_size = LayoutSize::maybe(axis.cross(), cross_length);
+        ctx.compute_length(&mut self.label, len_req.into(), context_size, axis, cross_length)
+    }
+
+    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
+        ctx.run_layout(&mut self.label, size);
+        ctx.place_child(&mut self.label, Point::ZERO);
+    }
+
+    fn paint(&mut self, _ctx: &mut PaintCtx<'_>, _props: &PropertiesRef<'_>, _painter: &mut Painter<'_>) {
+        // Purely structural — the inner `Label` paints itself.
+    }
+
+    fn accessibility_role(&self) -> Role {
+        Role::ListBoxOption
+    }
+
+    fn accessibility(&mut self, _ctx: &mut AccessCtx<'_>, _props: &PropertiesRef<'_>, node: &mut Node) {
+        node.set_label(self.text.to_string());
+        if self.selected {
+            node.set_selected(true);
+        }
+    }
+
+    fn children_ids(&self) -> ChildrenIds {
+        ChildrenIds::from_slice(&[self.label.id()])
     }
 }
 
@@ -501,6 +777,8 @@ impl Widget for LabelList {
 pub(crate) struct SuggestionListView {
     pub(crate) filtered: Arc<Vec<ArcStr>>,
     pub(crate) handle: AutocompleteHandle,
+    pub(crate) listbox_handle: LabelListHandle,
+    pub(crate) text_area_handle: TextAreaHandle,
     pub(crate) theme: Theme,
 }
 
@@ -515,7 +793,13 @@ where
     type ViewState = ();
 
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
-        let widget = SuggestionList::new((*self.filtered).iter().cloned(), &self.theme);
+        let widget = SuggestionList::new(
+            (*self.filtered).iter().cloned(),
+            &self.theme,
+            self.listbox_handle.clone(),
+            self.handle.clone(),
+            self.text_area_handle.clone(),
+        );
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, ())
     }
@@ -554,13 +838,13 @@ where
     ) -> MessageResult<Action> {
         if let Some(boxed) = message.take_message::<SuggestionSelected>() {
             let SuggestionSelected(i) = *boxed;
-            if let Some(text) = self.filtered.get(i).cloned() {
-                if let Some(ac_id) = self.handle.widget_id() {
-                    element.ctx.mutate_later(ac_id, move |mut w| {
-                        let mut ac = w.downcast::<AutocompleteWidget>();
-                        AutocompleteWidget::portal_select(&mut ac, text.to_string());
-                    });
-                }
+            if let Some(text) = self.filtered.get(i).cloned()
+                && let Some(ac_id) = self.handle.widget_id()
+            {
+                element.ctx.mutate_later(ac_id, move |mut w| {
+                    let mut ac = w.downcast::<AutocompleteWidget>();
+                    AutocompleteWidget::portal_select(&mut ac, text.to_string());
+                });
             }
         }
         MessageResult::Nop
@@ -663,7 +947,6 @@ enum Hosting {
         chrome: WidgetPod<SizedBox>,
         scope: OverlayScopeHandle,
         key: u64,
-        handle: AutocompleteHandle,
         /// Last window-space anchor rect pushed to the slot; `compose` uses
         /// it to re-anchor only when we actually moved.
         last_anchor_rect_window: Option<Rect>,
@@ -673,6 +956,16 @@ enum Hosting {
 // ─────────────────────────────────────────────────────────────────────────────
 // AutocompleteWidget
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Construction inputs for [`AutocompleteWidget::new_portal`]; bundled to
+/// keep its argument count under clippy's `too_many_arguments` threshold.
+pub(crate) struct AutocompleteConfig {
+    pub(crate) contents: String,
+    pub(crate) placeholder: ArcStr,
+    pub(crate) all_suggestions: Vec<ArcStr>,
+    pub(crate) disabled: bool,
+    pub(crate) theme: Theme,
+}
 
 /// Composite widget backing the autocomplete component.
 ///
@@ -700,16 +993,25 @@ pub(crate) struct AutocompleteWidget {
     /// Index into [`Self::filtered`] for roving keyboard highlight.
     highlighted: Option<usize>,
     theme: Theme,
+    /// Resolves to the listbox's widget id once mounted, for `aria-controls`
+    /// and for Tab-to-navigate (see [`Self::on_text_event`]).
+    listbox_handle: LabelListHandle,
+    /// Resolves to this widget's own id once mounted. Given to `LabelList` so
+    /// Escape can close the dropdown via [`Self::mark_closed`] regardless of
+    /// hosting mode (in portal mode there's no ancestor path back here).
+    handle: AutocompleteHandle,
 }
 
 impl AutocompleteWidget {
-    /// Build the input chrome (`SizedBox(InputFrame(TextInput(TextArea)))`).
+    /// Build the input chrome (`SizedBox(InputFrame(TextInput(TextArea)))`),
+    /// returning the `TextArea`'s id alongside it (known synchronously, no
+    /// need to wait for `Update::WidgetAdded` — see [`TextAreaHandle`]).
     fn build_chrome(
         contents: &str,
         placeholder: ArcStr,
         disabled: bool,
         theme: &Theme,
-    ) -> NewWidget<SizedBox> {
+    ) -> (NewWidget<SizedBox>, WidgetId) {
         // ── TextArea ──────────────────────────────────────────────────────────
         let text_area = widgets::TextArea::new_editable(contents)
             .with_style(StyleProperty::FontSize(theme.typography.size_body));
@@ -722,12 +1024,13 @@ impl AutocompleteWidget {
             p
         };
 
+        let text_area_widget = NewWidget::new(text_area).with_props(area_props);
+        let text_area_id = text_area_widget.id();
+
         // ── TextInput — stripped chrome ───────────────────────────────────────
-        let text_input = widgets::TextInput::from_text_area(
-            NewWidget::new(text_area).with_props(area_props),
-        )
-        .with_placeholder(placeholder)
-        .with_clip(true);
+        let text_input = widgets::TextInput::from_text_area(text_area_widget)
+            .with_placeholder(placeholder)
+            .with_clip(true);
 
         let mut text_input_widget = NewWidget::new(text_input);
         text_input_widget.properties.insert(Background::Color(TRANSPARENT));
@@ -752,7 +1055,7 @@ impl AutocompleteWidget {
             Length::px(f64::from(theme.density.button_pad_h)),
         ));
 
-        chrome_box
+        (chrome_box, text_area_id)
     }
 
     /// In-tree constructor (fallback, no scope ancestor).
@@ -764,8 +1067,18 @@ impl AutocompleteWidget {
         disabled: bool,
         theme: &Theme,
     ) -> Self {
-        let chrome = Self::build_chrome(contents, placeholder, disabled, theme);
-        let suggestion_list = SuggestionList::new([], theme);
+        let (chrome, text_area_id) = Self::build_chrome(contents, placeholder, disabled, theme);
+        let text_area_handle = TextAreaHandle::new();
+        text_area_handle.set(text_area_id);
+        let listbox_handle = LabelListHandle::new();
+        let handle = AutocompleteHandle::new();
+        let suggestion_list = SuggestionList::new(
+            [],
+            theme,
+            listbox_handle.clone(),
+            handle.clone(),
+            text_area_handle.clone(),
+        );
 
         let overlay = AnchoredOverlay::new(
             chrome,
@@ -787,6 +1100,8 @@ impl AutocompleteWidget {
             open: false,
             highlighted: None,
             theme: *theme,
+            listbox_handle,
+            handle,
         }
     }
 
@@ -794,32 +1109,33 @@ impl AutocompleteWidget {
     /// slot under `key`. Only the input chrome is hosted here as a direct child.
     #[must_use]
     pub(crate) fn new_portal(
-        contents: &str,
-        placeholder: ArcStr,
-        all_suggestions: Vec<ArcStr>,
-        disabled: bool,
-        theme: &Theme,
+        config: AutocompleteConfig,
         scope: OverlayScopeHandle,
         key: u64,
         handle: AutocompleteHandle,
+        listbox_handle: LabelListHandle,
+        text_area_handle: &TextAreaHandle,
     ) -> Self {
-        let chrome = Self::build_chrome(contents, placeholder, disabled, theme);
-        let filtered = compute_filtered(&all_suggestions, contents);
+        let AutocompleteConfig { contents, placeholder, all_suggestions, disabled, theme } = config;
+        let (chrome, text_area_id) = Self::build_chrome(&contents, placeholder, disabled, &theme);
+        text_area_handle.set(text_area_id);
+        let filtered = compute_filtered(&all_suggestions, &contents);
 
         Self {
             hosting: Hosting::Portal {
                 chrome: chrome.to_pod(),
                 scope,
                 key,
-                handle,
                 last_anchor_rect_window: None,
             },
             all_suggestions,
-            contents: contents.to_owned(),
+            contents,
             filtered,
             open: false,
             highlighted: None,
-            theme: *theme,
+            theme,
+            listbox_handle,
+            handle,
         }
     }
 }
@@ -880,48 +1196,6 @@ impl AutocompleteWidget {
             }
         }
         ctx.request_paint_only();
-    }
-
-    fn set_highlight(&mut self, ctx: &mut EventCtx<'_>, index: Option<usize>) {
-        if self.highlighted == index {
-            return;
-        }
-        self.highlighted = index;
-        match &mut self.hosting {
-            Hosting::InTree { overlay_host } => {
-                ctx.mutate_child_later(overlay_host, move |mut w| {
-                    with_suggestion_list(&mut w, |list| {
-                        SuggestionList::set_highlighted(list, index);
-                    });
-                });
-            }
-            Hosting::Portal { scope, key, .. } => {
-                let Some(scope_id) = scope.widget_id() else { return };
-                let key = *key;
-                ctx.mutate_later(scope_id, move |mut w| {
-                    let mut scope = w.downcast::<OverlayScope>();
-                    let mut slot = OverlayScope::portal_slot_mut(&mut scope);
-                    if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
-                        let mut pass = child.downcast::<Passthrough>();
-                        let mut inner = Passthrough::child_mut(&mut pass);
-                        let mut list = inner.downcast::<SuggestionList>();
-                        SuggestionList::set_highlighted(&mut list, index);
-                    }
-                });
-            }
-        }
-    }
-
-    fn move_highlight(&mut self, ctx: &mut EventCtx<'_>, delta: isize) {
-        let n = self.filtered.len();
-        if n == 0 {
-            return;
-        }
-        let next = match self.highlighted {
-            None => if delta >= 0 { 0 } else { n - 1 },
-            Some(i) => (i.cast_signed() + delta).rem_euclid(n.cast_signed()).cast_unsigned(),
-        };
-        self.set_highlight(ctx, Some(next));
     }
 
     fn close_overlay_later(&mut self, ctx: &mut ActionCtx<'_>) {
@@ -1491,6 +1765,15 @@ impl Widget for AutocompleteWidget {
         }
     }
 
+    /// Tab moves real focus into the open listbox; once there,
+    /// [`LabelList::on_text_event`] handles arrow keys/Enter/Escape directly.
+    ///
+    /// Arrow/Home/End list-navigation can't be intercepted *here* while focus
+    /// is still in the text field: masonry's built-in `TextArea`
+    /// unconditionally claims those keys for cursor movement — even on a
+    /// single line, where the move is a no-op — and stops the event from
+    /// reaching any ancestor's `on_text_event`. Tab isn't one of the keys
+    /// `TextArea` claims, so it reaches us and we can redirect it.
     fn on_text_event(
         &mut self,
         ctx: &mut EventCtx<'_>,
@@ -1504,33 +1787,19 @@ impl Widget for AutocompleteWidget {
         if key.state != KeyState::Down {
             return;
         }
-        match &key.key {
-            Key::Named(NamedKey::ArrowDown) => {
-                self.move_highlight(ctx, 1);
-                ctx.set_handled();
-            }
-            Key::Named(NamedKey::ArrowUp) => {
-                self.move_highlight(ctx, -1);
-                ctx.set_handled();
-            }
-            Key::Named(NamedKey::Home) if !self.filtered.is_empty() => {
-                self.set_highlight(ctx, Some(0));
-                ctx.set_handled();
-            }
-            Key::Named(NamedKey::End) if !self.filtered.is_empty() => {
-                self.set_highlight(ctx, Some(self.filtered.len() - 1));
-                ctx.set_handled();
-            }
-            _ => {}
+        if key.key == Key::Named(NamedKey::Tab)
+            && !key.modifiers.shift()
+            && let Some(listbox_id) = self.listbox_handle.widget_id()
+        {
+            ctx.set_focus(listbox_id);
+            ctx.set_handled();
         }
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
             Update::WidgetAdded => {
-                if let Hosting::Portal { handle, .. } = &self.hosting {
-                    handle.set(ctx.widget_id());
-                }
+                self.handle.set(ctx.widget_id());
             }
             // Close when stashed mid-open.
             Update::StashedChanged(true) if self.open => {
@@ -1691,8 +1960,14 @@ impl Widget for AutocompleteWidget {
         node: &mut Node,
     ) {
         node.add_action(masonry::accesskit::Action::SetValue);
-        if self.open {
-            node.set_expanded(true);
+        // Always reflect actual state (not just when open) — AT relies on an
+        // explicit `false` to announce "collapsed", not just the property's
+        // absence.
+        node.set_expanded(self.open);
+        if self.open
+            && let Some(listbox_id) = self.listbox_handle.widget_id()
+        {
+            node.push_controlled(listbox_id.into());
         }
     }
 
@@ -1719,7 +1994,13 @@ mod scroll_tests {
     fn wheel_scroll_changes_painted_content() {
         let theme = Theme::default();
         let items: Vec<ArcStr> = (0..30).map(|i| ArcStr::from(format!("Item {i}"))).collect();
-        let list = SuggestionList::new(items, &theme);
+        let list = SuggestionList::new(
+            items,
+            &theme,
+            LabelListHandle::default(),
+            AutocompleteHandle::default(),
+            TextAreaHandle::default(),
+        );
 
         let mut harness = TestHarness::create_with_size(
             masonry::theme::default_property_set(),
@@ -1746,5 +2027,163 @@ mod scroll_tests {
             scrolled_one_way, scrolled_other_way,
             "scrolling to the opposite extreme produced identical pixels"
         );
+    }
+}
+
+#[cfg(test)]
+mod accessibility_tests {
+    use masonry::core::keyboard::{Key, NamedKey};
+    use masonry::core::{NewWidget, TextEvent, WidgetRef};
+    use masonry::testing::TestHarness;
+    use masonry::widgets::TextArea;
+
+    use super::*;
+
+    fn find_text_area(
+        widget: WidgetRef<'_, dyn Widget>,
+    ) -> Option<WidgetRef<'_, TextArea<true>>> {
+        if let Some(area) = widget.downcast::<TextArea<true>>() {
+            return Some(area);
+        }
+        widget.children().into_iter().find_map(find_text_area)
+    }
+
+    /// Builds an in-tree autocomplete with 3 fixed suggestions and locates
+    /// its combobox/text-area ids, ready for focus/keyboard driving.
+    fn harness_with_fruit() -> (TestHarness<AutocompleteWidget>, WidgetId, WidgetId) {
+        let theme = Theme::default();
+        let suggestions: Vec<ArcStr> =
+            ["Apple", "Banana", "Cherry"].into_iter().map(ArcStr::from).collect();
+        let widget = AutocompleteWidget::new("", ArcStr::from("Pick a fruit"), suggestions, false, &theme);
+
+        let harness = TestHarness::create_with_size(
+            masonry::theme::default_property_set(),
+            NewWidget::new(widget),
+            (300, 300),
+        );
+
+        let autocomplete_id = harness.root_id();
+        let text_area_id = find_text_area(harness.root_widget().as_dyn())
+            .expect("autocomplete should host a TextArea")
+            .id();
+        (harness, autocomplete_id, text_area_id)
+    }
+
+    /// Real accessibility-tree proof, driven through the actual masonry
+    /// focus/keyboard pipeline (not internal state): focusing the field opens
+    /// the popup and wires the ARIA combobox relationship (`expanded` +
+    /// `controls` -> a real `Role::ListBox` node). Arrow-key list navigation
+    /// can't be driven from the textbox (masonry's `TextArea` unconditionally
+    /// claims those keys for cursor movement before any ancestor sees them —
+    /// see [`AutocompleteWidget::on_text_event`]), so Tab must move real
+    /// focus into the listbox first; from there, arrow keys move
+    /// `active_descendant` to real `Role::ListBoxOption` nodes with the right
+    /// accessible name and `aria-selected`.
+    #[test]
+    fn tab_into_listbox_and_arrow_keys_set_active_descendant() {
+        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit();
+
+        harness.render();
+        {
+            let node = harness.access_node(autocomplete_id).expect("combobox node");
+            assert_eq!(node.role(), Role::ComboBox);
+            assert_eq!(node.data().is_expanded(), Some(false), "closed before focus");
+        }
+
+        // Focusing the text field opens the dropdown and wires aria-controls.
+        harness.focus_on(Some(text_area_id));
+        harness.render();
+        {
+            let node = harness.access_node(autocomplete_id).expect("combobox node");
+            assert_eq!(node.data().is_expanded(), Some(true));
+            let controlled: Vec<_> = node.controls().collect();
+            assert_eq!(controlled.len(), 1, "combobox should control exactly the listbox");
+            assert_eq!(controlled[0].role(), Role::ListBox);
+            assert!(
+                controlled[0].active_descendant().is_none(),
+                "no keyboard highlight yet"
+            );
+        }
+
+        // Tab moves real focus into the listbox (not the next form field).
+        // Verify by checking the newly-focused widget's accessibility role.
+        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
+        let focused_role = harness
+            .focused_widget_id()
+            .and_then(|id| harness.access_node(id))
+            .map(|n| n.role());
+        assert_eq!(focused_role, Some(Role::ListBox), "Tab should move focus into the open listbox");
+
+        // ArrowDown highlights "Apple": active-descendant resolves to a real
+        // ListBoxOption node with the right name and aria-selected.
+        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowDown)));
+        harness.render();
+        {
+            let node = harness.access_node(autocomplete_id).expect("combobox node");
+            let listbox = node.controls().next().expect("controls the listbox");
+            let active = listbox.active_descendant().expect("active descendant set");
+            assert_eq!(active.role(), Role::ListBoxOption);
+            assert_eq!(active.label().as_deref(), Some("Apple"));
+            assert_eq!(active.is_selected(), Some(true));
+        }
+
+        // ArrowDown again moves the relationship to "Banana".
+        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowDown)));
+        harness.render();
+        {
+            let node = harness.access_node(autocomplete_id).expect("combobox node");
+            let listbox = node.controls().next().expect("controls the listbox");
+            let active = listbox.active_descendant().expect("active descendant set");
+            assert_eq!(active.label().as_deref(), Some("Banana"));
+        }
+    }
+
+    /// Pressing Enter while focus is in the listbox selects the highlighted
+    /// item, closes the dropdown, and returns real focus to the text field —
+    /// driven through the real focus/keyboard pipeline, not internal state.
+    #[test]
+    fn enter_in_listbox_selects_closes_and_returns_focus_to_input() {
+        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit();
+
+        harness.focus_on(Some(text_area_id));
+        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
+        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowDown)));
+        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Enter)));
+
+        assert_eq!(
+            harness.focused_widget_id(),
+            Some(text_area_id),
+            "Enter-selection should return focus to the input"
+        );
+        let area = find_text_area(harness.root_widget().as_dyn()).expect("TextArea");
+        assert_eq!(area.text().to_string(), "Apple");
+
+        harness.render();
+        let node = harness.access_node(autocomplete_id).expect("combobox node");
+        assert_eq!(node.data().is_expanded(), Some(false), "closed after selection");
+    }
+
+    /// Escape while focus is in the listbox closes the dropdown without
+    /// selecting and returns real focus to the text field.
+    #[test]
+    fn escape_in_listbox_closes_without_selecting_and_returns_focus_to_input() {
+        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit();
+
+        harness.focus_on(Some(text_area_id));
+        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
+        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowDown)));
+        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Escape)));
+
+        assert_eq!(
+            harness.focused_widget_id(),
+            Some(text_area_id),
+            "Escape should return focus to the input"
+        );
+        let area = find_text_area(harness.root_widget().as_dyn()).expect("TextArea");
+        assert_eq!(area.text().to_string(), "", "Escape must not select");
+
+        harness.render();
+        let node = harness.access_node(autocomplete_id).expect("combobox node");
+        assert_eq!(node.data().is_expanded(), Some(false), "closed after Escape");
     }
 }
