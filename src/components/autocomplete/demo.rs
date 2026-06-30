@@ -4,7 +4,7 @@ use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::layout::Length;
 use xilem::masonry::widgets::Passthrough;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, flex_col, flex_row, sized_box};
+use xilem::view::{CrossAxisAlignment, flex_col, sized_box};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use crate::components::ScrollBarVisibility;
@@ -19,50 +19,148 @@ use crate::{Theme, separator};
 const FIELD_WIDTH: f64 = 280.0;
 
 static COUNTRIES: &[&str] = &[
-    "Afghanistan", "Albania", "Algeria", "Andorra", "Angola",
-    "Argentina", "Armenia", "Australia", "Austria", "Azerbaijan",
-    "Bahamas", "Bahrain", "Bangladesh", "Belarus", "Belgium",
-    "Belize", "Benin", "Bhutan", "Bolivia", "Bosnia",
-    "Botswana", "Brazil", "Brunei", "Bulgaria", "Burkina Faso",
-    "Burundi", "Cambodia", "Cameroon", "Canada", "Chad",
-    "Chile", "China", "Colombia", "Comoros", "Croatia",
-    "Cuba", "Cyprus", "Czech Republic", "Denmark", "Djibouti",
-    "Ecuador", "Egypt", "Estonia", "Ethiopia", "Finland",
-    "France", "Georgia", "Germany", "Ghana", "Greece",
-    "Guatemala", "Honduras", "Hungary", "Iceland", "India",
-    "Indonesia", "Iran", "Iraq", "Ireland", "Israel",
-    "Italy", "Jamaica", "Japan", "Jordan", "Kazakhstan",
-    "Kenya", "Kuwait", "Kyrgyzstan", "Laos", "Latvia",
-    "Lebanon", "Libya", "Lithuania", "Luxembourg", "Madagascar",
-    "Malaysia", "Mali", "Malta", "Mexico", "Moldova",
-    "Monaco", "Mongolia", "Montenegro", "Morocco", "Mozambique",
-    "Nepal", "Netherlands", "New Zealand", "Nicaragua", "Niger",
-    "Nigeria", "Norway", "Oman", "Pakistan", "Panama",
-    "Paraguay", "Peru", "Philippines", "Poland", "Portugal",
-    "Qatar", "Romania", "Russia", "Rwanda", "Saudi Arabia",
-    "Senegal", "Serbia", "Singapore", "Slovakia", "Slovenia",
-    "Somalia", "South Africa", "South Korea", "Spain", "Sri Lanka",
-    "Sudan", "Sweden", "Switzerland", "Syria", "Taiwan",
-    "Tajikistan", "Tanzania", "Thailand", "Togo", "Tunisia",
-    "Turkey", "Uganda", "Ukraine", "United Arab Emirates",
-    "United Kingdom", "United States", "Uruguay", "Uzbekistan",
-    "Venezuela", "Vietnam", "Yemen", "Zimbabwe",
-];
-
-static FRUITS: &[&str] = &[
-    "Apple", "Apricot", "Avocado", "Banana", "Blackberry",
-    "Blueberry", "Cherry", "Coconut", "Cranberry", "Date",
-    "Fig", "Grape", "Grapefruit", "Guava", "Kiwi",
-    "Lemon", "Lime", "Lychee", "Mango", "Melon",
-    "Nectarine", "Orange", "Papaya", "Passion fruit", "Peach",
-    "Pear", "Pineapple", "Plum", "Pomegranate", "Raspberry",
-    "Strawberry", "Tangerine", "Watermelon",
+    "Afghanistan",
+    "Albania",
+    "Algeria",
+    "Andorra",
+    "Angola",
+    "Argentina",
+    "Armenia",
+    "Australia",
+    "Austria",
+    "Azerbaijan",
+    "Bahamas",
+    "Bahrain",
+    "Bangladesh",
+    "Belarus",
+    "Belgium",
+    "Belize",
+    "Benin",
+    "Bhutan",
+    "Bolivia",
+    "Bosnia",
+    "Botswana",
+    "Brazil",
+    "Brunei",
+    "Bulgaria",
+    "Burkina Faso",
+    "Burundi",
+    "Cambodia",
+    "Cameroon",
+    "Canada",
+    "Chad",
+    "Chile",
+    "China",
+    "Colombia",
+    "Comoros",
+    "Croatia",
+    "Cuba",
+    "Cyprus",
+    "Czech Republic",
+    "Denmark",
+    "Djibouti",
+    "Ecuador",
+    "Egypt",
+    "Estonia",
+    "Ethiopia",
+    "Finland",
+    "France",
+    "Georgia",
+    "Germany",
+    "Ghana",
+    "Greece",
+    "Guatemala",
+    "Honduras",
+    "Hungary",
+    "Iceland",
+    "India",
+    "Indonesia",
+    "Iran",
+    "Iraq",
+    "Ireland",
+    "Israel",
+    "Italy",
+    "Jamaica",
+    "Japan",
+    "Jordan",
+    "Kazakhstan",
+    "Kenya",
+    "Kuwait",
+    "Kyrgyzstan",
+    "Laos",
+    "Latvia",
+    "Lebanon",
+    "Libya",
+    "Lithuania",
+    "Luxembourg",
+    "Madagascar",
+    "Malaysia",
+    "Mali",
+    "Malta",
+    "Mexico",
+    "Moldova",
+    "Monaco",
+    "Mongolia",
+    "Montenegro",
+    "Morocco",
+    "Mozambique",
+    "Nepal",
+    "Netherlands",
+    "New Zealand",
+    "Nicaragua",
+    "Niger",
+    "Nigeria",
+    "Norway",
+    "Oman",
+    "Pakistan",
+    "Panama",
+    "Paraguay",
+    "Peru",
+    "Philippines",
+    "Poland",
+    "Portugal",
+    "Qatar",
+    "Romania",
+    "Russia",
+    "Rwanda",
+    "Saudi Arabia",
+    "Senegal",
+    "Serbia",
+    "Singapore",
+    "Slovakia",
+    "Slovenia",
+    "Somalia",
+    "South Africa",
+    "South Korea",
+    "Spain",
+    "Sri Lanka",
+    "Sudan",
+    "Sweden",
+    "Switzerland",
+    "Syria",
+    "Taiwan",
+    "Tajikistan",
+    "Tanzania",
+    "Thailand",
+    "Togo",
+    "Tunisia",
+    "Turkey",
+    "Uganda",
+    "Ukraine",
+    "United Arab Emirates",
+    "United Kingdom",
+    "United States",
+    "Uruguay",
+    "Uzbekistan",
+    "Venezuela",
+    "Vietnam",
+    "Yemen",
+    "Zimbabwe",
 ];
 
 #[derive(Default, Debug)]
 struct AutocompleteDemo {
     country: String,
-    fruit: String,
     last: String,
 }
 
@@ -106,7 +204,10 @@ where
     .gap(Length::px(4.0))
 }
 
-fn build_inner(theme: &Theme, state: &AutocompleteDemo) -> impl WidgetView<AutocompleteDemo> + use<> {
+fn build_inner(
+    theme: &Theme,
+    state: &AutocompleteDemo,
+) -> impl WidgetView<AutocompleteDemo> + use<> {
     let header = |text: &'static str| {
         label(text)
             .text_size(theme.typography.size_caption)
@@ -140,26 +241,15 @@ fn build_inner(theme: &Theme, state: &AutocompleteDemo) -> impl WidgetView<Autoc
         labeled_field(
             theme,
             "Country",
-            autocomplete(state.country.clone(), |s: &mut AutocompleteDemo, text: String| {
-                s.last.clone_from(&text);
-                s.country = text;
-            })
+            autocomplete(
+                state.country.clone(),
+                |s: &mut AutocompleteDemo, text: String| {
+                    s.last.clone_from(&text);
+                    s.country = text;
+                },
+            )
             .suggestions(COUNTRIES.iter().copied())
             .placeholder("Type a country…")
-            .render(theme),
-        )
-    });
-
-    let fruit_field = with_source!(theme, {
-        labeled_field(
-            theme,
-            "Fruit",
-            autocomplete(state.fruit.clone(), |s: &mut AutocompleteDemo, text: String| {
-                s.last.clone_from(&text);
-                s.fruit = text;
-            })
-            .suggestions(FRUITS.iter().copied())
-            .placeholder("Type a fruit…")
             .render(theme),
         )
     });
@@ -181,9 +271,8 @@ fn build_inner(theme: &Theme, state: &AutocompleteDemo) -> impl WidgetView<Autoc
             separator().render(theme),
             last_label,
             header("With suggestions"),
-            flex_row((country_field, fruit_field))
-                .cross_axis_alignment(CrossAxisAlignment::Start)
-                .gap(Length::px(16.0)),
+            country_field,
+            separator().render(theme),
             header("Disabled"),
             disabled_field,
         ))
@@ -207,7 +296,14 @@ impl<S: 'static> View<S, (), ViewCtx> for AutocompleteDemoPanel {
         let mut state = AutocompleteDemo::default();
         let inner_view: InnerView = Box::new(build_inner(&self.theme, &state));
         let (element, inner_state) = inner_view.build(ctx, &mut state);
-        (element, AutocompleteDemoPanelState { state, inner_view, inner_state })
+        (
+            element,
+            AutocompleteDemoPanelState {
+                state,
+                inner_view,
+                inner_state,
+            },
+        )
     }
 
     fn rebuild(
@@ -219,7 +315,13 @@ impl<S: 'static> View<S, (), ViewCtx> for AutocompleteDemoPanel {
         _: &mut S,
     ) {
         let new_inner: InnerView = Box::new(build_inner(&self.theme, &vs.state));
-        new_inner.rebuild(&vs.inner_view, &mut vs.inner_state, ctx, element, &mut vs.state);
+        new_inner.rebuild(
+            &vs.inner_view,
+            &mut vs.inner_state,
+            ctx,
+            element,
+            &mut vs.state,
+        );
         vs.inner_view = new_inner;
     }
 

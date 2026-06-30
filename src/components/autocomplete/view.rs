@@ -258,8 +258,13 @@ where
 
         // In portal mode, refresh the registered view whenever filtered items
         // or theme change so the scope's rebuild uses the latest items.
-        if let ViewBinding::Portal { portal, key, handle, listbox_handle, text_area_handle } =
-            &view_state.binding
+        if let ViewBinding::Portal {
+            portal,
+            key,
+            handle,
+            listbox_handle,
+            text_area_handle,
+        } = &view_state.binding
             && (contents_changed || suggestions_changed || self.theme != prev.theme)
         {
             let filtered = Arc::new(compute_filtered(&self.suggestions, &self.contents));

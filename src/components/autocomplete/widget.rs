@@ -18,7 +18,7 @@ use masonry::accesskit::{Node, Role};
 use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
     AccessCtx, ActionCtx, ArcStr, ChildrenIds, ComposeCtx, ErasedAction, EventCtx, LayoutCtx,
-    MeasureCtx, NewWidget, NoAction, PaintCtx, PropertySet, PropertiesMut, PropertiesRef,
+    MeasureCtx, NewWidget, NoAction, PaintCtx, PropertiesMut, PropertiesRef, PropertySet,
     RegisterCtx, StyleProperty, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
     WidgetPod,
 };
@@ -272,7 +272,13 @@ impl Widget for SuggestionList {
         }
     }
 
-    fn update(&mut self, _ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, _event: &Update) {}
+    fn update(
+        &mut self,
+        _ctx: &mut UpdateCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _event: &Update,
+    ) {
+    }
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
 
@@ -294,7 +300,13 @@ impl Widget for SuggestionList {
         // horizontal (the list's width) is left as-is.
         let context_size = LayoutSize::maybe(axis.cross(), cross_length);
         let natural = ctx
-            .compute_length(&mut self.scroll, LenDef::MaxContent, context_size, axis, cross_length)
+            .compute_length(
+                &mut self.scroll,
+                LenDef::MaxContent,
+                context_size,
+                axis,
+                cross_length,
+            )
             .get();
         match axis {
             Axis::Vertical => Length::px(natural.min(MAX_LIST_HEIGHT)),
@@ -307,18 +319,32 @@ impl Widget for SuggestionList {
         ctx.place_child(&mut self.scroll, Point::ORIGIN);
     }
 
-    fn paint(&mut self, ctx: &mut PaintCtx<'_>, _props: &PropertiesRef<'_>, painter: &mut Painter<'_>) {
+    fn paint(
+        &mut self,
+        ctx: &mut PaintCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        painter: &mut Painter<'_>,
+    ) {
         let p = &self.theme.palette;
-        let bg_rect = RoundedRect::from_origin_size(Point::ORIGIN, ctx.border_box_size(), LIST_CORNER);
+        let bg_rect =
+            RoundedRect::from_origin_size(Point::ORIGIN, ctx.border_box_size(), LIST_CORNER);
         painter.fill(bg_rect, p.surface_hi).draw();
-        painter.stroke(bg_rect, &Stroke::new(LIST_BORDER), p.border_strong).draw();
+        painter
+            .stroke(bg_rect, &Stroke::new(LIST_BORDER), p.border_strong)
+            .draw();
     }
 
     fn accessibility_role(&self) -> Role {
         Role::GenericContainer
     }
 
-    fn accessibility(&mut self, _ctx: &mut AccessCtx<'_>, _props: &PropertiesRef<'_>, _node: &mut Node) {}
+    fn accessibility(
+        &mut self,
+        _ctx: &mut AccessCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        _node: &mut Node,
+    ) {
+    }
 
     fn children_ids(&self) -> ChildrenIds {
         ChildrenIds::from_slice(&[self.scroll.id()])
@@ -365,7 +391,10 @@ impl LabelList {
         autocomplete_handle: AutocompleteHandle,
         text_area_handle: TextAreaHandle,
     ) -> Self {
-        let labels = items.into_iter().map(|t| Self::make_item(t, theme)).collect();
+        let labels = items
+            .into_iter()
+            .map(|t| Self::make_item(t, theme))
+            .collect();
         Self {
             labels,
             item_rects: Vec::new(),
@@ -383,7 +412,8 @@ impl LabelList {
     }
 
     fn item_height(&self) -> f64 {
-        f64::from(self.theme.density.ui_font_size) + 2.0 * f64::from(self.theme.density.button_pad_v)
+        f64::from(self.theme.density.ui_font_size)
+            + 2.0 * f64::from(self.theme.density.button_pad_v)
     }
 
     fn pad_h(&self) -> f64 {
@@ -425,8 +455,16 @@ impl LabelList {
             return;
         }
         let next = match self.highlighted {
-            None => if delta >= 0 { 0 } else { n - 1 },
-            Some(i) => (i.cast_signed() + delta).rem_euclid(n.cast_signed()).cast_unsigned(),
+            None => {
+                if delta >= 0 {
+                    0
+                } else {
+                    n - 1
+                }
+            }
+            Some(i) => (i.cast_signed() + delta)
+                .rem_euclid(n.cast_signed())
+                .cast_unsigned(),
         };
         self.set_highlight(ctx, Some(next));
     }
@@ -440,12 +478,16 @@ impl LabelList {
         if let Some(i) = prev
             && let Some(label) = self.labels.get_mut(i)
         {
-            ctx.mutate_child_later(label, |mut item| SuggestionItem::set_selected(&mut item, false));
+            ctx.mutate_child_later(label, |mut item| {
+                SuggestionItem::set_selected(&mut item, false);
+            });
         }
         if let Some(i) = index
             && let Some(label) = self.labels.get_mut(i)
         {
-            ctx.mutate_child_later(label, |mut item| SuggestionItem::set_selected(&mut item, true));
+            ctx.mutate_child_later(label, |mut item| {
+                SuggestionItem::set_selected(&mut item, true);
+            });
         }
         ctx.request_paint_only();
         ctx.request_accessibility_update();
@@ -552,8 +594,15 @@ impl Widget for LabelList {
         }
     }
 
-    fn on_text_event(&mut self, ctx: &mut EventCtx<'_>, _props: &mut PropertiesMut<'_>, event: &TextEvent) {
-        let TextEvent::Keyboard(key) = event else { return };
+    fn on_text_event(
+        &mut self,
+        ctx: &mut EventCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        event: &TextEvent,
+    ) {
+        let TextEvent::Keyboard(key) = event else {
+            return;
+        };
         if key.state != KeyState::Down {
             return;
         }
@@ -649,11 +698,11 @@ impl Widget for LabelList {
 
         let mut y = LIST_PAD_V;
         for label in &mut self.labels {
-            let item_rect = Rect::from_origin_size(Point::new(0.0, y), Size::new(size.width, item_h));
+            let item_rect =
+                Rect::from_origin_size(Point::new(0.0, y), Size::new(size.width, item_h));
             self.item_rects.push(item_rect);
 
-            let label_size =
-                ctx.compute_size(label, SizeDef::fit(label_avail), label_avail.into());
+            let label_size = ctx.compute_size(label, SizeDef::fit(label_avail), label_avail.into());
             ctx.run_layout(label, label_size);
             let label_y = y + (item_h - label_size.height) * 0.5;
             ctx.place_child(label, Point::new(pad_h, label_y));
@@ -662,7 +711,12 @@ impl Widget for LabelList {
         }
     }
 
-    fn paint(&mut self, _ctx: &mut PaintCtx<'_>, _props: &PropertiesRef<'_>, painter: &mut Painter<'_>) {
+    fn paint(
+        &mut self,
+        _ctx: &mut PaintCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        painter: &mut Painter<'_>,
+    ) {
         let p = &self.theme.palette;
 
         if let Some(i) = self.hover_index
@@ -675,7 +729,12 @@ impl Widget for LabelList {
             && let Some(&rect) = self.item_rects.get(i)
         {
             let inset = HIGHLIGHT_RING_INSET;
-            let ring = Rect::new(rect.x0 + inset, rect.y0 + inset, rect.x1 - inset, rect.y1 - inset);
+            let ring = Rect::new(
+                rect.x0 + inset,
+                rect.y0 + inset,
+                rect.x1 - inset,
+                rect.y1 - inset,
+            );
             paint_focus_ring(painter, ring, &self.theme);
         }
     }
@@ -684,7 +743,12 @@ impl Widget for LabelList {
         Role::ListBox
     }
 
-    fn accessibility(&mut self, _ctx: &mut AccessCtx<'_>, _props: &PropertiesRef<'_>, node: &mut Node) {
+    fn accessibility(
+        &mut self,
+        _ctx: &mut AccessCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        node: &mut Node,
+    ) {
         if let Some(i) = self.highlighted
             && let Some(label) = self.labels.get(i)
         {
@@ -732,7 +796,10 @@ impl SuggestionItem {
     pub(crate) fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
         let mut lbl = this.ctx.get_mut(&mut this.widget.label);
         lbl.insert_prop(ContentColor::new(theme.palette.text));
-        Label::insert_style(&mut lbl, StyleProperty::FontSize(theme.density.ui_font_size));
+        Label::insert_style(
+            &mut lbl,
+            StyleProperty::FontSize(theme.density.ui_font_size),
+        );
     }
 
     pub(crate) fn set_selected(this: &mut WidgetMut<'_, Self>, selected: bool) {
@@ -747,7 +814,13 @@ impl SuggestionItem {
 impl Widget for SuggestionItem {
     type Action = NoAction;
 
-    fn update(&mut self, _ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, _event: &Update) {}
+    fn update(
+        &mut self,
+        _ctx: &mut UpdateCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _event: &Update,
+    ) {
+    }
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
 
@@ -764,7 +837,13 @@ impl Widget for SuggestionItem {
         cross_length: Option<Length>,
     ) -> Length {
         let context_size = LayoutSize::maybe(axis.cross(), cross_length);
-        ctx.compute_length(&mut self.label, len_req.into(), context_size, axis, cross_length)
+        ctx.compute_length(
+            &mut self.label,
+            len_req.into(),
+            context_size,
+            axis,
+            cross_length,
+        )
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
@@ -772,7 +851,12 @@ impl Widget for SuggestionItem {
         ctx.place_child(&mut self.label, Point::ZERO);
     }
 
-    fn paint(&mut self, _ctx: &mut PaintCtx<'_>, _props: &PropertiesRef<'_>, _painter: &mut Painter<'_>) {
+    fn paint(
+        &mut self,
+        _ctx: &mut PaintCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        _painter: &mut Painter<'_>,
+    ) {
         // Purely structural — the inner `Label` paints itself.
     }
 
@@ -780,7 +864,12 @@ impl Widget for SuggestionItem {
         Role::ListBoxOption
     }
 
-    fn accessibility(&mut self, _ctx: &mut AccessCtx<'_>, _props: &PropertiesRef<'_>, node: &mut Node) {
+    fn accessibility(
+        &mut self,
+        _ctx: &mut AccessCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        node: &mut Node,
+    ) {
         node.set_label(self.text.to_string());
         if self.selected {
             node.set_selected(true);
@@ -845,12 +934,7 @@ where
         }
     }
 
-    fn teardown(
-        &self,
-        _vs: &mut (),
-        ctx: &mut ViewCtx,
-        element: Mut<'_, Self::Element>,
-    ) {
+    fn teardown(&self, _vs: &mut (), ctx: &mut ViewCtx, element: Mut<'_, Self::Element>) {
         ctx.teardown_action_source(element);
     }
 
@@ -1052,8 +1136,12 @@ impl AutocompleteWidget {
         let area_props = {
             let mut p = PropertySet::new();
             p.insert(ContentColor::new(theme.palette.text));
-            p.insert(CaretColor { color: theme.palette.teal });
-            p.insert(SelectionColor { color: theme.palette.teal_soft });
+            p.insert(CaretColor {
+                color: theme.palette.teal,
+            });
+            p.insert(SelectionColor {
+                color: theme.palette.teal_soft,
+            });
             p
         };
 
@@ -1066,10 +1154,18 @@ impl AutocompleteWidget {
             .with_clip(true);
 
         let mut text_input_widget = NewWidget::new(text_input);
-        text_input_widget.properties.insert(Background::Color(TRANSPARENT));
-        text_input_widget.properties.insert(BorderWidth::all(Length::const_px(0.0)));
-        text_input_widget.properties.insert(Padding::all(Length::const_px(0.0)));
-        text_input_widget.properties.insert(PlaceholderColor::new(theme.palette.text_muted));
+        text_input_widget
+            .properties
+            .insert(Background::Color(TRANSPARENT));
+        text_input_widget
+            .properties
+            .insert(BorderWidth::all(Length::const_px(0.0)));
+        text_input_widget
+            .properties
+            .insert(Padding::all(Length::const_px(0.0)));
+        text_input_widget
+            .properties
+            .insert(PlaceholderColor::new(theme.palette.text_muted));
         text_input_widget.options.disabled = disabled;
 
         // ── InputFrame — adds Esc-to-clear behaviour ──────────────────────────
@@ -1077,12 +1173,18 @@ impl AutocompleteWidget {
 
         // ── SizedBox — field chrome via masonry property system ───────────────
         let mut chrome_box = NewWidget::new(SizedBox::new(NewWidget::new(input_frame)));
-        chrome_box.properties.insert(Background::Color(theme.palette.surface));
-        chrome_box.properties.insert(BorderWidth::all(Length::const_px(1.0)));
-        chrome_box.properties.insert(BorderColor::new(theme.palette.border));
-        chrome_box.properties.insert(CornerRadius::all(Length::px(
-            f64::from(theme.radius.small),
-        )));
+        chrome_box
+            .properties
+            .insert(Background::Color(theme.palette.surface));
+        chrome_box
+            .properties
+            .insert(BorderWidth::all(Length::const_px(1.0)));
+        chrome_box
+            .properties
+            .insert(BorderColor::new(theme.palette.border));
+        chrome_box
+            .properties
+            .insert(CornerRadius::all(Length::px(f64::from(theme.radius.small))));
         chrome_box.properties.insert(Padding::from_vh(
             Length::px(f64::from(theme.density.button_pad_v)),
             Length::px(f64::from(theme.density.button_pad_h)),
@@ -1150,7 +1252,13 @@ impl AutocompleteWidget {
         listbox_handle: LabelListHandle,
         text_area_handle: &TextAreaHandle,
     ) -> Self {
-        let AutocompleteConfig { contents, placeholder, all_suggestions, disabled, theme } = config;
+        let AutocompleteConfig {
+            contents,
+            placeholder,
+            all_suggestions,
+            disabled,
+            theme,
+        } = config;
         let (chrome, text_area_id) = Self::build_chrome(&contents, placeholder, disabled, &theme);
         text_area_handle.set(text_area_id);
         let filtered = compute_filtered(&all_suggestions, &contents);
@@ -1197,12 +1305,19 @@ impl AutocompleteWidget {
                 });
             }
             Hosting::Portal { scope, key, .. } => {
-                let Some(scope_id) = scope.widget_id() else { return };
+                let Some(scope_id) = scope.widget_id() else {
+                    return;
+                };
                 let key = *key;
                 let owner_id = ctx.widget_id();
-                let rect = Rect::from_origin_size(ctx.to_window(Point::ZERO), ctx.border_box_size());
+                let rect =
+                    Rect::from_origin_size(ctx.to_window(Point::ZERO), ctx.border_box_size());
                 let items = self.filtered.clone();
-                if let Hosting::Portal { last_anchor_rect_window, .. } = &mut self.hosting {
+                if let Hosting::Portal {
+                    last_anchor_rect_window,
+                    ..
+                } = &mut self.hosting
+                {
                     *last_anchor_rect_window = Some(rect);
                 }
                 ctx.mutate_later(scope_id, move |mut w| {
@@ -1246,7 +1361,9 @@ impl AutocompleteWidget {
                 });
             }
             Hosting::Portal { scope, key, .. } => {
-                let Some(scope_id) = scope.widget_id() else { return };
+                let Some(scope_id) = scope.widget_id() else {
+                    return;
+                };
                 let key = *key;
                 ctx.mutate_later(scope_id, move |mut w| {
                     let mut scope = w.downcast::<OverlayScope>();
@@ -1267,6 +1384,82 @@ impl AutocompleteWidget {
         }
     }
 
+    fn handle_text_changed(&mut self, ctx: &mut ActionCtx<'_>, text: &str) {
+        self.contents.clear();
+        self.contents.push_str(text);
+        self.filtered = compute_filtered(&self.all_suggestions, text);
+        self.highlighted = None;
+
+        let should_open = !self.filtered.is_empty();
+        let open_changed = self.open != should_open;
+        self.open = should_open;
+
+        match &mut self.hosting {
+            Hosting::InTree { overlay_host } => {
+                let items = self.filtered.clone();
+                ctx.mutate_child_later(overlay_host, move |mut w| {
+                    with_suggestion_list(&mut w, |list| {
+                        SuggestionList::set_items(list, items);
+                    });
+                    if open_changed {
+                        AnchoredOverlay::set_overlay_visible(&mut w, should_open);
+                    }
+                });
+            }
+            Hosting::Portal { scope, key, .. } => {
+                let Some(scope_id) = scope.widget_id() else {
+                    ctx.submit_action::<AutocompleteAction>(AutocompleteAction::TextChanged(
+                        text.to_owned(),
+                    ));
+                    ctx.set_handled();
+                    return;
+                };
+                let key = *key;
+                let items = self.filtered.clone();
+                ctx.mutate_later(scope_id, move |mut w| {
+                    let mut scope = w.downcast::<OverlayScope>();
+                    let mut slot = OverlayScope::portal_slot_mut(&mut scope);
+                    if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
+                        let mut pass = child.downcast::<Passthrough>();
+                        let mut inner = Passthrough::child_mut(&mut pass);
+                        let mut list = inner.downcast::<SuggestionList>();
+                        SuggestionList::set_items(&mut list, items);
+                    }
+                });
+                if open_changed {
+                    let owner_id = ctx.widget_id();
+                    let rect =
+                        Rect::from_origin_size(ctx.to_window(Point::ZERO), ctx.border_box_size());
+                    if let Hosting::Portal { last_anchor_rect_window, .. } = &mut self.hosting {
+                        *last_anchor_rect_window = if should_open { Some(rect) } else { None };
+                    }
+                    ctx.mutate_later(scope_id, move |mut w| {
+                        let mut scope = w.downcast::<OverlayScope>();
+                        OverlayScope::set_portal_visible(
+                            &mut scope,
+                            key,
+                            should_open,
+                            PortalVisibility {
+                                owner: Some(owner_id),
+                                owner_kind: OwnerKind::Autocomplete,
+                                rect,
+                                anchor: PopoverAnchor::BottomStart,
+                                gap: OVERLAY_GAP_PX,
+                            },
+                        );
+                    });
+                    if should_open {
+                        ctx.request_compose();
+                        ctx.request_anim_frame();
+                    }
+                }
+            }
+        }
+
+        ctx.submit_action::<AutocompleteAction>(AutocompleteAction::TextChanged(text.to_owned()));
+        ctx.set_handled();
+    }
+
     fn select_suggestion(&mut self, ctx: &mut ActionCtx<'_>, selected: String) {
         let text = selected.clone();
         self.contents.clone_from(&selected);
@@ -1283,7 +1476,9 @@ impl AutocompleteWidget {
                     with_text_area(&mut w, |ta| widgets::TextArea::reset_text(ta, &text));
                 });
             }
-            Hosting::Portal { chrome, scope, key, .. } => {
+            Hosting::Portal {
+                chrome, scope, key, ..
+            } => {
                 let text_for_area = text.clone();
                 ctx.mutate_child_later(chrome, move |mut w| {
                     let mut sb = w.downcast::<SizedBox>();
@@ -1292,7 +1487,9 @@ impl AutocompleteWidget {
                     });
                 });
                 let Some(scope_id) = scope.widget_id() else {
-                    ctx.submit_action::<AutocompleteAction>(AutocompleteAction::TextChanged(selected));
+                    ctx.submit_action::<AutocompleteAction>(AutocompleteAction::TextChanged(
+                        selected,
+                    ));
                     ctx.set_handled();
                     ctx.request_paint_only();
                     return;
@@ -1357,7 +1554,9 @@ impl AutocompleteWidget {
                     }
                 });
             }
-            Hosting::Portal { chrome, scope, key, .. } => {
+            Hosting::Portal {
+                chrome, scope, key, ..
+            } => {
                 {
                     let mut c = this.ctx.get_mut(chrome);
                     let mut sb = c.downcast::<SizedBox>();
@@ -1471,12 +1670,16 @@ impl AutocompleteWidget {
         match &mut this.widget.hosting {
             Hosting::InTree { overlay_host } => {
                 let mut h = this.ctx.get_mut(overlay_host);
-                with_text_input(&mut h, |ti| widgets::TextInput::set_placeholder(ti, placeholder));
+                with_text_input(&mut h, |ti| {
+                    widgets::TextInput::set_placeholder(ti, placeholder);
+                });
             }
             Hosting::Portal { chrome, .. } => {
                 let mut c = this.ctx.get_mut(chrome);
                 let mut sb = c.downcast::<SizedBox>();
-                with_text_input_in_chrome(&mut sb, |ti| widgets::TextInput::set_placeholder(ti, placeholder));
+                with_text_input_in_chrome(&mut sb, |ti| {
+                    widgets::TextInput::set_placeholder(ti, placeholder);
+                });
             }
         }
     }
@@ -1544,8 +1747,12 @@ impl AutocompleteWidget {
                         ti.insert_prop(PlaceholderColor::new(theme.palette.text_muted));
                         let mut ta = widgets::TextInput::text_mut(&mut ti);
                         ta.insert_prop(ContentColor::new(theme.palette.text));
-                        ta.insert_prop(CaretColor { color: theme.palette.teal });
-                        ta.insert_prop(SelectionColor { color: theme.palette.teal_soft });
+                        ta.insert_prop(CaretColor {
+                            color: theme.palette.teal,
+                        });
+                        ta.insert_prop(SelectionColor {
+                            color: theme.palette.teal_soft,
+                        });
                         widgets::TextArea::insert_style(
                             &mut ta,
                             StyleProperty::FontSize(theme.typography.size_body),
@@ -1555,7 +1762,9 @@ impl AutocompleteWidget {
 
                 with_suggestion_list(&mut h, |list| SuggestionList::set_theme(list, theme));
             }
-            Hosting::Portal { chrome, scope, key, .. } => {
+            Hosting::Portal {
+                chrome, scope, key, ..
+            } => {
                 {
                     let mut c = this.ctx.get_mut(chrome);
                     let mut sb = c.downcast::<SizedBox>();
@@ -1570,8 +1779,12 @@ impl AutocompleteWidget {
                         ti.insert_prop(PlaceholderColor::new(theme.palette.text_muted));
                         let mut ta = widgets::TextInput::text_mut(&mut ti);
                         ta.insert_prop(ContentColor::new(theme.palette.text));
-                        ta.insert_prop(CaretColor { color: theme.palette.teal });
-                        ta.insert_prop(SelectionColor { color: theme.palette.teal_soft });
+                        ta.insert_prop(CaretColor {
+                            color: theme.palette.teal,
+                        });
+                        ta.insert_prop(SelectionColor {
+                            color: theme.palette.teal_soft,
+                        });
                         widgets::TextArea::insert_style(
                             &mut ta,
                             StyleProperty::FontSize(theme.typography.size_body),
@@ -1685,7 +1898,8 @@ impl AutocompleteWidget {
             });
         }
 
-        this.ctx.submit_action::<AutocompleteAction>(AutocompleteAction::TextChanged(text));
+        this.ctx
+            .submit_action::<AutocompleteAction>(AutocompleteAction::TextChanged(text));
         this.ctx.request_paint_only();
     }
 }
@@ -1705,76 +1919,7 @@ impl Widget for AutocompleteWidget {
         if let Some(text_action) = action.downcast_ref::<TextAction>() {
             match text_action {
                 TextAction::Changed(text) => {
-                    self.contents.clone_from(text);
-                    self.filtered = compute_filtered(&self.all_suggestions, text);
-                    self.highlighted = None;
-
-                    let should_open = !self.filtered.is_empty();
-                    let open_changed = self.open != should_open;
-                    self.open = should_open;
-
-                    match &mut self.hosting {
-                        Hosting::InTree { overlay_host } => {
-                            let items = self.filtered.clone();
-                            ctx.mutate_child_later(overlay_host, move |mut w| {
-                                with_suggestion_list(&mut w, |list| SuggestionList::set_items(list, items));
-                                if open_changed {
-                                    AnchoredOverlay::set_overlay_visible(&mut w, should_open);
-                                }
-                            });
-                        }
-                        Hosting::Portal { scope, key, .. } => {
-                            let Some(scope_id) = scope.widget_id() else {
-                                ctx.submit_action::<Self::Action>(AutocompleteAction::TextChanged(text.clone()));
-                                ctx.set_handled();
-                                return;
-                            };
-                            let key = *key;
-                            let items = self.filtered.clone();
-                            ctx.mutate_later(scope_id, move |mut w| {
-                                let mut scope = w.downcast::<OverlayScope>();
-                                let mut slot = OverlayScope::portal_slot_mut(&mut scope);
-                                if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
-                                    let mut pass = child.downcast::<Passthrough>();
-                                    let mut inner = Passthrough::child_mut(&mut pass);
-                                    let mut list = inner.downcast::<SuggestionList>();
-                                    SuggestionList::set_items(&mut list, items);
-                                }
-                            });
-                            if open_changed {
-                                let owner_id = ctx.widget_id();
-                                let rect = Rect::from_origin_size(
-                                    ctx.to_window(Point::ZERO),
-                                    ctx.border_box_size(),
-                                );
-                                if let Hosting::Portal { last_anchor_rect_window, .. } = &mut self.hosting {
-                                    *last_anchor_rect_window = if should_open { Some(rect) } else { None };
-                                }
-                                ctx.mutate_later(scope_id, move |mut w| {
-                                    let mut scope = w.downcast::<OverlayScope>();
-                                    OverlayScope::set_portal_visible(
-                                        &mut scope,
-                                        key,
-                                        should_open,
-                                        PortalVisibility {
-                                            owner: Some(owner_id),
-                                            owner_kind: OwnerKind::Autocomplete,
-                                            rect,
-                                            anchor: PopoverAnchor::BottomStart,
-                                            gap: OVERLAY_GAP_PX,
-                                        },
-                                    );
-                                });
-                                if should_open {
-                                    ctx.request_compose();
-                                    ctx.request_anim_frame();
-                                }
-                            }
-                        }
-                    }
-
-                    ctx.submit_action::<Self::Action>(AutocompleteAction::TextChanged(text.clone()));
-                    ctx.set_handled();
+                    self.handle_text_changed(ctx, text);
                 }
                 // Enter selects the highlighted suggestion when the list is open;
                 // otherwise it is left unhandled (bubbles for form submission).
@@ -1829,7 +1974,9 @@ impl Widget for AutocompleteWidget {
         if !self.open {
             return;
         }
-        let TextEvent::Keyboard(key) = event else { return };
+        let TextEvent::Keyboard(key) = event else {
+            return;
+        };
         if key.state != KeyState::Down {
             return;
         }
@@ -1855,12 +2002,16 @@ impl Widget for AutocompleteWidget {
                 match &mut self.hosting {
                     Hosting::InTree { overlay_host } => {
                         ctx.mutate_child_later(overlay_host, |mut w| {
-                            with_suggestion_list(&mut w, |list| SuggestionList::set_items(list, []));
+                            with_suggestion_list(&mut w, |list| {
+                                SuggestionList::set_items(list, []);
+                            });
                             AnchoredOverlay::set_overlay_visible(&mut w, false);
                         });
                     }
                     Hosting::Portal { scope, key, .. } => {
-                        let Some(scope_id) = scope.widget_id() else { return };
+                        let Some(scope_id) = scope.widget_id() else {
+                            return;
+                        };
                         let key = *key;
                         ctx.mutate_later(scope_id, move |mut w| {
                             let mut scope = w.downcast::<OverlayScope>();
@@ -1929,7 +2080,9 @@ impl Widget for AutocompleteWidget {
         else {
             return;
         };
-        let Some(scope_id) = scope.widget_id() else { return };
+        let Some(scope_id) = scope.widget_id() else {
+            return;
+        };
         let rect = Rect::from_origin_size(ctx.to_window(Point::ZERO), ctx.border_box_size());
         if *last_anchor_rect_window == Some(rect) {
             return;
@@ -1971,9 +2124,7 @@ impl Widget for AutocompleteWidget {
             Hosting::InTree { overlay_host } => {
                 ctx.redirect_measurement(overlay_host, axis, cross_length)
             }
-            Hosting::Portal { chrome, .. } => {
-                ctx.redirect_measurement(chrome, axis, cross_length)
-            }
+            Hosting::Portal { chrome, .. } => ctx.redirect_measurement(chrome, axis, cross_length),
         }
     }
 
@@ -2093,9 +2244,7 @@ mod accessibility_tests {
 
     use super::*;
 
-    fn find_text_area(
-        widget: WidgetRef<'_, dyn Widget>,
-    ) -> Option<WidgetRef<'_, TextArea<true>>> {
+    fn find_text_area(widget: WidgetRef<'_, dyn Widget>) -> Option<WidgetRef<'_, TextArea<true>>> {
         if let Some(area) = widget.downcast::<TextArea<true>>() {
             return Some(area);
         }
@@ -2106,9 +2255,12 @@ mod accessibility_tests {
     /// its combobox/text-area ids, ready for focus/keyboard driving.
     fn harness_with_fruit() -> (TestHarness<AutocompleteWidget>, WidgetId, WidgetId) {
         let theme = Theme::default();
-        let suggestions: Vec<ArcStr> =
-            ["Apple", "Banana", "Cherry"].into_iter().map(ArcStr::from).collect();
-        let widget = AutocompleteWidget::new("", ArcStr::from("Pick a fruit"), suggestions, false, &theme);
+        let suggestions: Vec<ArcStr> = ["Apple", "Banana", "Cherry"]
+            .into_iter()
+            .map(ArcStr::from)
+            .collect();
+        let widget =
+            AutocompleteWidget::new("", ArcStr::from("Pick a fruit"), suggestions, false, &theme);
 
         let harness = TestHarness::create_with_size(
             masonry::theme::default_property_set(),
@@ -2141,7 +2293,11 @@ mod accessibility_tests {
         {
             let node = harness.access_node(autocomplete_id).expect("combobox node");
             assert_eq!(node.role(), Role::ComboBox);
-            assert_eq!(node.data().is_expanded(), Some(false), "closed before focus");
+            assert_eq!(
+                node.data().is_expanded(),
+                Some(false),
+                "closed before focus"
+            );
         }
 
         // Focusing the text field opens the dropdown and wires aria-controls.
@@ -2151,7 +2307,11 @@ mod accessibility_tests {
             let node = harness.access_node(autocomplete_id).expect("combobox node");
             assert_eq!(node.data().is_expanded(), Some(true));
             let controlled: Vec<_> = node.controls().collect();
-            assert_eq!(controlled.len(), 1, "combobox should control exactly the listbox");
+            assert_eq!(
+                controlled.len(),
+                1,
+                "combobox should control exactly the listbox"
+            );
             assert_eq!(controlled[0].role(), Role::ListBox);
             assert!(
                 controlled[0].active_descendant().is_none(),
@@ -2166,7 +2326,11 @@ mod accessibility_tests {
             .focused_widget_id()
             .and_then(|id| harness.access_node(id))
             .map(|n| n.role());
-        assert_eq!(focused_role, Some(Role::ListBox), "Tab should move focus into the open listbox");
+        assert_eq!(
+            focused_role,
+            Some(Role::ListBox),
+            "Tab should move focus into the open listbox"
+        );
 
         // ArrowDown highlights "Apple": active-descendant resolves to a real
         // ListBoxOption node with the right name and aria-selected.
@@ -2214,7 +2378,11 @@ mod accessibility_tests {
 
         harness.render();
         let node = harness.access_node(autocomplete_id).expect("combobox node");
-        assert_eq!(node.data().is_expanded(), Some(false), "closed after selection");
+        assert_eq!(
+            node.data().is_expanded(),
+            Some(false),
+            "closed after selection"
+        );
     }
 
     /// Escape while focus is in the listbox closes the dropdown without
@@ -2238,7 +2406,11 @@ mod accessibility_tests {
 
         harness.render();
         let node = harness.access_node(autocomplete_id).expect("combobox node");
-        assert_eq!(node.data().is_expanded(), Some(false), "closed after Escape");
+        assert_eq!(
+            node.data().is_expanded(),
+            Some(false),
+            "closed after Escape"
+        );
     }
 
     /// Clicking an item in the open list auto-fills the text field even
@@ -2277,7 +2449,11 @@ mod accessibility_tests {
         harness.mouse_button_release(Some(masonry::core::PointerButton::Primary));
 
         let area = find_text_area(harness.root_widget().as_dyn()).expect("TextArea");
-        assert_eq!(area.text().to_string(), "Apple", "click should auto-fill the text field");
+        assert_eq!(
+            area.text().to_string(),
+            "Apple",
+            "click should auto-fill the text field"
+        );
         assert_eq!(
             harness.focused_widget_id(),
             Some(text_area_id),
@@ -2285,6 +2461,10 @@ mod accessibility_tests {
         );
         harness.render();
         let node = harness.access_node(autocomplete_id).expect("combobox");
-        assert_eq!(node.data().is_expanded(), Some(false), "closed after click-select");
+        assert_eq!(
+            node.data().is_expanded(),
+            Some(false),
+            "closed after click-select"
+        );
     }
 }
