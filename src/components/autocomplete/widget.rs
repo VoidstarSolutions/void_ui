@@ -441,9 +441,11 @@ where
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Case-insensitive prefix match, capped at [`MAX_SUGGESTIONS`].
+/// When `query` is empty the full list (up to the cap) is returned so the
+/// dropdown shows all suggestions when the field first receives focus.
 pub(crate) fn compute_filtered(all: &[ArcStr], query: &str) -> Vec<ArcStr> {
     if query.is_empty() {
-        return Vec::new();
+        return all.iter().take(MAX_SUGGESTIONS).cloned().collect();
     }
     let q = query.to_lowercase();
     all.iter()
@@ -692,6 +694,62 @@ impl AutocompleteWidget {
 
 // --- MARK: INTERNAL HELPERS
 impl AutocompleteWidget {
+    fn open_on_focus(&mut self, ctx: &mut UpdateCtx<'_>) {
+        self.filtered = compute_filtered(&self.all_suggestions, &self.contents);
+        if self.filtered.is_empty() {
+            return;
+        }
+        self.open = true;
+        self.highlighted = None;
+        match &mut self.hosting {
+            Hosting::InTree { overlay_host } => {
+                let items = self.filtered.clone();
+                ctx.mutate_child_later(overlay_host, move |mut w| {
+                    with_suggestion_list(&mut w, |list| SuggestionList::set_items(list, items));
+                    AnchoredOverlay::set_overlay_visible(&mut w, true);
+                });
+            }
+            Hosting::Portal { scope, key, .. } => {
+                let Some(scope_id) = scope.widget_id() else { return };
+                let key = *key;
+                let owner_id = ctx.widget_id();
+                let rect = Rect::from_origin_size(ctx.to_window(Point::ZERO), ctx.border_box_size());
+                let items = self.filtered.clone();
+                if let Hosting::Portal { last_anchor_rect_window, .. } = &mut self.hosting {
+                    *last_anchor_rect_window = Some(rect);
+                }
+                ctx.mutate_later(scope_id, move |mut w| {
+                    let mut scope = w.downcast::<OverlayScope>();
+                    let mut slot = OverlayScope::portal_slot_mut(&mut scope);
+                    if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
+                        let mut pass = child.downcast::<Passthrough>();
+                        let mut inner = Passthrough::child_mut(&mut pass);
+                        let mut list = inner.downcast::<SuggestionList>();
+                        SuggestionList::set_items(&mut list, items);
+                    }
+                });
+                ctx.mutate_later(scope_id, move |mut w| {
+                    let mut scope = w.downcast::<OverlayScope>();
+                    OverlayScope::set_portal_visible(
+                        &mut scope,
+                        key,
+                        true,
+                        PortalVisibility {
+                            owner: Some(owner_id),
+                            owner_kind: OwnerKind::Autocomplete,
+                            rect,
+                            anchor: PopoverAnchor::BottomStart,
+                            gap: OVERLAY_GAP_PX,
+                        },
+                    );
+                });
+                ctx.request_compose();
+                ctx.request_anim_frame();
+            }
+        }
+        ctx.request_paint_only();
+    }
+
     fn set_highlight(&mut self, ctx: &mut EventCtx<'_>, index: Option<usize>) {
         if self.highlighted == index {
             return;
@@ -830,7 +888,7 @@ impl AutocompleteWidget {
         this.widget.contents.push_str(contents);
 
         let filtered = compute_filtered(&this.widget.all_suggestions, contents);
-        let should_open = this.widget.open && !filtered.is_empty() && !contents.is_empty();
+        let should_open = this.widget.open && !filtered.is_empty();
         let open_changed = this.widget.open != should_open;
         this.widget.filtered.clone_from(&filtered);
         this.widget.open = should_open;
@@ -1199,7 +1257,7 @@ impl Widget for AutocompleteWidget {
                     self.filtered = compute_filtered(&self.all_suggestions, text);
                     self.highlighted = None;
 
-                    let should_open = !self.filtered.is_empty() && !text.is_empty();
+                    let should_open = !self.filtered.is_empty();
                     let open_changed = self.open != should_open;
                     self.open = should_open;
 
@@ -1392,6 +1450,10 @@ impl Widget for AutocompleteWidget {
                     });
                 }
                 ctx.request_paint_only();
+            }
+            // Open the dropdown when focus enters the input field.
+            Update::ChildFocusChanged(true) if !self.open && !self.all_suggestions.is_empty() => {
+                self.open_on_focus(ctx);
             }
             _ => {}
         }
