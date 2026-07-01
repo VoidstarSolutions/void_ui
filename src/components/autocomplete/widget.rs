@@ -1875,6 +1875,7 @@ impl AutocompleteWidget {
         this.ctx
             .submit_action::<AutocompleteAction>(AutocompleteAction::TextChanged(text));
         this.ctx.request_paint_only();
+        this.ctx.request_accessibility_update();
     }
 }
 
