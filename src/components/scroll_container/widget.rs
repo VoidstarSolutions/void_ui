@@ -579,28 +579,32 @@ impl<W: Widget + ?Sized> ScrollView<W> {
         }
     }
 
-    fn update_scrollbar_progress(&mut self, ctx: &mut EventCtx<'_>, eff_size: Size) {
+    /// Returns `(px, py)` — each axis's scroll progress in `[0, 1]`.
+    fn scrollbar_progress(&self, eff_size: Size) -> (f64, f64) {
         let range = Self::scroll_range(eff_size, self.content_size);
-
         let px = if range.width > 1e-12 {
-            self.viewport_pos.x / range.width
+            (self.viewport_pos.x / range.width).clamp(0.0, 1.0)
         } else {
             0.0
         };
         let py = if range.height > 1e-12 {
-            self.viewport_pos.y / range.height
+            (self.viewport_pos.y / range.height).clamp(0.0, 1.0)
         } else {
             0.0
         };
+        (px, py)
+    }
 
+    fn update_scrollbar_progress(&mut self, ctx: &mut EventCtx<'_>, eff_size: Size) {
+        let (px, py) = self.scrollbar_progress(eff_size);
         {
             let (sb, mut sb_ctx) = ctx.get_raw_mut(&mut self.scrollbar_h);
-            sb.cursor_progress = px.clamp(0.0, 1.0);
+            sb.cursor_progress = px;
             sb_ctx.request_render();
         }
         {
             let (sb, mut sb_ctx) = ctx.get_raw_mut(&mut self.scrollbar_v);
-            sb.cursor_progress = py.clamp(0.0, 1.0);
+            sb.cursor_progress = py;
             sb_ctx.request_render();
         }
     }
@@ -997,17 +1001,7 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
 
             if self.set_viewport_pos_raw(eff_size, self.content_size, Point::new(new_x, new_y)) {
                 ctx.request_compose();
-                let range = Self::scroll_range(eff_size, self.content_size);
-                let px = if range.width > 1e-12 {
-                    (self.viewport_pos.x / range.width).clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
-                let py = if range.height > 1e-12 {
-                    (self.viewport_pos.y / range.height).clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
+                let (px, py) = self.scrollbar_progress(eff_size);
                 {
                     let (sb, mut sb_ctx) = ctx.get_raw_mut(&mut self.scrollbar_h);
                     sb.cursor_progress = px;
