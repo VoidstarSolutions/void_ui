@@ -1043,6 +1043,23 @@ fn apply_chrome_theme(sb: &mut WidgetMut<'_, SizedBox>, theme: &Theme) {
     });
 }
 
+/// Canonical close-portal sentinel. Every "hide the portal slot" path uses
+/// this so the PortalVisibility fields can't silently diverge across callers.
+fn close_portal_slot(scope: &mut WidgetMut<'_, OverlayScope>, key: u64) {
+    OverlayScope::set_portal_visible(
+        scope,
+        key,
+        false,
+        PortalVisibility {
+            owner: None,
+            owner_kind: OwnerKind::Autocomplete,
+            rect: Rect::ZERO,
+            anchor: PopoverAnchor::BottomStart,
+            gap: 0.0,
+        },
+    );
+}
+
 /// Navigate to the `SuggestionList` in the in-tree overlay slot and invoke `f`.
 fn with_suggestion_list<R>(
     w: &mut WidgetMut<'_, AnchoredOverlay>,
@@ -1411,18 +1428,7 @@ impl AutocompleteWidget {
                 let key = *key;
                 ctx.mutate_later(scope_id, move |mut w| {
                     let mut scope = w.downcast::<OverlayScope>();
-                    OverlayScope::set_portal_visible(
-                        &mut scope,
-                        key,
-                        false,
-                        PortalVisibility {
-                            owner: None,
-                            owner_kind: OwnerKind::Autocomplete,
-                            rect: Rect::ZERO,
-                            anchor: PopoverAnchor::BottomStart,
-                            gap: 0.0,
-                        },
-                    );
+                    close_portal_slot(&mut scope, key);
                 });
             }
         }
@@ -1541,18 +1547,7 @@ impl AutocompleteWidget {
                 let key = *key;
                 ctx.mutate_later(scope_id, move |mut w| {
                     let mut scope = w.downcast::<OverlayScope>();
-                    OverlayScope::set_portal_visible(
-                        &mut scope,
-                        key,
-                        false,
-                        PortalVisibility {
-                            owner: None,
-                            owner_kind: OwnerKind::Autocomplete,
-                            rect: Rect::ZERO,
-                            anchor: PopoverAnchor::BottomStart,
-                            gap: 0.0,
-                        },
-                    );
+                    close_portal_slot(&mut scope, key);
                 });
             }
         }
@@ -1628,18 +1623,7 @@ impl AutocompleteWidget {
                     if open_changed {
                         this.ctx.mutate_later(scope_id, move |mut w| {
                             let mut scope = w.downcast::<OverlayScope>();
-                            OverlayScope::set_portal_visible(
-                                &mut scope,
-                                key,
-                                should_open,
-                                PortalVisibility {
-                                    owner: None,
-                                    owner_kind: OwnerKind::Autocomplete,
-                                    rect: Rect::ZERO,
-                                    anchor: PopoverAnchor::BottomStart,
-                                    gap: OVERLAY_GAP_PX,
-                                },
-                            );
+                            close_portal_slot(&mut scope, key);
                         });
                     }
                 }
@@ -1692,18 +1676,7 @@ impl AutocompleteWidget {
                     if open_changed {
                         this.ctx.mutate_later(scope_id, move |mut w| {
                             let mut scope = w.downcast::<OverlayScope>();
-                            OverlayScope::set_portal_visible(
-                                &mut scope,
-                                key,
-                                should_open,
-                                PortalVisibility {
-                                    owner: None,
-                                    owner_kind: OwnerKind::Autocomplete,
-                                    rect: Rect::ZERO,
-                                    anchor: PopoverAnchor::BottomStart,
-                                    gap: OVERLAY_GAP_PX,
-                                },
-                            );
+                            close_portal_slot(&mut scope, key);
                         });
                     }
                 }
@@ -1749,18 +1722,7 @@ impl AutocompleteWidget {
                     if let Some(scope_id) = scope_id {
                         this.ctx.mutate_later(scope_id, move |mut w| {
                             let mut scope = w.downcast::<OverlayScope>();
-                            OverlayScope::set_portal_visible(
-                                &mut scope,
-                                key,
-                                false,
-                                PortalVisibility {
-                                    owner: None,
-                                    owner_kind: OwnerKind::Autocomplete,
-                                    rect: Rect::ZERO,
-                                    anchor: PopoverAnchor::BottomStart,
-                                    gap: 0.0,
-                                },
-                            );
+                            close_portal_slot(&mut scope, key);
                         });
                     }
                 }
@@ -1838,18 +1800,7 @@ impl AutocompleteWidget {
                 if let Some(scope_id) = scope_id {
                     this.ctx.mutate_later(scope_id, move |mut w| {
                         let mut scope = w.downcast::<OverlayScope>();
-                        OverlayScope::set_portal_visible(
-                            &mut scope,
-                            key,
-                            false,
-                            PortalVisibility {
-                                owner: None,
-                                owner_kind: OwnerKind::Autocomplete,
-                                rect: Rect::ZERO,
-                                anchor: PopoverAnchor::BottomStart,
-                                gap: 0.0,
-                            },
-                        );
+                        close_portal_slot(&mut scope, key);
                     });
                 }
             }
@@ -1891,18 +1842,7 @@ impl AutocompleteWidget {
         if let Some(scope_id) = scope_id {
             this.ctx.mutate_later(scope_id, move |mut w| {
                 let mut scope = w.downcast::<OverlayScope>();
-                OverlayScope::set_portal_visible(
-                    &mut scope,
-                    key,
-                    false,
-                    PortalVisibility {
-                        owner: None,
-                        owner_kind: OwnerKind::Autocomplete,
-                        rect: Rect::ZERO,
-                        anchor: PopoverAnchor::BottomStart,
-                        gap: 0.0,
-                    },
-                );
+                close_portal_slot(&mut scope, key);
             });
         }
 
@@ -2021,18 +1961,7 @@ impl Widget for AutocompleteWidget {
                         let key = *key;
                         ctx.mutate_later(scope_id, move |mut w| {
                             let mut scope = w.downcast::<OverlayScope>();
-                            OverlayScope::set_portal_visible(
-                                &mut scope,
-                                key,
-                                false,
-                                PortalVisibility {
-                                    owner: None,
-                                    owner_kind: OwnerKind::Autocomplete,
-                                    rect: Rect::ZERO,
-                                    anchor: PopoverAnchor::BottomStart,
-                                    gap: 0.0,
-                                },
-                            );
+                            close_portal_slot(&mut scope, key);
                         });
                     }
                 }
