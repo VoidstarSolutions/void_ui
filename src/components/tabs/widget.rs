@@ -392,6 +392,22 @@ impl TabsWidget {
         self.placed.iter().position(|r| r.contains(pos))
     }
 
+    /// Item rect for `index`, falling back to a theme-metric estimate when
+    /// `placed` is empty (cleared by `set_items`, not yet rebuilt by layout).
+    /// Items are horizontal; width is estimated from the UI font size.
+    fn item_rect_or_estimate(&self, index: usize) -> Rect {
+        if let Some(&rect) = self.placed.get(index) {
+            return rect;
+        }
+        let outer = self.outer_pad();
+        let gap = self.gap();
+        let (pad_h, pad_v) = self.item_pad();
+        let est_item_w = f64::from(self.theme.density.ui_font_size) * 3.0 + 2.0 * pad_h;
+        let est_item_h = f64::from(self.theme.density.ui_font_size) + 2.0 * pad_v;
+        let x = outer + index as f64 * (est_item_w + gap);
+        Rect::new(x, outer, x + est_item_w, outer + est_item_h)
+    }
+
     fn is_disabled(&self, index: usize) -> bool {
         self.disabled.get(index).copied().unwrap_or(false)
     }
@@ -516,9 +532,7 @@ impl Widget for TabsWidget {
         };
         if let Some(i) = new_selected {
             ctx.set_handled();
-            if let Some(&rect) = self.placed.get(i) {
-                ctx.request_scroll_to(rect);
-            }
+            ctx.request_scroll_to(self.item_rect_or_estimate(i));
             if i != self.selected {
                 ctx.submit_action::<Self::Action>(TabSelected(i));
             }

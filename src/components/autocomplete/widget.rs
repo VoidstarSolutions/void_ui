@@ -496,9 +496,15 @@ impl LabelList {
                 SuggestionItem::set_selected(&mut item, true);
             });
         }
-        if let Some(i) = index
-            && let Some(&rect) = self.item_rects.get(i)
-        {
+        if let Some(i) = index {
+            // item_rects is cleared by set_items and repopulated in layout. If a
+            // keypress arrives before layout runs the vec is empty; fall back to
+            // computing the rect from theme metrics so the scroll request isn't lost.
+            let rect = self.item_rects.get(i).copied().unwrap_or_else(|| {
+                let item_h = self.item_height();
+                let y = LIST_PAD_V + i as f64 * item_h;
+                Rect::new(0.0, y, 0.0, y + item_h)
+            });
             ctx.request_scroll_to(rect);
         }
         ctx.request_paint_only();

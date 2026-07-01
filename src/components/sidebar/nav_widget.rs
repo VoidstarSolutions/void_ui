@@ -196,6 +196,20 @@ pub struct ThemedSidebarNav {
     theme: Theme,
 }
 
+// --- MARK: HELPERS
+impl ThemedSidebarNav {
+    /// Item rect for `index`, falling back to a theme-metric estimate when
+    /// `placed` is empty (cleared by `set_items`, not yet rebuilt by layout).
+    fn item_rect_or_estimate(&self, index: usize) -> Rect {
+        if let Some(&rect) = self.placed.get(index) {
+            return rect;
+        }
+        let item_h = f64::from(self.theme.density.ui_font_size) + 2.0 * PAD_V;
+        let y = index as f64 * (item_h + GAP);
+        Rect::new(0.0, y, 0.0, y + item_h)
+    }
+}
+
 // --- MARK: BUILDERS
 impl ThemedSidebarNav {
     #[must_use]
@@ -377,9 +391,7 @@ impl Widget for ThemedSidebarNav {
             Key::Named(NamedKey::ArrowUp) if key.state == KeyState::Down => {
                 if self.focused > 0 {
                     self.focused -= 1;
-                    if let Some(&rect) = self.placed.get(self.focused) {
-                        ctx.request_scroll_to(rect);
-                    }
+                    ctx.request_scroll_to(self.item_rect_or_estimate(self.focused));
                     ctx.request_paint_only();
                 }
                 ctx.set_handled();
@@ -387,9 +399,7 @@ impl Widget for ThemedSidebarNav {
             Key::Named(NamedKey::ArrowDown) if key.state == KeyState::Down => {
                 if self.focused + 1 < self.items.len() {
                     self.focused += 1;
-                    if let Some(&rect) = self.placed.get(self.focused) {
-                        ctx.request_scroll_to(rect);
-                    }
+                    ctx.request_scroll_to(self.item_rect_or_estimate(self.focused));
                     ctx.request_paint_only();
                 }
                 ctx.set_handled();
