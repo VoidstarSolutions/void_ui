@@ -1442,6 +1442,7 @@ impl AutocompleteWidget {
             }
         }
         ctx.request_paint_only();
+        ctx.request_accessibility_update();
     }
 
     fn close_overlay_later(&mut self, ctx: &mut ActionCtx<'_>) {
@@ -2049,6 +2050,7 @@ impl Widget for AutocompleteWidget {
                     });
                 }
                 ctx.request_paint_only();
+                ctx.request_accessibility_update();
             }
             // Open the dropdown when focus enters the input field.
             Update::ChildFocusChanged(true) if !self.open && !self.all_suggestions.is_empty() => {
