@@ -516,6 +516,9 @@ impl Widget for TabsWidget {
         };
         if let Some(i) = new_selected {
             ctx.set_handled();
+            if let Some(&rect) = self.placed.get(i) {
+                ctx.request_scroll_to(rect);
+            }
             if i != self.selected {
                 ctx.submit_action::<Self::Action>(TabSelected(i));
             }

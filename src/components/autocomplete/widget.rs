@@ -496,6 +496,11 @@ impl LabelList {
                 SuggestionItem::set_selected(&mut item, true);
             });
         }
+        if let Some(i) = index
+            && let Some(&rect) = self.item_rects.get(i)
+        {
+            ctx.request_scroll_to(rect);
+        }
         ctx.request_paint_only();
         ctx.request_accessibility_update();
     }

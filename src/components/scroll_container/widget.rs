@@ -995,8 +995,28 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
             )
             .start;
 
-            self.set_viewport_pos_raw(eff_size, self.content_size, Point::new(new_x, new_y));
-            ctx.request_compose();
+            if self.set_viewport_pos_raw(eff_size, self.content_size, Point::new(new_x, new_y)) {
+                ctx.request_compose();
+                let range = Self::scroll_range(eff_size, self.content_size);
+                let px = if range.width > 1e-12 {
+                    (self.viewport_pos.x / range.width).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                let py = if range.height > 1e-12 {
+                    (self.viewport_pos.y / range.height).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                ctx.mutate_child_later(&mut self.scrollbar_h, move |mut bar| {
+                    bar.widget.cursor_progress = px;
+                    bar.ctx.request_render();
+                });
+                ctx.mutate_child_later(&mut self.scrollbar_v, move |mut bar| {
+                    bar.widget.cursor_progress = py;
+                    bar.ctx.request_render();
+                });
+            }
         }
     }
 

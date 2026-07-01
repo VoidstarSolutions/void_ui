@@ -377,6 +377,9 @@ impl Widget for ThemedSidebarNav {
             Key::Named(NamedKey::ArrowUp) if key.state == KeyState::Down => {
                 if self.focused > 0 {
                     self.focused -= 1;
+                    if let Some(&rect) = self.placed.get(self.focused) {
+                        ctx.request_scroll_to(rect);
+                    }
                     ctx.request_paint_only();
                 }
                 ctx.set_handled();
@@ -384,6 +387,9 @@ impl Widget for ThemedSidebarNav {
             Key::Named(NamedKey::ArrowDown) if key.state == KeyState::Down => {
                 if self.focused + 1 < self.items.len() {
                     self.focused += 1;
+                    if let Some(&rect) = self.placed.get(self.focused) {
+                        ctx.request_scroll_to(rect);
+                    }
                     ctx.request_paint_only();
                 }
                 ctx.set_handled();
