@@ -143,6 +143,14 @@ enum ViewBinding<State: 'static, Action: 'static> {
         handle: AutocompleteHandle,
         listbox_handle: LabelListHandle,
         text_area_handle: TextAreaHandle,
+        /// Pre-lowercased mirror of the current suggestions, kept in sync with
+        /// `suggestions` changes so `compute_filtered` on the keystroke path
+        /// never allocates per item.
+        suggestions_lower: Vec<String>,
+        /// Last filtered list passed to `SuggestionListView`. Kept here so
+        /// the portal rebuild only needs to call `portal.update` when
+        /// suggestions or theme change, not on every keystroke.
+        filtered: Arc<Vec<ArcStr>>,
     },
     InTree,
 }
@@ -169,9 +177,12 @@ where
             let handle = AutocompleteHandle::new();
             let listbox_handle = LabelListHandle::new();
             let text_area_handle = TextAreaHandle::new();
-            let filtered = Arc::new(compute_filtered(&self.suggestions, &self.contents));
+            let suggestions_lower: Vec<String> =
+                self.suggestions.iter().map(|s| s.to_lowercase()).collect();
+            let filtered =
+                Arc::new(compute_filtered(&self.suggestions, &suggestions_lower, &self.contents));
             let list_view = SuggestionListView {
-                filtered,
+                filtered: filtered.clone(),
                 handle: handle.clone(),
                 listbox_handle: listbox_handle.clone(),
                 text_area_handle: text_area_handle.clone(),
@@ -208,6 +219,8 @@ where
                         handle,
                         listbox_handle,
                         text_area_handle,
+                        suggestions_lower,
+                        filtered,
                     },
                 },
             )
@@ -238,7 +251,7 @@ where
         _state: &mut State,
     ) {
         let contents_changed = self.contents != prev.contents;
-        let suggestions_changed = !Arc::ptr_eq(&self.suggestions, &prev.suggestions);
+        let suggestions_changed = self.suggestions != prev.suggestions;
 
         if contents_changed {
             AutocompleteWidget::set_contents(&mut element, &self.contents);
@@ -256,25 +269,48 @@ where
             AutocompleteWidget::set_theme(&mut element, &self.theme);
         }
 
-        // In portal mode, refresh the registered view whenever filtered items
-        // or theme change so the scope's rebuild uses the latest items.
+        // In portal mode, update the stored filtered result whenever the
+        // inputs change — this is the single call to compute_filtered per
+        // rebuild. Then refresh the registered SuggestionListView only when
+        // suggestions or theme change; content-only changes (keystrokes) are
+        // already handled by set_contents → mutate_later in the widget layer.
         if let ViewBinding::Portal {
             portal,
             key,
             handle,
             listbox_handle,
             text_area_handle,
-        } = &view_state.binding
-            && (contents_changed || suggestions_changed || self.theme != prev.theme)
+            suggestions_lower,
+            filtered,
+        } = &mut view_state.binding
         {
-            let filtered = Arc::new(compute_filtered(&self.suggestions, &self.contents));
+            if suggestions_changed {
+                *suggestions_lower =
+                    self.suggestions.iter().map(|s| s.to_lowercase()).collect();
+            }
+            if contents_changed || suggestions_changed {
+                *filtered =
+                    Arc::new(compute_filtered(&self.suggestions, suggestions_lower, &self.contents));
+            }
+        }
+        if let ViewBinding::Portal {
+            portal,
+            key,
+            handle,
+            listbox_handle,
+            text_area_handle,
+            suggestions_lower: _,
+            filtered,
+        } = &view_state.binding
+            && (suggestions_changed || self.theme != prev.theme)
+        {
             // Re-use the *same* handle instances from the original portal
             // registration (not detached defaults) — `SuggestionListView`'s
             // `message` and `LabelList`'s back-channels both need
             // `widget_id()` to resolve to the real, already-mounted widgets,
             // which only the original `Arc<OnceLock<_>>`s have.
             let list_view = SuggestionListView {
-                filtered,
+                filtered: filtered.clone(),
                 handle: handle.clone(),
                 listbox_handle: listbox_handle.clone(),
                 text_area_handle: text_area_handle.clone(),

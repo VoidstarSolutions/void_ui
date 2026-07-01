@@ -974,15 +974,20 @@ where
 /// When `query` is empty, the **full, uncapped** list is returned — the
 /// dropdown shows everything when the field first receives focus, and the
 /// list scrolls to reach entries beyond the visible window.
-pub(crate) fn compute_filtered(all: &[ArcStr], query: &str) -> Vec<ArcStr> {
+///
+/// `all_lower` must be the pre-lowercased mirror of `all` (same length,
+/// same order). This avoids a `to_lowercase` allocation per item on the
+/// hot keystroke path.
+pub(crate) fn compute_filtered(all: &[ArcStr], all_lower: &[String], query: &str) -> Vec<ArcStr> {
     if query.is_empty() {
         return all.to_vec();
     }
     let q = query.to_lowercase();
     all.iter()
-        .filter(|s| s.to_lowercase().starts_with(&q))
+        .zip(all_lower)
+        .filter(|(_, lower)| lower.starts_with(&q))
+        .map(|(s, _)| s.clone())
         .take(MAX_SUGGESTIONS)
-        .cloned()
         .collect()
 }
 
@@ -1099,6 +1104,9 @@ pub(crate) struct AutocompleteConfig {
 pub(crate) struct AutocompleteWidget {
     hosting: Hosting,
     all_suggestions: Vec<ArcStr>,
+    /// Lower-case mirror of [`Self::all_suggestions`], pre-computed at
+    /// set time so `compute_filtered` never allocates on the hot path.
+    all_suggestions_lower: Vec<String>,
     /// Mirrors the host-controlled text, kept in sync via [`Self::set_contents`]
     /// and updated eagerly in action handlers for keyboard nav and selection.
     contents: String,
@@ -1229,13 +1237,16 @@ impl AutocompleteWidget {
         )
         .with_gap(OVERLAY_GAP);
 
-        let filtered = compute_filtered(&all_suggestions, contents);
+        let all_suggestions_lower: Vec<String> =
+            all_suggestions.iter().map(|s| s.to_lowercase()).collect();
+        let filtered = compute_filtered(&all_suggestions, &all_suggestions_lower, contents);
 
         Self {
             hosting: Hosting::InTree {
                 overlay_host: NewWidget::new(overlay).to_pod(),
             },
             all_suggestions,
+            all_suggestions_lower,
             contents: contents.to_owned(),
             filtered,
             open: false,
@@ -1267,7 +1278,9 @@ impl AutocompleteWidget {
         } = config;
         let (chrome, text_area_id) = Self::build_chrome(&contents, placeholder, disabled, &theme);
         text_area_handle.set(text_area_id);
-        let filtered = compute_filtered(&all_suggestions, &contents);
+        let all_suggestions_lower: Vec<String> =
+            all_suggestions.iter().map(|s| s.to_lowercase()).collect();
+        let filtered = compute_filtered(&all_suggestions, &all_suggestions_lower, &contents);
 
         Self {
             hosting: Hosting::Portal {
@@ -1277,6 +1290,7 @@ impl AutocompleteWidget {
                 last_anchor_rect_window: None,
             },
             all_suggestions,
+            all_suggestions_lower,
             contents,
             filtered,
             open: false,
@@ -1296,7 +1310,7 @@ impl AutocompleteWidget {
             self.suppress_focus_open = false;
             return;
         }
-        self.filtered = compute_filtered(&self.all_suggestions, &self.contents);
+        self.filtered = compute_filtered(&self.all_suggestions, &self.all_suggestions_lower, &self.contents);
         if self.filtered.is_empty() {
             return;
         }
@@ -1393,7 +1407,7 @@ impl AutocompleteWidget {
     fn handle_text_changed(&mut self, ctx: &mut ActionCtx<'_>, text: &str) {
         self.contents.clear();
         self.contents.push_str(text);
-        self.filtered = compute_filtered(&self.all_suggestions, text);
+        self.filtered = compute_filtered(&self.all_suggestions, &self.all_suggestions_lower, text);
         self.highlighted = None;
 
         let should_open = !self.filtered.is_empty();
@@ -1537,7 +1551,7 @@ impl AutocompleteWidget {
         this.widget.contents.clear();
         this.widget.contents.push_str(contents);
 
-        let filtered = compute_filtered(&this.widget.all_suggestions, contents);
+        let filtered = compute_filtered(&this.widget.all_suggestions, &this.widget.all_suggestions_lower, contents);
         let should_open = this.widget.open && !filtered.is_empty();
         let open_changed = this.widget.open != should_open;
         this.widget.filtered.clone_from(&filtered);
@@ -1615,9 +1629,11 @@ impl AutocompleteWidget {
         if this.widget.all_suggestions == suggestions {
             return;
         }
+        this.widget.all_suggestions_lower =
+            suggestions.iter().map(|s| s.to_lowercase()).collect();
         this.widget.all_suggestions = suggestions;
 
-        let filtered = compute_filtered(&this.widget.all_suggestions, &this.widget.contents);
+        let filtered = compute_filtered(&this.widget.all_suggestions, &this.widget.all_suggestions_lower, &this.widget.contents);
         let should_open = this.widget.open && !filtered.is_empty();
         let open_changed = this.widget.open != should_open;
         if this.widget.highlighted.is_some_and(|i| i >= filtered.len()) {
