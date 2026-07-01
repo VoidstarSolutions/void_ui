@@ -1660,6 +1660,13 @@ impl AutocompleteWidget {
                         }
                     });
                     if open_changed {
+                        if let Hosting::Portal {
+                            last_anchor_rect_window,
+                            ..
+                        } = &mut this.widget.hosting
+                        {
+                            *last_anchor_rect_window = None;
+                        }
                         this.ctx.mutate_later(scope_id, move |mut w| {
                             let mut scope = w.downcast::<OverlayScope>();
                             close_portal_slot(&mut scope, key);
@@ -1714,6 +1721,13 @@ impl AutocompleteWidget {
                         }
                     });
                     if open_changed {
+                        if let Hosting::Portal {
+                            last_anchor_rect_window,
+                            ..
+                        } = &mut this.widget.hosting
+                        {
+                            *last_anchor_rect_window = None;
+                        }
                         this.ctx.mutate_later(scope_id, move |mut w| {
                             let mut scope = w.downcast::<OverlayScope>();
                             close_portal_slot(&mut scope, key);
