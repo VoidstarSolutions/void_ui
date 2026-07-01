@@ -543,6 +543,16 @@ impl<W: Widget + ?Sized> ScrollView<W> {
         if this.widget.viewport_pos != Point::ORIGIN {
             this.widget.viewport_pos = Point::ORIGIN;
             this.ctx.request_compose();
+            {
+                let (sb, mut sb_ctx) = this.ctx.get_raw_mut(&mut this.widget.scrollbar_h);
+                sb.cursor_progress = 0.0;
+                sb_ctx.request_render();
+            }
+            {
+                let (sb, mut sb_ctx) = this.ctx.get_raw_mut(&mut this.widget.scrollbar_v);
+                sb.cursor_progress = 0.0;
+                sb_ctx.request_render();
+            }
         }
     }
 }
