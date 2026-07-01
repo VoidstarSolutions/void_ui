@@ -70,10 +70,10 @@ const OVERLAY_GAP: Length = Length::const_px(OVERLAY_GAP_PX);
 // SuggestionSelected action
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Fired when the user selects item at `0` (index into the current filtered
-/// list). Handled by [`AutocompleteWidget::on_action`].
-#[derive(Debug)]
-pub(crate) struct SuggestionSelected(pub usize);
+/// Fired when the user selects a suggestion. Carries the text directly so the
+/// receiver never has to resolve a stale index against filtered state.
+#[derive(Debug, Clone)]
+pub(crate) struct SuggestionSelected(pub ArcStr);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AutocompleteAction
@@ -266,8 +266,8 @@ impl Widget for SuggestionList {
         // `SuggestionList.id`, which IS registered, so it reaches `SuggestionListView::message`.
         // In in-tree mode the re-emitted action bubbles to `AutocompleteWidget::on_action`
         // which handles it — so it never reaches the driver at all.
-        if let Some(&SuggestionSelected(i)) = action.downcast_ref::<SuggestionSelected>() {
-            ctx.submit_action::<Self::Action>(SuggestionSelected(i));
+        if let Some(sel) = action.downcast_ref::<SuggestionSelected>() {
+            ctx.submit_action::<Self::Action>(sel.clone());
             ctx.set_handled();
         }
     }
@@ -368,6 +368,10 @@ impl Widget for SuggestionList {
 /// case, so no cross-widget id plumbing is needed for that part.
 pub(crate) struct LabelList {
     labels: Vec<WidgetPod<SuggestionItem>>,
+    /// Parallel to `labels` — the text of each item. Used to resolve a
+    /// selected index to text at action-submit time, where `WidgetPod`
+    /// internals are not accessible.
+    label_texts: Vec<ArcStr>,
     /// Item rects in this widget's local (natural, un-scrolled) coordinate
     /// space — `ScrollView` applies the scroll offset via a transform, so
     /// `EventCtx::to_window`/`to_local` already account for it.
@@ -391,12 +395,12 @@ impl LabelList {
         autocomplete_handle: AutocompleteHandle,
         text_area_handle: TextAreaHandle,
     ) -> Self {
-        let labels = items
-            .into_iter()
-            .map(|t| Self::make_item(t, theme))
-            .collect();
+        let items: Vec<ArcStr> = items.into_iter().collect();
+        let label_texts = items.clone();
+        let labels = items.into_iter().map(|t| Self::make_item(t, theme)).collect();
         Self {
             labels,
+            label_texts,
             item_rects: Vec::new(),
             hover_index: None,
             highlighted: None,
@@ -517,10 +521,9 @@ impl LabelList {
             this.ctx.remove_child(label);
         }
         let theme = this.widget.theme;
-        this.widget.labels = items
-            .into_iter()
-            .map(|t| Self::make_item(t, &theme))
-            .collect();
+        let items: Vec<ArcStr> = items.into_iter().collect();
+        this.widget.label_texts = items.clone();
+        this.widget.labels = items.into_iter().map(|t| Self::make_item(t, &theme)).collect();
         this.widget.item_rects.clear();
         this.widget.hover_index = None;
         this.widget.highlighted = None;
@@ -579,8 +582,10 @@ impl Widget for LabelList {
                 ..
             }) if ctx.is_active() && ctx.is_hovered() => {
                 let local = Self::to_local(ctx, state.logical_point());
-                if let Some(i) = self.hit_item(local) {
-                    ctx.submit_action::<Self::Action>(SuggestionSelected(i));
+                if let Some(i) = self.hit_item(local)
+                    && let Some(text) = self.label_texts.get(i)
+                {
+                    ctx.submit_action::<Self::Action>(SuggestionSelected(text.clone()));
                     // Return focus to the input so the user can keep typing.
                     self.refocus_input(ctx);
                     ctx.set_handled();
@@ -624,10 +629,13 @@ impl Widget for LabelList {
                 ctx.set_handled();
             }
             Key::Named(NamedKey::Enter) => {
-                if let Some(i) = self.highlighted {
-                    ctx.submit_action::<Self::Action>(SuggestionSelected(i));
+                if let Some(i) = self.highlighted
+                    && let Some(text) = self.label_texts.get(i)
+                {
+                    ctx.submit_action::<Self::Action>(SuggestionSelected(text.clone()));
                 }
                 self.refocus_input(ctx);
+                self.request_close(ctx);
                 ctx.set_handled();
             }
             Key::Named(NamedKey::Escape) => {
@@ -946,10 +954,8 @@ where
         _state: &mut State,
     ) -> MessageResult<Action> {
         if let Some(boxed) = message.take_message::<SuggestionSelected>() {
-            let SuggestionSelected(i) = *boxed;
-            if let Some(text) = self.filtered.get(i).cloned()
-                && let Some(ac_id) = self.handle.widget_id()
-            {
+            let SuggestionSelected(text) = *boxed;
+            if let Some(ac_id) = self.handle.widget_id() {
                 element.ctx.mutate_later(ac_id, move |mut w| {
                     let mut ac = w.downcast::<AutocompleteWidget>();
                     AutocompleteWidget::portal_select(&mut ac, text.to_string());
@@ -1824,27 +1830,33 @@ impl AutocompleteWidget {
         this.widget.highlighted = None;
         this.widget.filtered.clear();
 
-        // Also tell the scope to hide (idempotent if already hidden).
-        let (scope_id, key) = match &this.widget.hosting {
-            Hosting::Portal { scope, key, .. } => (scope.widget_id(), *key),
-            Hosting::InTree { .. } => return,
-        };
-        if let Some(scope_id) = scope_id {
-            this.ctx.mutate_later(scope_id, move |mut w| {
-                let mut scope = w.downcast::<OverlayScope>();
-                OverlayScope::set_portal_visible(
-                    &mut scope,
-                    key,
-                    false,
-                    PortalVisibility {
-                        owner: None,
-                        owner_kind: OwnerKind::Autocomplete,
-                        rect: Rect::ZERO,
-                        anchor: PopoverAnchor::BottomStart,
-                        gap: 0.0,
-                    },
-                );
-            });
+        // Also tell the scope/overlay to hide (idempotent if already hidden).
+        match &mut this.widget.hosting {
+            Hosting::InTree { overlay_host } => {
+                let mut w = this.ctx.get_mut(overlay_host);
+                AnchoredOverlay::set_overlay_visible(&mut w, false);
+            }
+            Hosting::Portal { scope, key, .. } => {
+                let scope_id = scope.widget_id();
+                let key = *key;
+                if let Some(scope_id) = scope_id {
+                    this.ctx.mutate_later(scope_id, move |mut w| {
+                        let mut scope = w.downcast::<OverlayScope>();
+                        OverlayScope::set_portal_visible(
+                            &mut scope,
+                            key,
+                            false,
+                            PortalVisibility {
+                                owner: None,
+                                owner_kind: OwnerKind::Autocomplete,
+                                rect: Rect::ZERO,
+                                anchor: PopoverAnchor::BottomStart,
+                                gap: 0.0,
+                            },
+                        );
+                    });
+                }
+            }
         }
         this.ctx.request_paint_only();
     }
@@ -1949,10 +1961,8 @@ impl Widget for AutocompleteWidget {
         }
 
         // ── Suggestion selected by click (in-tree mode only) ──────────────────
-        if let Some(&SuggestionSelected(i)) = action.downcast_ref::<SuggestionSelected>()
-            && let Some(selected) = self.filtered.get(i).cloned()
-        {
-            self.select_suggestion(ctx, selected.to_string());
+        if let Some(SuggestionSelected(text)) = action.downcast_ref::<SuggestionSelected>() {
+            self.select_suggestion(ctx, text.to_string());
         }
     }
 
