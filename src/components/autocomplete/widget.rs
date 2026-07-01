@@ -656,17 +656,19 @@ impl Widget for LabelList {
                 self.request_close(ctx);
                 ctx.set_handled();
             }
-            Key::Named(NamedKey::Escape) => {
+            // Tab from the listbox: close and let focus cycle forward naturally.
+            // The listbox lives in the portal, so ChildFocusChanged never reaches
+            // AutocompleteWidget from here; request_close is the only close path.
+            Key::Named(NamedKey::Tab) if !key.modifiers.shift() => {
+                self.request_close(ctx);
+            }
+            // Escape or Shift+Tab: return focus to the text input explicitly.
+            // For Shift+Tab, masonry would otherwise backward-cycle from inside
+            // the portal, skipping the text field entirely.
+            Key::Named(NamedKey::Escape | NamedKey::Tab) => {
                 self.refocus_input(ctx);
                 self.request_close(ctx);
                 ctx.set_handled();
-            }
-            // Tab/Shift+Tab from the listbox exits the autocomplete entirely. The
-            // listbox lives in the portal (not the autocomplete's subtree), so
-            // ChildFocusChanged never reaches AutocompleteWidget from here. Close
-            // without set_handled() so focus cycles normally.
-            Key::Named(NamedKey::Tab) => {
-                self.request_close(ctx);
             }
             _ => {}
         }
