@@ -404,6 +404,7 @@ impl TabsWidget {
         let (pad_h, pad_v) = self.item_pad();
         let est_item_w = f64::from(self.theme.density.ui_font_size) * 3.0 + 2.0 * pad_h;
         let est_item_h = f64::from(self.theme.density.ui_font_size) + 2.0 * pad_v;
+        #[allow(clippy::cast_precision_loss)]
         let x = outer + index as f64 * (est_item_w + gap);
         Rect::new(x, outer, x + est_item_w, outer + est_item_h)
     }

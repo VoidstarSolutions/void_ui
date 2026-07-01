@@ -502,6 +502,7 @@ impl LabelList {
             // computing the rect from theme metrics so the scroll request isn't lost.
             let rect = self.item_rects.get(i).copied().unwrap_or_else(|| {
                 let item_h = self.item_height();
+                #[allow(clippy::cast_precision_loss)]
                 let y = LIST_PAD_V + i as f64 * item_h;
                 Rect::new(0.0, y, 0.0, y + item_h)
             });
@@ -1976,14 +1977,14 @@ impl Widget for AutocompleteWidget {
             self.open = false;
             self.highlighted = None;
             self.filtered.clear();
-            if let Hosting::Portal { scope, key: slot_key, .. } = &mut self.hosting {
-                if let Some(scope_id) = scope.widget_id() {
-                    let slot_key = *slot_key;
-                    ctx.mutate_later(scope_id, move |mut w| {
-                        let mut scope = w.downcast::<OverlayScope>();
-                        close_portal_slot(&mut scope, slot_key);
-                    });
-                }
+            if let Hosting::Portal { scope, key: slot_key, .. } = &mut self.hosting
+                && let Some(scope_id) = scope.widget_id()
+            {
+                let slot_key = *slot_key;
+                ctx.mutate_later(scope_id, move |mut w| {
+                    let mut scope = w.downcast::<OverlayScope>();
+                    close_portal_slot(&mut scope, slot_key);
+                });
             }
             ctx.request_paint_only();
         }

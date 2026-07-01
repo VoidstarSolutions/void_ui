@@ -205,6 +205,7 @@ impl ThemedSidebarNav {
             return rect;
         }
         let item_h = f64::from(self.theme.density.ui_font_size) + 2.0 * PAD_V;
+        #[allow(clippy::cast_precision_loss)]
         let y = index as f64 * (item_h + GAP);
         Rect::new(0.0, y, 0.0, y + item_h)
     }
