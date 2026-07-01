@@ -1575,9 +1575,7 @@ impl AutocompleteWidget {
         let open_changed = this.widget.open != should_open;
         this.widget.filtered.clone_from(&filtered);
         this.widget.open = should_open;
-        if this.widget.highlighted.is_some_and(|i| i >= filtered.len()) {
-            this.widget.highlighted = None;
-        }
+        this.widget.highlighted = None;
 
         match &mut this.widget.hosting {
             Hosting::InTree { overlay_host } => {
@@ -1644,9 +1642,7 @@ impl AutocompleteWidget {
         let filtered = compute_filtered(&this.widget.all_suggestions, &this.widget.all_suggestions_lower, &this.widget.contents);
         let should_open = this.widget.open && !filtered.is_empty();
         let open_changed = this.widget.open != should_open;
-        if this.widget.highlighted.is_some_and(|i| i >= filtered.len()) {
-            this.widget.highlighted = None;
-        }
+        this.widget.highlighted = None;
         this.widget.filtered.clone_from(&filtered);
         this.widget.open = should_open;
 
