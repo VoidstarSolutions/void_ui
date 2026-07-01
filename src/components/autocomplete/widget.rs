@@ -1491,17 +1491,7 @@ impl AutocompleteWidget {
                 if let Some(scope_id) = scope.widget_id() {
                     let key = *key;
                     let items = self.filtered.clone();
-                    ctx.mutate_later(scope_id, move |mut w| {
-                        let mut scope = w.downcast::<OverlayScope>();
-                        let mut slot = OverlayScope::portal_slot_mut(&mut scope);
-                        if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
-                            let mut pass = child.downcast::<Passthrough>();
-                            let mut inner = Passthrough::child_mut(&mut pass);
-                            let mut list = inner.downcast::<SuggestionList>();
-                            SuggestionList::set_items(&mut list, items);
-                        }
-                    });
-                    if open_changed {
+                    let visibility_update = if open_changed {
                         let owner_id = ctx.widget_id();
                         let rect = Rect::from_origin_size(
                             ctx.to_window(Point::ZERO),
@@ -1514,31 +1504,46 @@ impl AutocompleteWidget {
                         {
                             *last_anchor_rect_window = if should_open { Some(rect) } else { None };
                         }
-                        ctx.mutate_later(scope_id, move |mut w| {
-                            let mut scope = w.downcast::<OverlayScope>();
-                            OverlayScope::set_portal_visible(
-                                &mut scope,
-                                key,
-                                should_open,
-                                PortalVisibility {
-                                    owner: Some(owner_id),
-                                    owner_kind: OwnerKind::Autocomplete,
-                                    rect,
-                                    anchor: PopoverAnchor::BottomStart,
-                                    gap: OVERLAY_GAP_PX,
-                                },
-                            );
-                        });
-                        if should_open {
-                            ctx.request_compose();
-                            ctx.request_anim_frame();
+                        Some((
+                            should_open,
+                            PortalVisibility {
+                                owner: Some(owner_id),
+                                owner_kind: OwnerKind::Autocomplete,
+                                rect,
+                                anchor: PopoverAnchor::BottomStart,
+                                gap: OVERLAY_GAP_PX,
+                            },
+                        ))
+                    } else {
+                        None
+                    };
+                    ctx.mutate_later(scope_id, move |mut w| {
+                        let mut scope = w.downcast::<OverlayScope>();
+                        {
+                            let mut slot = OverlayScope::portal_slot_mut(&mut scope);
+                            if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
+                                let mut pass = child.downcast::<Passthrough>();
+                                let mut inner = Passthrough::child_mut(&mut pass);
+                                let mut list = inner.downcast::<SuggestionList>();
+                                SuggestionList::set_items(&mut list, items);
+                            }
                         }
+                        if let Some((visible, visibility)) = visibility_update {
+                            OverlayScope::set_portal_visible(&mut scope, key, visible, visibility);
+                        }
+                    });
+                    if open_changed && should_open {
+                        ctx.request_compose();
+                        ctx.request_anim_frame();
                     }
                 }
             }
         }
 
         ctx.submit_action::<AutocompleteAction>(AutocompleteAction::TextChanged(text.to_owned()));
+        if open_changed {
+            ctx.request_accessibility_update();
+        }
         ctx.set_handled();
     }
 
@@ -1930,6 +1935,7 @@ impl Widget for AutocompleteWidget {
             ctx.submit_action::<Self::Action>(AutocompleteAction::TextChanged(String::new()));
             ctx.set_handled();
             ctx.request_paint_only();
+            ctx.request_accessibility_update();
             return;
         }
 
@@ -1990,6 +1996,7 @@ impl Widget for AutocompleteWidget {
                 });
             }
             ctx.request_paint_only();
+            ctx.request_accessibility_update();
         }
     }
 
@@ -2024,6 +2031,7 @@ impl Widget for AutocompleteWidget {
                     }
                 }
                 ctx.request_paint_only();
+                ctx.request_accessibility_update();
             }
             // In-tree: close when focus truly leaves our subtree (Tab-out,
             // clicking elsewhere, etc.).  Portal: the slot's own
