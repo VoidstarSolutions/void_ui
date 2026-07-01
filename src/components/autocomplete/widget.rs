@@ -1414,16 +1414,15 @@ impl AutocompleteWidget {
                 }
                 ctx.mutate_later(scope_id, move |mut w| {
                     let mut scope = w.downcast::<OverlayScope>();
-                    let mut slot = OverlayScope::portal_slot_mut(&mut scope);
-                    if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
-                        let mut pass = child.downcast::<Passthrough>();
-                        let mut inner = Passthrough::child_mut(&mut pass);
-                        let mut list = inner.downcast::<SuggestionList>();
-                        SuggestionList::set_items(&mut list, items);
+                    {
+                        let mut slot = OverlayScope::portal_slot_mut(&mut scope);
+                        if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
+                            let mut pass = child.downcast::<Passthrough>();
+                            let mut inner = Passthrough::child_mut(&mut pass);
+                            let mut list = inner.downcast::<SuggestionList>();
+                            SuggestionList::set_items(&mut list, items);
+                        }
                     }
-                });
-                ctx.mutate_later(scope_id, move |mut w| {
-                    let mut scope = w.downcast::<OverlayScope>();
                     OverlayScope::set_portal_visible(
                         &mut scope,
                         key,
