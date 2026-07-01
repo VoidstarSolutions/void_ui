@@ -654,6 +654,13 @@ impl Widget for LabelList {
                 self.request_close(ctx);
                 ctx.set_handled();
             }
+            // Tab/Shift+Tab from the listbox exits the autocomplete entirely. The
+            // listbox lives in the portal (not the autocomplete's subtree), so
+            // ChildFocusChanged never reaches AutocompleteWidget from here. Close
+            // without set_handled() so focus cycles normally.
+            Key::Named(NamedKey::Tab) => {
+                self.request_close(ctx);
+            }
             _ => {}
         }
     }
@@ -1951,6 +1958,27 @@ impl Widget for AutocompleteWidget {
         {
             ctx.set_focus(listbox_id);
             ctx.set_handled();
+        } else if key.key == Key::Named(NamedKey::Tab)
+            && key.modifiers.shift()
+            && matches!(self.hosting, Hosting::Portal { .. })
+        {
+            // Shift+Tab in portal mode: focus is leaving the text field toward a widget
+            // outside our subtree. ChildFocusChanged(false) is gated to InTree (see
+            // update()), so this is the only close path for keyboard focus-leave here.
+            // Don't call set_handled() — let masonry cycle focus backward normally.
+            self.open = false;
+            self.highlighted = None;
+            self.filtered.clear();
+            if let Hosting::Portal { scope, key: slot_key, .. } = &mut self.hosting {
+                if let Some(scope_id) = scope.widget_id() {
+                    let slot_key = *slot_key;
+                    ctx.mutate_later(scope_id, move |mut w| {
+                        let mut scope = w.downcast::<OverlayScope>();
+                        close_portal_slot(&mut scope, slot_key);
+                    });
+                }
+            }
+            ctx.request_paint_only();
         }
     }
 
