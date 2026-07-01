@@ -1008,14 +1008,16 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
                 } else {
                     0.0
                 };
-                ctx.mutate_child_later(&mut self.scrollbar_h, move |mut bar| {
-                    bar.widget.cursor_progress = px;
-                    bar.ctx.request_render();
-                });
-                ctx.mutate_child_later(&mut self.scrollbar_v, move |mut bar| {
-                    bar.widget.cursor_progress = py;
-                    bar.ctx.request_render();
-                });
+                {
+                    let (sb, mut sb_ctx) = ctx.get_raw_mut(&mut self.scrollbar_h);
+                    sb.cursor_progress = px;
+                    sb_ctx.request_render();
+                }
+                {
+                    let (sb, mut sb_ctx) = ctx.get_raw_mut(&mut self.scrollbar_v);
+                    sb.cursor_progress = py;
+                    sb_ctx.request_render();
+                }
             }
         }
     }
