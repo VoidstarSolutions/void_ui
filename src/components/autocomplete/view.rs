@@ -179,8 +179,11 @@ where
             let text_area_handle = TextAreaHandle::new();
             let suggestions_lower: Vec<String> =
                 self.suggestions.iter().map(|s| s.to_lowercase()).collect();
-            let filtered =
-                Arc::new(compute_filtered(&self.suggestions, &suggestions_lower, &self.contents));
+            let filtered = Arc::new(compute_filtered(
+                &self.suggestions,
+                &suggestions_lower,
+                &self.contents,
+            ));
             let list_view = SuggestionListView {
                 filtered: filtered.clone(),
                 handle: handle.clone(),
@@ -275,22 +278,24 @@ where
         // suggestions or theme change; content-only changes (keystrokes) are
         // already handled by set_contents → mutate_later in the widget layer.
         if let ViewBinding::Portal {
-            portal,
-            key,
-            handle,
-            listbox_handle,
-            text_area_handle,
+            portal: _,
+            key: _,
+            handle: _,
+            listbox_handle: _,
+            text_area_handle: _,
             suggestions_lower,
             filtered,
         } = &mut view_state.binding
         {
             if suggestions_changed {
-                *suggestions_lower =
-                    self.suggestions.iter().map(|s| s.to_lowercase()).collect();
+                *suggestions_lower = self.suggestions.iter().map(|s| s.to_lowercase()).collect();
             }
             if contents_changed || suggestions_changed {
-                *filtered =
-                    Arc::new(compute_filtered(&self.suggestions, suggestions_lower, &self.contents));
+                *filtered = Arc::new(compute_filtered(
+                    &self.suggestions,
+                    suggestions_lower,
+                    &self.contents,
+                ));
             }
         }
         if let ViewBinding::Portal {

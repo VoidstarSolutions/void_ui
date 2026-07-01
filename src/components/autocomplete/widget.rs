@@ -397,7 +397,10 @@ impl LabelList {
     ) -> Self {
         let items: Vec<ArcStr> = items.into_iter().collect();
         let label_texts = items.clone();
-        let labels = items.into_iter().map(|t| Self::make_item(t, theme)).collect();
+        let labels = items
+            .into_iter()
+            .map(|t| Self::make_item(t, theme))
+            .collect();
         Self {
             labels,
             label_texts,
@@ -522,8 +525,11 @@ impl LabelList {
         }
         let theme = this.widget.theme;
         let items: Vec<ArcStr> = items.into_iter().collect();
-        this.widget.label_texts = items.clone();
-        this.widget.labels = items.into_iter().map(|t| Self::make_item(t, &theme)).collect();
+        this.widget.label_texts.clone_from(&items);
+        this.widget.labels = items
+            .into_iter()
+            .map(|t| Self::make_item(t, &theme))
+            .collect();
         this.widget.item_rects.clear();
         this.widget.hover_index = None;
         this.widget.highlighted = None;
@@ -1044,7 +1050,7 @@ fn apply_chrome_theme(sb: &mut WidgetMut<'_, SizedBox>, theme: &Theme) {
 }
 
 /// Canonical close-portal sentinel. Every "hide the portal slot" path uses
-/// this so the PortalVisibility fields can't silently diverge across callers.
+/// this so the `PortalVisibility` fields can't silently diverge across callers.
 fn close_portal_slot(scope: &mut WidgetMut<'_, OverlayScope>, key: u64) {
     OverlayScope::set_portal_visible(
         scope,
@@ -1351,7 +1357,11 @@ impl AutocompleteWidget {
             self.suppress_focus_open = false;
             return;
         }
-        self.filtered = compute_filtered(&self.all_suggestions, &self.all_suggestions_lower, &self.contents);
+        self.filtered = compute_filtered(
+            &self.all_suggestions,
+            &self.all_suggestions_lower,
+            &self.contents,
+        );
         if self.filtered.is_empty() {
             return;
         }
@@ -1476,11 +1486,12 @@ impl AutocompleteWidget {
                             ctx.to_window(Point::ZERO),
                             ctx.border_box_size(),
                         );
-                        if let Hosting::Portal { last_anchor_rect_window, .. } =
-                            &mut self.hosting
+                        if let Hosting::Portal {
+                            last_anchor_rect_window,
+                            ..
+                        } = &mut self.hosting
                         {
-                            *last_anchor_rect_window =
-                                if should_open { Some(rect) } else { None };
+                            *last_anchor_rect_window = if should_open { Some(rect) } else { None };
                         }
                         ctx.mutate_later(scope_id, move |mut w| {
                             let mut scope = w.downcast::<OverlayScope>();
@@ -1570,7 +1581,11 @@ impl AutocompleteWidget {
         this.widget.contents.clear();
         this.widget.contents.push_str(contents);
 
-        let filtered = compute_filtered(&this.widget.all_suggestions, &this.widget.all_suggestions_lower, contents);
+        let filtered = compute_filtered(
+            &this.widget.all_suggestions,
+            &this.widget.all_suggestions_lower,
+            contents,
+        );
         let should_open = this.widget.open && !filtered.is_empty();
         let open_changed = this.widget.open != should_open;
         this.widget.filtered.clone_from(&filtered);
@@ -1635,11 +1650,14 @@ impl AutocompleteWidget {
         if this.widget.all_suggestions == suggestions {
             return;
         }
-        this.widget.all_suggestions_lower =
-            suggestions.iter().map(|s| s.to_lowercase()).collect();
+        this.widget.all_suggestions_lower = suggestions.iter().map(|s| s.to_lowercase()).collect();
         this.widget.all_suggestions = suggestions;
 
-        let filtered = compute_filtered(&this.widget.all_suggestions, &this.widget.all_suggestions_lower, &this.widget.contents);
+        let filtered = compute_filtered(
+            &this.widget.all_suggestions,
+            &this.widget.all_suggestions_lower,
+            &this.widget.contents,
+        );
         let should_open = this.widget.open && !filtered.is_empty();
         let open_changed = this.widget.open != should_open;
         this.widget.highlighted = None;
