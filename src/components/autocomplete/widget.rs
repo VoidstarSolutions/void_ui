@@ -1997,18 +1997,23 @@ impl Widget for AutocompleteWidget {
             // outside our subtree. ChildFocusChanged(false) is gated to InTree (see
             // update()), so this is the only close path for keyboard focus-leave here.
             // Don't call set_handled() — let masonry cycle focus backward normally.
+            let Hosting::Portal { scope, key: slot_key, .. } = &mut self.hosting else {
+                return;
+            };
+            // Bail before touching local state if the scope isn't mounted yet:
+            // otherwise we'd report ourselves closed without ever telling the
+            // portal slot to close, leaving them out of sync.
+            let Some(scope_id) = scope.widget_id() else {
+                return;
+            };
+            let slot_key = *slot_key;
             self.open = false;
             self.highlighted = None;
             self.filtered.clear();
-            if let Hosting::Portal { scope, key: slot_key, .. } = &mut self.hosting
-                && let Some(scope_id) = scope.widget_id()
-            {
-                let slot_key = *slot_key;
-                ctx.mutate_later(scope_id, move |mut w| {
-                    let mut scope = w.downcast::<OverlayScope>();
-                    close_portal_slot(&mut scope, slot_key);
-                });
-            }
+            ctx.mutate_later(scope_id, move |mut w| {
+                let mut scope = w.downcast::<OverlayScope>();
+                close_portal_slot(&mut scope, slot_key);
+            });
             ctx.request_paint_only();
             ctx.request_accessibility_update();
         }
