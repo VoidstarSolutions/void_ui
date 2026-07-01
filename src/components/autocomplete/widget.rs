@@ -1841,6 +1841,7 @@ impl AutocompleteWidget {
             }
         }
         this.ctx.request_paint_only();
+        this.ctx.request_accessibility_update();
     }
 
     /// Handle a suggestion selection that arrived from the portal
