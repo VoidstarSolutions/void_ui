@@ -31,7 +31,7 @@ use xilem::{Pod, ViewCtx, WidgetView};
 
 use super::widget::{
     AutocompleteAction, AutocompleteConfig, AutocompleteHandle, AutocompleteWidget,
-    LabelListHandle, SuggestionListView, TextAreaHandle, compute_filtered,
+    LabelListHandle, SuggestionList, SuggestionSelected, TextAreaHandle, compute_filtered,
 };
 use crate::Theme;
 use crate::components::popover::widget::SurfaceStyle;
@@ -111,6 +111,83 @@ impl<F> Autocomplete<F> {
             on_changed: Arc::new(self.on_changed),
             phantom: PhantomData,
         }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SuggestionListView — portal content view
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Xilem view registered with the overlay scope's portal when a scope ancestor
+/// exists. Wraps [`SuggestionList`] and routes [`SuggestionSelected`] actions
+/// back to the owning [`AutocompleteWidget`] via [`AutocompleteHandle`].
+pub(crate) struct SuggestionListView {
+    pub(crate) filtered: Arc<Vec<ArcStr>>,
+    pub(crate) handle: AutocompleteHandle,
+    pub(crate) listbox_handle: LabelListHandle,
+    pub(crate) text_area_handle: TextAreaHandle,
+    pub(crate) theme: Theme,
+}
+
+impl ViewMarker for SuggestionListView {}
+
+impl<State, Action> View<State, Action, ViewCtx> for SuggestionListView
+where
+    State: 'static,
+    Action: 'static,
+{
+    type Element = Pod<SuggestionList>;
+    type ViewState = ();
+
+    fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
+        let widget = SuggestionList::new(
+            (*self.filtered).iter().cloned(),
+            &self.theme,
+            self.listbox_handle.clone(),
+            self.handle.clone(),
+            self.text_area_handle.clone(),
+        );
+        let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
+        (element, ())
+    }
+
+    fn rebuild(
+        &self,
+        prev: &Self,
+        _vs: &mut (),
+        _ctx: &mut ViewCtx,
+        mut element: Mut<'_, Self::Element>,
+        _state: &mut State,
+    ) {
+        if self.theme != prev.theme {
+            SuggestionList::set_theme(&mut element, &self.theme);
+        }
+        if !Arc::ptr_eq(&self.filtered, &prev.filtered) {
+            SuggestionList::set_items(&mut element, (*self.filtered).iter().cloned());
+        }
+    }
+
+    fn teardown(&self, _vs: &mut (), ctx: &mut ViewCtx, element: Mut<'_, Self::Element>) {
+        ctx.teardown_action_source(element);
+    }
+
+    fn message(
+        &self,
+        _vs: &mut (),
+        message: &mut MessageCtx,
+        mut element: Mut<'_, Self::Element>,
+        _state: &mut State,
+    ) -> MessageResult<Action> {
+        if let Some(boxed) = message.take_message::<SuggestionSelected>() {
+            let SuggestionSelected(text) = *boxed;
+            if let Some(ac_id) = self.handle.widget_id() {
+                element.ctx.mutate_later(ac_id, move |mut w| {
+                    let mut ac = w.downcast::<AutocompleteWidget>();
+                    AutocompleteWidget::portal_select(&mut ac, text.to_string());
+                });
+            }
+        }
+        MessageResult::Nop
     }
 }
 

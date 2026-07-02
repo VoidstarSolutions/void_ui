@@ -31,8 +31,6 @@ use masonry::properties::{
     PlaceholderColor, SelectionColor,
 };
 use masonry::widgets::{self, Label, Passthrough, SizedBox, TextAction};
-use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
-use xilem::{Pod, ViewCtx};
 
 use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
@@ -91,8 +89,8 @@ pub(crate) enum AutocompleteAction {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Self-filling handle to an [`AutocompleteWidget`]'s widget id, filled at
-/// `Update::WidgetAdded`. Given to portal-mounted [`SuggestionListView`] so
-/// an item selection can `mutate_later` back into the widget to close the
+/// `Update::WidgetAdded`. Given to portal-mounted [`super::view::SuggestionListView`]
+/// so an item selection can `mutate_later` back into the widget to close the
 /// suggestion list and emit the selected text.
 #[derive(Clone, Default)]
 pub(crate) struct AutocompleteHandle(Arc<OnceLock<WidgetId>>);
@@ -259,11 +257,11 @@ impl Widget for SuggestionList {
         // Re-emit from our own widget id so the xilem driver can route the action.
         //
         // The driver maps widget ids to view paths (registered by `with_action_widget`
-        // in `SuggestionListView::build`). In portal mode, `LabelList` is deep inside
+        // in `view::SuggestionListView::build`). In portal mode, `LabelList` is deep inside
         // a `PortalSlot` subtree that is separate from `AutocompleteWidget`'s subtree,
         // so the action from `LabelList.id` has no registered view path and is dropped
         // with an "unknown widget" error. Re-emitting here promotes the action to
-        // `SuggestionList.id`, which IS registered, so it reaches `SuggestionListView::message`.
+        // `SuggestionList.id`, which IS registered, so it reaches `view::SuggestionListView::message`.
         // In in-tree mode the re-emitted action bubbles to `AutocompleteWidget::on_action`
         // which handles it — so it never reaches the driver at all.
         if let Some(sel) = action.downcast_ref::<SuggestionSelected>() {
@@ -656,15 +654,16 @@ impl Widget for LabelList {
                 self.request_close(ctx);
                 ctx.set_handled();
             }
-            // Tab from the listbox: close and let focus cycle forward naturally.
-            // The listbox lives in the portal, so ChildFocusChanged never reaches
-            // AutocompleteWidget from here; request_close is the only close path.
-            Key::Named(NamedKey::Tab) if !key.modifiers.shift() => {
-                self.request_close(ctx);
-            }
-            // Escape or Shift+Tab: return focus to the text input explicitly.
-            // For Shift+Tab, masonry would otherwise backward-cycle from inside
-            // the portal, skipping the text field entirely.
+            // Escape or Tab (either direction): return focus to the text
+            // input explicitly and close, rather than letting masonry cycle
+            // focus starting from the listbox's actual tree position. The
+            // listbox lives in the portal slot, mounted elsewhere in the
+            // tree, so an unhandled Tab would make masonry search for the
+            // next focusable widget from there instead of from the
+            // autocomplete's page position, landing on the wrong widget in
+            // either direction. This lands back on the text field instead;
+            // a second real Tab/Shift+Tab from there cycles correctly since
+            // the input's tree position does match its page position.
             Key::Named(NamedKey::Escape | NamedKey::Tab) => {
                 self.refocus_input(ctx);
                 self.request_close(ctx);
@@ -906,90 +905,11 @@ impl Widget for SuggestionItem {
         node: &mut Node,
     ) {
         node.set_label(self.text.to_string());
-        if self.selected {
-            node.set_selected(true);
-        }
+        node.set_selected(self.selected);
     }
 
     fn children_ids(&self) -> ChildrenIds {
         ChildrenIds::from_slice(&[self.label.id()])
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SuggestionListView — portal content view
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Xilem view registered with the overlay scope's portal when a scope ancestor
-/// exists. Wraps [`SuggestionList`] and routes [`SuggestionSelected`] actions
-/// back to the owning [`AutocompleteWidget`] via [`AutocompleteHandle`].
-pub(crate) struct SuggestionListView {
-    pub(crate) filtered: Arc<Vec<ArcStr>>,
-    pub(crate) handle: AutocompleteHandle,
-    pub(crate) listbox_handle: LabelListHandle,
-    pub(crate) text_area_handle: TextAreaHandle,
-    pub(crate) theme: Theme,
-}
-
-impl ViewMarker for SuggestionListView {}
-
-impl<State, Action> View<State, Action, ViewCtx> for SuggestionListView
-where
-    State: 'static,
-    Action: 'static,
-{
-    type Element = Pod<SuggestionList>;
-    type ViewState = ();
-
-    fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
-        let widget = SuggestionList::new(
-            (*self.filtered).iter().cloned(),
-            &self.theme,
-            self.listbox_handle.clone(),
-            self.handle.clone(),
-            self.text_area_handle.clone(),
-        );
-        let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
-        (element, ())
-    }
-
-    fn rebuild(
-        &self,
-        prev: &Self,
-        _vs: &mut (),
-        _ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
-        _state: &mut State,
-    ) {
-        if self.theme != prev.theme {
-            SuggestionList::set_theme(&mut element, &self.theme);
-        }
-        if !Arc::ptr_eq(&self.filtered, &prev.filtered) {
-            SuggestionList::set_items(&mut element, (*self.filtered).iter().cloned());
-        }
-    }
-
-    fn teardown(&self, _vs: &mut (), ctx: &mut ViewCtx, element: Mut<'_, Self::Element>) {
-        ctx.teardown_action_source(element);
-    }
-
-    fn message(
-        &self,
-        _vs: &mut (),
-        message: &mut MessageCtx,
-        mut element: Mut<'_, Self::Element>,
-        _state: &mut State,
-    ) -> MessageResult<Action> {
-        if let Some(boxed) = message.take_message::<SuggestionSelected>() {
-            let SuggestionSelected(text) = *boxed;
-            if let Some(ac_id) = self.handle.widget_id() {
-                element.ctx.mutate_later(ac_id, move |mut w| {
-                    let mut ac = w.downcast::<AutocompleteWidget>();
-                    AutocompleteWidget::portal_select(&mut ac, text.to_string());
-                });
-            }
-        }
-        MessageResult::Nop
     }
 }
 
@@ -1164,8 +1084,8 @@ pub(crate) struct AutocompleteConfig {
 ///   [`SuggestionList`] — the original layout.
 /// - **Portal** (scope ancestor present): hosts only the input chrome as a
 ///   direct child; the [`SuggestionList`] is registered with the scope's
-///   [`crate::overlay_portal::OverlayPortal`] via [`SuggestionListView`] and
-///   mounted in the always-on-top portal slot, so it paints above siblings.
+///   [`crate::overlay_portal::OverlayPortal`] via [`super::view::SuggestionListView`]
+///   and mounted in the always-on-top portal slot, so it paints above siblings.
 ///
 /// Intercepts actions from descendants and re-emits
 /// [`AutocompleteAction::TextChanged`] for the view layer.
@@ -1586,6 +1506,7 @@ impl AutocompleteWidget {
                     ));
                     ctx.set_handled();
                     ctx.request_paint_only();
+                    ctx.request_accessibility_update();
                     return;
                 };
                 let key = *key;
@@ -1880,8 +1801,8 @@ impl AutocompleteWidget {
     }
 
     /// Handle a suggestion selection that arrived from the portal
-    /// [`SuggestionListView`] via `mutate_later`. Updates widget state, resets
-    /// the text area, closes the portal slot, and submits
+    /// [`super::view::SuggestionListView`] via `mutate_later`. Updates widget
+    /// state, resets the text area, closes the portal slot, and submits
     /// [`AutocompleteAction::TextChanged`].
     pub(crate) fn portal_select(this: &mut WidgetMut<'_, Self>, text: String) {
         this.widget.contents.clone_from(&text);
@@ -2054,22 +1975,23 @@ impl Widget for AutocompleteWidget {
                         });
                     }
                     Hosting::Portal { scope, key, .. } => {
-                        let Some(scope_id) = scope.widget_id() else {
-                            return;
-                        };
-                        let key = *key;
-                        ctx.mutate_later(scope_id, move |mut w| {
-                            let mut scope = w.downcast::<OverlayScope>();
-                            close_portal_slot(&mut scope, key);
-                        });
+                        if let Some(scope_id) = scope.widget_id() {
+                            let key = *key;
+                            ctx.mutate_later(scope_id, move |mut w| {
+                                let mut scope = w.downcast::<OverlayScope>();
+                                close_portal_slot(&mut scope, key);
+                            });
+                        }
                     }
                 }
                 ctx.request_paint_only();
                 ctx.request_accessibility_update();
             }
-            // In-tree: close when focus truly leaves our subtree (Tab-out,
-            // clicking elsewhere, etc.).  Portal: the slot's own
-            // outside-press dismissal handles this instead.
+            // Close when focus truly leaves our subtree (Tab-out, clicking
+            // elsewhere, a programmatic `set_focus` steal from a modal or
+            // validation error, etc.). Portal mode also gets an
+            // outside-press dismissal from the slot itself, but that only
+            // covers presses — this covers everything else.
             //
             // Skip if a pointer-capture is active — that means the user
             // pressed Down on a list item and the pointer-Up (click-select)
@@ -2077,18 +1999,41 @@ impl Widget for AutocompleteWidget {
             // and prevent the subsequent `SuggestionSelected` action from
             // finding the item, so the text field never auto-fills.
             Update::ChildFocusChanged(false)
-                if self.open
-                    && matches!(self.hosting, Hosting::InTree { .. })
-                    && ctx.pointer_capture_target_id().is_none() =>
+                if self.open && ctx.pointer_capture_target_id().is_none() =>
             {
+                // In portal mode the listbox lives outside our subtree, so
+                // Tab-ing forward into it also fires this event. That's an
+                // internal transition, not a real focus-leave — don't close
+                // for it.
+                let moved_to_own_listbox = matches!(self.hosting, Hosting::Portal { .. })
+                    && match (self.listbox_handle.widget_id(), ctx.focus_target_id()) {
+                        (Some(listbox_id), Some(focus_id)) => listbox_id == focus_id,
+                        _ => false,
+                    };
+                if moved_to_own_listbox {
+                    return;
+                }
                 self.open = false;
                 self.highlighted = None;
                 self.filtered.clear();
-                if let Hosting::InTree { overlay_host } = &mut self.hosting {
-                    ctx.mutate_child_later(overlay_host, |mut w| {
-                        with_suggestion_list(&mut w, |list| SuggestionList::set_items(list, []));
-                        AnchoredOverlay::set_overlay_visible(&mut w, false);
-                    });
+                match &mut self.hosting {
+                    Hosting::InTree { overlay_host } => {
+                        ctx.mutate_child_later(overlay_host, |mut w| {
+                            with_suggestion_list(&mut w, |list| {
+                                SuggestionList::set_items(list, []);
+                            });
+                            AnchoredOverlay::set_overlay_visible(&mut w, false);
+                        });
+                    }
+                    Hosting::Portal { scope, key, .. } => {
+                        if let Some(scope_id) = scope.widget_id() {
+                            let key = *key;
+                            ctx.mutate_later(scope_id, move |mut w| {
+                                let mut scope = w.downcast::<OverlayScope>();
+                                close_portal_slot(&mut scope, key);
+                            });
+                        }
+                    }
                 }
                 ctx.request_paint_only();
                 ctx.request_accessibility_update();
@@ -2133,6 +2078,16 @@ impl Widget for AutocompleteWidget {
 
     /// Keeps compose running every frame while portal-mode is open, so the
     /// list re-anchors regardless of pointer position or which ancestor scrolled.
+    ///
+    /// This is a deliberate busy-poll, not an oversight: masonry's compose
+    /// pass only calls a widget's `compose()` if that widget already
+    /// requested it, and there's no `Update` variant or timer API in the
+    /// pinned masonry version that notifies an arbitrary descendant when an
+    /// unrelated ancestor scrolls. Without that upstream hook, per-frame
+    /// polling while open is the only way to catch "some ancestor scrolled"
+    /// regardless of which one. Revisit this once masonry exposes a
+    /// scroll-changed notification or a timer primitive that isn't tied to
+    /// the display's refresh rate.
     fn on_anim_frame(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, _: u64) {
         if !self.open || !matches!(self.hosting, Hosting::Portal { .. }) {
             return;
