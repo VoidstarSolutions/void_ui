@@ -533,8 +533,8 @@ impl Widget for TabsWidget {
         };
         if let Some(i) = new_selected {
             ctx.set_handled();
-            ctx.request_scroll_to(self.item_rect_or_estimate(i));
             if i != self.selected {
+                ctx.request_scroll_to(self.item_rect_or_estimate(i));
                 ctx.submit_action::<Self::Action>(TabSelected(i));
             }
         }
