@@ -497,8 +497,8 @@ impl LabelList {
             // computing the rect from theme metrics so the scroll request isn't lost.
             let rect = self.item_rects.get(i).copied().unwrap_or_else(|| {
                 let item_h = self.item_height();
-                #[allow(clippy::cast_precision_loss)]
-                let y = LIST_PAD_V + i as f64 * item_h;
+                let i_f64 = f64::from(u32::try_from(i).unwrap_or(u32::MAX));
+                let y = LIST_PAD_V + i_f64 * item_h;
                 Rect::new(0.0, y, 0.0, y + item_h)
             });
             ctx.request_scroll_to(rect);
@@ -597,11 +597,21 @@ impl Widget for LabelList {
             }) => {
                 ctx.capture_pointer();
             }
+            // `is_active()` alone, not `is_hovered()`: masonry clears hovered
+            // status once a captured pointer drags outside this widget's
+            // bounds (is_active stays true throughout the capture). Gating on
+            // is_hovered() would skip this arm entirely for a press-drag-
+            // release-outside gesture — no selection, no set_handled(), and
+            // no close, since the scope's outside-press dismissal only fires
+            // on Down events landing outside, and this gesture's Down was
+            // inside (that's what started the capture). `hit_item` below
+            // already resolves to `None` for an outside release, so dropping
+            // the hover gate doesn't change behavior for a real miss.
             PointerEvent::Up(PointerButtonEvent {
                 button: Some(PointerButton::Primary),
                 state,
                 ..
-            }) if ctx.is_active() && ctx.is_hovered() => {
+            }) if ctx.is_active() => {
                 let local = Self::to_local(ctx, state.logical_point());
                 if let Some(i) = self.hit_item(local)
                     && let Some(text) = self.label_texts.get(i)
@@ -1513,6 +1523,57 @@ impl AutocompleteWidget {
 
 // --- MARK: WIDGETMUT SETTERS
 impl AutocompleteWidget {
+    /// Opens or closes the Portal-mode slot to match `should_open`, called
+    /// after a setter has already determined `open_changed`. Shared by every
+    /// `WidgetMut`-based setter that can flip the dropdown open or closed as
+    /// a side effect of something other than direct user interaction (typing
+    /// and focus events compute this inline instead, since they run from
+    /// `ActionCtx`/`UpdateCtx` rather than a `WidgetMut`).
+    fn sync_portal_visibility(this: &mut WidgetMut<'_, Self>, scope_id: WidgetId, key: u64) {
+        let should_open = this.widget.open;
+        if should_open {
+            let owner_id = this.ctx.widget_id();
+            let rect =
+                Rect::from_origin_size(this.ctx.to_window(Point::ZERO), this.ctx.border_box_size());
+            if let Hosting::Portal {
+                last_anchor_rect_window,
+                ..
+            } = &mut this.widget.hosting
+            {
+                *last_anchor_rect_window = Some(rect);
+            }
+            this.ctx.mutate_later(scope_id, move |mut w| {
+                let mut scope = w.downcast::<OverlayScope>();
+                OverlayScope::set_portal_visible(
+                    &mut scope,
+                    key,
+                    true,
+                    PortalVisibility {
+                        owner: Some(owner_id),
+                        owner_kind: OwnerKind::Autocomplete,
+                        rect,
+                        anchor: PopoverAnchor::BottomStart,
+                        gap: OVERLAY_GAP_PX,
+                    },
+                );
+            });
+            this.ctx.request_compose();
+            this.ctx.request_anim_frame();
+        } else {
+            if let Hosting::Portal {
+                last_anchor_rect_window,
+                ..
+            } = &mut this.widget.hosting
+            {
+                *last_anchor_rect_window = None;
+            }
+            this.ctx.mutate_later(scope_id, move |mut w| {
+                let mut scope = w.downcast::<OverlayScope>();
+                close_portal_slot(&mut scope, key);
+            });
+        }
+    }
+
     /// Update the displayed and filtered text. Called from the view layer on
     /// rebuild when the host's `contents` value changes.
     pub(crate) fn set_contents(this: &mut WidgetMut<'_, Self>, contents: &str) {
@@ -1527,7 +1588,12 @@ impl AutocompleteWidget {
             &this.widget.all_suggestions_lower,
             contents,
         );
-        let should_open = this.widget.open && !filtered.is_empty();
+        // Also open (not just stay open) when the field already has focus:
+        // an external content change (e.g. host-driven autofill or restoring
+        // a draft into a controlled field) can happen while focused, and
+        // should surface matching suggestions the same way handle_text_changed
+        // does for a typed keystroke, rather than only ever narrowing/closing.
+        let should_open = (this.widget.open || this.ctx.has_focus_target()) && !filtered.is_empty();
         let open_changed = this.widget.open != should_open;
         this.widget.filtered.clone_from(&filtered);
         this.widget.open = should_open;
@@ -1575,17 +1641,7 @@ impl AutocompleteWidget {
                         }
                     });
                     if open_changed {
-                        if let Hosting::Portal {
-                            last_anchor_rect_window,
-                            ..
-                        } = &mut this.widget.hosting
-                        {
-                            *last_anchor_rect_window = None;
-                        }
-                        this.ctx.mutate_later(scope_id, move |mut w| {
-                            let mut scope = w.downcast::<OverlayScope>();
-                            close_portal_slot(&mut scope, key);
-                        });
+                        Self::sync_portal_visibility(this, scope_id, key);
                     }
                 }
             }
@@ -1610,7 +1666,13 @@ impl AutocompleteWidget {
             &this.widget.all_suggestions_lower,
             &this.widget.contents,
         );
-        let should_open = this.widget.open && !filtered.is_empty();
+        // Also open (not just stay open) when the field already has focus:
+        // suggestions can arrive asynchronously (e.g. a debounced/network
+        // fetch) after the user has already focused an initially-empty
+        // field, in which case open_on_focus already ran and bailed out
+        // with nothing to show. Without this, the dropdown would never
+        // appear until the user types or blurs and refocuses.
+        let should_open = (this.widget.open || this.ctx.has_focus_target()) && !filtered.is_empty();
         let open_changed = this.widget.open != should_open;
         this.widget.highlighted = None;
         this.widget.filtered.clone_from(&filtered);
@@ -1640,17 +1702,7 @@ impl AutocompleteWidget {
                         }
                     });
                     if open_changed {
-                        if let Hosting::Portal {
-                            last_anchor_rect_window,
-                            ..
-                        } = &mut this.widget.hosting
-                        {
-                            *last_anchor_rect_window = None;
-                        }
-                        this.ctx.mutate_later(scope_id, move |mut w| {
-                            let mut scope = w.downcast::<OverlayScope>();
-                            close_portal_slot(&mut scope, key);
-                        });
+                        Self::sync_portal_visibility(this, scope_id, key);
                     }
                 }
             }
@@ -1941,33 +1993,16 @@ impl Widget for AutocompleteWidget {
         {
             ctx.set_focus(listbox_id);
             ctx.set_handled();
-        } else if key.key == Key::Named(NamedKey::Tab) && key.modifiers.shift() {
-            // Shift+Tab in portal mode: focus is leaving the text field toward a widget
-            // outside our subtree. ChildFocusChanged(false) is gated to InTree (see
-            // update()), so this is the only close path for keyboard focus-leave here.
-            // In-tree mode has no portal slot to close, so the let-else below is the
-            // real (reachable) gate for that case.
-            // Don't call set_handled() — let masonry cycle focus backward normally.
-            let Hosting::Portal { scope, key: slot_key, .. } = &mut self.hosting else {
-                return;
-            };
-            // Bail before touching local state if the scope isn't mounted yet:
-            // otherwise we'd report ourselves closed without ever telling the
-            // portal slot to close, leaving them out of sync.
-            let Some(scope_id) = scope.widget_id() else {
-                return;
-            };
-            let slot_key = *slot_key;
-            self.open = false;
-            self.highlighted = None;
-            self.filtered.clear();
-            ctx.mutate_later(scope_id, move |mut w| {
-                let mut scope = w.downcast::<OverlayScope>();
-                close_portal_slot(&mut scope, slot_key);
-            });
-            ctx.request_paint_only();
-            ctx.request_accessibility_update();
         }
+        // Shift+Tab: deliberately left unhandled (no set_handled()) here in
+        // both hosting modes, so masonry cycles focus backward from the
+        // input's real page position instead of from wherever this widget
+        // might redirect it. The dropdown itself closes via the unified
+        // `ChildFocusChanged(false)` arm in `update()`, which covers both
+        // modes. This function used to also close explicitly for Portal
+        // mode, back when `ChildFocusChanged(false)` was InTree-only — that
+        // became a redundant second close once `update()` was broadened to
+        // cover Portal too, so it was removed.
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
@@ -2388,6 +2423,110 @@ mod accessibility_tests {
             node.data().is_expanded(),
             Some(false),
             "closed after selection"
+        );
+    }
+
+    /// Suggestions delivered asynchronously (e.g. a debounced fetch) after
+    /// the field already has focus must open the dropdown themselves —
+    /// `open_on_focus` already ran and bailed out when the field was
+    /// focused with no suggestions yet, so nothing else would open it.
+    #[test]
+    fn async_suggestions_open_dropdown_while_already_focused() {
+        let theme = Theme::default();
+        let widget =
+            AutocompleteWidget::new("", ArcStr::from("Pick a fruit"), Vec::new(), false, &theme);
+        let mut harness = TestHarness::create_with_size(
+            masonry::theme::default_property_set(),
+            NewWidget::new(widget),
+            (300, 300),
+        );
+        let autocomplete_id = harness.root_id();
+        let text_area_id = find_text_area(harness.root_widget().as_dyn())
+            .expect("autocomplete should host a TextArea")
+            .id();
+
+        harness.focus_on(Some(text_area_id));
+        harness.render();
+        assert_eq!(
+            harness
+                .access_node(autocomplete_id)
+                .expect("combobox node")
+                .data()
+                .is_expanded(),
+            Some(false),
+            "no suggestions yet, so focusing shouldn't open anything"
+        );
+
+        let suggestions: Vec<ArcStr> = ["Apple", "Banana", "Cherry"]
+            .into_iter()
+            .map(ArcStr::from)
+            .collect();
+        harness.edit_root_widget(|mut root| {
+            AutocompleteWidget::set_all_suggestions(&mut root, suggestions);
+        });
+
+        harness.render();
+        assert_eq!(
+            harness
+                .access_node(autocomplete_id)
+                .expect("combobox node")
+                .data()
+                .is_expanded(),
+            Some(true),
+            "suggestions arriving while the field is focused should open the dropdown"
+        );
+    }
+
+    /// An external content change (e.g. host-driven autofill into a
+    /// controlled field) while the field already has focus must open the
+    /// dropdown itself if the new text matches suggestions — not just narrow
+    /// or close an already-open one.
+    #[test]
+    fn set_contents_opens_dropdown_while_already_focused() {
+        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit();
+
+        harness.focus_on(Some(text_area_id));
+        harness.render();
+        assert_eq!(
+            harness
+                .access_node(autocomplete_id)
+                .expect("combobox node")
+                .data()
+                .is_expanded(),
+            Some(true),
+            "focusing an empty field with suggestions available should open it"
+        );
+
+        // Type nothing further, but simulate an external reset to no match,
+        // closing the dropdown while focus remains on the field.
+        harness.edit_root_widget(|mut root| {
+            AutocompleteWidget::set_contents(&mut root, "zzz");
+        });
+        harness.render();
+        assert_eq!(
+            harness
+                .access_node(autocomplete_id)
+                .expect("combobox node")
+                .data()
+                .is_expanded(),
+            Some(false),
+            "content change to a non-matching value should close the dropdown"
+        );
+
+        // Now an external content change to a matching value, still focused,
+        // must reopen it.
+        harness.edit_root_widget(|mut root| {
+            AutocompleteWidget::set_contents(&mut root, "Ap");
+        });
+        harness.render();
+        assert_eq!(
+            harness
+                .access_node(autocomplete_id)
+                .expect("combobox node")
+                .data()
+                .is_expanded(),
+            Some(true),
+            "external content change to a matching value while focused should reopen the dropdown"
         );
     }
 
