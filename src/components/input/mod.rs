@@ -22,3 +22,4 @@ pub use currency::{CurrencyFormat, CurrencyInput, currency_input, format_currenc
 pub use masked::{MaskedInput, format_mask, masked_input};
 pub use number::{NumberInput, number_input};
 pub use view::{Input, input};
+pub(crate) use view::{stripped_text_input_props, text_area_props};

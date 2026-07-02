@@ -200,6 +200,7 @@ pub struct ThemedSidebarNav {
 impl ThemedSidebarNav {
     /// Item rect for `index`, falling back to a theme-metric estimate when
     /// `placed` is empty (cleared by `set_items`, not yet rebuilt by layout).
+    /// Items are vertical; only `y` is estimated, `x` always spans from 0.
     fn item_rect_or_estimate(&self, index: usize) -> Rect {
         if let Some(&rect) = self.placed.get(index) {
             return rect;

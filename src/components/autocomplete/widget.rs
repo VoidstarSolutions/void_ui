@@ -18,14 +18,12 @@ use masonry::accesskit::{Node, Role};
 use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
     AccessCtx, ActionCtx, ArcStr, ChildrenIds, ComposeCtx, ErasedAction, EventCtx, LayoutCtx,
-    MeasureCtx, NewWidget, NoAction, PaintCtx, PropertiesMut, PropertiesRef, PropertySet,
-    RegisterCtx, StyleProperty, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
-    WidgetPod,
+    MeasureCtx, NewWidget, NoAction, PaintCtx, PropertiesMut, PropertiesRef, RegisterCtx,
+    StyleProperty, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, RoundedRect, Size, Stroke};
 use masonry::layout::{LayoutSize, LenDef, LenReq, Length, SizeDef};
-use masonry::peniko::Color;
 use masonry::properties::{
     Background, BorderColor, BorderWidth, CaretColor, ContentColor, CornerRadius, Padding,
     PlaceholderColor, SelectionColor,
@@ -35,14 +33,13 @@ use masonry::widgets::{self, Label, Passthrough, SizedBox, TextAction};
 use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
 use crate::components::input::widget::{InputCleared, InputFrame};
+use crate::components::input::{stripped_text_input_props, text_area_props};
 use crate::components::popover::PopoverAnchor;
 use crate::components::scroll_container::widget::{ContentClip, ScrollView};
 use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 use crate::overlay_portal::{OwnerKind, PortalSlot, PortalVisibility};
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
-/// Fully transparent fill — strips the `TextInput`'s default masonry chrome.
-const TRANSPARENT: Color = Color::from_rgba8(0, 0, 0, 0);
 /// Vertical padding above/below the suggestion list content.
 const LIST_PAD_V: f64 = 4.0;
 /// Suggestion list chrome corner radius.
@@ -562,12 +559,20 @@ impl Widget for LabelList {
         false
     }
 
-    /// Lets keyboard focus move here via Tab while the dropdown is open (see
-    /// [`AutocompleteWidget::on_text_event`]'s Tab handling) — once focus is
-    /// here, arrow keys navigate without any conflict, since this widget has
-    /// no competing key bindings the way `TextArea` does.
+    /// `false`: this widget is never a target for masonry's *native* Tab/
+    /// Shift+Tab cycling — `accepts_focus` only gates that search
+    /// (`ctx.set_focus`/`request_focus` bypass it entirely, per masonry's
+    /// `is_still_interactive` check). Focus only ever arrives here via the
+    /// explicit `ctx.set_focus(listbox_id)` in
+    /// [`AutocompleteWidget::on_text_event`]'s forward-Tab handling.
+    ///
+    /// Returning `true` here previously let native backward search treat
+    /// this widget as a valid Shift+Tab target when the input (not the
+    /// list) held focus — in-tree, this widget lives in the same subtree as
+    /// the input, so backward cycling from the input could land here
+    /// instead of exiting to the previous page field.
     fn accepts_focus(&self) -> bool {
-        true
+        false
     }
 
     fn on_pointer_event(
@@ -693,7 +698,7 @@ impl Widget for LabelList {
         _props: &PropertiesRef<'_>,
         axis: Axis,
         len_req: LenReq,
-        cross_length: Option<Length>,
+        _cross_length: Option<Length>,
     ) -> Length {
         let item_h = self.item_height();
         let pad_h = self.pad_h();
@@ -704,17 +709,22 @@ impl Widget for LabelList {
                 Length::px(LIST_PAD_V * 2.0 + item_h * n_f64)
             }
             Axis::Horizontal => {
-                let inner_cross =
-                    cross_length.map(|c| Length::px((c.get() - 2.0 * pad_h).max(0.0)));
+                // Each item's height is fixed at `item_h` regardless of any
+                // incoming cross-axis constraint (see the `Axis::Vertical` arm
+                // above, which also ignores inbound constraints and always
+                // reports the intrinsic height) — this must match `layout()`,
+                // which allocates exactly `item_h` per label. `pad_h` is
+                // horizontal padding and has no bearing on this vertical hint.
+                let row_height = Some(Length::px(item_h));
                 let mut max_w = MIN_LIST_WIDTH;
                 for label in &mut self.labels {
                     let w = ctx
                         .compute_length(
                             label,
                             len_req.into(),
-                            LayoutSize::maybe(Axis::Vertical, inner_cross),
+                            LayoutSize::maybe(Axis::Vertical, row_height),
                             Axis::Horizontal,
-                            inner_cross,
+                            row_height,
                         )
                         .get();
                     max_w = max_w.max(w);
@@ -1135,19 +1145,7 @@ impl AutocompleteWidget {
         let text_area = widgets::TextArea::new_editable(contents)
             .with_style(StyleProperty::FontSize(theme.typography.size_body));
 
-        let area_props = {
-            let mut p = PropertySet::new();
-            p.insert(ContentColor::new(theme.palette.text));
-            p.insert(CaretColor {
-                color: theme.palette.teal,
-            });
-            p.insert(SelectionColor {
-                color: theme.palette.teal_soft,
-            });
-            p
-        };
-
-        let text_area_widget = NewWidget::new(text_area).with_props(area_props);
+        let text_area_widget = NewWidget::new(text_area).with_props(text_area_props(theme));
         let text_area_id = text_area_widget.id();
 
         // ── TextInput — stripped chrome ───────────────────────────────────────
@@ -1156,18 +1154,7 @@ impl AutocompleteWidget {
             .with_clip(true);
 
         let mut text_input_widget = NewWidget::new(text_input);
-        text_input_widget
-            .properties
-            .insert(Background::Color(TRANSPARENT));
-        text_input_widget
-            .properties
-            .insert(BorderWidth::all(Length::const_px(0.0)));
-        text_input_widget
-            .properties
-            .insert(Padding::all(Length::const_px(0.0)));
-        text_input_widget
-            .properties
-            .insert(PlaceholderColor::new(theme.palette.text_muted));
+        text_input_widget.properties = stripped_text_input_props(theme);
         text_input_widget.options.disabled = disabled;
 
         // ── InputFrame — adds Esc-to-clear behaviour ──────────────────────────
@@ -1809,11 +1796,31 @@ impl AutocompleteWidget {
         this.widget.filtered.clear();
         this.widget.highlighted = None;
         this.widget.open = false;
-        // Do NOT set suppress_focus_open here. In portal mode, ChildFocusChanged(true)
-        // fires while self.open is still true (portal_select is deferred via mutate_later),
-        // so open_on_focus is never called and the flag would never be consumed — leaving it
-        // stuck and silently preventing the dropdown from opening on the next focus event.
-        // The self.open == true guard already prevents the reopen without the flag.
+        // Do NOT set suppress_focus_open here. This function only runs once masonry
+        // flushes the mutate_later queued by SuggestionListView::message, and that
+        // flush happens strictly *after* the focus pass that fires ChildFocusChanged
+        // on this widget for the refocus_input() call in LabelList's Enter handler:
+        //
+        //   RenderRoot::handle_text_event (masonry_core/src/app/render_root.rs):
+        //     run_on_text_event_pass   — LabelList::on_text_event runs here,
+        //                                 calling ctx.set_focus(text_area_id)
+        //     run_update_focus_pass    — ChildFocusChanged(true) fires HERE,
+        //                                 with self.open still true
+        //     run_rewrite_passes()     — run_mutate_pass (first in the loop) is
+        //                                 what actually calls portal_select, i.e. HERE
+        //
+        // So ChildFocusChanged(true) always sees self.open == true and never calls
+        // open_on_focus — the flag would never be consumed, leaving it stuck and
+        // silently preventing the dropdown from opening on a later, real focus event.
+        // The self.open == true guard on ChildFocusChanged(true) already prevents the
+        // reopen without the flag, given this ordering.
+        //
+        // This ordering is a real masonry guarantee (RenderRoot::handle_text_event's
+        // fixed pass sequence), not incidental — but void_ui tracks masonry's `main`
+        // branch (see workspace Cargo.toml), so it could shift on a future upstream
+        // change without a compile break. If `enter_in_listbox_selects_closes_and_
+        // returns_focus_to_input` starts failing with the dropdown reopening after
+        // Enter-selection, re-check this ordering first.
 
         let text_for_area = text.clone();
 
@@ -1862,14 +1869,22 @@ impl Widget for AutocompleteWidget {
                 TextAction::Changed(text) => {
                     self.handle_text_changed(ctx, text);
                 }
-                // Enter selects the highlighted suggestion when the list is open;
-                // otherwise it is left unhandled (bubbles for form submission).
+                // Enter selects the highlighted suggestion when the list is
+                // open; it's left unhandled (bubbles for form submission)
+                // only when the list is closed. An open-but-nothing-
+                // highlighted Enter must still be consumed here — otherwise
+                // it silently bubbles to an ancestor form's submit handler
+                // while the dropdown is visibly showing suggestions the user
+                // hasn't acted on.
                 TextAction::Entered(_) => {
-                    if self.open
-                        && let Some(i) = self.highlighted
-                        && let Some(selected) = self.filtered.get(i).cloned()
-                    {
-                        self.select_suggestion(ctx, selected.to_string());
+                    if self.open {
+                        if let Some(i) = self.highlighted
+                            && let Some(selected) = self.filtered.get(i).cloned()
+                        {
+                            self.select_suggestion(ctx, selected.to_string());
+                        } else {
+                            ctx.set_handled();
+                        }
                     }
                 }
             }
