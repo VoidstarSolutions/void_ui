@@ -1386,6 +1386,15 @@ impl AutocompleteWidget {
         if self.filtered.is_empty() {
             return;
         }
+        // Bail before flipping `open` if the portal scope isn't mounted yet:
+        // otherwise we'd get stuck open with nothing visible and no AT update,
+        // and the `!self.open` guard on ChildFocusChanged would permanently
+        // block future opens.
+        if let Hosting::Portal { scope, .. } = &self.hosting
+            && scope.widget_id().is_none()
+        {
+            return;
+        }
         self.open = true;
         self.highlighted = None;
         match &mut self.hosting {
@@ -1397,9 +1406,7 @@ impl AutocompleteWidget {
                 });
             }
             Hosting::Portal { scope, key, .. } => {
-                let Some(scope_id) = scope.widget_id() else {
-                    return;
-                };
+                let scope_id = scope.widget_id().expect("checked above");
                 let key = *key;
                 let owner_id = ctx.widget_id();
                 let rect =
@@ -1675,6 +1682,10 @@ impl AutocompleteWidget {
                 }
             }
         }
+
+        if open_changed {
+            this.ctx.request_accessibility_update();
+        }
     }
 
     /// Replace the full suggestion list. Filtered suggestions are recomputed
@@ -1736,6 +1747,10 @@ impl AutocompleteWidget {
                 }
             }
         }
+
+        if open_changed {
+            this.ctx.request_accessibility_update();
+        }
     }
 
     /// Update the placeholder text shown while the field is empty.
@@ -1781,6 +1796,7 @@ impl AutocompleteWidget {
                     }
                 }
             }
+            this.ctx.request_accessibility_update();
         }
     }
 
@@ -1989,13 +2005,12 @@ impl Widget for AutocompleteWidget {
         {
             ctx.set_focus(listbox_id);
             ctx.set_handled();
-        } else if key.key == Key::Named(NamedKey::Tab)
-            && key.modifiers.shift()
-            && matches!(self.hosting, Hosting::Portal { .. })
-        {
+        } else if key.key == Key::Named(NamedKey::Tab) && key.modifiers.shift() {
             // Shift+Tab in portal mode: focus is leaving the text field toward a widget
             // outside our subtree. ChildFocusChanged(false) is gated to InTree (see
             // update()), so this is the only close path for keyboard focus-leave here.
+            // In-tree mode has no portal slot to close, so the let-else below is the
+            // real (reachable) gate for that case.
             // Don't call set_handled() — let masonry cycle focus backward normally.
             let Hosting::Portal { scope, key: slot_key, .. } = &mut self.hosting else {
                 return;
