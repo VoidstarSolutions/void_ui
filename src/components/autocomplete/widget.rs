@@ -2048,19 +2048,34 @@ impl Widget for AutocompleteWidget {
             // hasn't fired yet.  Closing here would clear `self.filtered`
             // and prevent the subsequent `SuggestionSelected` action from
             // finding the item, so the text field never auto-fills.
-            Update::ChildFocusChanged(false)
-                if self.open && ctx.pointer_capture_target_id().is_none() =>
-            {
+            Update::ChildFocusChanged(false) => {
                 // In portal mode the listbox lives outside our subtree, so
                 // Tab-ing forward into it also fires this event. That's an
-                // internal transition, not a real focus-leave — don't close
-                // for it.
+                // internal transition, not a real focus-leave — don't treat
+                // it as a blur at all (not even for the suppress_focus_open
+                // reset below).
                 let moved_to_own_listbox = matches!(self.hosting, Hosting::Portal { .. })
                     && match (self.listbox_handle.widget_id(), ctx.focus_target_id()) {
                         (Some(listbox_id), Some(focus_id)) => listbox_id == focus_id,
                         _ => false,
                     };
                 if moved_to_own_listbox {
+                    return;
+                }
+                // select_suggestion sets this to suppress the reopen that
+                // would otherwise follow its own refocus_input() call, but
+                // masonry's pass ordering means the corresponding
+                // ChildFocusChanged(true) doesn't reliably arrive while
+                // self.open is still true to be ignored naturally — so the
+                // flag can end up set with nothing left to consume it,
+                // silently blocking every future open. Any real blur means
+                // that grace period is over one way or another (either it
+                // did its job, or the moment it was meant for already
+                // passed), so clear it here unconditionally: a future
+                // ChildFocusChanged(true) can only happen after a preceding
+                // blur like this one.
+                self.suppress_focus_open = false;
+                if !(self.open && ctx.pointer_capture_target_id().is_none()) {
                     return;
                 }
                 self.open = false;
@@ -2516,6 +2531,79 @@ mod accessibility_tests {
             node.data().is_expanded(),
             Some(false),
             "closed after selection"
+        );
+    }
+
+    /// After an in-tree Enter-selection, blurring and re-focusing the field
+    /// must reopen the dropdown. `select_suggestion` sets
+    /// `suppress_focus_open` to swallow the reopen that would otherwise
+    /// follow its own `refocus_input()` call, but masonry's pass ordering
+    /// for `handle_text_event` resolves the corresponding
+    /// `ChildFocusChanged(true)` *before* `select_suggestion` itself runs
+    /// (actions are processed later, in `run_rewrite_passes`) — so that
+    /// event sees `self.open` still `true` and never consumes the flag,
+    /// leaving it stuck and silently blocking every future open. See the
+    /// unconditional reset in `update()`'s `ChildFocusChanged(false)` arm.
+    #[test]
+    fn reopens_after_selection_then_blur_and_refocus() {
+        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit();
+
+        harness.focus_on(Some(text_area_id));
+        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
+        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowDown)));
+        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Enter)));
+
+        harness.focus_on(None);
+        harness.focus_on(Some(text_area_id));
+        harness.render();
+
+        assert_eq!(
+            harness
+                .access_node(autocomplete_id)
+                .expect("combobox node")
+                .data()
+                .is_expanded(),
+            Some(true),
+            "re-focusing after a selection should reopen the dropdown, not leave it \
+             permanently stuck closed"
+        );
+    }
+
+    /// Same leak, via a click-based selection instead of Enter — click and
+    /// keyboard selection go through different masonry pass orderings
+    /// (`handle_pointer_event` vs `handle_text_event`), so both paths need
+    /// their own coverage.
+    #[test]
+    fn reopens_after_click_selection_then_blur_and_refocus() {
+        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit();
+
+        harness.focus_on(Some(text_area_id));
+        harness.render();
+
+        let mut first_item_id = None;
+        harness.inspect_widgets(|w| {
+            if first_item_id.is_none() && w.accessibility_role() == Role::ListBoxOption {
+                first_item_id = Some(w.id());
+            }
+        });
+        let item_id = first_item_id.expect("dropdown should have rendered list items");
+
+        harness.mouse_move_to_unchecked(item_id);
+        harness.mouse_button_press(Some(PointerButton::Primary));
+        harness.mouse_button_release(Some(PointerButton::Primary));
+
+        harness.focus_on(None);
+        harness.focus_on(Some(text_area_id));
+        harness.render();
+
+        assert_eq!(
+            harness
+                .access_node(autocomplete_id)
+                .expect("combobox node")
+                .data()
+                .is_expanded(),
+            Some(true),
+            "re-focusing after a click selection should reopen the dropdown"
         );
     }
 
