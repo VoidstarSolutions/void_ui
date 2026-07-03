@@ -993,6 +993,10 @@ fn apply_chrome_theme(sb: &mut WidgetMut<'_, SizedBox>, theme: &Theme) {
     sb.insert_prop(Background::Color(theme.palette.surface));
     sb.insert_prop(BorderColor::new(theme.palette.border));
     sb.insert_prop(CornerRadius::all(Length::px(f64::from(theme.radius.small))));
+    sb.insert_prop(Padding::from_vh(
+        Length::px(f64::from(theme.density.button_pad_v)),
+        Length::px(f64::from(theme.density.button_pad_h)),
+    ));
     with_text_input_in_chrome(sb, |ti| {
         ti.insert_prop(PlaceholderColor::new(theme.palette.text_muted));
         let mut ta = widgets::TextInput::text_mut(ti);
