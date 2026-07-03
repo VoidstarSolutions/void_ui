@@ -2234,6 +2234,14 @@ impl Widget for AutocompleteWidget {
         // explicit `false` to announce "collapsed", not just the property's
         // absence.
         node.set_expanded(self.open);
+        // Gated on `self.open`, not just presence of the handle: in-tree,
+        // `AnchoredOverlay::set_overlay_visible(false)` stashes the overlay
+        // (`ctx.set_stashed`), and stashed widgets are excluded from the
+        // accessibility tree entirely. Pointing aria-controls at a widget
+        // with no corresponding a11y node is a dangling reference —
+        // `accesskit_consumer::Node::controls()` unconditionally `.unwrap()`s
+        // the resolved node per id, so this would crash any AT consumer that
+        // reads it while collapsed, not just render an inaccurate attribute.
         if self.open
             && let Some(listbox_id) = self.listbox_handle.widget_id()
         {
@@ -2460,6 +2468,16 @@ mod accessibility_tests {
                 node.data().is_expanded(),
                 Some(false),
                 "closed before focus"
+            );
+            // aria-controls is deliberately absent here: the listbox is
+            // stashed while collapsed (excluded from the a11y tree), so
+            // pointing aria-controls at it would be a dangling reference —
+            // see the comment on the `push_controlled` call in
+            // `AutocompleteWidget::accessibility`.
+            assert_eq!(
+                node.controls().count(),
+                0,
+                "no aria-controls while the listbox is stashed/collapsed"
             );
         }
 
