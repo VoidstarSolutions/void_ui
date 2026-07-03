@@ -559,20 +559,23 @@ impl Widget for LabelList {
         false
     }
 
-    /// `false`: this widget is never a target for masonry's *native* Tab/
-    /// Shift+Tab cycling — `accepts_focus` only gates that search
-    /// (`ctx.set_focus`/`request_focus` bypass it entirely, per masonry's
-    /// `is_still_interactive` check). Focus only ever arrives here via the
-    /// explicit `ctx.set_focus(listbox_id)` in
-    /// [`AutocompleteWidget::on_text_event`]'s forward-Tab handling.
+    /// Must be `true`, not just for `ctx.set_focus(listbox_id)` (forward-Tab
+    /// handling in [`AutocompleteWidget::on_text_event`]) — masonry's
+    /// accessibility pass only adds `accesskit::Action::Focus` to a widget's
+    /// a11y node when `accepts_focus()` is true, so screen readers/AT tools
+    /// that focus elements via the accessibility action API (rather than
+    /// raw key events) need this to reach the listbox at all.
     ///
-    /// Returning `true` here previously let native backward search treat
-    /// this widget as a valid Shift+Tab target when the input (not the
-    /// list) held focus — in-tree, this widget lives in the same subtree as
-    /// the input, so backward cycling from the input could land here
-    /// instead of exiting to the previous page field.
+    /// This does mean native backward-Tab search can treat this widget as a
+    /// valid Shift+Tab target when the input (not the list) holds focus —
+    /// in-tree, this widget lives in the same subtree as the input, so
+    /// backward cycling from the input could land here instead of exiting
+    /// to the previous page field. `on_text_event`'s explicit Shift+Tab
+    /// interception (for both hosting modes) exists specifically to
+    /// preempt that native search rather than relying on `accepts_focus`
+    /// to keep this widget out of it.
     fn accepts_focus(&self) -> bool {
-        false
+        true
     }
 
     fn on_pointer_event(
@@ -1133,6 +1136,17 @@ pub(crate) struct AutocompleteWidget {
     /// the list. Set by [`Self::select_suggestion`] / [`Self::portal_select`]
     /// and cleared by the first [`Self::open_on_focus`] that sees it.
     suppress_focus_open: bool,
+    /// Set the moment `on_text_event`'s forward-Tab handler calls
+    /// `ctx.set_focus(listbox_id)`, consumed by the very next
+    /// `ChildFocusChanged(false)`. Portal mode's listbox lives outside our
+    /// subtree, so this transfer fires that event on us — we can't tell it
+    /// apart from a real blur by comparing `ctx.focus_target_id()` against
+    /// the listbox id, because masonry updates `global_state.focused_widget`
+    /// *after* dispatching `ChildFocusChanged`, so that accessor still
+    /// reflects the *previous* focus target at the point the handler runs.
+    /// This flag sidesteps that entirely: we already know, synchronously,
+    /// that we just initiated this exact transfer ourselves.
+    focus_moving_to_listbox: bool,
     theme: Theme,
     /// Resolves to the listbox's widget id once mounted, for `aria-controls`
     /// and for Tab-to-navigate (see [`Self::on_text_event`]).
@@ -1238,6 +1252,7 @@ impl AutocompleteWidget {
             filtered,
             open: false,
             suppress_focus_open: false,
+            focus_moving_to_listbox: false,
             theme: *theme,
             listbox_handle,
             handle,
@@ -1281,6 +1296,7 @@ impl AutocompleteWidget {
             filtered,
             open: false,
             suppress_focus_open: false,
+            focus_moving_to_listbox: false,
             theme,
             listbox_handle,
             handle,
@@ -1977,18 +1993,54 @@ impl Widget for AutocompleteWidget {
             && !key.modifiers.shift()
             && let Some(listbox_id) = self.listbox_handle.widget_id()
         {
+            // Only Portal mode's ChildFocusChanged(false) needs (and gets)
+            // this flag consumed: in-tree, the listbox is a descendant of
+            // this widget just like the input is, so has_focus_target never
+            // toggles for this transition and ChildFocusChanged never fires
+            // at all — setting the flag unconditionally would leak it
+            // forever after the first in-tree Tab-into-listbox, silently
+            // disabling every future real close-on-blur.
+            if matches!(self.hosting, Hosting::Portal { .. }) {
+                self.focus_moving_to_listbox = true;
+            }
             ctx.set_focus(listbox_id);
             ctx.set_handled();
+        } else if key.key == Key::Named(NamedKey::Tab) && key.modifiers.shift() {
+            // Explicitly consumed (set_handled), not left for masonry's
+            // native backward search: `LabelList::accepts_focus()` must
+            // return `true` (accesskit only exposes `Action::Focus` — and so
+            // AT-driven Tab navigation — to widgets that do), so native
+            // search can and does treat the listbox as a valid Shift+Tab
+            // target when the input holds focus, since in-tree it lives in
+            // the same subtree as the input. Rather than fight that search,
+            // close the dropdown here and consume the keypress; a second
+            // real Shift+Tab, with the listbox no longer relevant, then
+            // cycles backward correctly on its own.
+            self.open = false;
+            self.filtered.clear();
+            match &mut self.hosting {
+                Hosting::InTree { overlay_host } => {
+                    ctx.mutate_child_later(overlay_host, |mut w| {
+                        with_suggestion_list(&mut w, |list| {
+                            SuggestionList::set_items(list, []);
+                        });
+                        AnchoredOverlay::set_overlay_visible(&mut w, false);
+                    });
+                }
+                Hosting::Portal { scope, key, .. } => {
+                    if let Some(scope_id) = scope.widget_id() {
+                        let key = *key;
+                        ctx.mutate_later(scope_id, move |mut w| {
+                            let mut scope = w.downcast::<OverlayScope>();
+                            close_portal_slot(&mut scope, key);
+                        });
+                    }
+                }
+            }
+            ctx.request_paint_only();
+            ctx.request_accessibility_update();
+            ctx.set_handled();
         }
-        // Shift+Tab: deliberately left unhandled (no set_handled()) here in
-        // both hosting modes, so masonry cycles focus backward from the
-        // input's real page position instead of from wherever this widget
-        // might redirect it. The dropdown itself closes via the unified
-        // `ChildFocusChanged(false)` arm in `update()`, which covers both
-        // modes. This function used to also close explicitly for Portal
-        // mode, back when `ChildFocusChanged(false)` was InTree-only — that
-        // became a redundant second close once `update()` was broadened to
-        // cover Portal too, so it was removed.
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
@@ -2038,13 +2090,15 @@ impl Widget for AutocompleteWidget {
                 // Tab-ing forward into it also fires this event. That's an
                 // internal transition, not a real focus-leave — don't treat
                 // it as a blur at all (not even for the suppress_focus_open
-                // reset below).
-                let moved_to_own_listbox = matches!(self.hosting, Hosting::Portal { .. })
-                    && match (self.listbox_handle.widget_id(), ctx.focus_target_id()) {
-                        (Some(listbox_id), Some(focus_id)) => listbox_id == focus_id,
-                        _ => false,
-                    };
-                if moved_to_own_listbox {
+                // reset below). Consume the flag `on_text_event` set right
+                // before calling `ctx.set_focus(listbox_id)` — we can't
+                // instead compare `ctx.focus_target_id()` against the
+                // listbox id here, because masonry updates
+                // `global_state.focused_widget` only *after* dispatching
+                // this event, so that accessor would still read the
+                // *previous* target and never match.
+                if self.focus_moving_to_listbox {
+                    self.focus_moving_to_listbox = false;
                     return;
                 }
                 // select_suggestion sets this to suppress the reopen that
@@ -2290,12 +2344,13 @@ mod scroll_tests {
 
 #[cfg(test)]
 mod accessibility_tests {
-    use masonry::core::keyboard::{Key, NamedKey};
+    use masonry::core::keyboard::{Code, Key, KeyboardEvent, Modifiers, NamedKey};
     use masonry::core::{NewWidget, PointerButton, TextEvent, WidgetRef};
     use masonry::testing::TestHarness;
     use masonry::widgets::TextArea;
 
     use super::*;
+    use crate::overlay_portal::PortalPlacement;
 
     fn find_text_area(widget: WidgetRef<'_, dyn Widget>) -> Option<WidgetRef<'_, TextArea<true>>> {
         if let Some(area) = widget.downcast::<TextArea<true>>() {
@@ -2331,6 +2386,64 @@ mod accessibility_tests {
         );
 
         let autocomplete_id = harness.root_id();
+        let text_area_id = find_text_area(harness.root_widget().as_dyn())
+            .expect("autocomplete should host a TextArea")
+            .id();
+        (harness, autocomplete_id, text_area_id)
+    }
+
+    /// Builds a portal-mode autocomplete with 3 fixed suggestions, wired
+    /// into a real `OverlayScope` the way the view layer assembles it
+    /// (mirrors `popover::widget::tests::portal_scope_with_host`), and
+    /// locates its combobox/text-area ids.
+    fn harness_with_fruit_portal() -> (TestHarness<OverlayScope>, WidgetId, WidgetId) {
+        let theme = Theme::default();
+        let suggestions: Vec<ArcStr> = ["Apple", "Banana", "Cherry"]
+            .into_iter()
+            .map(ArcStr::from)
+            .collect();
+        let scope_handle = OverlayScopeHandle::new();
+        let handle = AutocompleteHandle::new();
+        let listbox_handle = LabelListHandle::new();
+        let text_area_handle = TextAreaHandle::new();
+        let key = 1;
+
+        let autocomplete = AutocompleteWidget::new_portal(
+            AutocompleteConfig {
+                contents: String::new(),
+                placeholder: ArcStr::from("Pick a fruit"),
+                all_suggestions: suggestions,
+                disabled: false,
+                theme,
+            },
+            scope_handle.clone(),
+            key,
+            handle.clone(),
+            listbox_handle.clone(),
+            &text_area_handle,
+        );
+        let suggestion_list = SuggestionList::new([], &theme, listbox_handle, handle, text_area_handle);
+        // Matches what the view layer produces: `PortalContentView` is typed
+        // to a `Pod<Passthrough>` element, and the widget-side mutate_later
+        // closures (open_on_focus, handle_text_changed, ...) all navigate
+        // `PortalSlot::child_mut` -> downcast::<Passthrough> ->
+        // Passthrough::child_mut -> downcast::<SuggestionList>.
+        let passthrough = Passthrough::new(NewWidget::new(suggestion_list).erased());
+
+        let scope = OverlayScope::new(
+            scope_handle,
+            NewWidget::new(autocomplete).erased(),
+            vec![(key, NewWidget::new(passthrough).erased(), PortalPlacement::BareTrigger)],
+        );
+        let harness = TestHarness::create_with_size(
+            masonry::theme::default_property_set(),
+            NewWidget::new(scope),
+            (300, 300),
+        );
+
+        let autocomplete_id = find_autocomplete(harness.root_widget().as_dyn())
+            .expect("tree should contain the portal-mode autocomplete")
+            .id();
         let text_area_id = find_text_area(harness.root_widget().as_dyn())
             .expect("autocomplete should host a TextArea")
             .id();
@@ -2478,6 +2591,18 @@ mod accessibility_tests {
                 controlled[0].active_descendant().is_none(),
                 "no keyboard highlight yet"
             );
+            // Regression coverage: LabelList::accepts_focus() must stay
+            // `true` (a raw-keyboard-only test wouldn't catch a regression
+            // here — masonry's accessibility pass only grants
+            // accesskit::Action::Focus, which AT tools use to move focus,
+            // to widgets that accept focus).
+            assert!(
+                controlled[0]
+                    .data()
+                    .supports_action(masonry::accesskit::Action::Focus),
+                "the listbox must be focusable via the accessibility action API, \
+                 not just raw keyboard Tab, for AT-driven navigation to reach it"
+            );
         }
 
         // Tab moves real focus into the listbox (not the next form field).
@@ -2515,6 +2640,102 @@ mod accessibility_tests {
             let active = listbox.active_descendant().expect("active descendant set");
             assert_eq!(active.label().as_deref(), Some("Banana"));
         }
+    }
+
+    /// Shift+Tab pressed from the text input (dropdown open, never having
+    /// Tab'd into the listbox) must not land real focus on the listbox: with
+    /// `LabelList::accepts_focus()` correctly `true` (required for AT
+    /// focusability, see the previous test), masonry's native backward
+    /// search would otherwise treat the in-tree listbox as a valid target
+    /// since it shares the input's subtree. `on_text_event`'s explicit
+    /// Shift+Tab interception closes the dropdown and consumes the keypress
+    /// instead, so focus stays on the input rather than jumping into
+    /// (now-closing) list content.
+    #[test]
+    fn shift_tab_from_input_closes_dropdown_instead_of_focusing_listbox() {
+        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit();
+
+        harness.focus_on(Some(text_area_id));
+        harness.render();
+        assert_eq!(
+            harness
+                .access_node(autocomplete_id)
+                .expect("combobox node")
+                .data()
+                .is_expanded(),
+            Some(true)
+        );
+
+        let shift_tab = TextEvent::Keyboard(KeyboardEvent {
+            key: Key::Named(NamedKey::Tab),
+            modifiers: Modifiers::SHIFT,
+            ..KeyboardEvent::key_down(Key::Named(NamedKey::Tab), Code::Unidentified)
+        });
+        harness.process_text_event(shift_tab);
+        harness.render();
+
+        assert_eq!(
+            harness.focused_widget_id(),
+            Some(text_area_id),
+            "Shift+Tab from the input should leave focus on the input, not jump \
+             into the listbox"
+        );
+        assert_eq!(
+            harness
+                .access_node(autocomplete_id)
+                .expect("combobox node")
+                .data()
+                .is_expanded(),
+            Some(false),
+            "Shift+Tab from the input should close the dropdown"
+        );
+    }
+
+    /// Portal-mode-specific regression: forward Tab from the input must move
+    /// real focus into the (portal-mounted) listbox *without* closing the
+    /// dropdown. In portal mode the listbox lives outside the autocomplete's
+    /// own subtree, so this transfer does fire `ChildFocusChanged(false)` on
+    /// the widget — `on_text_event` sets `focus_moving_to_listbox` right
+    /// before calling `ctx.set_focus`, and the handler must recognize that
+    /// and skip closing. It previously tried to detect this via
+    /// `ctx.focus_target_id() == listbox_id`, which never matched: masonry
+    /// updates `global_state.focused_widget` *after* dispatching
+    /// `ChildFocusChanged`, so that accessor still read the old value at the
+    /// point the handler ran, and the dropdown closed out from under the
+    /// user on every forward Tab.
+    #[test]
+    fn tab_into_portal_listbox_does_not_close_dropdown() {
+        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit_portal();
+
+        harness.focus_on(Some(text_area_id));
+        harness.render();
+        assert_eq!(
+            harness
+                .access_node(autocomplete_id)
+                .expect("combobox node")
+                .data()
+                .is_expanded(),
+            Some(true),
+            "focusing the field should open the portal-mode dropdown"
+        );
+
+        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
+        harness.render();
+
+        assert_ne!(
+            harness.focused_widget_id(),
+            Some(text_area_id),
+            "Tab should move focus off the input and into the listbox"
+        );
+        assert_eq!(
+            harness
+                .access_node(autocomplete_id)
+                .expect("combobox node")
+                .data()
+                .is_expanded(),
+            Some(true),
+            "Tab-ing into the portal-mode listbox must not close the dropdown"
+        );
     }
 
     /// Pressing Enter while focus is in the listbox selects the highlighted
