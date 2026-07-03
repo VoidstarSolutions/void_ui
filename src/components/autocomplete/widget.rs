@@ -2279,7 +2279,7 @@ mod scroll_tests {
 #[cfg(test)]
 mod accessibility_tests {
     use masonry::core::keyboard::{Key, NamedKey};
-    use masonry::core::{NewWidget, TextEvent, WidgetRef};
+    use masonry::core::{NewWidget, PointerButton, TextEvent, WidgetRef};
     use masonry::testing::TestHarness;
     use masonry::widgets::TextArea;
 
@@ -2290,6 +2290,15 @@ mod accessibility_tests {
             return Some(area);
         }
         widget.children().into_iter().find_map(find_text_area)
+    }
+
+    fn find_autocomplete(
+        widget: WidgetRef<'_, dyn Widget>,
+    ) -> Option<WidgetRef<'_, AutocompleteWidget>> {
+        if let Some(ac) = widget.downcast::<AutocompleteWidget>() {
+            return Some(ac);
+        }
+        widget.children().into_iter().find_map(find_autocomplete)
     }
 
     /// Builds an in-tree autocomplete with 3 fixed suggestions and locates
@@ -2314,6 +2323,90 @@ mod accessibility_tests {
             .expect("autocomplete should host a TextArea")
             .id();
         (harness, autocomplete_id, text_area_id)
+    }
+
+    /// Real proof that clicking a plain, non-interactive sibling widget
+    /// elsewhere on the page closes the in-tree dropdown. Neither
+    /// `AnchoredOverlay` nor `AutocompleteWidget` implements
+    /// `on_pointer_event` for outside-click detection — there's no bespoke
+    /// geometric check. This instead relies on masonry's own pointer-down
+    /// handling, which resolves the click to the nearest pointer-interactive
+    /// ancestor of whatever's under the cursor (here, the `Flex` container,
+    /// since `Label` opts out of pointer interaction) and clears focus
+    /// whenever that resolved target isn't in the focused widget's own
+    /// ancestor path — regardless of whether the literal clicked widget
+    /// itself accepts focus. Same mechanism `ThemedPopover::update`
+    /// documents and relies on for its own in-tree fallback.
+    #[test]
+    fn clicking_a_non_focusable_sibling_closes_the_in_tree_dropdown() {
+        let theme = Theme::default();
+        let suggestions: Vec<ArcStr> = ["Apple", "Banana", "Cherry"]
+            .into_iter()
+            .map(ArcStr::from)
+            .collect();
+        let autocomplete =
+            AutocompleteWidget::new("", ArcStr::from("Pick a fruit"), suggestions, false, &theme);
+        let label_widget = NewWidget::new(widgets::Label::new("Elsewhere on the page"));
+        let label_id = label_widget.id();
+
+        let root = widgets::Flex::column()
+            .with_fixed(NewWidget::new(autocomplete))
+            .with_fixed(label_widget);
+
+        let mut harness = TestHarness::create_with_size(
+            masonry::theme::default_property_set(),
+            NewWidget::new(root),
+            (300, 300),
+        );
+
+        let autocomplete_id = find_autocomplete(harness.root_widget().as_dyn())
+            .expect("tree should contain the autocomplete")
+            .id();
+        let text_area_id = find_text_area(harness.root_widget().as_dyn())
+            .expect("autocomplete should host a TextArea")
+            .id();
+
+        harness.focus_on(Some(text_area_id));
+        harness.render();
+        assert_eq!(
+            harness
+                .access_node(autocomplete_id)
+                .expect("combobox node")
+                .data()
+                .is_expanded(),
+            Some(true),
+            "focusing the field should open the dropdown"
+        );
+
+        // `mouse_click_on`/`mouse_move_to` refuse a widget that doesn't
+        // accept pointer events (by design, `Label` doesn't) — compute the
+        // window-space center manually instead, matching what a real click
+        // on that visible label would resolve to.
+        let label_ref = harness.get_widget_with_id(label_id);
+        let label_size = label_ref.ctx().border_box_size();
+        let label_center = label_ref.ctx().to_window(Point::new(
+            label_size.width / 2.0,
+            label_size.height / 2.0,
+        ));
+        harness.mouse_move(label_center);
+        harness.mouse_button_press(Some(PointerButton::Primary));
+        harness.mouse_button_release(Some(PointerButton::Primary));
+        harness.render();
+
+        assert_ne!(
+            harness.focused_widget_id(),
+            Some(text_area_id),
+            "clicking a non-focusable sibling should clear focus from the field"
+        );
+        assert_eq!(
+            harness
+                .access_node(autocomplete_id)
+                .expect("combobox node")
+                .data()
+                .is_expanded(),
+            Some(false),
+            "clicking outside should close the in-tree dropdown"
+        );
     }
 
     /// Real accessibility-tree proof, driven through the actual masonry
