@@ -14,7 +14,7 @@
 
 use std::sync::{Arc, OnceLock};
 
-use masonry::accesskit::{Node, Role};
+use masonry::accesskit::{HasPopup, Node, Role};
 use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
     AccessCtx, ActionCtx, ArcStr, ChildrenIds, ComposeCtx, ErasedAction, EventCtx, LayoutCtx,
@@ -2225,6 +2225,11 @@ impl Widget for AutocompleteWidget {
         node: &mut Node,
     ) {
         node.add_action(masonry::accesskit::Action::SetValue);
+        // Static: this combobox can always potentially show a listbox popup,
+        // independent of whether it's currently open — that's aria-expanded
+        // (set_expanded below), not aria-haspopup. Required by the ARIA 1.2
+        // combobox pattern for AT to announce the popup type.
+        node.set_has_popup(HasPopup::Listbox);
         // Always reflect actual state (not just when open) — AT relies on an
         // explicit `false` to announce "collapsed", not just the property's
         // absence.
@@ -2446,6 +2451,11 @@ mod accessibility_tests {
         {
             let node = harness.access_node(autocomplete_id).expect("combobox node");
             assert_eq!(node.role(), Role::ComboBox);
+            assert_eq!(
+                node.data().has_popup(),
+                Some(masonry::accesskit::HasPopup::Listbox),
+                "aria-haspopup should announce a listbox popup, closed or not"
+            );
             assert_eq!(
                 node.data().is_expanded(),
                 Some(false),
