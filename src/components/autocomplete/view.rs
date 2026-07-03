@@ -224,10 +224,6 @@ enum ViewBinding<State: 'static, Action: 'static> {
         /// `suggestions` changes so `compute_filtered` on the keystroke path
         /// never allocates per item.
         suggestions_lower: Vec<String>,
-        /// Last filtered list passed to `SuggestionListView`. Kept here so
-        /// the portal rebuild only needs to call `portal.update` when
-        /// suggestions or theme change, not on every keystroke.
-        filtered: Arc<Vec<ArcStr>>,
     },
     InTree,
 }
@@ -300,7 +296,6 @@ where
                         listbox_handle,
                         text_area_handle,
                         suggestions_lower,
-                        filtered,
                     },
                 },
             )
@@ -349,50 +344,43 @@ where
             AutocompleteWidget::set_theme(&mut element, &self.theme);
         }
 
-        // In portal mode, update the stored filtered result whenever the
-        // inputs change — this is the single call to compute_filtered per
-        // rebuild. Then refresh the registered SuggestionListView only when
-        // suggestions or theme change; content-only changes (keystrokes) are
-        // already handled by set_contents → mutate_later in the widget layer.
+        // Keep the pre-lowercased mirror in sync whenever suggestions change
+        // — cheap, and needed regardless of whether a re-registration below
+        // actually happens this rebuild.
         if let ViewBinding::Portal {
-            portal: _,
-            key: _,
-            handle: _,
-            listbox_handle: _,
-            text_area_handle: _,
-            suggestions_lower,
-            filtered,
+            suggestions_lower, ..
         } = &mut view_state.binding
+            && suggestions_changed
         {
-            if suggestions_changed {
-                *suggestions_lower = self.suggestions.iter().map(|s| s.to_lowercase()).collect();
-            }
-            if contents_changed || suggestions_changed {
-                *filtered = Arc::new(compute_filtered(
-                    &self.suggestions,
-                    suggestions_lower,
-                    &self.contents,
-                ));
-            }
+            *suggestions_lower = self.suggestions.iter().map(|s| s.to_lowercase()).collect();
         }
+        // Only re-register the portal content — and only then compute
+        // `filtered` — when suggestions or theme actually change.
+        // Content-only changes (keystrokes) are already handled by
+        // set_contents → mutate_later in the widget layer, so recomputing
+        // `filtered` here on every keystroke would just be thrown away.
         if let ViewBinding::Portal {
             portal,
             key,
             handle,
             listbox_handle,
             text_area_handle,
-            suggestions_lower: _,
-            filtered,
+            suggestions_lower,
         } = &view_state.binding
             && (suggestions_changed || self.theme != prev.theme)
         {
+            let filtered = Arc::new(compute_filtered(
+                &self.suggestions,
+                suggestions_lower,
+                &self.contents,
+            ));
             // Re-use the *same* handle instances from the original portal
             // registration (not detached defaults) — `SuggestionListView`'s
             // `message` and `LabelList`'s back-channels both need
             // `widget_id()` to resolve to the real, already-mounted widgets,
             // which only the original `Arc<OnceLock<_>>`s have.
             let list_view = SuggestionListView {
-                filtered: filtered.clone(),
+                filtered,
                 handle: handle.clone(),
                 listbox_handle: listbox_handle.clone(),
                 text_area_handle: text_area_handle.clone(),

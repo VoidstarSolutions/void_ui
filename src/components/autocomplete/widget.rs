@@ -1125,8 +1125,6 @@ pub(crate) struct AutocompleteWidget {
     /// Pre-computed filtered slice of [`Self::all_suggestions`].
     filtered: Vec<ArcStr>,
     open: bool,
-    /// Index into [`Self::filtered`] for roving keyboard highlight.
-    highlighted: Option<usize>,
     /// Suppresses the next [`Self::open_on_focus`] call so that click-based
     /// selection does not reopen the dropdown when focus returns to the input.
     ///
@@ -1239,7 +1237,6 @@ impl AutocompleteWidget {
             contents: contents.to_owned(),
             filtered,
             open: false,
-            highlighted: None,
             suppress_focus_open: false,
             theme: *theme,
             listbox_handle,
@@ -1283,7 +1280,6 @@ impl AutocompleteWidget {
             contents,
             filtered,
             open: false,
-            highlighted: None,
             suppress_focus_open: false,
             theme,
             listbox_handle,
@@ -1317,7 +1313,6 @@ impl AutocompleteWidget {
             return;
         }
         self.open = true;
-        self.highlighted = None;
         match &mut self.hosting {
             Hosting::InTree { overlay_host } => {
                 let items = self.filtered.clone();
@@ -1397,7 +1392,6 @@ impl AutocompleteWidget {
         self.contents.clear();
         self.contents.push_str(text);
         self.filtered = compute_filtered(&self.all_suggestions, &self.all_suggestions_lower, text);
-        self.highlighted = None;
 
         let should_open = !self.filtered.is_empty();
         let open_changed = self.open != should_open;
@@ -1479,7 +1473,6 @@ impl AutocompleteWidget {
         let text = selected.clone();
         self.contents.clone_from(&selected);
         self.filtered.clear();
-        self.highlighted = None;
         self.open = false;
         self.suppress_focus_open = true;
 
@@ -1601,7 +1594,6 @@ impl AutocompleteWidget {
         let open_changed = this.widget.open != should_open;
         this.widget.filtered.clone_from(&filtered);
         this.widget.open = should_open;
-        this.widget.highlighted = None;
 
         match &mut this.widget.hosting {
             Hosting::InTree { overlay_host } => {
@@ -1678,7 +1670,6 @@ impl AutocompleteWidget {
         // appear until the user types or blurs and refocuses.
         let should_open = (this.widget.open || this.ctx.has_focus_target()) && !filtered.is_empty();
         let open_changed = this.widget.open != should_open;
-        this.widget.highlighted = None;
         this.widget.filtered.clone_from(&filtered);
         this.widget.open = should_open;
 
@@ -1741,7 +1732,6 @@ impl AutocompleteWidget {
         this.ctx.set_disabled(disabled);
         if disabled && this.widget.open {
             this.widget.open = false;
-            this.widget.highlighted = None;
             this.widget.filtered.clear();
             match &mut this.widget.hosting {
                 Hosting::InTree { overlay_host } => {
@@ -1813,13 +1803,12 @@ impl AutocompleteWidget {
     }
 
     /// Notify that the portal slot was dismissed by an outside press. Syncs
-    /// `open`/`highlighted`/`filtered` — the slot has already hidden itself.
+    /// `open`/`filtered` — the slot has already hidden itself.
     pub(crate) fn mark_closed(this: &mut WidgetMut<'_, Self>) {
         if !this.widget.open {
             return;
         }
         this.widget.open = false;
-        this.widget.highlighted = None;
         this.widget.filtered.clear();
 
         // Also tell the scope/overlay to hide (idempotent if already hidden).
@@ -1850,7 +1839,6 @@ impl AutocompleteWidget {
     pub(crate) fn portal_select(this: &mut WidgetMut<'_, Self>, text: String) {
         this.widget.contents.clone_from(&text);
         this.widget.filtered.clear();
-        this.widget.highlighted = None;
         this.widget.open = false;
         // Do NOT set suppress_focus_open here. This function only runs once masonry
         // flushes the mutate_later queued by SuggestionListView::message, and that
@@ -1925,22 +1913,17 @@ impl Widget for AutocompleteWidget {
                 TextAction::Changed(text) => {
                     self.handle_text_changed(ctx, text);
                 }
-                // Enter selects the highlighted suggestion when the list is
-                // open; it's left unhandled (bubbles for form submission)
-                // only when the list is closed. An open-but-nothing-
-                // highlighted Enter must still be consumed here — otherwise
-                // it silently bubbles to an ancestor form's submit handler
-                // while the dropdown is visibly showing suggestions the user
-                // hasn't acted on.
+                // Enter from the text input (not the listbox — that has its
+                // own Enter handling in LabelList::on_text_event, which
+                // tracks its own highlight) has nothing to select here, but
+                // must still be consumed while the list is open. Otherwise
+                // it's left unhandled (bubbles for form submission) — an
+                // open-but-consumed Enter would otherwise silently bubble to
+                // an ancestor form's submit handler while the dropdown is
+                // visibly showing suggestions the user hasn't acted on.
                 TextAction::Entered(_) => {
                     if self.open {
-                        if let Some(i) = self.highlighted
-                            && let Some(selected) = self.filtered.get(i).cloned()
-                        {
-                            self.select_suggestion(ctx, selected.to_string());
-                        } else {
-                            ctx.set_handled();
-                        }
+                        ctx.set_handled();
                     }
                 }
             }
@@ -1951,7 +1934,6 @@ impl Widget for AutocompleteWidget {
         if action.downcast_ref::<InputCleared>().is_some() {
             self.contents.clear();
             self.filtered.clear();
-            self.highlighted = None;
             self.open = false;
             self.close_overlay_later(ctx);
             ctx.submit_action::<Self::Action>(AutocompleteAction::TextChanged(String::new()));
@@ -2017,7 +1999,6 @@ impl Widget for AutocompleteWidget {
             // Close when stashed mid-open.
             Update::StashedChanged(true) if self.open => {
                 self.open = false;
-                self.highlighted = None;
                 self.filtered.clear();
                 match &mut self.hosting {
                     Hosting::InTree { overlay_host } => {
@@ -2083,7 +2064,6 @@ impl Widget for AutocompleteWidget {
                     return;
                 }
                 self.open = false;
-                self.highlighted = None;
                 self.filtered.clear();
                 match &mut self.hosting {
                     Hosting::InTree { overlay_host } => {
