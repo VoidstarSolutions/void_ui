@@ -166,7 +166,7 @@ pub mod width;
 
 pub use crate::collection::ScrollState;
 pub use crate::collection::SelectionState;
-pub use crate::collection::row_click::{RowClickAction, RowClickable};
+pub use crate::collection::row_click::{ClickableRow, RowClickAction, RowClickable, clickable_row};
 pub use column::{
     CellAlign, ColumnDef, ColumnId, RowComparator, RowFilter, colored_text_column,
     optional_text_column, text_column,
