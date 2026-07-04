@@ -419,7 +419,11 @@ impl ThemedButton {
                 } else {
                     Color::TRANSPARENT
                 };
-                let border = if self.active || hovered { p.border_strong } else { p.border };
+                let border = if self.active || hovered {
+                    p.border_strong
+                } else {
+                    p.border
+                };
                 (bg, border)
             }
             // Link: no background or border.
