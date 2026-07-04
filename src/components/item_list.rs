@@ -1,12 +1,14 @@
 //! Shared geometry helpers for list-shaped widgets (autocomplete, dropdown
-//! menu, context menu) that row-stack uniform items.
+//! menu, context menu) that row-stack uniform items, plus an axis-generic
+//! placed-or-estimate helper shared by `tabs` and `sidebar`'s nav widget
+//! (see [`item_rect_or_estimate`]).
 //!
 //! These formulas are in all three components and would silently diverge if a
 //! density token were renamed or a padding policy were changed in only one
 //! place.
 
 use masonry::core::EventCtx;
-use masonry::kurbo::{Point, Rect};
+use masonry::kurbo::{Axis, Point, Rect};
 
 use crate::theme::Density;
 
@@ -36,4 +38,57 @@ pub(crate) fn to_local(ctx: &EventCtx<'_>, window_pos: Point) -> Point {
 /// realistic list size.
 pub(crate) fn index_f64(index: usize) -> f64 {
     f64::from(u32::try_from(index).unwrap_or(u32::MAX))
+}
+
+/// Geometry [`item_rect_or_estimate`] needs to place an item that hasn't been
+/// laid out yet.
+#[derive(Clone, Copy)]
+pub(crate) struct EstimateGeometry {
+    /// Axis items are stacked along (`tabs`: horizontal, sidebar nav: vertical).
+    pub axis: Axis,
+    /// Leading offset before the first item, along `axis`.
+    pub outer: f64,
+    /// Offset on the cross axis (perpendicular to `axis`).
+    pub cross_offset: f64,
+    /// Estimated extent along `axis` — typically the real average from the
+    /// last layout, falling back to a theme-metric guess before the first
+    /// layout has ever run.
+    pub main_extent: f64,
+    /// Estimated extent on the cross axis. `0.0` for callers that only need
+    /// the main-axis scroll target and don't care about a cross-axis span.
+    pub cross_extent: f64,
+    /// Gap between adjacent items.
+    pub gap: f64,
+}
+
+/// Item rect for `index`: `placed[index]` if layout has already run, else an
+/// estimate from `geometry`.
+///
+/// Shared by `tabs` and sidebar nav — both row-stack variable-size items
+/// (along opposite axes) and need this fallback for keyboard scroll-into-view
+/// right after `set_items` clears `placed`, before the next layout rebuilds
+/// it.
+pub(crate) fn item_rect_or_estimate(
+    placed: &[Rect],
+    index: usize,
+    geometry: EstimateGeometry,
+) -> Rect {
+    if let Some(&rect) = placed.get(index) {
+        return rect;
+    }
+    let main_pos = geometry.outer + index_f64(index) * (geometry.main_extent + geometry.gap);
+    match geometry.axis {
+        Axis::Horizontal => Rect::new(
+            main_pos,
+            geometry.cross_offset,
+            main_pos + geometry.main_extent,
+            geometry.cross_offset + geometry.cross_extent,
+        ),
+        Axis::Vertical => Rect::new(
+            geometry.cross_offset,
+            main_pos,
+            geometry.cross_offset + geometry.cross_extent,
+            main_pos + geometry.main_extent,
+        ),
+    }
 }

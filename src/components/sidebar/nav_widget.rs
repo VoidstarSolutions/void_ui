@@ -212,17 +212,24 @@ impl ThemedSidebarNav {
     /// average from the last layout, which tracks variable-height items far
     /// better than a fixed per-item guess) when available, falling back to a
     /// theme-metric guess only before the very first layout has ever run.
-    /// `x` always spans from 0.
+    /// `x` always spans from 0. Shared with `tabs` via
+    /// [`item_list::item_rect_or_estimate`].
     fn item_rect_or_estimate(&self, index: usize) -> Rect {
-        if let Some(&rect) = self.placed.get(index) {
-            return rect;
-        }
         let item_h = self
             .last_avg_item_height
             .unwrap_or(f64::from(self.theme.density.ui_font_size) + 2.0 * PAD_V);
-        let index_f64 = item_list::index_f64(index);
-        let y = index_f64 * (item_h + GAP);
-        Rect::new(0.0, y, 0.0, y + item_h)
+        item_list::item_rect_or_estimate(
+            &self.placed,
+            index,
+            item_list::EstimateGeometry {
+                axis: Axis::Vertical,
+                outer: 0.0,
+                cross_offset: 0.0,
+                main_extent: item_h,
+                cross_extent: 0.0,
+                gap: GAP,
+            },
+        )
     }
 }
 

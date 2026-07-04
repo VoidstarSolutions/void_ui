@@ -406,10 +406,8 @@ impl TabsWidget {
     /// average from the last layout, which tracks variable-width labels far
     /// better than a fixed per-item guess) when available, falling back to a
     /// theme-metric guess only before the very first layout has ever run.
+    /// Shared with sidebar nav via [`item_list::item_rect_or_estimate`].
     fn item_rect_or_estimate(&self, index: usize) -> Rect {
-        if let Some(&rect) = self.placed.get(index) {
-            return rect;
-        }
         let outer = self.outer_pad();
         let gap = self.gap();
         let (pad_h, pad_v) = self.item_pad();
@@ -417,9 +415,18 @@ impl TabsWidget {
             .last_avg_item_width
             .unwrap_or(f64::from(self.theme.density.ui_font_size) * 3.0 + 2.0 * pad_h);
         let est_item_h = f64::from(self.theme.density.ui_font_size) + 2.0 * pad_v;
-        let index_f64 = item_list::index_f64(index);
-        let x = outer + index_f64 * (est_item_w + gap);
-        Rect::new(x, outer, x + est_item_w, outer + est_item_h)
+        item_list::item_rect_or_estimate(
+            &self.placed,
+            index,
+            item_list::EstimateGeometry {
+                axis: Axis::Horizontal,
+                outer,
+                cross_offset: outer,
+                main_extent: est_item_w,
+                cross_extent: est_item_h,
+                gap,
+            },
+        )
     }
 
     fn is_disabled(&self, index: usize) -> bool {
