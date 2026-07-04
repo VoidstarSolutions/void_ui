@@ -1046,6 +1046,26 @@ fn with_suggestion_list<R>(
     f(&mut list)
 }
 
+/// Navigate to the portal-mounted `SuggestionList` for `key` — behind the
+/// scope's `PortalSlot` → `Passthrough` wrapping — and invoke `f`, when the
+/// slot child is currently mounted. The Portal-mode counterpart to
+/// [`with_suggestion_list`]; called from inside `mutate_later` closures so
+/// every setter drives the list through one downcast chain instead of five
+/// hand-copied ones.
+fn with_portal_list(
+    scope: &mut WidgetMut<'_, OverlayScope>,
+    key: u64,
+    f: impl FnOnce(&mut WidgetMut<'_, SuggestionList>),
+) {
+    let mut slot = OverlayScope::portal_slot_mut(scope);
+    if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
+        let mut pass = child.downcast::<Passthrough>();
+        let mut inner = Passthrough::child_mut(&mut pass);
+        let mut list = inner.downcast::<SuggestionList>();
+        f(&mut list);
+    }
+}
+
 /// Navigate to the `TextArea` via the in-tree `AnchoredOverlay` primary slot
 /// and invoke `f`.
 fn with_text_area<R>(
@@ -1355,15 +1375,9 @@ impl AutocompleteWidget {
                 }
                 ctx.mutate_later(scope_id, move |mut w| {
                     let mut scope = w.downcast::<OverlayScope>();
-                    {
-                        let mut slot = OverlayScope::portal_slot_mut(&mut scope);
-                        if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
-                            let mut pass = child.downcast::<Passthrough>();
-                            let mut inner = Passthrough::child_mut(&mut pass);
-                            let mut list = inner.downcast::<SuggestionList>();
-                            SuggestionList::set_items(&mut list, items);
-                        }
-                    }
+                    with_portal_list(&mut scope, key, |list| {
+                        SuggestionList::set_items(list, items);
+                    });
                     OverlayScope::set_portal_visible(
                         &mut scope,
                         key,
@@ -1459,15 +1473,9 @@ impl AutocompleteWidget {
                     };
                     ctx.mutate_later(scope_id, move |mut w| {
                         let mut scope = w.downcast::<OverlayScope>();
-                        {
-                            let mut slot = OverlayScope::portal_slot_mut(&mut scope);
-                            if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
-                                let mut pass = child.downcast::<Passthrough>();
-                                let mut inner = Passthrough::child_mut(&mut pass);
-                                let mut list = inner.downcast::<SuggestionList>();
-                                SuggestionList::set_items(&mut list, items);
-                            }
-                        }
+                        with_portal_list(&mut scope, key, |list| {
+                            SuggestionList::set_items(list, items);
+                        });
                         if let Some((visible, visibility)) = visibility_update {
                             OverlayScope::set_portal_visible(&mut scope, key, visible, visibility);
                         }
@@ -1646,13 +1654,9 @@ impl AutocompleteWidget {
                     let items = filtered.clone();
                     this.ctx.mutate_later(scope_id, move |mut w| {
                         let mut scope = w.downcast::<OverlayScope>();
-                        let mut slot = OverlayScope::portal_slot_mut(&mut scope);
-                        if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
-                            let mut pass = child.downcast::<Passthrough>();
-                            let mut inner = Passthrough::child_mut(&mut pass);
-                            let mut list = inner.downcast::<SuggestionList>();
-                            SuggestionList::set_items(&mut list, items);
-                        }
+                        with_portal_list(&mut scope, key, |list| {
+                            SuggestionList::set_items(list, items);
+                        });
                     });
                     if open_changed {
                         Self::sync_portal_visibility(this, scope_id, key);
@@ -1706,13 +1710,9 @@ impl AutocompleteWidget {
                     let items = filtered.clone();
                     this.ctx.mutate_later(scope_id, move |mut w| {
                         let mut scope = w.downcast::<OverlayScope>();
-                        let mut slot = OverlayScope::portal_slot_mut(&mut scope);
-                        if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
-                            let mut pass = child.downcast::<Passthrough>();
-                            let mut inner = Passthrough::child_mut(&mut pass);
-                            let mut list = inner.downcast::<SuggestionList>();
-                            SuggestionList::set_items(&mut list, items);
-                        }
+                        with_portal_list(&mut scope, key, |list| {
+                            SuggestionList::set_items(list, items);
+                        });
                     });
                     if open_changed {
                         Self::sync_portal_visibility(this, scope_id, key);
@@ -1804,13 +1804,9 @@ impl AutocompleteWidget {
                 if let Some(scope_id) = scope_id {
                     this.ctx.mutate_later(scope_id, move |mut w| {
                         let mut scope = w.downcast::<OverlayScope>();
-                        let mut slot = OverlayScope::portal_slot_mut(&mut scope);
-                        if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
-                            let mut pass = child.downcast::<Passthrough>();
-                            let mut inner = Passthrough::child_mut(&mut pass);
-                            let mut list = inner.downcast::<SuggestionList>();
-                            SuggestionList::set_theme(&mut list, &theme_copy);
-                        }
+                        with_portal_list(&mut scope, key, |list| {
+                            SuggestionList::set_theme(list, &theme_copy);
+                        });
                     });
                 }
             }
