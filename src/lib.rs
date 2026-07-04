@@ -64,8 +64,8 @@ pub mod theme;
 
 pub use animated_clip::AnimatedClip;
 pub use components::{
-    Alert, AlertVariant, Autocomplete, Button, ButtonGroup, ButtonVariant, ButtonView, CellAlign,
-    ClickableRow, ColumnDef, ColumnWidths, DataGrid, DropdownButton, DropdownButtonView,
+    Alert, AlertVariant, Autocomplete, Badge, Button, ButtonGroup, ButtonVariant, ButtonView, Card,
+    CellAlign, ClickableRow, ColumnDef, ColumnWidths, DataGrid, DropdownButton, DropdownButtonView,
     FilterState, GroupBox, Icon, IconName, Label, LabelAlignment, List, MIN_COLUMN_WIDTH,
     MIN_PANEL_SIZE, NoTitle, Notification, NotificationPosition, Orientation, Popover,
     PopoverAnchor, PopoverHost, PopoverView, RangeSlider, RangeSliderView, ReadOnlyText,
@@ -74,11 +74,12 @@ pub use components::{
     ScrollContainerView, ScrollState, SelectionState, Separator, SeparatorStyle, SidebarItem,
     SidebarItemView, SidebarNav, SidebarNavItem, SidebarNavView, SidebarPanel, SidebarPanelView,
     Slider, SliderView, SortDirection, SortState, Spinner, SpinnerView, SpinnerWidget, TitleState,
-    Tooltip, TooltipView, WithTitle, alert, autocomplete, button, button_group, clickable_row,
-    colored_text_column, data_grid, dropdown_button, filtered_indices, group_box, h_resizable,
-    h_resizable_panels, icon, label, list, notification, notification_layer, notification_overlay,
-    notification_stack, optional_text_column, popover, range_slider, read_only_text,
-    scroll_container, separator, sidebar_item, sidebar_nav, sidebar_panel, slider, spinner,
+    Tooltip, TooltipView, WithTitle, alert, autocomplete, badge, button, button_group, card,
+    clickable_row, colored_text_column, data_grid, dropdown_button, filtered_indices, group_box,
+    h_resizable, h_resizable_panels, icon, label, list, notification, notification_layer,
+    notification_overlay, notification_stack, optional_text_column, pill, popover, range_slider,
+    read_only_text, scroll_container, separator, sidebar_item, sidebar_nav, sidebar_panel, slider,
+    spinner,
     text_column, toggle_button_group, tooltip, v_resizable, v_resizable_panels,
 };
 pub use floating::{FloatingOverlay, FloatingOverlayView, floating, interactive_floating};
