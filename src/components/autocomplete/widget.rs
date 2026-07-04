@@ -3041,6 +3041,40 @@ mod accessibility_tests {
         );
     }
 
+    /// The portal-mounted `SuggestionList` is built empty by the view layer
+    /// (`SuggestionListView` no longer carries a `filtered` mirror); the widget
+    /// is the single source of truth and must populate it via `set_items` when
+    /// the dropdown opens. `harness_with_fruit_portal` mirrors the view by
+    /// building the list with `[]`, so this proves the widget — not the view —
+    /// fills the list on open.
+    #[test]
+    fn portal_dropdown_populates_items_from_widget() {
+        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit_portal();
+
+        harness.focus_on(Some(text_area_id));
+        harness.render();
+        assert_eq!(
+            harness
+                .access_node(autocomplete_id)
+                .expect("combobox")
+                .data()
+                .is_expanded(),
+            Some(true),
+            "focusing should open the portal dropdown",
+        );
+
+        let mut option_count = 0;
+        harness.inspect_widgets(|w| {
+            if w.accessibility_role() == Role::ListBoxOption {
+                option_count += 1;
+            }
+        });
+        assert_eq!(
+            option_count, 3,
+            "the widget must populate the empty portal list with all suggestions",
+        );
+    }
+
     /// Like [`harness_with_fruit`] but seeds the field with `initial` text, so
     /// text-preserving keyboard behavior (Escape, Enter) can be exercised.
     fn harness_with_fruit_contents(

@@ -31,7 +31,7 @@ use xilem::{Pod, ViewCtx, WidgetView};
 
 use super::widget::{
     AutocompleteAction, AutocompleteConfig, AutocompleteHandle, AutocompleteWidget,
-    LabelListHandle, SuggestionList, SuggestionSelected, TextAreaHandle, compute_filtered,
+    LabelListHandle, SuggestionList, SuggestionSelected, TextAreaHandle,
 };
 use crate::Theme;
 use crate::components::popover::widget::SurfaceStyle;
@@ -121,8 +121,13 @@ impl<F> Autocomplete<F> {
 /// Xilem view registered with the overlay scope's portal when a scope ancestor
 /// exists. Wraps [`SuggestionList`] and routes [`SuggestionSelected`] actions
 /// back to the owning [`AutocompleteWidget`] via [`AutocompleteHandle`].
+///
+/// This view builds only the empty list shell and keeps its theme current;
+/// the *items* are owned by [`AutocompleteWidget`], which pushes the filtered
+/// set via `SuggestionList::set_items` on every open/keystroke/suggestion
+/// change. Duplicating the filtered list here would be dead work — the widget
+/// overwrites it before it's ever shown.
 pub(crate) struct SuggestionListView {
-    pub(crate) filtered: Arc<Vec<ArcStr>>,
     pub(crate) handle: AutocompleteHandle,
     pub(crate) listbox_handle: LabelListHandle,
     pub(crate) text_area_handle: TextAreaHandle,
@@ -140,8 +145,10 @@ where
     type ViewState = ();
 
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
+        // Empty shell: AutocompleteWidget populates items via set_items when
+        // it opens the dropdown.
         let widget = SuggestionList::new(
-            (*self.filtered).iter().cloned(),
+            [],
             &self.theme,
             self.listbox_handle.clone(),
             self.handle.clone(),
@@ -159,11 +166,9 @@ where
         mut element: Mut<'_, Self::Element>,
         _state: &mut State,
     ) {
+        // Items are the widget's responsibility; this view only re-themes.
         if self.theme != prev.theme {
             SuggestionList::set_theme(&mut element, &self.theme);
-        }
-        if !Arc::ptr_eq(&self.filtered, &prev.filtered) {
-            SuggestionList::set_items(&mut element, (*self.filtered).iter().cloned());
         }
     }
 
@@ -220,17 +225,12 @@ enum ViewBinding<State: 'static, Action: 'static> {
         handle: AutocompleteHandle,
         listbox_handle: LabelListHandle,
         text_area_handle: TextAreaHandle,
-        /// Pre-lowercased mirror of the current suggestions, kept in sync with
-        /// `suggestions` changes so `compute_filtered` on the keystroke path
-        /// never allocates per item.
-        suggestions_lower: Vec<String>,
     },
     InTree,
 }
 
 /// View state for `AutocompleteView`.
-#[doc(hidden)]
-pub struct AutocompleteViewState<State: 'static, Action: 'static> {
+pub(crate) struct AutocompleteViewState<State: 'static, Action: 'static> {
     binding: ViewBinding<State, Action>,
 }
 
@@ -250,15 +250,7 @@ where
             let handle = AutocompleteHandle::new();
             let listbox_handle = LabelListHandle::new();
             let text_area_handle = TextAreaHandle::new();
-            let suggestions_lower: Vec<String> =
-                self.suggestions.iter().map(|s| s.to_lowercase()).collect();
-            let filtered = Arc::new(compute_filtered(
-                &self.suggestions,
-                &suggestions_lower,
-                &self.contents,
-            ));
             let list_view = SuggestionListView {
-                filtered: filtered.clone(),
                 handle: handle.clone(),
                 listbox_handle: listbox_handle.clone(),
                 text_area_handle: text_area_handle.clone(),
@@ -295,7 +287,6 @@ where
                         handle,
                         listbox_handle,
                         text_area_handle,
-                        suggestions_lower,
                     },
                 },
             )
@@ -344,43 +335,26 @@ where
             AutocompleteWidget::set_theme(&mut element, &self.theme);
         }
 
-        // Keep the pre-lowercased mirror in sync whenever suggestions change
-        // — cheap, and needed regardless of whether a re-registration below
-        // actually happens this rebuild.
-        if let ViewBinding::Portal {
-            suggestions_lower, ..
-        } = &mut view_state.binding
-            && suggestions_changed
-        {
-            *suggestions_lower = self.suggestions.iter().map(|s| s.to_lowercase()).collect();
-        }
-        // Only re-register the portal content — and only then compute
-        // `filtered` — when suggestions or theme actually change.
-        // Content-only changes (keystrokes) are already handled by
-        // set_contents → mutate_later in the widget layer, so recomputing
-        // `filtered` here on every keystroke would just be thrown away.
+        // Re-register the portal content only when the theme changes — that's
+        // the sole property `SuggestionListView` now carries. Suggestion-set
+        // and keystroke changes reach the mounted list directly through the
+        // widget layer (set_all_suggestions / set_contents → mutate_later), so
+        // re-registering for them would be pure churn.
         if let ViewBinding::Portal {
             portal,
             key,
             handle,
             listbox_handle,
             text_area_handle,
-            suggestions_lower,
         } = &view_state.binding
-            && (suggestions_changed || self.theme != prev.theme)
+            && self.theme != prev.theme
         {
-            let filtered = Arc::new(compute_filtered(
-                &self.suggestions,
-                suggestions_lower,
-                &self.contents,
-            ));
             // Re-use the *same* handle instances from the original portal
             // registration (not detached defaults) — `SuggestionListView`'s
             // `message` and `LabelList`'s back-channels both need
             // `widget_id()` to resolve to the real, already-mounted widgets,
             // which only the original `Arc<OnceLock<_>>`s have.
             let list_view = SuggestionListView {
-                filtered,
                 handle: handle.clone(),
                 listbox_handle: listbox_handle.clone(),
                 text_area_handle: text_area_handle.clone(),
