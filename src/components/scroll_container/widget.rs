@@ -535,6 +535,28 @@ impl<W: Widget + ?Sized> ScrollView<W> {
         this.widget.always_hide_scrollbars = v;
         this.ctx.request_layout();
     }
+
+    /// Resets the scroll position to the top-left corner. Useful when content
+    /// is replaced wholesale (e.g. a filtered list) and any prior scroll
+    /// offset no longer makes sense.
+    pub fn scroll_to_origin(this: &mut WidgetMut<'_, Self>) {
+        if this.widget.viewport_pos != Point::ORIGIN {
+            this.widget.viewport_pos = Point::ORIGIN;
+            this.ctx.request_compose();
+            let eff_size = this.widget.effective_size(this.ctx.border_box_size());
+            let (px, py) = this.widget.scrollbar_progress(eff_size);
+            {
+                let (sb, mut sb_ctx) = this.ctx.get_raw_mut(&mut this.widget.scrollbar_h);
+                sb.cursor_progress = px;
+                sb_ctx.request_render();
+            }
+            {
+                let (sb, mut sb_ctx) = this.ctx.get_raw_mut(&mut this.widget.scrollbar_v);
+                sb.cursor_progress = py;
+                sb_ctx.request_render();
+            }
+        }
+    }
 }
 
 // Helpers
@@ -559,28 +581,32 @@ impl<W: Widget + ?Sized> ScrollView<W> {
         }
     }
 
-    fn update_scrollbar_progress(&mut self, ctx: &mut EventCtx<'_>, eff_size: Size) {
+    /// Returns `(px, py)` — each axis's scroll progress in `[0, 1]`.
+    fn scrollbar_progress(&self, eff_size: Size) -> (f64, f64) {
         let range = Self::scroll_range(eff_size, self.content_size);
-
         let px = if range.width > 1e-12 {
-            self.viewport_pos.x / range.width
+            (self.viewport_pos.x / range.width).clamp(0.0, 1.0)
         } else {
             0.0
         };
         let py = if range.height > 1e-12 {
-            self.viewport_pos.y / range.height
+            (self.viewport_pos.y / range.height).clamp(0.0, 1.0)
         } else {
             0.0
         };
+        (px, py)
+    }
 
+    fn update_scrollbar_progress(&mut self, ctx: &mut EventCtx<'_>, eff_size: Size) {
+        let (px, py) = self.scrollbar_progress(eff_size);
         {
             let (sb, mut sb_ctx) = ctx.get_raw_mut(&mut self.scrollbar_h);
-            sb.cursor_progress = px.clamp(0.0, 1.0);
+            sb.cursor_progress = px;
             sb_ctx.request_render();
         }
         {
             let (sb, mut sb_ctx) = ctx.get_raw_mut(&mut self.scrollbar_v);
-            sb.cursor_progress = py.clamp(0.0, 1.0);
+            sb.cursor_progress = py;
             sb_ctx.request_render();
         }
     }
@@ -975,8 +1001,20 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
             )
             .start;
 
-            self.set_viewport_pos_raw(eff_size, self.content_size, Point::new(new_x, new_y));
-            ctx.request_compose();
+            if self.set_viewport_pos_raw(eff_size, self.content_size, Point::new(new_x, new_y)) {
+                ctx.request_compose();
+                let (px, py) = self.scrollbar_progress(eff_size);
+                {
+                    let (sb, mut sb_ctx) = ctx.get_raw_mut(&mut self.scrollbar_h);
+                    sb.cursor_progress = px;
+                    sb_ctx.request_render();
+                }
+                {
+                    let (sb, mut sb_ctx) = ctx.get_raw_mut(&mut self.scrollbar_v);
+                    sb.cursor_progress = py;
+                    sb_ctx.request_render();
+                }
+            }
         }
     }
 

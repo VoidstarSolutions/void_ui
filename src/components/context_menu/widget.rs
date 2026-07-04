@@ -29,6 +29,7 @@ use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use super::item_node::{MenuItemNode, NodeActivated, gutter_glyph_width, reserves_gutter};
 use crate::Theme;
 use crate::components::icon::IconName;
+use crate::components::item_list;
 use crate::focus_ring::paint_focus_ring;
 
 /// Vertical padding above and below the item list.
@@ -274,7 +275,7 @@ impl MenuPanel {
     }
 
     fn pad_h(&self) -> f64 {
-        f64::from(self.theme.density.button_pad_h)
+        item_list::pad_h(&self.theme.density)
     }
 
     /// The selectable row containing `local_pos`, if any.
@@ -343,8 +344,7 @@ impl MenuPanel {
     }
 
     fn to_local(ctx: &EventCtx<'_>, window_pos: Point) -> Point {
-        let origin = ctx.to_window(Point::ZERO);
-        window_pos - origin.to_vec2()
+        item_list::to_local(ctx, window_pos)
     }
 
     #[cfg(test)]

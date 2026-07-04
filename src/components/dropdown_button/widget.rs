@@ -20,8 +20,6 @@
 //!   an [`AnchoredOverlay`] below the trigger, toggled via
 //!   `AnchoredOverlay::set_overlay_visible`.
 
-use std::sync::{Arc, OnceLock};
-
 use masonry::accesskit::{Node, Role};
 use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
@@ -53,30 +51,17 @@ pub enum DropdownButtonAction {
     ItemSelected(usize),
 }
 
-/// Self-filling handle to a [`ThemedDropdownButton`]'s widget id, filled at
-/// `Update::WidgetAdded` — mirrors [`OverlayScopeHandle`]'s bootstrapping.
-///
-/// Given to a portal-mounted [`super::view::MenuContentView`] so an item
-/// selection can `mutate_later` back into the dropdown to close the menu and
-/// clear the keyboard highlight: in portal mode the menu is not a descendant
-/// of the dropdown, so normal action bubbling never reaches
-/// [`ThemedDropdownButton::on_action`].
-#[derive(Clone, Default)]
-pub(crate) struct DropdownButtonHandle(Arc<OnceLock<WidgetId>>);
-
-impl DropdownButtonHandle {
-    pub(crate) fn new() -> Self {
-        Self(Arc::new(OnceLock::new()))
-    }
-
-    pub(crate) fn widget_id(&self) -> Option<WidgetId> {
-        self.0.get().copied()
-    }
-
-    fn set(&self, id: WidgetId) {
-        let _ = self.0.set(id);
-    }
-}
+widget_id_handle!(
+    /// Self-filling handle to a [`ThemedDropdownButton`]'s widget id, filled at
+    /// `Update::WidgetAdded` — mirrors [`OverlayScopeHandle`]'s bootstrapping.
+    ///
+    /// Given to a portal-mounted [`super::view::MenuContentView`] so an item
+    /// selection can `mutate_later` back into the dropdown to close the menu and
+    /// clear the keyboard highlight: in portal mode the menu is not a descendant
+    /// of the dropdown, so normal action bubbling never reaches
+    /// [`ThemedDropdownButton::on_action`].
+    DropdownButtonHandle
+);
 
 /// Trigger-construction inputs shared by [`ThemedDropdownButton::new`] and
 /// [`ThemedDropdownButton::new_portal`]; bundled to keep `new_portal`'s

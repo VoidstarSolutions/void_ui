@@ -25,6 +25,7 @@ use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use masonry::peniko::Color;
 
 use crate::Theme;
+use crate::components::item_list;
 use crate::focus_ring::{FOCUS_RING_OUTSET, paint_focus_ring};
 
 /// Width of the active-state left accent bar.
@@ -194,6 +195,22 @@ pub struct ThemedSidebarNav {
     hovered: Option<usize>,
     pressed: Option<usize>,
     theme: Theme,
+}
+
+// --- MARK: HELPERS
+impl ThemedSidebarNav {
+    /// Item rect for `index`, falling back to a theme-metric estimate when
+    /// `placed` is empty (cleared by `set_items`, not yet rebuilt by layout).
+    /// Items are vertical; only `y` is estimated, `x` always spans from 0.
+    fn item_rect_or_estimate(&self, index: usize) -> Rect {
+        if let Some(&rect) = self.placed.get(index) {
+            return rect;
+        }
+        let item_h = f64::from(self.theme.density.ui_font_size) + 2.0 * PAD_V;
+        let index_f64 = item_list::index_f64(index);
+        let y = index_f64 * (item_h + GAP);
+        Rect::new(0.0, y, 0.0, y + item_h)
+    }
 }
 
 // --- MARK: BUILDERS
@@ -377,6 +394,7 @@ impl Widget for ThemedSidebarNav {
             Key::Named(NamedKey::ArrowUp) if key.state == KeyState::Down => {
                 if self.focused > 0 {
                     self.focused -= 1;
+                    ctx.request_scroll_to(self.item_rect_or_estimate(self.focused));
                     ctx.request_paint_only();
                 }
                 ctx.set_handled();
@@ -384,6 +402,7 @@ impl Widget for ThemedSidebarNav {
             Key::Named(NamedKey::ArrowDown) if key.state == KeyState::Down => {
                 if self.focused + 1 < self.items.len() {
                     self.focused += 1;
+                    ctx.request_scroll_to(self.item_rect_or_estimate(self.focused));
                     ctx.request_paint_only();
                 }
                 ctx.set_handled();

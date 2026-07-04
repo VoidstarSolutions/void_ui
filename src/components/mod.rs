@@ -13,6 +13,7 @@
 //! the host, not a tree walk.
 
 pub mod alert;
+pub mod autocomplete;
 pub mod button;
 pub mod button_group;
 pub mod checkbox;
@@ -27,6 +28,7 @@ pub mod dropdown_button;
 pub mod group_box;
 pub mod icon;
 pub mod input;
+pub(crate) mod item_list;
 pub mod label;
 pub mod list;
 pub mod notification;
@@ -43,6 +45,7 @@ pub mod toggle;
 pub mod tooltip;
 
 pub use alert::{Alert, AlertVariant, alert};
+pub use autocomplete::{Autocomplete, autocomplete};
 pub use button::{Button, ButtonVariant, ButtonView, button};
 pub use button_group::{ButtonGroup, button_group, toggle_button_group};
 pub use checkbox::{Checkbox, CheckboxView, checkbox};
@@ -101,6 +104,7 @@ pub use tooltip::{Tooltip, TooltipView, tooltip};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ComponentKind {
     Alert,
+    Autocomplete,
     Button,
     ButtonGroup,
     DropdownButton,
@@ -137,6 +141,7 @@ impl ComponentKind {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Alert => "Alert",
+            Self::Autocomplete => "Autocomplete",
             Self::Button => "Button",
             Self::ButtonGroup => "Button Group",
             Self::DropdownButton => "Dropdown Button",
@@ -173,6 +178,7 @@ impl ComponentKind {
     pub const fn all() -> &'static [Self] {
         &[
             Self::Alert,
+            Self::Autocomplete,
             Self::Button,
             Self::ButtonGroup,
             Self::Checkbox,

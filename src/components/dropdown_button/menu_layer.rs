@@ -19,6 +19,7 @@ use masonry::properties::ContentColor;
 use masonry::widgets::Label;
 
 use crate::Theme;
+use crate::components::item_list;
 use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 
 /// Vertical padding above and below the item list.
@@ -81,21 +82,19 @@ impl MenuContent {
     }
 
     fn item_height(&self) -> f64 {
-        f64::from(self.theme.density.ui_font_size)
-            + 2.0 * f64::from(self.theme.density.button_pad_v)
+        item_list::item_height(&self.theme.density)
     }
 
     fn pad_h(&self) -> f64 {
-        f64::from(self.theme.density.button_pad_h)
+        item_list::pad_h(&self.theme.density)
     }
 
     fn hit_item(&self, local_pos: Point) -> Option<usize> {
-        self.item_rects.iter().position(|r| r.contains(local_pos))
+        item_list::hit_item(&self.item_rects, local_pos)
     }
 
     fn to_local(ctx: &EventCtx<'_>, window_pos: Point) -> Point {
-        let origin = ctx.to_window(Point::ZERO);
-        window_pos - origin.to_vec2()
+        item_list::to_local(ctx, window_pos)
     }
 }
 

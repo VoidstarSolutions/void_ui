@@ -66,10 +66,6 @@ pub(crate) use affixed_row;
 /// density. Inner padding, by contrast, is read from `Theme.density`.
 const BORDER_WIDTH: Length = Length::const_px(1.0);
 
-/// Fully transparent fill, used to suppress the inner `TextInput`'s default
-/// masonry chrome so only the surrounding `sized_box` paints the field.
-const TRANSPARENT: Color = Color::from_rgba8(0, 0, 0, 0);
-
 /// Builder for a themed single-line text input.
 ///
 /// Created with [`input`]. Returns a xilem view via [`Self::render`].
@@ -182,6 +178,35 @@ where
         .padding(field_padding(theme))
 }
 
+/// Theme colors for an editable `TextArea`: text, caret, and selection
+/// highlight. Shared by every field flavor that builds a masonry `TextArea`
+/// directly instead of going through [`Input`] (currently the autocomplete
+/// component, whose portal-mode chrome can't be a xilem view).
+pub(crate) fn text_area_props(theme: &Theme) -> PropertySet {
+    let mut props = PropertySet::new();
+    props.insert(ContentColor::new(theme.palette.text));
+    props.insert(CaretColor {
+        color: theme.palette.teal,
+    });
+    props.insert(SelectionColor {
+        color: theme.palette.teal_soft,
+    });
+    props
+}
+
+/// Strips masonry's default `TextInput` chrome (background, border, padding)
+/// so only a surrounding field box paints it, keeping just the themed
+/// placeholder color. Shared with the same field flavors as
+/// [`text_area_props`].
+pub(crate) fn stripped_text_input_props(theme: &Theme) -> PropertySet {
+    let mut props = PropertySet::new();
+    props.insert(Background::Color(Color::TRANSPARENT));
+    props.insert(BorderWidth::all(Length::const_px(0.0)));
+    props.insert(Padding::all(Length::const_px(0.0)));
+    props.insert(PlaceholderColor::new(theme.palette.text_muted));
+    props
+}
+
 /// A muted, non-interactive affix label (prefix/suffix, currency symbol). Shared
 /// so every flavor styles its affixes identically.
 pub(crate) fn affix_label<State, Action>(
@@ -270,19 +295,6 @@ impl<F, State, Action> InputView<F, State, Action> {
             phantom: PhantomData,
         }
     }
-
-    /// Theme the inner `TextArea`: text color, caret, and selection highlight.
-    fn area_props(&self) -> PropertySet {
-        let mut props = PropertySet::new();
-        props.insert(ContentColor::new(self.theme.palette.text));
-        props.insert(CaretColor {
-            color: self.theme.palette.teal,
-        });
-        props.insert(SelectionColor {
-            color: self.theme.palette.teal_soft,
-        });
-        props
-    }
 }
 
 impl<F, State, Action> ViewMarker for InputView<F, State, Action> {}
@@ -305,7 +317,7 @@ where
             .with_style(StyleProperty::FontSize(self.theme.typography.size_body));
 
         let text_input = widgets::TextInput::from_text_area(
-            NewWidget::new(text_area).with_props(self.area_props()),
+            NewWidget::new(text_area).with_props(text_area_props(&self.theme)),
         )
         .with_placeholder(self.placeholder.clone())
         .with_clip(true);
@@ -318,14 +330,7 @@ where
         // surrounding sized_box paints the field. Keep only the themed
         // placeholder color and the disabled flag.
         let mut input = NewWidget::new(text_input);
-        input.properties.insert(Background::Color(TRANSPARENT));
-        input
-            .properties
-            .insert(BorderWidth::all(Length::const_px(0.0)));
-        input.properties.insert(Padding::all(Length::const_px(0.0)));
-        input
-            .properties
-            .insert(PlaceholderColor::new(self.theme.palette.text_muted));
+        input.properties = stripped_text_input_props(&self.theme);
         input.options.disabled = self.disabled;
 
         let pod = ctx.create_pod(InputFrame::new(input));
