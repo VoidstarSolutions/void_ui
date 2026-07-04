@@ -14,7 +14,6 @@
 
 pub mod alert;
 pub mod autocomplete;
-pub(crate) mod item_list;
 pub mod button;
 pub mod button_group;
 pub mod checkbox;
@@ -29,6 +28,7 @@ pub mod dropdown_button;
 pub mod group_box;
 pub mod icon;
 pub mod input;
+pub(crate) mod item_list;
 pub mod label;
 pub mod list;
 pub mod notification;
