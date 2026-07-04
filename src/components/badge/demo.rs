@@ -23,8 +23,12 @@ fn rounded_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
         flex_row((
             badge("Draft").render(theme),
             badge("Info").variant(AlertVariant::Info).render(theme),
-            badge("Success").variant(AlertVariant::Success).render(theme),
-            badge("Warning").variant(AlertVariant::Warning).render(theme),
+            badge("Success")
+                .variant(AlertVariant::Success)
+                .render(theme),
+            badge("Warning")
+                .variant(AlertVariant::Warning)
+                .render(theme),
             badge("Error").variant(AlertVariant::Error).render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Center)

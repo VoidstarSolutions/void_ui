@@ -18,7 +18,11 @@ fn section_header<S: 'static>(text: &'static str, theme: &Theme) -> impl WidgetV
         .render(theme)
 }
 
-fn kv_row<S: 'static>(key: &'static str, value: &'static str, theme: &Theme) -> impl WidgetView<S> + use<S> {
+fn kv_row<S: 'static>(
+    key: &'static str,
+    value: &'static str,
+    theme: &Theme,
+) -> impl WidgetView<S> + use<S> {
     flex_row((
         label(key).color(theme.palette.text_faint).render(theme),
         label(value).render(theme),
@@ -45,9 +49,11 @@ fn default_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
 
 fn bordered_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     with_source!(theme, {
-        card(label("A card with a border and a custom background.")
-            .multiline(true)
-            .render(theme))
+        card(
+            label("A card with a border and a custom background.")
+                .multiline(true)
+                .render(theme),
+        )
         .border()
         .background(theme.palette.surface_2)
         .render(theme)
