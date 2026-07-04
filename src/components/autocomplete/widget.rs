@@ -941,16 +941,18 @@ impl Widget for SuggestionItem {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Case-insensitive prefix match, capped at [`MAX_SUGGESTIONS`].
-/// When `query` is empty, the **full, uncapped** list is returned — the
-/// dropdown shows everything when the field first receives focus, and the
-/// list scrolls to reach entries beyond the visible window.
+/// When `query` is empty, the first [`MAX_SUGGESTIONS`] entries are returned —
+/// the dropdown shows an initial window when the field first receives focus.
+/// The cap applies to the empty query too: the list is not virtualized, so an
+/// uncapped result would materialize one widget per entry (see the tracked
+/// follow-up to move this onto the shared virtualization substrate).
 ///
 /// `all_lower` must be the pre-lowercased mirror of `all` (same length,
 /// same order). This avoids a `to_lowercase` allocation per item on the
 /// hot keystroke path.
 pub(crate) fn compute_filtered(all: &[ArcStr], all_lower: &[String], query: &str) -> Vec<ArcStr> {
     if query.is_empty() {
-        return all.to_vec();
+        return all.iter().take(MAX_SUGGESTIONS).cloned().collect();
     }
     let q = query.to_lowercase();
     all.iter()
