@@ -14,6 +14,7 @@
 
 pub mod alert;
 pub mod autocomplete;
+pub(crate) mod item_list;
 pub mod button;
 pub mod button_group;
 pub mod checkbox;

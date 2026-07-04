@@ -28,6 +28,7 @@ use masonry::peniko::Color;
 
 use super::TabsVariant;
 use crate::Theme;
+use crate::components::item_list;
 use crate::focus_ring::{FOCUS_RING_OUTSET, paint_focus_ring};
 
 /// Border/underline stroke width.
@@ -404,7 +405,7 @@ impl TabsWidget {
         let (pad_h, pad_v) = self.item_pad();
         let est_item_w = f64::from(self.theme.density.ui_font_size) * 3.0 + 2.0 * pad_h;
         let est_item_h = f64::from(self.theme.density.ui_font_size) + 2.0 * pad_v;
-        let index_f64 = f64::from(u32::try_from(index).unwrap_or(u32::MAX));
+        let index_f64 = item_list::index_f64(index);
         let x = outer + index_f64 * (est_item_w + gap);
         Rect::new(x, outer, x + est_item_w, outer + est_item_h)
     }

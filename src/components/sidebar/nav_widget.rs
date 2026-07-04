@@ -25,6 +25,7 @@ use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use masonry::peniko::Color;
 
 use crate::Theme;
+use crate::components::item_list;
 use crate::focus_ring::{FOCUS_RING_OUTSET, paint_focus_ring};
 
 /// Width of the active-state left accent bar.
@@ -206,7 +207,7 @@ impl ThemedSidebarNav {
             return rect;
         }
         let item_h = f64::from(self.theme.density.ui_font_size) + 2.0 * PAD_V;
-        let index_f64 = f64::from(u32::try_from(index).unwrap_or(u32::MAX));
+        let index_f64 = item_list::index_f64(index);
         let y = index_f64 * (item_h + GAP);
         Rect::new(0.0, y, 0.0, y + item_h)
     }

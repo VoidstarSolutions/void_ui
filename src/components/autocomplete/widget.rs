@@ -12,8 +12,6 @@
 //!   `SuggestionSelected` actions from its descendants and re-emits the single
 //!   public [`AutocompleteAction::TextChanged`] that the view layer consumes.
 
-use std::sync::{Arc, OnceLock};
-
 use masonry::accesskit::{HasPopup, Node, Role};
 use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
@@ -34,6 +32,7 @@ use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
 use crate::components::input::widget::{InputCleared, InputFrame};
 use crate::components::input::{stripped_text_input_props, text_area_props};
+use crate::components::item_list;
 use crate::components::popover::PopoverAnchor;
 use crate::components::scroll_container::widget::{ContentClip, ScrollView};
 use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
@@ -81,87 +80,36 @@ pub(crate) enum AutocompleteAction {
     TextChanged(String),
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// AutocompleteHandle
-// ─────────────────────────────────────────────────────────────────────────────
+widget_id_handle!(
+    /// Self-filling handle to an [`AutocompleteWidget`]'s widget id, filled at
+    /// `Update::WidgetAdded`. Given to portal-mounted [`super::view::SuggestionListView`]
+    /// so an item selection can `mutate_later` back into the widget to close the
+    /// suggestion list and emit the selected text.
+    AutocompleteHandle
+);
 
-/// Self-filling handle to an [`AutocompleteWidget`]'s widget id, filled at
-/// `Update::WidgetAdded`. Given to portal-mounted [`super::view::SuggestionListView`]
-/// so an item selection can `mutate_later` back into the widget to close the
-/// suggestion list and emit the selected text.
-#[derive(Clone, Default)]
-pub(crate) struct AutocompleteHandle(Arc<OnceLock<WidgetId>>);
+widget_id_handle!(
+    /// Self-filling handle to a [`LabelList`]'s widget id, filled at
+    /// `Update::WidgetAdded`. Lets [`AutocompleteWidget`] expose `aria-controls`
+    /// pointing at the listbox. The active-descendant relationship is set
+    /// directly by [`LabelList`] itself (see its `accessibility` impl), since it
+    /// always has immediate, local access to which item is highlighted.
+    LabelListHandle
+);
 
-impl AutocompleteHandle {
-    pub(crate) fn new() -> Self {
-        Self(Arc::new(OnceLock::new()))
-    }
-
-    pub(crate) fn widget_id(&self) -> Option<WidgetId> {
-        self.0.get().copied()
-    }
-
-    fn set(&self, id: WidgetId) {
-        let _ = self.0.set(id);
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// LabelListHandle
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Self-filling handle to a [`LabelList`]'s widget id, filled at
-/// `Update::WidgetAdded`. Lets [`AutocompleteWidget`] expose `aria-controls`
-/// pointing at the listbox. The active-descendant relationship is set
-/// directly by [`LabelList`] itself (see its `accessibility` impl), since it
-/// always has immediate, local access to which item is highlighted.
-#[derive(Clone, Default)]
-pub(crate) struct LabelListHandle(Arc<OnceLock<WidgetId>>);
-
-impl LabelListHandle {
-    pub(crate) fn new() -> Self {
-        Self(Arc::new(OnceLock::new()))
-    }
-
-    pub(crate) fn widget_id(&self) -> Option<WidgetId> {
-        self.0.get().copied()
-    }
-
-    fn set(&self, id: WidgetId) {
-        let _ = self.0.set(id);
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TextAreaHandle
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Handle to the autocomplete's editable `TextArea`'s widget id. Unlike the
-/// other handles here, this is filled *eagerly* at [`AutocompleteWidget`]
-/// construction — `build_chrome` already reads the id synchronously off the
-/// `NewWidget` it builds, no need to wait for `Update::WidgetAdded`. Lets
-/// [`LabelList`] call `ctx.set_focus()` directly to return focus to the input
-/// after Enter-selection or Escape, in both hosting modes — see the module
-/// docs for why arrow-key navigation moved from "focus stays in the textbox"
-/// (blocked: `TextArea` unconditionally claims arrow keys for cursor
-/// movement, even on a single line, so an ancestor never sees them) to
-/// "Tab moves focus into the open listbox".
-#[derive(Clone, Default)]
-pub(crate) struct TextAreaHandle(Arc<OnceLock<WidgetId>>);
-
-impl TextAreaHandle {
-    pub(crate) fn new() -> Self {
-        Self(Arc::new(OnceLock::new()))
-    }
-
-    pub(crate) fn widget_id(&self) -> Option<WidgetId> {
-        self.0.get().copied()
-    }
-
-    fn set(&self, id: WidgetId) {
-        let _ = self.0.set(id);
-    }
-}
+widget_id_handle!(
+    /// Handle to the autocomplete's editable `TextArea`'s widget id. Unlike the
+    /// other handles here, this is filled *eagerly* at [`AutocompleteWidget`]
+    /// construction — `build_chrome` already reads the id synchronously off the
+    /// `NewWidget` it builds, no need to wait for `Update::WidgetAdded`. Lets
+    /// [`LabelList`] call `ctx.set_focus()` directly to return focus to the input
+    /// after Enter-selection or Escape, in both hosting modes — see the module
+    /// docs for why arrow-key navigation moved from "focus stays in the textbox"
+    /// (blocked: `TextArea` unconditionally claims arrow keys for cursor
+    /// movement, even on a single line, so an ancestor never sees them) to
+    /// "Tab moves focus into the open listbox".
+    TextAreaHandle
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SuggestionList
@@ -414,21 +362,19 @@ impl LabelList {
     }
 
     fn item_height(&self) -> f64 {
-        f64::from(self.theme.density.ui_font_size)
-            + 2.0 * f64::from(self.theme.density.button_pad_v)
+        item_list::item_height(&self.theme.density)
     }
 
     fn pad_h(&self) -> f64 {
-        f64::from(self.theme.density.button_pad_h)
+        item_list::pad_h(&self.theme.density)
     }
 
     fn hit_item(&self, local: Point) -> Option<usize> {
-        self.item_rects.iter().position(|r| r.contains(local))
+        item_list::hit_item(&self.item_rects, local)
     }
 
     fn to_local(ctx: &EventCtx<'_>, window_pos: Point) -> Point {
-        let origin = ctx.to_window(Point::ZERO);
-        window_pos - origin.to_vec2()
+        item_list::to_local(ctx, window_pos)
     }
 
     /// Returns focus to the input field, if its id is known yet.
