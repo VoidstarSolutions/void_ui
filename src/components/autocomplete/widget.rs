@@ -1927,17 +1927,18 @@ impl Widget for AutocompleteWidget {
                 TextAction::Changed(text) => {
                     self.handle_text_changed(ctx, text);
                 }
-                // Enter from the text input (not the listbox — that has its
-                // own Enter handling in LabelList::on_text_event, which
-                // tracks its own highlight) has nothing to select here, but
-                // must still be consumed while the list is open. Otherwise
-                // it's left unhandled (bubbles for form submission) — an
-                // open-but-consumed Enter would otherwise silently bubble to
-                // an ancestor form's submit handler while the dropdown is
-                // visibly showing suggestions the user hasn't acted on.
+                // Enter over an open dropdown accepts the first suggestion —
+                // the near-universal combobox affordance (the listbox, once
+                // Tab-focused, has its own highlight-aware Enter handling in
+                // LabelList::on_text_event). `select_suggestion` fills the
+                // field, closes the popup, and consumes the key. When closed,
+                // it's left unhandled so an enclosing form can submit.
                 TextAction::Entered(_) => {
-                    if self.open {
-                        ctx.set_handled();
+                    if self.open
+                        && let Some(first) = self.filtered.first()
+                    {
+                        let first = first.to_string();
+                        self.select_suggestion(ctx, first);
                     }
                 }
             }
@@ -1946,11 +1947,22 @@ impl Widget for AutocompleteWidget {
 
         // ── Escape / clear ────────────────────────────────────────────────────
         if action.downcast_ref::<InputCleared>().is_some() {
-            self.contents.clear();
-            self.filtered.clear();
-            self.open = false;
-            self.close_overlay_later(ctx);
-            ctx.submit_action::<Self::Action>(AutocompleteAction::TextChanged(String::new()));
+            if self.open {
+                // Escape while the suggestion popup is open dismisses the
+                // popup only, preserving the typed text (standard combobox
+                // affordance). Emitting no TextChanged keeps the host's bound
+                // value intact — the field is not cleared.
+                self.open = false;
+                self.filtered.clear();
+                self.close_overlay_later(ctx);
+            } else {
+                // No popup to dismiss: fall back to the bare-input clear
+                // behavior (InputFrame emits InputCleared on Escape), emptying
+                // the field and reporting the change.
+                self.contents.clear();
+                self.filtered.clear();
+                ctx.submit_action::<Self::Action>(AutocompleteAction::TextChanged(String::new()));
+            }
             ctx.set_handled();
             ctx.request_paint_only();
             ctx.request_accessibility_update();
@@ -3027,5 +3039,144 @@ mod accessibility_tests {
             Some(false),
             "closed after click-select"
         );
+    }
+
+    /// Like [`harness_with_fruit`] but seeds the field with `initial` text, so
+    /// text-preserving keyboard behavior (Escape, Enter) can be exercised.
+    fn harness_with_fruit_contents(
+        initial: &str,
+    ) -> (TestHarness<AutocompleteWidget>, WidgetId, WidgetId) {
+        let theme = Theme::default();
+        let suggestions: Vec<ArcStr> = ["Apple", "Banana", "Cherry"]
+            .into_iter()
+            .map(ArcStr::from)
+            .collect();
+        let widget = AutocompleteWidget::new(
+            initial,
+            ArcStr::from("Pick a fruit"),
+            suggestions,
+            false,
+            &theme,
+        );
+        let harness = TestHarness::create_with_size(
+            masonry::theme::default_property_set(),
+            NewWidget::new(widget),
+            (300, 300),
+        );
+        let autocomplete_id = harness.root_id();
+        let text_area_id = find_text_area(harness.root_widget().as_dyn())
+            .expect("autocomplete should host a TextArea")
+            .id();
+        (harness, autocomplete_id, text_area_id)
+    }
+
+    /// Escape while the dropdown is open must dismiss the popup only — the
+    /// standard combobox affordance — leaving the typed text intact and *not*
+    /// emitting a text change that would reset the host's bound value.
+    #[test]
+    fn escape_in_field_closes_dropdown_without_clearing_text() {
+        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit_contents("App");
+
+        // Focus opens the dropdown: compute_filtered("App") -> ["Apple"].
+        harness.focus_on(Some(text_area_id));
+        harness.render();
+        assert_eq!(
+            harness
+                .access_node(autocomplete_id)
+                .expect("combobox")
+                .data()
+                .is_expanded(),
+            Some(true),
+            "focusing a field with matches should open the dropdown",
+        );
+        while harness.pop_action::<AutocompleteAction>().is_some() {}
+
+        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Escape)));
+        harness.render();
+
+        assert_eq!(
+            harness
+                .access_node(autocomplete_id)
+                .expect("combobox")
+                .data()
+                .is_expanded(),
+            Some(false),
+            "Escape should close the open dropdown",
+        );
+        assert!(
+            harness.pop_action::<AutocompleteAction>().is_none(),
+            "Escape-to-close must not emit a text change — it dismisses the \
+             popup, it does not clear the field",
+        );
+        let ac = find_autocomplete(harness.root_widget().as_dyn()).expect("autocomplete");
+        assert_eq!(ac.contents, "App", "typed text must survive Escape");
+    }
+
+    /// Escape with no dropdown open falls back to the bare-input clear
+    /// behavior: there's no popup to dismiss, so it empties the field.
+    #[test]
+    fn escape_with_closed_dropdown_still_clears_the_field() {
+        // "zzz" matches nothing, so focusing never opens the dropdown.
+        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit_contents("zzz");
+
+        harness.focus_on(Some(text_area_id));
+        harness.render();
+        assert_eq!(
+            harness
+                .access_node(autocomplete_id)
+                .expect("combobox")
+                .data()
+                .is_expanded(),
+            Some(false),
+            "no matches -> dropdown stays closed",
+        );
+        while harness.pop_action::<AutocompleteAction>().is_some() {}
+
+        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Escape)));
+        harness.render();
+
+        let (action, _) = harness
+            .pop_action::<AutocompleteAction>()
+            .expect("Escape with no popup should clear and report the change");
+        let AutocompleteAction::TextChanged(text) = action;
+        assert_eq!(text, "", "Escape with no open dropdown clears the field");
+        let ac = find_autocomplete(harness.root_widget().as_dyn()).expect("autocomplete");
+        assert!(ac.contents.is_empty(), "field should be cleared");
+    }
+
+    /// Pressing Enter in the text field while the dropdown is open accepts the
+    /// first suggestion (the near-universal combobox affordance), fills the
+    /// field, closes the popup, and reports the change.
+    #[test]
+    fn enter_in_field_selects_first_suggestion() {
+        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit();
+
+        harness.focus_on(Some(text_area_id));
+        harness.render();
+        while harness.pop_action::<AutocompleteAction>().is_some() {}
+
+        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Enter)));
+        harness.render();
+
+        let area = find_text_area(harness.root_widget().as_dyn()).expect("TextArea");
+        assert_eq!(
+            area.text().to_string(),
+            "Apple",
+            "Enter should accept the first suggestion",
+        );
+        assert_eq!(
+            harness
+                .access_node(autocomplete_id)
+                .expect("combobox")
+                .data()
+                .is_expanded(),
+            Some(false),
+            "accepting a suggestion closes the dropdown",
+        );
+        let (action, _) = harness
+            .pop_action::<AutocompleteAction>()
+            .expect("accepting a suggestion should report the change");
+        let AutocompleteAction::TextChanged(text) = action;
+        assert_eq!(text, "Apple");
     }
 }
