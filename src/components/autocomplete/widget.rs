@@ -2422,7 +2422,8 @@ mod accessibility_tests {
             listbox_handle.clone(),
             &text_area_handle,
         );
-        let suggestion_list = SuggestionList::new([], &theme, listbox_handle, handle, text_area_handle);
+        let suggestion_list =
+            SuggestionList::new([], &theme, listbox_handle, handle, text_area_handle);
         // Matches what the view layer produces: `PortalContentView` is typed
         // to a `Pod<Passthrough>` element, and the widget-side mutate_later
         // closures (open_on_focus, handle_text_changed, ...) all navigate
@@ -2433,7 +2434,11 @@ mod accessibility_tests {
         let scope = OverlayScope::new(
             scope_handle,
             NewWidget::new(autocomplete).erased(),
-            vec![(key, NewWidget::new(passthrough).erased(), PortalPlacement::BareTrigger)],
+            vec![(
+                key,
+                NewWidget::new(passthrough).erased(),
+                PortalPlacement::BareTrigger,
+            )],
         );
         let harness = TestHarness::create_with_size(
             masonry::theme::default_property_set(),
@@ -2509,10 +2514,9 @@ mod accessibility_tests {
         // on that visible label would resolve to.
         let label_ref = harness.get_widget_with_id(label_id);
         let label_size = label_ref.ctx().border_box_size();
-        let label_center = label_ref.ctx().to_window(Point::new(
-            label_size.width / 2.0,
-            label_size.height / 2.0,
-        ));
+        let label_center = label_ref
+            .ctx()
+            .to_window(Point::new(label_size.width / 2.0, label_size.height / 2.0));
         harness.mouse_move(label_center);
         harness.mouse_button_press(Some(PointerButton::Primary));
         harness.mouse_button_release(Some(PointerButton::Primary));

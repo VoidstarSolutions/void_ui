@@ -295,7 +295,6 @@ impl<F, State, Action> InputView<F, State, Action> {
             phantom: PhantomData,
         }
     }
-
 }
 
 impl<F, State, Action> ViewMarker for InputView<F, State, Action> {}
