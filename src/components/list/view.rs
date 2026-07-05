@@ -42,11 +42,11 @@ use crate::components::spinner::spinner;
 
 /// Boxed stable item-id projector (`Fn(&Item) -> u64`).
 type ItemIdFn<Item> = Arc<dyn Fn(&Item) -> u64 + Send + Sync>;
-/// Boxed search-query-change callback (`Fn(&mut State, query)`).
-type SearchChange<State> = Arc<dyn Fn(&mut State, String) + Send + Sync>;
-/// Boxed lazy-load callback (`Fn(&mut State)`), wrapped into the substrate's
-/// [`Lazy`] before being handed to `collection_body`.
-type LoadMore<State> = Arc<dyn Fn(&mut State) + Send + Sync>;
+/// Boxed search-query-change callback (`Fn(&mut State, query) -> Action`).
+type SearchChange<State, Action> = Arc<dyn Fn(&mut State, String) -> Action + Send + Sync>;
+/// Boxed lazy-load callback (`Fn(&mut State) -> Action`), wrapped into the
+/// substrate's [`Lazy`] before being handed to `collection_body`.
+type LoadMore<State, Action> = Arc<dyn Fn(&mut State) -> Action + Send + Sync>;
 
 /// Default fixed item height when [`List::item_height`] is unset.
 const DEFAULT_ITEM_HEIGHT: f64 = 32.0;
@@ -72,7 +72,7 @@ const DEFAULT_LOAD_THRESHOLD: u64 = 20;
 ///
 /// All setters are optional — an empty `List` renders an empty body.
 #[must_use = "List does nothing until rendered with .render(&theme)"]
-pub struct List<State, Item> {
+pub struct List<State, Item, Action = ()> {
     items: Option<ItemsFn<State, Item>>,
     item_count: u64,
     item_height: f64,
@@ -81,16 +81,17 @@ pub struct List<State, Item> {
     selection_lens: Option<SelectionLens<State>>,
     scroll: ScrollState,
     loading: bool,
-    search: Option<(String, SearchChange<State>)>,
+    search: Option<(String, SearchChange<State, Action>)>,
     search_placeholder: String,
-    on_load_more: Option<LoadMore<State>>,
+    on_load_more: Option<LoadMore<State, Action>>,
     load_threshold: u64,
 }
 
-impl<State, Item> List<State, Item>
+impl<State, Item, Action> List<State, Item, Action>
 where
     State: 'static,
     Item: 'static,
+    Action: Default + 'static,
 {
     /// Starts an empty list. Attach data with [`Self::items`] +
     /// [`Self::item_count`] and a renderer with [`Self::render_item`] before
@@ -201,7 +202,7 @@ where
     /// `items`/`item_count` from the query and passes the result back.
     pub fn search<F>(mut self, query: impl Into<String>, on_change: F) -> Self
     where
-        F: Fn(&mut State, String) + Send + Sync + 'static,
+        F: Fn(&mut State, String) -> Action + Send + Sync + 'static,
     {
         self.search = Some((query.into(), Arc::new(on_change)));
         self
@@ -218,7 +219,7 @@ where
     /// grows `item_count` (and/or `items`) in response.
     pub fn on_load_more<F>(mut self, f: F) -> Self
     where
-        F: Fn(&mut State) + Send + Sync + 'static,
+        F: Fn(&mut State) -> Action + Send + Sync + 'static,
     {
         self.on_load_more = Some(Arc::new(f));
         self
@@ -233,15 +234,19 @@ where
 
     /// Materializes the xilem view at the supplied theme.
     #[must_use]
-    pub fn render(self, theme: &Theme) -> impl WidgetView<State, ()> + use<State, Item> {
+    pub fn render(
+        self,
+        theme: &Theme,
+    ) -> impl WidgetView<State, Action> + use<State, Item, Action> {
         build_list_view(self, theme)
     }
 }
 
-impl<State, Item> Default for List<State, Item>
+impl<State, Item, Action> Default for List<State, Item, Action>
 where
     State: 'static,
     Item: 'static,
+    Action: Default + 'static,
 {
     fn default() -> Self {
         Self::new()
@@ -252,21 +257,23 @@ where
 /// components' constructors (`data_grid(columns)`, `button(..)`, …).
 /// Equivalent to [`List::new`]; attach data/behavior with the chained
 /// setters, then [`List::render`].
-pub fn list<State, Item>() -> List<State, Item>
+pub fn list<State, Item, Action>() -> List<State, Item, Action>
 where
     State: 'static,
     Item: 'static,
+    Action: Default + 'static,
 {
     List::new()
 }
 
-fn build_list_view<State, Item>(
-    list: List<State, Item>,
+fn build_list_view<State, Item, Action>(
+    list: List<State, Item, Action>,
     theme: &Theme,
-) -> impl WidgetView<State, ()> + use<State, Item>
+) -> impl WidgetView<State, Action> + use<State, Item, Action>
 where
     State: 'static,
     Item: 'static,
+    Action: Default + 'static,
 {
     let theme = *theme;
     let List {
@@ -313,10 +320,10 @@ where
 
     let lazy = on_load_more.map(|callback| Lazy {
         threshold: load_threshold,
-        callback: Arc::new(move |state: &mut State| callback(state)),
+        callback,
     });
 
-    let body: Box<AnyWidgetView<State>> = if item_count == 0 && loading {
+    let body: Box<AnyWidgetView<State, Action>> = if item_count == 0 && loading {
         // Initial load: the spinner replaces the whole body.
         Box::new(centered_spinner(&theme))
     } else {
@@ -332,7 +339,7 @@ where
         });
         if loading && item_count > 0 {
             // Loading more: keep the items, append a footer spinner.
-            let children: [AnyFlexChild<State, ()>; 2] = [
+            let children: [AnyFlexChild<State, Action>; 2] = [
                 flex_item(collection, 1.0).into(),
                 flex_item(footer_spinner(&theme), 0.0).into(),
             ];
@@ -342,10 +349,10 @@ where
         }
     };
 
-    let mut top: Vec<AnyFlexChild<State, ()>> = Vec::with_capacity(2);
+    let mut top: Vec<AnyFlexChild<State, Action>> = Vec::with_capacity(2);
     if let Some((query, on_change)) = search {
         let input_view = input(query, move |state: &mut State, text: String| {
-            on_change(state, text);
+            on_change(state, text)
         })
         .placeholder(search_placeholder)
         .render(&theme);
@@ -358,8 +365,10 @@ where
 
 /// A spinner centered in the full space given to it — used when the list is
 /// empty and [`List::loading`] is set.
-fn centered_spinner<State: 'static>(theme: &Theme) -> impl WidgetView<State, ()> + use<State> {
-    flex_row((spinner().render::<State, ()>(theme),))
+fn centered_spinner<State: 'static, Action: 'static>(
+    theme: &Theme,
+) -> impl WidgetView<State, Action> + use<State, Action> {
+    flex_row((spinner().render::<State, Action>(theme),))
         .main_axis_alignment(MainAxisAlignment::Center)
         .cross_axis_alignment(CrossAxisAlignment::Center)
 }
@@ -367,10 +376,12 @@ fn centered_spinner<State: 'static>(theme: &Theme) -> impl WidgetView<State, ()>
 /// A fixed-height "loading more" footer row, shown beneath the items when
 /// [`List::loading`] is set and `item_count > 0`. Height derives from the
 /// theme's density (row pitch + surface padding).
-fn footer_spinner<State: 'static>(theme: &Theme) -> impl WidgetView<State, ()> + use<State> {
+fn footer_spinner<State: 'static, Action: 'static>(
+    theme: &Theme,
+) -> impl WidgetView<State, Action> + use<State, Action> {
     let height = f64::from(theme.density.row) + f64::from(theme.density.pad);
     sized_box(
-        flex_row((spinner().render::<State, ()>(theme),))
+        flex_row((spinner().render::<State, Action>(theme),))
             .main_axis_alignment(MainAxisAlignment::Center)
             .cross_axis_alignment(CrossAxisAlignment::Center),
     )
@@ -435,7 +446,7 @@ mod tests {
             items: vec![10, 20, 30],
         };
 
-        let view = list::<State, u64>()
+        let view = list::<State, u64, ()>()
             .items(|s: &State| &s.items[..])
             .item_count(3)
             .render_item(|item: &u64, _selected, theme| label(item.to_string()).render(theme))
@@ -458,5 +469,28 @@ mod tests {
             find_collection_body(harness.root_widget().as_dyn()).is_some(),
             "list's body should be a CollectionBodyWidget (shared virtualization substrate)",
         );
+    }
+
+    /// The list's host callbacks (search, load-more) return the host's
+    /// Action type, which the rendered view is generic over.
+    #[test]
+    fn list_callbacks_return_the_host_action() {
+        use xilem::WidgetView;
+
+        #[derive(Default, Debug)]
+        struct Refresh;
+        struct S {
+            items: Vec<u64>,
+        }
+        fn assert_widget_view<V: WidgetView<S, Refresh>>(_: &V) {}
+
+        let view = list::<S, u64, Refresh>()
+            .items(|s: &S| &s.items[..])
+            .item_count(3)
+            .render_item(|item: &u64, _sel, theme| label(item.to_string()).render(theme))
+            .search(String::new(), |_s: &mut S, _q: String| Refresh)
+            .on_load_more(|_s: &mut S| Refresh)
+            .render(&Theme::default());
+        assert_widget_view(&view);
     }
 }
