@@ -19,11 +19,13 @@
 //! ```
 
 use masonry::core::ArcStr;
+use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::layout::Length;
 use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, flex_row};
-use xilem::{AnyWidgetView, WidgetView};
+use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
+use super::widget::BreadcrumbNav;
 use crate::{ButtonVariant, IconName, Theme, button, icon, label};
 
 type SelectCallback<State, Action> = Box<dyn Fn(&mut State) -> Action + Send + Sync>;
@@ -112,8 +114,70 @@ impl<State, Action> Breadcrumb<State, Action> {
             };
             children.push(view);
         }
-        flex_row(children)
+        let trail = flex_row(children)
             .cross_axis_alignment(CrossAxisAlignment::Center)
-            .gap(Length::px(f64::from(theme.density.pad) / 3.0))
+            .gap(Length::px(f64::from(theme.density.pad) / 3.0));
+        BreadcrumbNavView { inner: trail }
+    }
+}
+
+/// Wraps a breadcrumb trail view in [`BreadcrumbNav`] so it's announced as a
+/// navigation landmark. A thin hand-written [`View`], mirroring the
+/// transparent single-child pattern `xilem_masonry`'s own `sized_box` uses,
+/// since `flex_row` alone has no accessibility-role override to reach for.
+struct BreadcrumbNavView<V> {
+    inner: V,
+}
+
+impl<V> ViewMarker for BreadcrumbNavView<V> {}
+
+impl<State, Action, V> View<State, Action, ViewCtx> for BreadcrumbNavView<V>
+where
+    State: 'static,
+    Action: 'static,
+    V: WidgetView<State, Action>,
+{
+    type Element = Pod<BreadcrumbNav>;
+    type ViewState = V::ViewState;
+
+    fn build(&self, ctx: &mut ViewCtx, state: &mut State) -> (Self::Element, Self::ViewState) {
+        let (child, child_state) = self.inner.build(ctx, state);
+        let widget = BreadcrumbNav::new(child.new_widget);
+        (ctx.create_pod(widget), child_state)
+    }
+
+    fn rebuild(
+        &self,
+        prev: &Self,
+        view_state: &mut Self::ViewState,
+        ctx: &mut ViewCtx,
+        mut element: Mut<'_, Self::Element>,
+        state: &mut State,
+    ) {
+        let mut child = BreadcrumbNav::child_mut(&mut element);
+        self.inner
+            .rebuild(&prev.inner, view_state, ctx, child.downcast(), state);
+    }
+
+    fn teardown(
+        &self,
+        view_state: &mut Self::ViewState,
+        ctx: &mut ViewCtx,
+        mut element: Mut<'_, Self::Element>,
+    ) {
+        let mut child = BreadcrumbNav::child_mut(&mut element);
+        self.inner.teardown(view_state, ctx, child.downcast());
+    }
+
+    fn message(
+        &self,
+        view_state: &mut Self::ViewState,
+        message: &mut MessageCtx,
+        mut element: Mut<'_, Self::Element>,
+        state: &mut State,
+    ) -> MessageResult<Action> {
+        let mut child = BreadcrumbNav::child_mut(&mut element);
+        self.inner
+            .message(view_state, message, child.downcast(), state)
     }
 }
