@@ -1107,9 +1107,9 @@ mod tests {
         probe.widget.dismissals += 1;
     }
 
-    /// After the `OwnerKind` erasure the portal has no registry of consumer
-    /// types: an outside press must reach the owner purely through the
-    /// `PortalOwner` hook stored in `PortalVisibility`.
+    /// The portal has no registry of consumer types: an outside press must
+    /// reach the owner purely through the erased `DismissHook` stored in
+    /// `PortalVisibility`.
     #[test]
     fn outside_press_notifies_the_owner_through_the_erased_hook() {
         let key = 3;
