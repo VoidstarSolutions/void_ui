@@ -30,8 +30,6 @@ use super::{SliderChanged, SliderValue};
 use crate::focus_ring::{FOCUS_RING_OUTSET, FOCUS_RING_WIDTH, paint_focus_ring};
 use crate::{Orientation, Theme};
 
-/// Diameter of a draggable thumb circle, in logical pixels.
-const THUMB_DIAMETER: f64 = 14.0;
 /// Thickness of the track and fill bar.
 const TRACK_HEIGHT: f64 = 4.0;
 /// Gap between the thumb edge and the focus ring.
@@ -242,10 +240,13 @@ impl SliderWidget {
         }
     }
 
-    /// Replaces the theme. Requests a repaint on change.
+    /// Replaces the theme. Requests layout + repaint on change — the thumb
+    /// diameter derives from `density.control`, so a density swap changes
+    /// the slider's measured cross size.
     pub fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
         if this.widget.theme != *theme {
             this.widget.theme = *theme;
+            this.ctx.request_layout();
             this.ctx.request_paint_only();
         }
     }
@@ -287,10 +288,15 @@ impl SliderWidget {
     /// `(start, usable_length)`.
     fn travel(&self, size: Size) -> (f64, f64) {
         let (main, _) = self.axis_lengths(size);
-        let thumb_radius = THUMB_DIAMETER / 2.0;
+        let thumb_radius = self.thumb_diameter() / 2.0;
         let start = thumb_radius + EDGE_PAD;
         let end = (main - thumb_radius - EDGE_PAD).max(start);
         (start, end - start)
+    }
+
+    /// Thumb diameter, from the density's control glyph size.
+    fn thumb_diameter(&self) -> f64 {
+        f64::from(self.theme.density.control)
     }
 
     /// Position along the main axis of the thumb center representing value `v`.
@@ -658,7 +664,7 @@ impl Widget for SliderWidget {
         len_req: LenReq,
         _cross_length: Option<Length>,
     ) -> Length {
-        let cross = Length::px(THUMB_DIAMETER + 2.0 * EDGE_PAD);
+        let cross = Length::px(self.thumb_diameter() + 2.0 * EDGE_PAD);
         let main_axis = match self.orientation {
             Orientation::Horizontal => Axis::Horizontal,
             Orientation::Vertical => Axis::Vertical,
@@ -687,7 +693,7 @@ impl Widget for SliderWidget {
         let focused = ctx.is_focus_target();
 
         let (start, usable) = self.travel(size);
-        let thumb_radius = THUMB_DIAMETER / 2.0;
+        let thumb_radius = self.thumb_diameter() / 2.0;
         let half_track = TRACK_HEIGHT * 0.5;
 
         let (track_color, fill_color, thumb_color) = self.resolve_colors(hovered, active);
@@ -781,5 +787,36 @@ impl Widget for SliderWidget {
 
     fn accepts_text_input(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod density_tests {
+    use super::*;
+    use crate::theme::Density;
+
+    fn slider_at(density: Density) -> SliderWidget {
+        SliderWidget::new_single(
+            &Theme::dark().with_density(density),
+            0.5,
+            0.0,
+            1.0,
+            0.1,
+            false,
+            Orientation::Horizontal,
+        )
+    }
+
+    #[test]
+    fn thumb_diameter_scales_with_density() {
+        assert!((slider_at(Density::balanced()).thumb_diameter() - 14.0).abs() < 1e-6); // pre-token THUMB_DIAMETER
+        assert!(
+            slider_at(Density::compact()).thumb_diameter()
+                < slider_at(Density::balanced()).thumb_diameter()
+        );
+        assert!(
+            slider_at(Density::balanced()).thumb_diameter()
+                < slider_at(Density::airy()).thumb_diameter()
+        );
     }
 }
