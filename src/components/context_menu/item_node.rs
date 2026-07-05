@@ -249,6 +249,11 @@ impl MenuItemNode {
     /// Restyle this row's children for a new theme.
     pub(crate) fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
         this.widget.theme = *theme;
+        // Shared gutter width is density-derived; re-derive it for rows that
+        // reserve one (a stale 0 stays 0 — no row in this panel has a gutter).
+        if this.widget.gutter_width > 0.0 {
+            this.widget.gutter_width = gutter_glyph_width(theme);
+        }
         let disabled = this.widget.disabled;
         let is_section = matches!(this.widget.kind, RowKind::Section);
         let label_fg = if is_section {
