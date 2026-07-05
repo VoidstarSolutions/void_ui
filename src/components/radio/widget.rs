@@ -8,11 +8,10 @@
 
 use masonry::accesskit;
 use masonry::accesskit::{Node, Role, Toggled};
-use masonry::core::keyboard::Key;
 use masonry::core::{
     AccessCtx, AccessEvent, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, PaintCtx,
-    PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx,
-    TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
+    PointerButton, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update,
+    UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Circle, Point, Size, Stroke};
@@ -21,6 +20,8 @@ use masonry::peniko::Color;
 use masonry::widgets::ButtonPress;
 
 use crate::Theme;
+use crate::components::click::{self, ClickPhase};
+use crate::components::interaction::{self, InteractionState};
 use crate::focus_ring::{FOCUS_RING_OUTSET, paint_focus_ring};
 
 /// Diameter of the radio circle in logical pixels.
@@ -46,6 +47,11 @@ pub struct ThemedRadio {
     active: bool,
     /// When true, all interaction is suppressed and colors are muted.
     disabled: bool,
+    /// True for the span between a Space key-down and its matching key-up
+    /// (or an intervening focus loss) — the keyboard equivalent of the
+    /// pointer-driven `pressed` flag read from the widget context, so
+    /// keyboard activation shows the same pressed ring a pointer click does.
+    keyboard_pressed: bool,
 }
 
 // --- MARK: BUILDERS
@@ -60,6 +66,7 @@ impl ThemedRadio {
             theme: *theme,
             active: false,
             disabled: false,
+            keyboard_pressed: false,
         }
     }
 
@@ -149,25 +156,20 @@ impl Widget for ThemedRadio {
         if self.disabled {
             return;
         }
-        match event {
-            PointerEvent::Down(PointerButtonEvent {
-                button: Some(PointerButton::Primary),
-                ..
-            }) => {
+        match click::primary_click(ctx, event) {
+            Some(ClickPhase::Down(_)) => {
                 ctx.request_focus();
-                ctx.capture_pointer();
                 ctx.request_paint_only();
             }
-            PointerEvent::Up(PointerButtonEvent {
-                button: button @ Some(PointerButton::Primary),
-                ..
-            }) => {
-                if ctx.is_active() && ctx.is_hovered() {
-                    ctx.submit_action::<Self::Action>(ButtonPress { button: *button });
+            Some(ClickPhase::Up { completed, .. }) => {
+                if completed {
+                    ctx.submit_action::<Self::Action>(ButtonPress {
+                        button: Some(PointerButton::Primary),
+                    });
                 }
                 ctx.request_paint_only();
             }
-            _ => (),
+            None => {}
         }
     }
 
@@ -180,11 +182,19 @@ impl Widget for ThemedRadio {
         if self.disabled {
             return;
         }
-        if let TextEvent::Keyboard(event) = event
-            && event.state.is_up()
-            && matches!(&event.key, Key::Character(c) if c == " ")
-        {
+        // ARIA radio-group convention: Space toggles the focused radio;
+        // Enter is deliberately NOT an activation key for radios (it is
+        // reserved for the form's default action, and arrow keys move the
+        // selection). Hence `accept_enter: false`, unlike checkbox/toggle/
+        // button. See WAI-ARIA Authoring Practices, "Radio Group".
+        if interaction::keyboard_press_start(event, false) {
             ctx.set_handled();
+            self.keyboard_pressed = true;
+            ctx.request_paint_only();
+        } else if interaction::keyboard_activate(event, false) {
+            ctx.set_handled();
+            self.keyboard_pressed = false;
+            ctx.request_paint_only();
             ctx.submit_action::<Self::Action>(ButtonPress { button: None });
         }
     }
@@ -198,21 +208,19 @@ impl Widget for ThemedRadio {
         if self.disabled {
             return;
         }
-        if event.action == accesskit::Action::Click {
+        if interaction::is_access_click(event) {
             ctx.submit_action::<Self::Action>(ButtonPress { button: None });
         }
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        match event {
-            Update::WidgetAdded => {
-                ctx.set_disabled(self.disabled);
-            }
-            Update::HoveredChanged(_) | Update::DisabledChanged(_) | Update::FocusChanged(_) => {
-                ctx.request_paint_only();
-            }
-            _ => {}
+        // Losing focus mid-press (e.g. Tab away while Space is still held)
+        // would otherwise leave `keyboard_pressed` stuck true with no
+        // matching key-up ever arriving to clear it.
+        if matches!(event, Update::FocusChanged(false)) {
+            self.keyboard_pressed = false;
         }
+        interaction::interaction_update(ctx, event, self.disabled);
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
@@ -284,9 +292,12 @@ impl Widget for ThemedRadio {
         painter: &mut Painter<'_>,
     ) {
         let size = ctx.border_box_size();
-        let hovered = ctx.is_hovered();
-        let pressed = ctx.is_active() && hovered;
-        let focused = ctx.is_focus_target();
+        let InteractionState {
+            hovered,
+            pressed,
+            focused,
+        } = InteractionState::from_paint_ctx(ctx);
+        let pressed = pressed || self.keyboard_pressed;
 
         let (ring_color, dot_color) = self.resolve_colors(hovered, pressed);
 
@@ -349,5 +360,79 @@ impl Widget for ThemedRadio {
 
     fn accepts_text_input(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use masonry::core::keyboard::{Key, NamedKey};
+    use masonry::core::{NewWidget, PointerButton, TextEvent};
+    use masonry::kurbo::Point;
+    use masonry::testing::TestHarness;
+    use masonry::theme::default_property_set;
+    use masonry::widgets::{ButtonPress, Label};
+
+    use super::ThemedRadio;
+    use crate::Theme;
+
+    fn harness() -> TestHarness<ThemedRadio> {
+        let widget = ThemedRadio::new(NewWidget::new(Label::new("choice")), &Theme::dark());
+        TestHarness::create_with_size(default_property_set(), NewWidget::new(widget), (120, 24))
+    }
+
+    #[test]
+    fn pointer_click_submits_press() {
+        let mut h = harness();
+        h.mouse_move(Point::new(60.0, 12.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+        assert!(h.pop_action::<ButtonPress>().is_some());
+    }
+
+    #[test]
+    fn space_activates_when_focused() {
+        let mut h = harness();
+        h.focus_on(Some(h.root_id()));
+        h.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
+        assert!(h.pop_action::<ButtonPress>().is_some());
+    }
+
+    /// ARIA radio convention: Enter must NOT activate a radio (it is
+    /// reserved for the form's default action; arrows move selection).
+    #[test]
+    fn enter_does_not_activate() {
+        let mut h = harness();
+        h.focus_on(Some(h.root_id()));
+        h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
+        assert!(h.pop_action::<ButtonPress>().is_none());
+    }
+
+    #[test]
+    fn space_key_down_shows_the_pressed_ring_until_key_up() {
+        // Regression: on_text_event used to only ever fire on key-up, so
+        // Space "clicking" showed no pressed-ring feedback the way a
+        // pointer click does.
+        let mut h = harness();
+        h.focus_on(Some(h.root_id()));
+
+        assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+        h.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
+        assert!(h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+        assert!(h.pop_action::<ButtonPress>().is_none(), "not yet activated");
+
+        h.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
+        assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+        assert!(h.pop_action::<ButtonPress>().is_some());
+    }
+
+    #[test]
+    fn losing_focus_mid_press_clears_the_keyboard_pressed_flag() {
+        let mut h = harness();
+        h.focus_on(Some(h.root_id()));
+        h.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
+        assert!(h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+
+        h.focus_on(None);
+        assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
     }
 }

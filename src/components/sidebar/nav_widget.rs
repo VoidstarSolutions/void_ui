@@ -202,6 +202,12 @@ pub struct ThemedSidebarNav {
     /// than assuming every item is the same guessed height. `None` until
     /// the first layout ever runs.
     last_avg_item_height: Option<f64>,
+    /// True for the span between a Space/Enter key-down on the
+    /// roving-focused item and its matching key-up (or an intervening focus
+    /// loss) — the keyboard equivalent of the pointer-driven `pressed`
+    /// field, so keyboard activation shows the same pressed fill a pointer
+    /// click does.
+    keyboard_pressed: bool,
 }
 
 // --- MARK: HELPERS
@@ -252,6 +258,7 @@ impl ThemedSidebarNav {
             pressed: None,
             theme: *theme,
             last_avg_item_height: None,
+            keyboard_pressed: false,
         }
     }
 }
@@ -329,7 +336,8 @@ impl ThemedSidebarNav {
     fn resolve_bg(&self, index: usize) -> Color {
         let p = &self.theme.palette;
         let hovered = self.hovered == Some(index);
-        let pressed = self.pressed == Some(index) && hovered;
+        let pressed = (self.pressed == Some(index) && hovered)
+            || (self.keyboard_pressed && index == self.focused);
         if pressed {
             p.surface_hi
         } else if index == self.active || hovered {
@@ -428,14 +436,28 @@ impl Widget for ThemedSidebarNav {
                 }
                 ctx.set_handled();
             }
+            Key::Named(NamedKey::Enter) if key.state == KeyState::Down => {
+                ctx.set_handled();
+                self.keyboard_pressed = true;
+                ctx.request_paint_only();
+            }
+            Key::Character(ref c) if c == " " && key.state == KeyState::Down => {
+                ctx.set_handled();
+                self.keyboard_pressed = true;
+                ctx.request_paint_only();
+            }
             Key::Named(NamedKey::Enter) if key.state.is_up() => {
                 ctx.set_handled();
+                self.keyboard_pressed = false;
+                ctx.request_paint_only();
                 if self.focused != self.active {
                     ctx.submit_action::<Self::Action>(SidebarNavSelected(self.focused));
                 }
             }
             Key::Character(ref c) if c == " " && key.state.is_up() => {
                 ctx.set_handled();
+                self.keyboard_pressed = false;
+                ctx.request_paint_only();
                 if self.focused != self.active {
                     ctx.submit_action::<Self::Action>(SidebarNavSelected(self.focused));
                 }
@@ -445,6 +467,12 @@ impl Widget for ThemedSidebarNav {
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        // Losing focus mid-press (e.g. Tab away while Space is still held)
+        // would otherwise leave `keyboard_pressed` stuck true with no
+        // matching key-up ever arriving to clear it.
+        if matches!(event, Update::FocusChanged(false)) {
+            self.keyboard_pressed = false;
+        }
         if matches!(event, Update::FocusChanged(_)) {
             ctx.request_paint_only();
         }
@@ -795,6 +823,41 @@ mod tests {
         h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
 
         assert!(h.pop_action::<SidebarNavSelected>().is_none());
+    }
+
+    #[test]
+    fn space_key_down_shows_the_pressed_fill_until_key_up() {
+        // Regression: on_text_event used to only ever act on key-up, so
+        // Space/Enter "clicking" a nav item showed no pressed-fill feedback
+        // the way a pointer click does.
+        let mut h = harness(vec![item(100.0, 20.0), item(100.0, 20.0)], 0);
+        h.focus_on(Some(h.root_id()));
+        // Move focus off the already-active item 0, so Space at item 1
+        // actually submits an action to prove the key-up branch still ran.
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowDown)));
+
+        assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+        h.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
+        assert!(h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+        assert!(
+            h.pop_action::<SidebarNavSelected>().is_none(),
+            "not yet activated"
+        );
+
+        h.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
+        assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+        assert!(h.pop_action::<SidebarNavSelected>().is_some());
+    }
+
+    #[test]
+    fn losing_focus_mid_press_clears_the_keyboard_pressed_flag() {
+        let mut h = harness(vec![item(100.0, 20.0), item(100.0, 20.0)], 0);
+        h.focus_on(Some(h.root_id()));
+        h.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
+        assert!(h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+
+        h.focus_on(None);
+        assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
     }
 
     // --- setters ---

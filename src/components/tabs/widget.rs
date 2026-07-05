@@ -18,8 +18,8 @@ use masonry::accesskit::{self, Node, Orientation, Role};
 use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
     AccessCtx, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
-    PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx,
-    TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
+    PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx, Widget,
+    WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, RoundedRect, RoundedRectRadii, Size, Stroke};
@@ -28,6 +28,7 @@ use masonry::peniko::Color;
 
 use super::TabsVariant;
 use crate::Theme;
+use crate::components::click::{self, ClickPhase};
 use crate::components::item_list;
 use crate::focus_ring::{FOCUS_RING_OUTSET, paint_focus_ring};
 
@@ -487,40 +488,40 @@ impl Widget for TabsWidget {
                     ctx.request_paint_only();
                 }
             }
-            PointerEvent::Down(PointerButtonEvent {
-                button: Some(PointerButton::Primary),
-                state,
-                ..
-            }) => {
-                let pos = ctx.local_position(state.position);
-                if let Some(i) = self.item_at(pos)
-                    && !self.is_disabled(i)
-                {
-                    self.pressed = Some(i);
-                    ctx.request_focus();
-                    ctx.capture_pointer();
-                    ctx.request_paint_only();
-                }
-            }
-            PointerEvent::Up(PointerButtonEvent {
-                button: Some(PointerButton::Primary),
-                state,
-                ..
-            }) => {
-                if let Some(i) = self.pressed.take() {
-                    let pos = ctx.local_position(state.position);
-                    if self.item_at(pos) == Some(i) && i != self.selected {
-                        ctx.submit_action::<Self::Action>(TabSelected(i));
-                    }
-                    ctx.request_paint_only();
-                }
-            }
             PointerEvent::Leave(_) if self.hovered.is_some() || self.pressed.is_some() => {
                 self.hovered = None;
                 self.pressed = None;
                 ctx.request_paint_only();
             }
-            _ => {}
+            // Shared primary-click recognizer; the capture guard only
+            // accepts presses that hit an enabled item, so pressing the
+            // row's outer padding neither captures the pointer nor arms
+            // a press (same as before the port).
+            _ => match click::primary_click_when(ctx, event, |ctx, state| {
+                let pos = ctx.local_position(state.position);
+                self.item_at(pos).is_some_and(|i| !self.is_disabled(i))
+            }) {
+                Some(ClickPhase::Down(state)) => {
+                    // The capture guard verified the hit; re-derive the
+                    // index for pressed tracking.
+                    let pos = ctx.local_position(state.position);
+                    if let Some(i) = self.item_at(pos).filter(|&i| !self.is_disabled(i)) {
+                        self.pressed = Some(i);
+                        ctx.request_focus();
+                        ctx.request_paint_only();
+                    }
+                }
+                Some(ClickPhase::Up { state, completed }) => {
+                    if let Some(i) = self.pressed.take() {
+                        let pos = ctx.local_position(state.position);
+                        if completed && self.item_at(pos) == Some(i) && i != self.selected {
+                            ctx.submit_action::<Self::Action>(TabSelected(i));
+                        }
+                        ctx.request_paint_only();
+                    }
+                }
+                None => {}
+            },
         }
     }
 
@@ -835,6 +836,7 @@ impl Widget for TabsWidget {
 
 #[cfg(test)]
 mod tests {
+    use masonry::core::PointerButton;
     use masonry::testing::TestHarness;
     use masonry::theme::default_property_set;
     use masonry::widgets::SizedBox;

@@ -360,10 +360,12 @@ impl Widget for PopoverHost {
         event: &PointerEvent,
     ) {
         match click::primary_click(ctx, event) {
-            Some(ClickPhase::Down) => {
+            Some(ClickPhase::Down(_)) => {
                 ctx.request_focus();
             }
-            Some(ClickPhase::Up(Some(_))) => {
+            Some(ClickPhase::Up {
+                completed: true, ..
+            }) => {
                 let open = !self.open;
                 self.open = open;
                 self.push_open_state(ctx, open);

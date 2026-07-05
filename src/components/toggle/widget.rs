@@ -8,11 +8,10 @@
 //! on Space/Enter while focused.
 
 use masonry::accesskit::{self, Node, Role, Toggled};
-use masonry::core::keyboard::{Key, NamedKey};
 use masonry::core::{
     AccessCtx, AccessEvent, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, PaintCtx,
-    PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx,
-    StyleProperty, TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
+    PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty, TextEvent, Update,
+    UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Circle, Point, RoundedRect, Size};
@@ -23,6 +22,8 @@ use masonry::widgets::Label;
 
 use super::TogglePress;
 use crate::Theme;
+use crate::components::click::{self, ClickPhase};
+use crate::components::interaction::{self, InteractionState};
 use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 
 /// Gap between the thumb edge and the track edge, in logical pixels.
@@ -40,6 +41,12 @@ pub struct ToggleWidget {
     theme: Theme,
     /// Optional text label rendered to the right of the track.
     label: Option<WidgetPod<dyn Widget>>,
+    /// True for the span between a Space/Enter key-down and its matching
+    /// key-up (or an intervening focus loss) — the keyboard equivalent of
+    /// the pointer-driven `pressed` flag read from the widget context, so
+    /// keyboard activation shows the same pressed track fill a pointer
+    /// click does.
+    keyboard_pressed: bool,
 }
 
 // --- MARK: BUILDERS
@@ -52,6 +59,7 @@ impl ToggleWidget {
             disabled,
             theme: *theme,
             label: None,
+            keyboard_pressed: false,
         }
     }
 
@@ -195,25 +203,18 @@ impl Widget for ToggleWidget {
         if self.disabled {
             return;
         }
-        match event {
-            PointerEvent::Down(PointerButtonEvent {
-                button: Some(PointerButton::Primary),
-                ..
-            }) => {
+        match click::primary_click(ctx, event) {
+            Some(ClickPhase::Down(_)) => {
                 ctx.request_focus();
-                ctx.capture_pointer();
                 ctx.request_paint_only();
             }
-            PointerEvent::Up(PointerButtonEvent {
-                button: Some(PointerButton::Primary),
-                ..
-            }) => {
-                if ctx.is_active() && ctx.is_hovered() {
+            Some(ClickPhase::Up { completed, .. }) => {
+                if completed {
                     ctx.submit_action::<Self::Action>(TogglePress);
                 }
                 ctx.request_paint_only();
             }
-            _ => {}
+            None => {}
         }
     }
 
@@ -226,12 +227,14 @@ impl Widget for ToggleWidget {
         if self.disabled {
             return;
         }
-        if let TextEvent::Keyboard(event) = event
-            && event.state.is_up()
-            && (matches!(&event.key, Key::Character(c) if c == " ")
-                || event.key == Key::Named(NamedKey::Enter))
-        {
+        if interaction::keyboard_press_start(event, true) {
             ctx.set_handled();
+            self.keyboard_pressed = true;
+            ctx.request_paint_only();
+        } else if interaction::keyboard_activate(event, true) {
+            ctx.set_handled();
+            self.keyboard_pressed = false;
+            ctx.request_paint_only();
             ctx.submit_action::<Self::Action>(TogglePress);
         }
     }
@@ -245,21 +248,19 @@ impl Widget for ToggleWidget {
         if self.disabled {
             return;
         }
-        if event.action == accesskit::Action::Click {
+        if interaction::is_access_click(event) {
             ctx.submit_action::<Self::Action>(TogglePress);
         }
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        match event {
-            Update::WidgetAdded => {
-                ctx.set_disabled(self.disabled);
-            }
-            Update::HoveredChanged(_) | Update::DisabledChanged(_) | Update::FocusChanged(_) => {
-                ctx.request_paint_only();
-            }
-            _ => {}
+        // Losing focus mid-press (e.g. Tab away while Space is still held)
+        // would otherwise leave `keyboard_pressed` stuck true with no
+        // matching key-up ever arriving to clear it.
+        if matches!(event, Update::FocusChanged(false)) {
+            self.keyboard_pressed = false;
         }
+        interaction::interaction_update(ctx, event, self.disabled);
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
@@ -333,9 +334,12 @@ impl Widget for ToggleWidget {
         painter: &mut Painter<'_>,
     ) {
         let size = ctx.border_box_size();
-        let hovered = ctx.is_hovered();
-        let pressed = ctx.is_active() && hovered;
-        let focused = ctx.is_focus_target();
+        let InteractionState {
+            hovered,
+            pressed,
+            focused,
+        } = InteractionState::from_paint_ctx(ctx);
+        let pressed = pressed || self.keyboard_pressed;
 
         let track_h = self.track_height();
         let track_w = self.track_width();
@@ -423,7 +427,14 @@ impl Widget for ToggleWidget {
 
 #[cfg(test)]
 mod tests {
+    use masonry::core::keyboard::{Key, NamedKey};
+    use masonry::core::{NewWidget, PointerButton, TextEvent};
+    use masonry::kurbo::Point;
+    use masonry::testing::TestHarness;
+    use masonry::theme::default_property_set;
+
     use crate::Theme;
+    use crate::components::toggle::TogglePress;
     use crate::theme::Density;
 
     use super::ToggleWidget;
@@ -537,5 +548,72 @@ mod tests {
         let on = widget(&Theme::dark(), true, false);
         let off = widget(&Theme::dark(), false, false);
         assert_eq!(on.resolve_thumb_color(), off.resolve_thumb_color());
+    }
+
+    // --- activation ---
+
+    fn harness() -> TestHarness<ToggleWidget> {
+        let w = widget(&Theme::dark(), false, false);
+        TestHarness::create_with_size(default_property_set(), NewWidget::new(w), (80, 30))
+    }
+
+    #[test]
+    fn pointer_click_submits_press() {
+        let mut h = harness();
+        h.mouse_move(Point::new(40.0, 15.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+        assert!(h.pop_action::<TogglePress>().is_some());
+    }
+
+    #[test]
+    fn drag_out_cancels_the_press() {
+        let mut h = harness();
+        h.mouse_move(Point::new(40.0, 15.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_move(Point::new(300.0, 300.0));
+        h.mouse_button_release(Some(PointerButton::Primary));
+        assert!(h.pop_action::<TogglePress>().is_none());
+    }
+
+    #[test]
+    fn space_and_enter_activate_when_focused() {
+        let mut h = harness();
+        h.focus_on(Some(h.root_id()));
+
+        h.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
+        assert!(h.pop_action::<TogglePress>().is_some());
+
+        h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
+        assert!(h.pop_action::<TogglePress>().is_some());
+    }
+
+    #[test]
+    fn space_key_down_shows_the_pressed_track_fill_until_key_up() {
+        // Regression: on_text_event used to only ever fire on key-up, so
+        // Space/Enter "clicking" showed no pressed-fill feedback the way a
+        // pointer click does.
+        let mut h = harness();
+        h.focus_on(Some(h.root_id()));
+
+        assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+        h.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
+        assert!(h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+        assert!(h.pop_action::<TogglePress>().is_none(), "not yet activated");
+
+        h.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
+        assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+        assert!(h.pop_action::<TogglePress>().is_some());
+    }
+
+    #[test]
+    fn losing_focus_mid_press_clears_the_keyboard_pressed_flag() {
+        let mut h = harness();
+        h.focus_on(Some(h.root_id()));
+        h.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
+        assert!(h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+
+        h.focus_on(None);
+        assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
     }
 }
