@@ -10,11 +10,10 @@
 
 use masonry::accesskit;
 use masonry::accesskit::{Node, Role};
-use masonry::core::keyboard::{Key, NamedKey};
 use masonry::core::{
     AccessCtx, AccessEvent, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, PaintCtx,
-    PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx,
-    TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
+    PointerButton, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update,
+    UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, RoundedRect, Size};
@@ -23,6 +22,8 @@ use masonry::peniko::Color;
 use masonry::widgets::ButtonPress;
 
 use crate::Theme;
+use crate::components::click::{self, ClickPhase};
+use crate::components::interaction::{self, InteractionState};
 use crate::focus_ring::{FOCUS_RING_OUTSET, paint_focus_ring};
 
 /// Width of the active-state left accent bar.
@@ -124,25 +125,20 @@ impl Widget for ThemedSidebarItem {
         _props: &mut PropertiesMut<'_>,
         event: &PointerEvent,
     ) {
-        match event {
-            PointerEvent::Down(PointerButtonEvent {
-                button: Some(PointerButton::Primary),
-                ..
-            }) => {
+        match click::primary_click(ctx, event) {
+            Some(ClickPhase::Down(_)) => {
                 ctx.request_focus();
-                ctx.capture_pointer();
                 ctx.request_paint_only();
             }
-            PointerEvent::Up(PointerButtonEvent {
-                button: button @ Some(PointerButton::Primary),
-                ..
-            }) => {
-                if ctx.is_active() && ctx.is_hovered() {
-                    ctx.submit_action::<Self::Action>(ButtonPress { button: *button });
+            Some(ClickPhase::Up { completed, .. }) => {
+                if completed {
+                    ctx.submit_action::<Self::Action>(ButtonPress {
+                        button: Some(PointerButton::Primary),
+                    });
                 }
                 ctx.request_paint_only();
             }
-            _ => (),
+            None => {}
         }
     }
 
@@ -152,11 +148,7 @@ impl Widget for ThemedSidebarItem {
         _props: &mut PropertiesMut<'_>,
         event: &TextEvent,
     ) {
-        if let TextEvent::Keyboard(event) = event
-            && event.state.is_up()
-            && (matches!(&event.key, Key::Character(c) if c == " ")
-                || event.key == Key::Named(NamedKey::Enter))
-        {
+        if interaction::keyboard_activate(event, true) {
             ctx.set_handled();
             ctx.submit_action::<Self::Action>(ButtonPress { button: None });
         }
@@ -168,12 +160,18 @@ impl Widget for ThemedSidebarItem {
         _props: &mut PropertiesMut<'_>,
         event: &AccessEvent,
     ) {
-        if event.action == accesskit::Action::Click {
+        if interaction::is_access_click(event) {
             ctx.submit_action::<Self::Action>(ButtonPress { button: None });
         }
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        // NOTE: unlike button/checkbox/toggle/radio, the sidebar item has
+        // no `disabled` field, so there is no WidgetAdded disabled sync
+        // and no DisabledChanged repaint here (it cannot adopt
+        // `interaction::interaction_update`). Known API inconsistency —
+        // adding `disabled` to sidebar items is tracked in the
+        // API-consistency plan.
         match event {
             Update::HoveredChanged(_) | Update::FocusChanged(_) => {
                 ctx.request_paint_only();
@@ -233,9 +231,11 @@ impl Widget for ThemedSidebarItem {
         painter: &mut Painter<'_>,
     ) {
         let size = ctx.border_box_size();
-        let hovered = ctx.is_hovered();
-        let pressed = ctx.is_active() && hovered;
-        let focused = ctx.is_focus_target();
+        let InteractionState {
+            hovered,
+            pressed,
+            focused,
+        } = InteractionState::from_paint_ctx(ctx);
         let p = &self.theme.palette;
 
         let bg = self.resolve_bg(hovered, pressed);
@@ -294,5 +294,54 @@ impl Widget for ThemedSidebarItem {
 
     fn accepts_text_input(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use masonry::core::keyboard::{Key, NamedKey};
+    use masonry::core::{NewWidget, PointerButton, TextEvent};
+    use masonry::kurbo::Point;
+    use masonry::testing::TestHarness;
+    use masonry::theme::default_property_set;
+    use masonry::widgets::{ButtonPress, Label};
+
+    use super::ThemedSidebarItem;
+    use crate::Theme;
+
+    fn harness() -> TestHarness<ThemedSidebarItem> {
+        let widget = ThemedSidebarItem::new(NewWidget::new(Label::new("Nav")), &Theme::dark());
+        TestHarness::create_with_size(default_property_set(), NewWidget::new(widget), (160, 28))
+    }
+
+    #[test]
+    fn pointer_click_submits_press() {
+        let mut h = harness();
+        h.mouse_move(Point::new(80.0, 14.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+        assert!(h.pop_action::<ButtonPress>().is_some());
+    }
+
+    #[test]
+    fn drag_out_cancels_the_press() {
+        let mut h = harness();
+        h.mouse_move(Point::new(80.0, 14.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_move(Point::new(400.0, 400.0));
+        h.mouse_button_release(Some(PointerButton::Primary));
+        assert!(h.pop_action::<ButtonPress>().is_none());
+    }
+
+    #[test]
+    fn space_and_enter_activate_when_focused() {
+        let mut h = harness();
+        h.focus_on(Some(h.root_id()));
+
+        h.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
+        assert!(h.pop_action::<ButtonPress>().is_some());
+
+        h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
+        assert!(h.pop_action::<ButtonPress>().is_some());
     }
 }
