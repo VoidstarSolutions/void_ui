@@ -25,7 +25,7 @@ use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, flex_row};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
-use super::widget::BreadcrumbNav;
+use super::widget::{BreadcrumbCurrent, BreadcrumbNav};
 use crate::{ButtonVariant, IconName, Theme, button, icon, label};
 
 type SelectCallback<State, Action> = Box<dyn Fn(&mut State) -> Action + Send + Sync>;
@@ -110,7 +110,9 @@ impl<State, Action> Breadcrumb<State, Action> {
                         .tint(theme.palette.text_muted)
                         .render(theme),
                 ),
-                None => Box::new(label(seg.label).color(theme.palette.text).render(theme)),
+                None => Box::new(BreadcrumbCurrentView {
+                    inner: label(seg.label).color(theme.palette.text).render(theme),
+                }),
             };
             children.push(view);
         }
@@ -177,6 +179,66 @@ where
         state: &mut State,
     ) -> MessageResult<Action> {
         let mut child = BreadcrumbNav::child_mut(&mut element);
+        self.inner
+            .message(view_state, message, child.downcast(), state)
+    }
+}
+
+/// Wraps the trailing current-location segment in [`BreadcrumbCurrent`] so
+/// it's marked `AriaCurrent::Page`. Same shape as [`BreadcrumbNavView`]; see
+/// its docs for why this can't just be a `label()` property.
+struct BreadcrumbCurrentView<V> {
+    inner: V,
+}
+
+impl<V> ViewMarker for BreadcrumbCurrentView<V> {}
+
+impl<State, Action, V> View<State, Action, ViewCtx> for BreadcrumbCurrentView<V>
+where
+    State: 'static,
+    Action: 'static,
+    V: WidgetView<State, Action>,
+{
+    type Element = Pod<BreadcrumbCurrent>;
+    type ViewState = V::ViewState;
+
+    fn build(&self, ctx: &mut ViewCtx, state: &mut State) -> (Self::Element, Self::ViewState) {
+        let (child, child_state) = self.inner.build(ctx, state);
+        let widget = BreadcrumbCurrent::new(child.new_widget);
+        (ctx.create_pod(widget), child_state)
+    }
+
+    fn rebuild(
+        &self,
+        prev: &Self,
+        view_state: &mut Self::ViewState,
+        ctx: &mut ViewCtx,
+        mut element: Mut<'_, Self::Element>,
+        state: &mut State,
+    ) {
+        let mut child = BreadcrumbCurrent::child_mut(&mut element);
+        self.inner
+            .rebuild(&prev.inner, view_state, ctx, child.downcast(), state);
+    }
+
+    fn teardown(
+        &self,
+        view_state: &mut Self::ViewState,
+        ctx: &mut ViewCtx,
+        mut element: Mut<'_, Self::Element>,
+    ) {
+        let mut child = BreadcrumbCurrent::child_mut(&mut element);
+        self.inner.teardown(view_state, ctx, child.downcast());
+    }
+
+    fn message(
+        &self,
+        view_state: &mut Self::ViewState,
+        message: &mut MessageCtx,
+        mut element: Mut<'_, Self::Element>,
+        state: &mut State,
+    ) -> MessageResult<Action> {
+        let mut child = BreadcrumbCurrent::child_mut(&mut element);
         self.inner
             .message(view_state, message, child.downcast(), state)
     }
