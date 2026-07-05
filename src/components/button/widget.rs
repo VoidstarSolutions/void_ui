@@ -33,9 +33,10 @@ use crate::components::spinner::widget::SpinnerWidget;
 /// Corner radius (`border-radius: 5px`).
 ///
 /// Single source of truth for the button corner radius — the view-layer
-/// fallback and the button-group outer corners both reference this.
+/// fallback and the button-group outer corners both reference this. Owned
+/// by the `Radii` domain, not density.
 pub(crate) const CORNER_RADIUS: f64 = 5.0;
-/// Border thickness for the active and focus states.
+/// Border thickness for the active and focus states — hairline chrome, not density-scaled.
 const BORDER_WIDTH: f64 = 1.0;
 /// Inset of the focus ring from the button edge.
 ///
@@ -45,8 +46,11 @@ const BORDER_WIDTH: f64 = 1.0;
 /// focus radii below subtract this inset from the background radii), and
 /// the extra half-pixel keeps the ring visually separated from the fill
 /// edge. Named distinctly so it no longer shadows the shared constant.
+/// Focus-ring chrome, not density-scaled.
 const BUTTON_FOCUS_RING_INSET: f64 = 2.0;
-/// Gap between a leading icon and the label.
+/// Gap between a leading icon and the label — 5px matches no density token
+/// (`gap` = 6 would change pixels); a candidate for a future *deliberate*
+/// visual change to `gap`, out of scope for this pixel-identical refactor.
 const ICON_GAP: f64 = 5.0;
 
 /// Themed, interactive button widget.

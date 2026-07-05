@@ -26,9 +26,10 @@ use crate::components::click::{self, ClickPhase};
 use crate::components::interaction::{self, InteractionState};
 use crate::focus_ring::{FOCUS_RING_OUTSET, paint_focus_ring};
 
-/// Width of the active-state left accent bar.
+/// Width of the active-state left accent bar — accent-bar chrome (stroke-like),
+/// not density-scaled.
 const ACCENT_WIDTH: f64 = 3.0;
-/// Corner radius of the accent bar.
+/// Corner radius of the accent bar — accent-bar chrome, not density-scaled.
 const ACCENT_RADIUS: f64 = 1.5;
 
 /// Themed, interactive sidebar navigation item.

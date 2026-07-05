@@ -32,16 +32,17 @@ use crate::components::click::{self, ClickPhase};
 use crate::components::item_list;
 use crate::focus_ring::{FOCUS_RING_OUTSET, paint_focus_ring};
 
-/// Border/underline stroke width.
+/// Border/underline stroke width — hairline chrome, not density-scaled.
 const BORDER_WIDTH: f64 = 1.0;
 /// Inset of the selected/hovered highlight from its item's placed rect, for
 /// [`TabsVariant::Pill`], [`TabsVariant::Segmented`] and
-/// [`TabsVariant::SegmentedFill`].
+/// [`TabsVariant::SegmentedFill`] — a highlight-chrome inset, not density-scaled.
 const HIGHLIGHT_INSET: f64 = 2.0;
 /// Thickness of the accent line under the selected item in
-/// [`TabsVariant::Underline`].
+/// [`TabsVariant::Underline`] — an accent stroke, not density-scaled.
 const UNDERLINE_ACCENT_WIDTH: f64 = 2.0;
-/// Alpha applied to the hover fill for variants with per-item chrome.
+/// Alpha applied to the hover fill for variants with per-item chrome — a
+/// color value, not a spacing/size value, so it doesn't scale with density.
 const HOVER_ALPHA: f32 = 0.5;
 
 /// Fills `rect` inset by [`HIGHLIGHT_INSET`] with `fill`, using the corner

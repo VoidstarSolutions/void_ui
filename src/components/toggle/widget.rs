@@ -26,9 +26,12 @@ use crate::components::click::{self, ClickPhase};
 use crate::components::interaction::{self, InteractionState};
 use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 
-/// Gap between the thumb edge and the track edge, in logical pixels.
+/// Gap between the thumb edge and the track edge, in logical pixels — a 2px
+/// thumb-to-track inset that reads as hairline-scale chrome; the track/thumb
+/// themselves already scale via `ui_font_size`, so this doesn't scale with density.
 const THUMB_INSET: f64 = 2.0;
-/// Uniform padding around the widget — provides clearance for the focus ring.
+/// Uniform padding around the widget — provides clearance for the exempt
+/// focus ring, so it doesn't scale with density either.
 const PAD: f64 = 2.0;
 
 /// Interactive toggle switch widget.

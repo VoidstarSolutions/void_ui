@@ -44,7 +44,7 @@ use crate::components::click::{self, ClickPhase};
 use crate::overlay_portal::{OwnerKind, PortalVisibility};
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
-/// Border width of the popover surface's chrome.
+/// Border width of the popover surface's chrome — hairline chrome, not density-scaled.
 const BORDER_WIDTH: f64 = 1.0;
 
 /// Gap between the trigger and the popover surface, scaled with density.

@@ -28,12 +28,13 @@ use crate::Theme;
 use crate::components::item_list;
 use crate::focus_ring::{FOCUS_RING_OUTSET, paint_focus_ring};
 
-/// Width of the active-state left accent bar.
+/// Width of the active-state left accent bar — accent-bar chrome (stroke-like),
+/// not density-scaled.
 const ACCENT_WIDTH: f64 = 3.0;
-/// Corner radius of the accent bar.
+/// Corner radius of the accent bar — accent-bar chrome, not density-scaled.
 const ACCENT_RADIUS: f64 = 1.5;
-/// Inset of the focus ring from an item's placed rect.
-/// Gap between adjacent items.
+/// Gap between adjacent nav rows — a 2px hairline separation; no token equals
+/// it and scaling a hairline is visual noise, so it doesn't scale with density.
 const GAP: f64 = 2.0;
 
 /// Action emitted when the user picks a different nav item, by pointer click

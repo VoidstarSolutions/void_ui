@@ -31,9 +31,10 @@ use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 
 // --- MARK: CONSTANTS
 
-/// Gap between the title label and the trailing chevron.
+/// Gap between the title label and the trailing chevron — 4px matches no
+/// density token; the header already scales via `ui_font_size` + `pad_v`/`pad_h`.
 const CHEVRON_GAP: f64 = 4.0;
-/// Thickness of the separator line below the header.
+/// Thickness of the separator line below the header — hairline chrome, not density-scaled.
 const SEPARATOR_WIDTH: f64 = 1.0;
 
 // --- MARK: ACTION

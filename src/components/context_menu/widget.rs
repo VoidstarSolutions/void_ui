@@ -32,14 +32,14 @@ use crate::components::icon::IconName;
 use crate::components::item_list;
 use crate::focus_ring::paint_focus_ring;
 
-/// Corner radius of the menu's background chrome.
+/// Corner radius of the menu's background chrome — owned by the `Radii` domain, not density.
 const CORNER_RADIUS: f64 = 5.0;
-/// Border width of the menu's background chrome.
+/// Border width of the menu's background chrome — hairline chrome, not density-scaled.
 const BORDER_WIDTH: f64 = 1.0;
 /// Minimum menu width in logical pixels, keeping a readable popup even when all
-/// item labels are very short.
+/// item labels are very short — a clamp, not a density-scaled dimension.
 const MIN_MENU_WIDTH: f64 = 80.0;
-/// Inset of the keyboard-highlight focus ring from its row's bounds.
+/// Inset of the keyboard-highlight focus ring from its row's bounds — focus chrome, not density-scaled.
 const HIGHLIGHT_RING_INSET: f64 = 2.0;
 
 /// One row of a [`MenuPanel`], as handed in by the view layer.

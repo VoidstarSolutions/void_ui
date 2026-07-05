@@ -33,9 +33,10 @@ use crate::components::icon::icon;
 
 // --- MARK: CONSTANTS
 
-/// Width of the collapse/expand toggle strip on the right edge.
+/// Width of the collapse/expand toggle strip on the right edge — a minimum
+/// hit-target (like `resizable`'s `GRAB_HALF`), not density-scaled.
 const STRIP_WIDTH: f64 = 20.0;
-/// Width of the strip's left separator line.
+/// Width of the strip's left separator line — hairline chrome, not density-scaled.
 const SEPARATOR_WIDTH: f64 = 1.0;
 
 // --- MARK: ACTION

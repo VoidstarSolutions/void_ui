@@ -28,7 +28,8 @@ use masonry::widgets::Label;
 
 use crate::Theme;
 
-/// Seconds the check icon is shown before reverting to the copy icon.
+/// Seconds the check icon is shown before reverting to the copy icon — a
+/// duration, not spacing, so it doesn't scale with density.
 const COPIED_DURATION: f64 = 1.5;
 
 fn make_icon(copied: bool, theme: &Theme) -> NewWidget<Label> {

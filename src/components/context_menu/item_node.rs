@@ -27,12 +27,16 @@ use super::widget::{MenuAction, MenuPanel, MenuRowSpec};
 use crate::Theme;
 use crate::components::icon::{IconName, icon};
 
-/// Gap between a submenu item's right edge and its fly-out panel.
+/// Gap between a submenu item's right edge and its fly-out panel — 1px
+/// overlap tuning, not a density-scaled spacing token.
 const SUBMENU_GAP: f64 = 1.0;
 
-/// Total height of a separator row (line centered within it).
+/// Total height of a separator row (line centered within it) — hairline
+/// chrome plus fixed breathing room; no token composition matches it, and
+/// non-separator rows already scale via `item_list::item_height`.
 pub(crate) const SEPARATOR_ROW_HEIGHT: f64 = 9.0;
-/// Vertical gap between an item's label and its sub-title line.
+/// Vertical gap between an item's label and its sub-title line — hairline
+/// separation, not density-scaled.
 const SUBTITLE_GAP: f64 = 2.0;
 
 /// What kind of row a [`MenuItemNode`] represents — drives selectability (in

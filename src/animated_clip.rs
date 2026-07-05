@@ -24,7 +24,8 @@ use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Size};
 use masonry::layout::{LayoutSize, LenReq, Length};
 
-/// Duration of the open/close animation.
+/// Duration of the open/close animation — an animation timing value, not
+/// spacing, so it doesn't scale with density.
 const SLIDE_MILLIS: f32 = 250.0;
 
 /// Clips its child to an animated extent on one axis.
