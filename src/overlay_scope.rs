@@ -1,32 +1,28 @@
 //! `OverlayScope` widget + `overlay_scope` xilem view: a container that hosts
-//! arbitrary `content` plus *two* discoverable, always-on-top, always-clipped
-//! overlay slots that deeply-nested descendants can put popups into:
-//!
-//! - **The legacy widget-push slot** ([`OverlayScope::set_overlay`]): holds at
-//!   most one pre-built `NewWidget<dyn Widget>`, pushed from a descendant via
-//!   `ctx.mutate_later(scope_id, ...)`. Because `mutate_later` closures must
-//!   be `Send` (and widgets aren't), the pushed widget has to be *built inside
-//!   the closure from plain data* — which limits this path to stateless
-//!   content with no xilem view identity (no rebuilds, no message routing).
-//!   [`crate::components::dropdown_button`] is the reference consumer.
-//! - **The portal slot** ([`crate::overlay_portal::PortalSlot`]): a permanent
-//!   child whose content is mounted by the scope's *own view* from the
-//!   [`crate::overlay_portal::OverlayPortal`] Environment resource that
-//!   `overlay_scope` publishes. Descendants (e.g. `popover`) register erased
-//!   content *views* into the portal; the scope's view builds them as real
-//!   view children, so arbitrary stateful content keeps full xilem semantics
-//!   (rebuilds, theme swaps, button callbacks). See [`crate::overlay_portal`]
-//!   for the full flow.
+//! arbitrary `content` plus a discoverable, always-on-top, always-clipped
+//! overlay slot that deeply-nested descendants can put popups into: the
+//! portal slot ([`crate::overlay_portal::PortalSlot`]), a permanent child
+//! whose content is mounted by the scope's *own view* from the
+//! [`crate::overlay_portal::OverlayPortal`] Environment resource that
+//! `overlay_scope` publishes. Descendants (e.g. `popover`, `dropdown_button`,
+//! `autocomplete`, `dialog`, `notification_layer`) register erased content
+//! *views* into the portal; the scope's view builds them as real view
+//! children, so arbitrary stateful content keeps full xilem semantics
+//! (rebuilds, theme swaps, button callbacks). Open/close/placement are plain
+//! data pushed from descendants via `ctx.mutate_later(scope_id, ...)`
+//! ([`OverlayScope::set_portal_visible`] /
+//! [`OverlayScope::set_portal_placement`]). See [`crate::overlay_portal`] for
+//! the full flow.
 //!
 //! Masonry's paint pass is strict depth-first by `children_ids()` registration
 //! order, and `set_clip_path` wraps a widget's own paint *and* all its
 //! children's recursive paint. `OverlayScope` exploits both facts: children
-//! register in the order `content`, legacy overlay, portal slot — so both
-//! slots always paint on top of `content` and everything inside it (including
-//! later in-scope siblings), with portal content topmost — and everything is
-//! clipped to the scope's own border box (so overlays never escape the
-//! container, unlike a window-level masonry `Layer`). That registration order
-//! *is* the entire z-mechanism; nothing else makes the overlays "win".
+//! register in the order `content`, portal slot — so portal content always
+//! paints on top of `content` and everything inside it (including later
+//! in-scope siblings) — and everything is clipped to the scope's own border
+//! box (so overlays never escape the container, unlike a window-level masonry
+//! `Layer`). That registration order *is* the entire z-mechanism; nothing
+//! else makes the overlays "win".
 //!
 //! Descendants discover the nearest `OverlayScope` ancestor (if any) via the
 //! Xilem `Environment` — [`OverlayScopeHandle`] (for `mutate_later` targeting)
@@ -48,7 +44,7 @@ use masonry::core::{
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, Size};
-use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
+use masonry::layout::{LayoutSize, LenReq, Length};
 use masonry::properties::Padding;
 use xilem_masonry::core::{
     MessageCtx, MessageResult, Mut, Resource, View, ViewId, ViewMarker, ViewPathTracker, provides,
@@ -56,7 +52,6 @@ use xilem_masonry::core::{
 use xilem_masonry::{Pod, ViewCtx, WidgetView};
 
 use crate::Theme;
-use crate::components::popover::PopoverAnchor;
 use crate::components::popover::widget::{PopoverSurface, SurfaceStyle};
 use crate::overlay_portal::{
     OverlayPortal, PortalContentView, PortalContentViewState, PortalEntry, PortalPlacement,
@@ -104,8 +99,8 @@ thread_local! {
     /// descendants') `build`/`rebuild` call — `None` outside of that window.
     ///
     /// `dialog` reads this via [`root_portal`] to always target the root
-    /// scope, unlike `popover` (and the legacy overlay slot), which use the
-    /// *nearest* scope's portal published through the Environment. A nested
+    /// scope, unlike `popover`, which uses the *nearest* scope's portal
+    /// published through the Environment. A nested
     /// `overlay_scope` leaves this untouched, so descendants — including
     /// dialogs registered by a nested scope's content — see the outermost
     /// scope's portal.
@@ -178,27 +173,18 @@ pub(crate) fn root_portal<State: 'static, Action: 'static>() -> Option<OverlayPo
     })
 }
 
-/// Masonry widget that hosts a footprint-dictating `content` child plus two
-/// always-clipped overlay slots: an optional legacy widget-push popup and a
-/// permanent [`PortalSlot`] (registered last, so it paints above both).
+/// Masonry widget that hosts a footprint-dictating `content` child plus a
+/// permanent, always-clipped [`PortalSlot`] (registered last, so it paints
+/// above `content` and everything inside it).
 ///
-/// `content` alone determines the container's measured size — pushing or
-/// clearing either slot never reflows surrounding layout (mirrors
-/// [`crate::AnchoredOverlay::measure`]). The legacy overlay, when present, is
-/// anchored relative to a caller-supplied `placement` rect (in this widget's
-/// own local coordinates — see [`Self::set_overlay`]) using the same
-/// unclamped `PopoverAnchor::child_offset` math as `AnchoredOverlay`; portal
-/// children carry per-key placements (see [`Self::set_portal_visible`]).
+/// `content` alone determines the container's measured size — showing or
+/// hiding portal children never reflows surrounding layout (mirrors
+/// [`crate::AnchoredOverlay::measure`]). Portal children carry per-key
+/// placements (see [`Self::set_portal_visible`]).
 pub struct OverlayScope {
     handle: OverlayScopeHandle,
     content: WidgetPod<dyn Widget>,
-    overlay: Option<WidgetPod<dyn Widget>>,
     portal_slot: WidgetPod<PortalSlot>,
-    placement: Rect,
-    anchor: PopoverAnchor,
-    /// Overlay's placed rect in local coordinates (set during `layout`,
-    /// meaningful only while `overlay.is_some()`).
-    placed_overlay_rect: Rect,
 }
 
 impl OverlayScope {
@@ -210,72 +196,13 @@ impl OverlayScope {
         Self {
             handle,
             content: content.to_pod(),
-            overlay: None,
             portal_slot: NewWidget::new(PortalSlot::new(portal_children)).to_pod(),
-            placement: Rect::ZERO,
-            anchor: PopoverAnchor::BottomStart,
-            placed_overlay_rect: Rect::ZERO,
         }
-    }
-
-    /// Replace the overlay popup (or clear it when `content` is `None`).
-    ///
-    /// `placement` is the trigger's anchor rect in *this scope's own local
-    /// (content-box) coordinates* — convert from window space with
-    /// `ctx.to_local`, exactly as [`crate::components::dropdown_button`]'s
-    /// scope-mode path does. `anchor` controls which side of `placement` the
-    /// overlay is positioned relative to (see [`PopoverAnchor`]).
-    ///
-    /// Triggers a layout pass. Replacing an existing overlay removes the old
-    /// one first — the slot holds at most one popup at a time; pushing a new
-    /// one implicitly dismisses whatever was there (e.g. opening dropdown B
-    /// while A's menu occupies the slot silently clears A).
-    pub fn set_overlay(
-        this: &mut WidgetMut<'_, Self>,
-        content: Option<NewWidget<dyn Widget>>,
-        placement: Rect,
-        anchor: PopoverAnchor,
-    ) {
-        if let Some(old) = this.widget.overlay.take() {
-            this.ctx.remove_child(old);
-        }
-        if let Some(content) = content {
-            this.widget.overlay = Some(content.to_pod());
-        }
-        this.widget.placement = placement;
-        this.widget.anchor = anchor;
-        this.ctx.children_changed();
-        this.ctx.request_layout();
-    }
-
-    /// Update the overlay's anchor placement without replacing its content —
-    /// used to re-anchor a still-open popup as its trigger scrolls/moves.
-    pub fn set_placement(this: &mut WidgetMut<'_, Self>, placement: Rect, anchor: PopoverAnchor) {
-        if this.widget.placement == placement && this.widget.anchor == anchor {
-            return;
-        }
-        this.widget.placement = placement;
-        this.widget.anchor = anchor;
-        this.ctx.request_layout();
     }
 
     /// Mutable access to the wrapped content for the [`View`] layer.
     pub fn content_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
         this.ctx.get_mut(&mut this.widget.content)
-    }
-
-    /// Mutable access to the overlay popup, if one is currently present —
-    /// used by triggers (e.g. `ThemedDropdownButton`) to push live state
-    /// updates (like keyboard-highlight) into their menu while it's open.
-    pub fn overlay_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, dyn Widget>> {
-        this.widget.overlay.as_mut().map(|o| this.ctx.get_mut(o))
-    }
-
-    /// The overlay's last-placed rect in local coordinates, valid while an
-    /// overlay is present.
-    #[must_use]
-    pub fn placed_overlay_rect(&self) -> Rect {
-        self.placed_overlay_rect
     }
 
     /// Mutable access to the portal slot for the scope view and tests.
@@ -288,7 +215,8 @@ impl OverlayScope {
     /// Show/hide a portal child. `anchor_rect_window` is the trigger's box in
     /// *window* coordinates; converted here with `to_local` exactly like the
     /// dropdown's scope push (robust to scrolling/transforms between the
-    /// scope and the trigger). For [`PopoverAnchor::ViewportQuarter`],
+    /// scope and the trigger). For
+    /// [`crate::components::popover::PopoverAnchor::ViewportQuarter`],
     /// `anchor_rect_window` is ignored — pass [`Rect::ZERO`] — since
     /// `PortalSlot::layout` centers that variant in its own size rather than
     /// any placement rect.
@@ -357,16 +285,12 @@ impl Widget for OverlayScope {
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        // Registration order is paint order: content first, the legacy
-        // overlay in the middle, the portal slot last — overlays always draw
-        // on top of content and everything inside it (including later
-        // siblings within the scope), and view-level portal content paints
-        // above everything else. This ordering *is* the entire mechanism;
-        // nothing else makes the overlays "win".
+        // Registration order is paint order: content first, the portal slot
+        // last — portal content always draws on top of content and everything
+        // inside it (including later siblings within the scope). This
+        // ordering *is* the entire mechanism; nothing else makes the overlay
+        // "win".
         ctx.register_child(&mut self.content);
-        if let Some(overlay) = &mut self.overlay {
-            ctx.register_child(overlay);
-        }
         ctx.register_child(&mut self.portal_slot);
     }
 
@@ -378,10 +302,11 @@ impl Widget for OverlayScope {
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        // Ignore the overlay entirely for sizing — see `AnchoredOverlay::measure`
-        // for the rationale (a transparent forward, not `redirect_measurement`,
-        // which under-measures and causes flex-sibling overlap). Guarantees
-        // pushing/clearing the overlay never reflows the scope's container.
+        // Ignore the portal slot entirely for sizing — see
+        // `AnchoredOverlay::measure` for the rationale (a transparent forward,
+        // not `redirect_measurement`, which under-measures and causes
+        // flex-sibling overlap). Guarantees showing/hiding portal children
+        // never reflows the scope's container.
         ctx.compute_length(
             &mut self.content,
             len_req.into(),
@@ -396,27 +321,9 @@ impl Widget for OverlayScope {
         ctx.place_child(&mut self.content, Point::ORIGIN);
         ctx.derive_baselines(&self.content);
 
-        // The clip that confines the overlay to this scope's own bounds —
+        // The clip that confines portal content to this scope's own bounds —
         // the other half of the mechanism alongside registration order.
         ctx.set_clip_path(size.to_rect());
-
-        if let Some(overlay) = &mut self.overlay {
-            // Snug to intrinsic content size — see `AnchoredOverlay::layout`
-            // for why `SizeDef::MIN` rather than fit-to-available.
-            let overlay_size = ctx.compute_size(overlay, SizeDef::MIN, size.into());
-            ctx.run_layout(overlay, overlay_size);
-            // No bounds enforcement — the overlay may extend past `placement`
-            // or even this scope's own border box; `set_clip_path` above
-            // handles confinement regardless. Mirrors `AnchoredOverlay::layout`.
-            let offset = self
-                .anchor
-                .child_offset(self.placement.size(), overlay_size)
-                + self.placement.origin().to_vec2();
-            ctx.place_child(overlay, offset);
-            self.placed_overlay_rect = Rect::from_origin_size(offset, overlay_size);
-        } else {
-            self.placed_overlay_rect = Rect::ZERO;
-        }
 
         ctx.run_layout(&mut self.portal_slot, size);
         ctx.place_child(&mut self.portal_slot, Point::ORIGIN);
@@ -428,7 +335,7 @@ impl Widget for OverlayScope {
         _props: &PropertiesRef<'_>,
         _painter: &mut Painter<'_>,
     ) {
-        // Purely structural — the (up to three) children paint themselves.
+        // Purely structural — the two children paint themselves.
     }
 
     fn update(
@@ -457,12 +364,7 @@ impl Widget for OverlayScope {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        match &self.overlay {
-            Some(overlay) => {
-                ChildrenIds::from_slice(&[self.content.id(), overlay.id(), self.portal_slot.id()])
-            }
-            None => ChildrenIds::from_slice(&[self.content.id(), self.portal_slot.id()]),
-        }
+        ChildrenIds::from_slice(&[self.content.id(), self.portal_slot.id()])
     }
 }
 
@@ -929,6 +831,7 @@ mod tests {
     use masonry::testing::TestHarness;
 
     use super::*;
+    use crate::components::popover::PopoverAnchor;
     use crate::overlay_portal::OwnerKind;
 
     /// Scope content standing in for "the app under the popover": records
