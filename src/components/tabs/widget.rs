@@ -245,6 +245,12 @@ pub struct TabsWidget {
     hovered: Option<usize>,
     pressed: Option<usize>,
     theme: Theme,
+    /// Average item width from the last real `layout` pass, cached because
+    /// `set_items` clears `placed` — a keypress arriving before the next
+    /// layout needs `item_rect_or_estimate`'s fallback to stay reasonably
+    /// accurate for variable-width labels rather than assuming every item is
+    /// the same guessed width. `None` until the first layout ever runs.
+    last_avg_item_width: Option<f64>,
 }
 
 // --- MARK: BUILDERS
@@ -267,6 +273,7 @@ impl TabsWidget {
             hovered: None,
             pressed: None,
             theme: *theme,
+            last_avg_item_width: None,
         }
     }
 }
@@ -393,21 +400,33 @@ impl TabsWidget {
         self.placed.iter().position(|r| r.contains(pos))
     }
 
-    /// Item rect for `index`, falling back to a theme-metric estimate when
-    /// `placed` is empty (cleared by `set_items`, not yet rebuilt by layout).
-    /// Items are horizontal; width is estimated from the UI font size.
+    /// Item rect for `index`, falling back to an estimate when `placed` is
+    /// empty (cleared by `set_items`, not yet rebuilt by layout). Items are
+    /// horizontal; width is estimated from `last_avg_item_width` (the real
+    /// average from the last layout, which tracks variable-width labels far
+    /// better than a fixed per-item guess) when available, falling back to a
+    /// theme-metric guess only before the very first layout has ever run.
+    /// Shared with sidebar nav via [`item_list::item_rect_or_estimate`].
     fn item_rect_or_estimate(&self, index: usize) -> Rect {
-        if let Some(&rect) = self.placed.get(index) {
-            return rect;
-        }
         let outer = self.outer_pad();
         let gap = self.gap();
         let (pad_h, pad_v) = self.item_pad();
-        let est_item_w = f64::from(self.theme.density.ui_font_size) * 3.0 + 2.0 * pad_h;
+        let est_item_w = self
+            .last_avg_item_width
+            .unwrap_or(f64::from(self.theme.density.ui_font_size) * 3.0 + 2.0 * pad_h);
         let est_item_h = f64::from(self.theme.density.ui_font_size) + 2.0 * pad_v;
-        let index_f64 = item_list::index_f64(index);
-        let x = outer + index_f64 * (est_item_w + gap);
-        Rect::new(x, outer, x + est_item_w, outer + est_item_h)
+        item_list::item_rect_or_estimate(
+            &self.placed,
+            index,
+            item_list::EstimateGeometry {
+                axis: Axis::Horizontal,
+                outer,
+                cross_offset: outer,
+                main_extent: est_item_w,
+                cross_extent: est_item_h,
+                gap,
+            },
+        )
     }
 
     fn is_disabled(&self, index: usize) -> bool {
@@ -658,6 +677,10 @@ impl Widget for TabsWidget {
                 }
                 shrunk = true;
             }
+        }
+
+        if n > 0 {
+            self.last_avg_item_width = Some(item_widths.iter().sum::<f64>() / n_f);
         }
 
         self.placed.clear();
@@ -943,6 +966,44 @@ mod tests {
                 "all segments should share the available width equally"
             );
         }
+    }
+
+    #[test]
+    fn item_rect_or_estimate_uses_real_average_width_not_uniform_guess() {
+        // Wide spread so the fixed theme-metric guess (~3x font size) can't
+        // coincidentally match the real average.
+        let mut h = harness(
+            vec![item(20.0, 20.0), item(300.0, 20.0)],
+            TabsVariant::Default,
+            0,
+        );
+        let (real_avg_width, uniform_guess) = h.edit_root_widget(|wm| {
+            let pad_h = wm.widget.item_pad().0;
+            let uniform_guess = f64::from(wm.widget.theme.density.ui_font_size) * 3.0 + 2.0 * pad_h;
+            let real_avg = wm
+                .widget
+                .last_avg_item_width
+                .expect("layout should have run and cached an average width");
+            (real_avg, uniform_guess)
+        });
+        assert!(
+            (real_avg_width - uniform_guess).abs() > 1.0,
+            "test fixture should produce an average width that's clearly different \
+             from the fixed guess (avg={real_avg_width}, guess={uniform_guess})"
+        );
+
+        // Simulate the transitional window set_items creates: placed cleared,
+        // layout hasn't run yet.
+        let estimated_width = h.edit_root_widget(|wm| {
+            wm.widget.placed.clear();
+            wm.widget.item_rect_or_estimate(0).width()
+        });
+
+        assert!(
+            (estimated_width - real_avg_width).abs() < 1e-6,
+            "estimate should track the real average item width from the last layout \
+             (est={estimated_width}, expected={real_avg_width})"
+        );
     }
 
     // --- pointer interaction ---

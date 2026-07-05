@@ -195,21 +195,41 @@ pub struct ThemedSidebarNav {
     hovered: Option<usize>,
     pressed: Option<usize>,
     theme: Theme,
+    /// Average item height from the last real `layout` pass, cached because
+    /// `set_items` clears `placed` — a keypress arriving before the next
+    /// layout needs `item_rect_or_estimate`'s fallback to stay reasonably
+    /// accurate for variable-height items (wrapped labels, icons) rather
+    /// than assuming every item is the same guessed height. `None` until
+    /// the first layout ever runs.
+    last_avg_item_height: Option<f64>,
 }
 
 // --- MARK: HELPERS
 impl ThemedSidebarNav {
-    /// Item rect for `index`, falling back to a theme-metric estimate when
-    /// `placed` is empty (cleared by `set_items`, not yet rebuilt by layout).
-    /// Items are vertical; only `y` is estimated, `x` always spans from 0.
+    /// Item rect for `index`, falling back to an estimate when `placed` is
+    /// empty (cleared by `set_items`, not yet rebuilt by layout). Items are
+    /// vertical; `y` is estimated from `last_avg_item_height` (the real
+    /// average from the last layout, which tracks variable-height items far
+    /// better than a fixed per-item guess) when available, falling back to a
+    /// theme-metric guess only before the very first layout has ever run.
+    /// `x` always spans from 0. Shared with `tabs` via
+    /// [`item_list::item_rect_or_estimate`].
     fn item_rect_or_estimate(&self, index: usize) -> Rect {
-        if let Some(&rect) = self.placed.get(index) {
-            return rect;
-        }
-        let item_h = f64::from(self.theme.density.ui_font_size) + 2.0 * PAD_V;
-        let index_f64 = item_list::index_f64(index);
-        let y = index_f64 * (item_h + GAP);
-        Rect::new(0.0, y, 0.0, y + item_h)
+        let item_h = self
+            .last_avg_item_height
+            .unwrap_or(f64::from(self.theme.density.ui_font_size) + 2.0 * PAD_V);
+        item_list::item_rect_or_estimate(
+            &self.placed,
+            index,
+            item_list::EstimateGeometry {
+                axis: Axis::Vertical,
+                outer: 0.0,
+                cross_offset: 0.0,
+                main_extent: item_h,
+                cross_extent: 0.0,
+                gap: GAP,
+            },
+        )
     }
 }
 
@@ -231,6 +251,7 @@ impl ThemedSidebarNav {
             hovered: None,
             pressed: None,
             theme: *theme,
+            last_avg_item_height: None,
         }
     }
 }
@@ -487,6 +508,7 @@ impl Widget for ThemedSidebarNav {
 
         self.placed.clear();
         let mut y = 0.0;
+        let mut total_height = 0.0;
         for item in &mut self.items {
             let content_size = ctx.compute_size(
                 item,
@@ -506,6 +528,10 @@ impl Widget for ThemedSidebarNav {
             ctx.place_child(item, Point::new(cx, cy));
 
             y += item_height + GAP;
+            total_height += item_height;
+        }
+        if !self.items.is_empty() {
+            self.last_avg_item_height = Some(total_height / item_list::index_f64(self.items.len()));
         }
     }
 
@@ -634,6 +660,39 @@ mod tests {
 
         assert_eq!(placed.len(), 2);
         assert!(placed[0].y1 <= placed[1].y0 + 1e-6);
+    }
+
+    #[test]
+    fn item_rect_or_estimate_uses_real_average_height_not_uniform_guess() {
+        // Wide spread so the fixed theme-metric guess can't coincidentally
+        // match the real average.
+        let mut h = harness(vec![item(100.0, 10.0), item(100.0, 200.0)], 0);
+        let (real_avg_height, uniform_guess) = h.edit_root_widget(|wm| {
+            let uniform_guess = f64::from(wm.widget.theme.density.ui_font_size) + 2.0 * PAD_V;
+            let real_avg = wm
+                .widget
+                .last_avg_item_height
+                .expect("layout should have run and cached an average height");
+            (real_avg, uniform_guess)
+        });
+        assert!(
+            (real_avg_height - uniform_guess).abs() > 1.0,
+            "test fixture should produce an average height that's clearly different \
+             from the fixed guess (avg={real_avg_height}, guess={uniform_guess})"
+        );
+
+        // Simulate the transitional window set_items creates: placed
+        // cleared, layout hasn't run yet.
+        let estimated_height = h.edit_root_widget(|wm| {
+            wm.widget.placed.clear();
+            wm.widget.item_rect_or_estimate(0).height()
+        });
+
+        assert!(
+            (estimated_height - real_avg_height).abs() < 1e-6,
+            "estimate should track the real average item height from the last layout \
+             (est={estimated_height}, expected={real_avg_height})"
+        );
     }
 
     // --- pointer interaction ---

@@ -543,18 +543,27 @@ impl<W: Widget + ?Sized> ScrollView<W> {
         if this.widget.viewport_pos != Point::ORIGIN {
             this.widget.viewport_pos = Point::ORIGIN;
             this.ctx.request_compose();
-            let eff_size = this.widget.effective_size(this.ctx.border_box_size());
-            let (px, py) = this.widget.scrollbar_progress(eff_size);
-            {
-                let (sb, mut sb_ctx) = this.ctx.get_raw_mut(&mut this.widget.scrollbar_h);
-                sb.cursor_progress = px;
-                sb_ctx.request_render();
-            }
-            {
-                let (sb, mut sb_ctx) = this.ctx.get_raw_mut(&mut this.widget.scrollbar_v);
-                sb.cursor_progress = py;
-                sb_ctx.request_render();
-            }
+        }
+        // Always resync the scrollbar thumbs, even if the viewport was
+        // already at the origin: `layout`'s own re-clamp
+        // (`set_viewport_pos_raw`, run every pass to keep `viewport_pos` in
+        // bounds as `content_size` changes) can silently reset
+        // `viewport_pos` back to the origin on a content swap without ever
+        // touching `cursor_progress` — leaving a thumb that was previously
+        // scrolled down visually stuck there even though there's nothing
+        // left to scroll. Bailing out here whenever `viewport_pos` already
+        // happened to be at the origin would skip fixing exactly that case.
+        let eff_size = this.widget.effective_size(this.ctx.border_box_size());
+        let (px, py) = this.widget.scrollbar_progress(eff_size);
+        {
+            let (sb, mut sb_ctx) = this.ctx.get_raw_mut(&mut this.widget.scrollbar_h);
+            sb.cursor_progress = px;
+            sb_ctx.request_render();
+        }
+        {
+            let (sb, mut sb_ctx) = this.ctx.get_raw_mut(&mut this.widget.scrollbar_v);
+            sb.cursor_progress = py;
+            sb_ctx.request_render();
         }
     }
 }
@@ -1199,9 +1208,66 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
 
 #[cfg(test)]
 mod tests {
-    use masonry::kurbo::{Axis, Size};
+    use masonry::core::NewWidget;
+    use masonry::kurbo::{Axis, Point, Size};
+    use masonry::layout::Length;
+    use masonry::testing::TestHarness;
+    use masonry::widgets::SizedBox;
 
     use super::{ScrollView, VoidScrollBar, compute_pan_range};
+
+    /// Builds a `ScrollView` whose content is much taller than the 100x100
+    /// viewport, so it starts out vertically scrollable.
+    fn tall_content_harness() -> TestHarness<ScrollView<SizedBox>> {
+        let content = SizedBox::empty().size(Length::px(50.0), Length::px(1000.0));
+        let view = ScrollView::new(NewWidget::new(content));
+        TestHarness::create_with_size(
+            masonry::theme::default_property_set(),
+            NewWidget::new(view),
+            (100, 100),
+        )
+    }
+
+    // --- scroll_to_origin ---
+
+    /// `scroll_to_origin` must resync the scrollbar thumb even when
+    /// `viewport_pos` is already at the origin: `layout`'s own re-clamp
+    /// (`set_viewport_pos_raw`, run every pass to keep `viewport_pos` in
+    /// bounds as `content_size` changes) can silently reset `viewport_pos`
+    /// back to the origin without ever touching `cursor_progress` — e.g. a
+    /// content swap that makes everything fit reclamps the position but
+    /// leaves a thumb that was previously scrolled down still reporting its
+    /// old progress. Reproduced here by setting up exactly that
+    /// inconsistent state directly, then checking `scroll_to_origin` still
+    /// corrects it.
+    #[test]
+    fn scroll_to_origin_resyncs_thumb_even_when_viewport_already_at_origin() {
+        let mut harness = tall_content_harness();
+
+        harness.edit_root_widget(|mut root| {
+            // Simulate the aftermath of a silent layout-time reclamp: the
+            // viewport is already back at the origin, but the thumb is
+            // stale, still reporting a scrolled-down position.
+            root.widget.viewport_pos = Point::ORIGIN;
+            let sb = root.ctx.get_mut(&mut root.widget.scrollbar_v);
+            sb.widget.cursor_progress = 0.8;
+        });
+
+        harness.edit_root_widget(|mut root| {
+            ScrollView::scroll_to_origin(&mut root);
+        });
+
+        let progress = harness.edit_root_widget(|mut root| {
+            let sb = root.ctx.get_mut(&mut root.widget.scrollbar_v);
+            sb.widget.cursor_progress
+        });
+        assert!(
+            progress.abs() < 1e-9,
+            "scroll_to_origin should resync the stale thumb to match the \
+             (already-origin) viewport, not skip the sync because the \
+             viewport didn't need to move (progress={progress})"
+        );
+    }
 
     // --- compute_pan_range ---
 

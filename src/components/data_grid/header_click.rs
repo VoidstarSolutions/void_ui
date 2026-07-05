@@ -1,6 +1,6 @@
 //! Single-child wrapper widget that detects a primary-button click and
 //! emits a [`HeaderClicked`] action — the header-row counterpart to
-//! [`crate::collection::row_click::RowClickable`].
+//! `RowClickable` (`crate::collection::row_click`).
 //!
 //! Kept deliberately separate from `RowClickable`. Header clicks are
 //! modifier-agnostic (a plain click cycles the column's sort) and must
