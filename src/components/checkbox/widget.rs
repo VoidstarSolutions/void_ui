@@ -8,11 +8,10 @@
 //! on Space/Enter while focused.
 
 use masonry::accesskit::{self, Node, Role, Toggled};
-use masonry::core::keyboard::{Key, NamedKey};
 use masonry::core::{
     AccessCtx, AccessEvent, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, PaintCtx,
-    PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx,
-    StyleProperty, TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
+    PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty, TextEvent, Update,
+    UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, RoundedRect, Size, Stroke};
@@ -23,7 +22,9 @@ use masonry::widgets::Label;
 
 use super::CheckboxPress;
 use crate::Theme;
+use crate::components::click::{self, ClickPhase};
 use crate::components::icon::{IconName, icon};
+use crate::components::interaction::{self, InteractionState};
 use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 
 /// Stroke width of the box border.
@@ -212,26 +213,20 @@ impl Widget for CheckboxWidget {
         if self.disabled {
             return;
         }
-        match event {
-            PointerEvent::Down(PointerButtonEvent {
-                button: Some(PointerButton::Primary),
-                ..
-            }) => {
+        // Shared Down→capture / Up-iff-active-and-hovered recognizer
+        // (drag out of the widget to cancel the press).
+        match click::primary_click(ctx, event) {
+            Some(ClickPhase::Down(_)) => {
                 ctx.request_focus();
-                ctx.capture_pointer();
                 ctx.request_paint_only();
             }
-            PointerEvent::Up(PointerButtonEvent {
-                button: Some(PointerButton::Primary),
-                ..
-            }) => {
-                // Fire only if the pointer was captured here and is still inside.
-                if ctx.is_active() && ctx.is_hovered() {
+            Some(ClickPhase::Up { completed, .. }) => {
+                if completed {
                     ctx.submit_action::<Self::Action>(CheckboxPress);
                 }
                 ctx.request_paint_only();
             }
-            _ => {}
+            None => {}
         }
     }
 
@@ -244,11 +239,7 @@ impl Widget for CheckboxWidget {
         if self.disabled {
             return;
         }
-        if let TextEvent::Keyboard(event) = event
-            && event.state.is_up()
-            && (matches!(&event.key, Key::Character(c) if c == " ")
-                || event.key == Key::Named(NamedKey::Enter))
-        {
+        if interaction::keyboard_activate(event, true) {
             ctx.set_handled();
             ctx.submit_action::<Self::Action>(CheckboxPress);
         }
@@ -263,22 +254,13 @@ impl Widget for CheckboxWidget {
         if self.disabled {
             return;
         }
-        if event.action == accesskit::Action::Click {
+        if interaction::is_access_click(event) {
             ctx.submit_action::<Self::Action>(CheckboxPress);
         }
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        match event {
-            // Sync masonry's disabled flag on first attach (matches button pattern).
-            Update::WidgetAdded => {
-                ctx.set_disabled(self.disabled);
-            }
-            Update::HoveredChanged(_) | Update::DisabledChanged(_) | Update::FocusChanged(_) => {
-                ctx.request_paint_only();
-            }
-            _ => {}
-        }
+        interaction::interaction_update(ctx, event, self.disabled);
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
@@ -368,9 +350,11 @@ impl Widget for CheckboxWidget {
         painter: &mut Painter<'_>,
     ) {
         let size = ctx.border_box_size();
-        let hovered = ctx.is_hovered();
-        let pressed = ctx.is_active() && hovered;
-        let focused = ctx.is_focus_target();
+        let InteractionState {
+            hovered,
+            pressed,
+            focused,
+        } = InteractionState::from_paint_ctx(ctx);
         let box_sz = self.box_size();
 
         let content_h = (size.height - 2.0 * PAD).max(0.0);
@@ -444,5 +428,57 @@ impl Widget for CheckboxWidget {
 
     fn accepts_text_input(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use masonry::core::keyboard::{Key, NamedKey};
+    use masonry::core::{NewWidget, PointerButton, TextEvent};
+    use masonry::kurbo::Point;
+    use masonry::testing::TestHarness;
+    use masonry::theme::default_property_set;
+
+    use super::CheckboxWidget;
+    use crate::Theme;
+    use crate::components::checkbox::CheckboxPress;
+
+    fn harness() -> TestHarness<CheckboxWidget> {
+        let widget = CheckboxWidget::new(&Theme::dark(), false, false);
+        TestHarness::create_with_size(default_property_set(), NewWidget::new(widget), (60, 30))
+    }
+
+    #[test]
+    fn pointer_click_submits_press() {
+        let mut h = harness();
+        h.mouse_move(Point::new(30.0, 15.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+        assert!(h.pop_action::<CheckboxPress>().is_some());
+    }
+
+    #[test]
+    fn drag_out_cancels_the_press() {
+        let mut h = harness();
+        h.mouse_move(Point::new(30.0, 15.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_move(Point::new(300.0, 300.0));
+        h.mouse_button_release(Some(PointerButton::Primary));
+        assert!(h.pop_action::<CheckboxPress>().is_none());
+    }
+
+    #[test]
+    fn space_and_enter_activate_when_focused() {
+        let mut h = harness();
+        h.focus_on(Some(h.root_id()));
+
+        h.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
+        assert!(h.pop_action::<CheckboxPress>().is_some());
+
+        h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
+        assert!(
+            h.pop_action::<CheckboxPress>().is_some(),
+            "checkboxes accept Enter as well as Space"
+        );
     }
 }
