@@ -87,10 +87,11 @@ pub use label::{Label, LabelAlignment, label};
 pub use list::{List, list};
 pub use notification::{
     DEFAULT_NOTIFICATION_WIDTH, DEFAULT_TIMEOUT, Notification, NotificationLayerView,
-    NotificationPosition, notification, notification_layer, notification_overlay,
+    NotificationPosition, OnClose, notification, notification_layer, notification_overlay,
     notification_stack,
 };
 pub use popover::{Popover, PopoverAnchor, PopoverHost, PopoverOpenChanged, PopoverView, popover};
+pub use radio::{Radio, RadioView, radio};
 pub use resizable::{
     MIN_PANEL_SIZE, Resizable, ResizablePanel, ResizablePanels, ResizablePanelsView, ResizableView,
     h_resizable, h_resizable_panels, v_resizable, v_resizable_panels,
