@@ -1,5 +1,5 @@
 //! Shared overlay infrastructure: placement vocabulary, surface chrome, and
-//! (soon) portal open/close plumbing used by every overlay-flavored
+//! portal open/close plumbing used by every overlay-flavored
 //! component (`popover`, `dropdown_button`, `autocomplete`, `dialog`,
 //! `notification`) and by the root overlay machinery
 //! ([`crate::overlay_scope`], [`crate::overlay_portal`],
