@@ -205,4 +205,17 @@ mod tests {
             .selected(true)
             .render::<u8, ()>(&theme);
     }
+
+    /// The deprecated `.active` shim must still compile and delegate to
+    /// `.selected` — a host mid-migration off the old name must see identical
+    /// behavior.
+    #[test]
+    #[allow(deprecated)]
+    fn deprecated_active_delegates_to_selected() {
+        let theme = Theme::default();
+        let view = radio("Option A", |_: &mut u8| {})
+            .active(true)
+            .render::<u8, ()>(&theme);
+        assert!(view.selected);
+    }
 }

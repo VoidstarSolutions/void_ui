@@ -475,6 +475,13 @@ impl ThemedDropdownButton {
         if this.widget.open == open {
             return;
         }
+        // A disabled dropdown must never open, even via the controlled prop —
+        // otherwise a host that keeps `open=true` set across rebuilds could
+        // re-open a dropdown that was just disabled. The disabled force-close
+        // path lives in `set_disabled` and still runs regardless.
+        if open && this.widget.disabled {
+            return;
+        }
         this.widget.open = open;
         if open {
             this.widget.open_menu(&mut this.ctx);

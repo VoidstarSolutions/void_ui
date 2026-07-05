@@ -618,8 +618,11 @@ mod tests {
         assert!(!h.edit_root_widget(|wm| wm.widget.header_keyboard_pressed));
     }
 
+    /// Keyboard activation is covered separately: masonry withholds focus (and
+    /// therefore text/keyboard events) from disabled widgets framework-side,
+    /// so there's no keyboard path here left to suppress at this layer.
     #[test]
-    fn disabled_suppresses_header_click_and_keyboard() {
+    fn disabled_suppresses_header_click() {
         let mut h = harness(true);
         let target = header_center(&mut h);
         h.mouse_move(target);

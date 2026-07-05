@@ -910,6 +910,110 @@ mod tests {
         });
     }
 
+    /// Portal-mode counterpart to `controlled_mode_suppresses_internal_toggling`:
+    /// a controlled portal popover must ignore attempts to close itself from
+    /// the inside (here, clicking its own trigger while open) — only the host,
+    /// via `set_open`, may change what's shown in the scope's slot. Mirrors
+    /// `ThemedDropdownButton`'s `portal_selection_close_respects_controlled_mode`.
+    #[test]
+    fn portal_controlled_close_attempt_is_ignored() {
+        use masonry::layout::AsUnit;
+
+        fn with_host<R>(
+            h: &mut TestHarness<OverlayScope>,
+            f: impl FnOnce(&mut WidgetMut<'_, PopoverHost>) -> R,
+        ) -> R {
+            h.edit_root_widget(|mut wm| {
+                let mut content = OverlayScope::content_mut(&mut wm);
+                let mut align = content.downcast::<masonry::widgets::Align>();
+                let mut sized = masonry::widgets::Align::child_mut(&mut align);
+                let mut sized = sized.downcast::<masonry::widgets::SizedBox>();
+                let mut host = masonry::widgets::SizedBox::child_mut(&mut sized)
+                    .expect("sized box has the host child");
+                let mut host = host.downcast::<PopoverHost>();
+                f(&mut host)
+            })
+        }
+
+        let key = 3;
+        let theme = Theme::default();
+        let handle = OverlayScopeHandle::new();
+
+        let trigger = masonry::widgets::Label::new("trigger").prepare().erased();
+        let host = NewWidget::new(
+            PopoverHost::new_portal(
+                trigger,
+                OverlayAnchor::BottomStart,
+                &theme,
+                handle.clone(),
+                key,
+            )
+            .with_open_state(false, true),
+        );
+        let sized = masonry::widgets::SizedBox::new(host.erased())
+            .width(100.0.px())
+            .height(40.0.px())
+            .prepare();
+        let content =
+            masonry::widgets::Align::new(masonry::layout::UnitPoint::TOP_LEFT, sized.erased())
+                .prepare()
+                .erased();
+
+        let popover_body = masonry::widgets::Label::new("popover body")
+            .prepare()
+            .erased();
+        let surface = NewWidget::new(OverlaySurface::new(
+            popover_body,
+            &theme,
+            SurfaceStyle::Popover,
+        ))
+        .erased();
+
+        let scope = OverlayScope::new(
+            handle,
+            content,
+            vec![(
+                key,
+                surface,
+                crate::overlay_portal::PortalPlacement::Trigger,
+            )],
+        );
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(scope));
+
+        // The host applies `.open(true)` (controlled): slot child becomes visible.
+        with_host(&mut h, |host| PopoverHost::set_open(host, true));
+        h.edit_root_widget(|mut wm| {
+            let slot = OverlayScope::portal_slot_mut(&mut wm);
+            assert!(
+                slot.widget.placed_rect(key).is_some(),
+                "slot child must be visible after the host applies open"
+            );
+        });
+
+        // An internal close attempt — clicking the trigger while open — lands
+        // here via the widget's own pointer handling.
+        h.mouse_move(Point::new(50.0, 20.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+
+        assert!(
+            with_host(&mut h, |host| host.widget.open),
+            "controlled popover must not self-close from an internal trigger click"
+        );
+        h.edit_root_widget(|mut wm| {
+            let slot = OverlayScope::portal_slot_mut(&mut wm);
+            assert!(
+                slot.widget.placed_rect(key).is_some(),
+                "slot child must stay visible while the host keeps open=true"
+            );
+        });
+        assert_eq!(
+            h.pop_action::<PopoverOpenChanged>().map(|(a, _)| a),
+            Some(PopoverOpenChanged(false)),
+            "the click must still report the OpenChanged(false) desire"
+        );
+    }
+
     /// An open portal popover must re-anchor as its trigger scrolls within an
     /// ancestor. Stands in for a real `ScrollContainer` with a minimal
     /// `ModularWidget` that, on `PointerEvent::Scroll`, accumulates a
