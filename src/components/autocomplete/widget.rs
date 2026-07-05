@@ -953,10 +953,10 @@ fn apply_chrome_theme(sb: &mut WidgetMut<'_, SizedBox>, theme: &Theme) {
         let mut ta = widgets::TextInput::text_mut(ti);
         ta.insert_prop(ContentColor::new(theme.palette.text));
         ta.insert_prop(CaretColor {
-            color: theme.palette.teal,
+            color: theme.palette.accent,
         });
         ta.insert_prop(SelectionColor {
-            color: theme.palette.teal_soft,
+            color: theme.palette.accent_soft,
         });
         widgets::TextArea::insert_style(
             &mut ta,

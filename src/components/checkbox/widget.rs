@@ -59,7 +59,7 @@ impl CheckboxWidget {
             if disabled {
                 theme.palette.text_faint
             } else {
-                theme.palette.teal
+                theme.palette.accent
             }
         } else {
             Color::TRANSPARENT
@@ -91,7 +91,7 @@ impl CheckboxWidget {
             if disabled {
                 theme.palette.text_faint
             } else {
-                theme.palette.teal
+                theme.palette.accent
             }
         } else {
             Color::TRANSPARENT
@@ -183,11 +183,11 @@ impl CheckboxWidget {
         }
         if self.checked {
             let bg = if pressed || hovered {
-                p.teal
+                p.accent
             } else {
-                p.teal_soft
+                p.accent_soft
             };
-            (bg, p.teal)
+            (bg, p.accent)
         } else {
             let bg = if pressed {
                 p.surface_hi

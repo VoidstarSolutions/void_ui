@@ -158,13 +158,13 @@ impl ToggleWidget {
         let p = &self.theme.palette;
         if self.disabled {
             return if self.checked {
-                p.teal_soft
+                p.accent_soft
             } else {
                 p.surface_2
             };
         }
         if self.checked {
-            if pressed { p.teal_deep } else { p.teal }
+            if pressed { p.accent_deep } else { p.accent }
         } else if pressed || hovered {
             p.surface_hi
         } else {

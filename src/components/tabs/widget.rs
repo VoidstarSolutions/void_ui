@@ -735,7 +735,7 @@ impl Widget for TabsWidget {
                         Point::new(sel.x0, size.height - UNDERLINE_ACCENT_WIDTH),
                         Size::new(sel.width(), UNDERLINE_ACCENT_WIDTH),
                     );
-                    painter.fill(accent, p.teal).draw();
+                    painter.fill(accent, p.accent).draw();
                 }
             }
             TabsVariant::Pill => {

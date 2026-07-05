@@ -556,7 +556,7 @@ impl Widget for ThemedSidebarNav {
                     Size::new(ACCENT_WIDTH, rect.height()),
                     ACCENT_RADIUS,
                 );
-                painter.fill(accent, p.teal).draw();
+                painter.fill(accent, p.accent).draw();
             }
 
             if i == self.focused && ctx.is_focus_target() {

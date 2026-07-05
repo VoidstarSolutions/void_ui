@@ -574,7 +574,7 @@ where
     if let Some(width_change) = width_change {
         let style = SeparatorStyle {
             line: theme.palette.border,
-            active: theme.palette.teal,
+            active: theme.palette.accent,
         };
         // The strip reports a *positional* resize index (it's a layout
         // widget — it knows columns by slot, not identity). Translate it
@@ -928,7 +928,7 @@ where
         title.push_str("  ●");
     }
     let title_color = if filtered {
-        theme.palette.teal
+        theme.palette.accent
     } else {
         theme.palette.text_muted
     };

@@ -355,7 +355,7 @@ impl ResizableWidget {
     fn handle_color(&self, index: usize) -> Color {
         let p = &self.theme.palette;
         if self.dragging_handle == Some(index) {
-            p.teal
+            p.accent
         } else if self.hovered_handle == Some(index) {
             p.surface_hi
         } else {

@@ -250,7 +250,7 @@ impl Widget for ThemedSidebarItem {
                 Size::new(ACCENT_WIDTH, size.height),
                 ACCENT_RADIUS,
             );
-            painter.fill(accent, p.teal).draw();
+            painter.fill(accent, p.accent).draw();
         }
 
         if focused {
