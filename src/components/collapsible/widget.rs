@@ -10,15 +10,13 @@
 use std::any::TypeId;
 
 use masonry::accesskit::{self, Node, Role};
-use masonry::core::keyboard::{Key, NamedKey};
 use masonry::core::{
     AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
-    PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef,
-    RegisterCtx, StyleProperty, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
-    WidgetPod,
+    PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty, TextEvent,
+    Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Point, Rect, Size, Stroke};
+use masonry::kurbo::{Axis, Point, Rect, Size};
 use masonry::layout::{LayoutSize, LenReq, Length};
 use masonry::peniko::Color;
 use masonry::properties::ContentColor;
@@ -26,7 +24,10 @@ use masonry::widgets::Label;
 
 use crate::Theme;
 use crate::animated_clip::AnimatedClip;
+use crate::components::click::{self, ClickPhase};
 use crate::components::icon::{IconName, icon};
+use crate::components::interaction;
+use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 
 // --- MARK: CONSTANTS
 
@@ -38,10 +39,6 @@ const PAD_H: f64 = 8.0;
 const CHEVRON_GAP: f64 = 4.0;
 /// Thickness of the separator line below the header.
 const SEPARATOR_WIDTH: f64 = 1.0;
-/// Stroke width of the keyboard-focus ring drawn around the header.
-const FOCUS_RING_WIDTH: f64 = 1.5;
-/// Gap between the header edge and the focus ring.
-const FOCUS_RING_INSET: f64 = 1.5;
 
 // --- MARK: ACTION
 
@@ -210,38 +207,34 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
                     ctx.request_paint_only();
                 }
             }
-            PointerEvent::Down(PointerButtonEvent {
-                button: Some(PointerButton::Primary),
-                state,
-                ..
-            }) => {
-                let pos = ctx.local_position(state.position);
-                if pos.y < self.current_header_height {
-                    self.header_pressed = true;
-                    ctx.request_focus();
-                    ctx.capture_pointer();
-                    ctx.request_paint_only();
-                }
-            }
-            PointerEvent::Up(PointerButtonEvent {
-                button: Some(PointerButton::Primary),
-                state,
-                ..
-            }) if self.header_pressed => {
-                let pos = ctx.local_position(state.position);
-                let in_header = pos.y < self.current_header_height;
-                if ctx.is_hovered() && in_header {
-                    ctx.submit_action::<Self::Action>(CollapsibleTogglePressed);
-                }
-                self.header_pressed = false;
-                self.header_hovered = in_header;
-                ctx.request_paint_only();
-            }
             PointerEvent::Leave(_) if self.header_hovered => {
                 self.header_hovered = false;
                 ctx.request_paint_only();
             }
-            _ => {}
+            // Shared primary-click recognizer; the capture guard only
+            // accepts presses on the header row, so a press in the body
+            // never captures — capturing there would steal the pointer
+            // from interactive body children (events bubble up here).
+            _ => match click::primary_click_when(ctx, event, |ctx, state| {
+                ctx.local_position(state.position).y < self.current_header_height
+            }) {
+                Some(ClickPhase::Down(_)) => {
+                    self.header_pressed = true;
+                    ctx.request_focus();
+                    ctx.request_paint_only();
+                }
+                Some(ClickPhase::Up { state, completed }) if self.header_pressed => {
+                    let pos = ctx.local_position(state.position);
+                    let in_header = pos.y < self.current_header_height;
+                    if completed && in_header {
+                        ctx.submit_action::<Self::Action>(CollapsibleTogglePressed);
+                    }
+                    self.header_pressed = false;
+                    self.header_hovered = in_header;
+                    ctx.request_paint_only();
+                }
+                Some(ClickPhase::Up { .. }) | None => {}
+            },
         }
     }
 
@@ -251,12 +244,7 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
         _props: &mut PropertiesMut<'_>,
         event: &TextEvent,
     ) {
-        if ctx.is_focus_target()
-            && let TextEvent::Keyboard(event) = event
-            && event.state.is_up()
-            && (matches!(&event.key, Key::Character(c) if c == " ")
-                || event.key == Key::Named(NamedKey::Enter))
-        {
+        if ctx.is_focus_target() && interaction::keyboard_activate(event, true) {
             ctx.set_handled();
             ctx.submit_action::<Self::Action>(CollapsibleTogglePressed);
         }
@@ -268,7 +256,7 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
         _props: &mut PropertiesMut<'_>,
         event: &AccessEvent,
     ) {
-        if ctx.target() == ctx.widget_id() && event.action == accesskit::Action::Click {
+        if ctx.target() == ctx.widget_id() && interaction::is_access_click(event) {
             ctx.submit_action::<Self::Action>(CollapsibleTogglePressed);
         }
     }
@@ -384,9 +372,7 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
                 Point::new(inset, inset),
                 Size::new((w - 2.0 * inset).max(0.0), (h - 2.0 * inset).max(0.0)),
             );
-            painter
-                .stroke(focus_rect, &Stroke::new(FOCUS_RING_WIDTH), p.focus)
-                .draw();
+            paint_focus_ring(painter, focus_rect, &self.theme);
         }
 
         // Separator below the header.
@@ -431,5 +417,74 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
 
     fn make_trace_span(&self, id: WidgetId) -> tracing::Span {
         tracing::trace_span!("CollapsibleWidget", id = id.trace())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use masonry::core::keyboard::{Key, NamedKey};
+    use masonry::core::{ArcStr, NewWidget, PointerButton, TextEvent, Widget};
+    use masonry::kurbo::Point;
+    use masonry::testing::TestHarness;
+    use masonry::theme::default_property_set;
+    use masonry::widgets::Label;
+
+    use super::{CollapsibleTogglePressed, CollapsibleWidget};
+    use crate::Theme;
+
+    fn harness() -> TestHarness<CollapsibleWidget<dyn Widget>> {
+        let body = NewWidget::new(Label::new("body")).erased();
+        let widget = CollapsibleWidget::new(ArcStr::from("Section"), body, &Theme::dark(), true);
+        TestHarness::create_with_size(default_property_set(), NewWidget::new(widget), (200, 120))
+    }
+
+    /// Center of the header row, read from the last layout.
+    fn header_center(h: &mut TestHarness<CollapsibleWidget<dyn Widget>>) -> Point {
+        let header_h = h.edit_root_widget(|wm| wm.widget.current_header_height);
+        Point::new(100.0, header_h * 0.5)
+    }
+
+    #[test]
+    fn clicking_the_header_toggles() {
+        let mut h = harness();
+        let target = header_center(&mut h);
+        h.mouse_move(target);
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+        assert!(h.pop_action::<CollapsibleTogglePressed>().is_some());
+    }
+
+    #[test]
+    fn clicking_the_body_does_not_toggle() {
+        let mut h = harness();
+        let header_h = h.edit_root_widget(|wm| wm.widget.current_header_height);
+        h.mouse_move(Point::new(100.0, header_h + 30.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+        assert!(h.pop_action::<CollapsibleTogglePressed>().is_none());
+    }
+
+    #[test]
+    fn dragging_from_header_into_body_cancels() {
+        let mut h = harness();
+        let target = header_center(&mut h);
+        let header_h = h.edit_root_widget(|wm| wm.widget.current_header_height);
+        h.mouse_move(target);
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_move(Point::new(100.0, header_h + 30.0));
+        h.mouse_button_release(Some(PointerButton::Primary));
+        assert!(h.pop_action::<CollapsibleTogglePressed>().is_none());
+    }
+
+    #[test]
+    fn space_and_enter_activate_when_focused() {
+        let mut h = harness();
+        h.focus_on(Some(h.root_id()));
+
+        h.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
+        assert!(h.pop_action::<CollapsibleTogglePressed>().is_some());
+
+        h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
+        assert!(h.pop_action::<CollapsibleTogglePressed>().is_some());
     }
 }
