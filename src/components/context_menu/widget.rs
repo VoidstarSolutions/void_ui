@@ -32,8 +32,6 @@ use crate::components::icon::IconName;
 use crate::components::item_list;
 use crate::focus_ring::paint_focus_ring;
 
-/// Vertical padding above and below the item list.
-const MENU_PAD_V: f64 = 4.0;
 /// Corner radius of the menu's background chrome.
 const CORNER_RADIUS: f64 = 5.0;
 /// Border width of the menu's background chrome.
@@ -276,6 +274,10 @@ impl MenuPanel {
 
     fn pad_h(&self) -> f64 {
         item_list::pad_h(&self.theme.density)
+    }
+
+    fn menu_pad_v(&self) -> f64 {
+        item_list::menu_pad_v(&self.theme.density)
     }
 
     /// The selectable row containing `local_pos`, if any.
@@ -776,7 +778,7 @@ impl Widget for MenuPanel {
                         .get()
                     })
                     .sum();
-                Length::px(MENU_PAD_V * 2.0 + content)
+                Length::px(self.menu_pad_v() * 2.0 + content)
             }
             Axis::Horizontal => {
                 let inner_cross =
@@ -803,7 +805,7 @@ impl Widget for MenuPanel {
         let pad_h = self.pad_h();
         let node_w = (size.width - 2.0 * pad_h).max(0.0);
 
-        let mut y = MENU_PAD_V;
+        let mut y = self.menu_pad_v();
         for row in &mut self.rows {
             // The node's height is intrinsic (its row height); force its width
             // to the panel's content width so trailing shortcuts right-align to

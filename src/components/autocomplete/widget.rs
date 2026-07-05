@@ -39,8 +39,6 @@ use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 use crate::overlay_portal::{OwnerKind, PortalSlot, PortalVisibility};
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
-/// Vertical padding above/below the suggestion list content.
-const LIST_PAD_V: f64 = 4.0;
 /// Suggestion list chrome corner radius.
 const LIST_CORNER: f64 = 5.0;
 /// Suggestion list border stroke width.
@@ -369,6 +367,10 @@ impl LabelList {
         item_list::pad_h(&self.theme.density)
     }
 
+    fn list_pad_v(&self) -> f64 {
+        item_list::menu_pad_v(&self.theme.density)
+    }
+
     fn hit_item(&self, local: Point) -> Option<usize> {
         item_list::hit_item(&self.item_rects, local)
     }
@@ -444,7 +446,7 @@ impl LabelList {
             let rect = self.item_rects.get(i).copied().unwrap_or_else(|| {
                 let item_h = self.item_height();
                 let i_f64 = f64::from(u32::try_from(i).unwrap_or(u32::MAX));
-                let y = LIST_PAD_V + i_f64 * item_h;
+                let y = self.list_pad_v() + i_f64 * item_h;
                 Rect::new(0.0, y, 0.0, y + item_h)
             });
             ctx.request_scroll_to(rect);
@@ -665,7 +667,7 @@ impl Widget for LabelList {
         match axis {
             Axis::Vertical => {
                 let n_f64 = f64::from(u32::try_from(n).unwrap_or(u32::MAX));
-                Length::px(LIST_PAD_V * 2.0 + item_h * n_f64)
+                Length::px(self.list_pad_v() * 2.0 + item_h * n_f64)
             }
             Axis::Horizontal => {
                 // Each item's height is fixed at `item_h` regardless of any
@@ -699,7 +701,7 @@ impl Widget for LabelList {
         let item_h = self.item_height();
         let label_avail = Size::new((size.width - 2.0 * pad_h).max(0.0), item_h);
 
-        let mut y = LIST_PAD_V;
+        let mut y = self.list_pad_v();
         for label in &mut self.labels {
             let item_rect =
                 Rect::from_origin_size(Point::new(0.0, y), Size::new(size.width, item_h));
