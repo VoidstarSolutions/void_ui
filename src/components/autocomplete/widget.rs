@@ -33,7 +33,7 @@ use crate::anchored_overlay::AnchoredOverlay;
 use crate::components::input::widget::{InputCleared, InputFrame};
 use crate::components::input::{stripped_text_input_props, text_area_props};
 use crate::components::item_list;
-use crate::components::popover::PopoverAnchor;
+use crate::overlay::OverlayAnchor;
 use crate::components::scroll_container::widget::{ContentClip, ScrollView};
 use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 use crate::overlay_portal::{OwnerKind, PortalSlot, PortalVisibility};
@@ -974,7 +974,7 @@ fn close_portal_slot(scope: &mut WidgetMut<'_, OverlayScope>, key: u64) {
             owner: None,
             owner_kind: OwnerKind::Autocomplete,
             rect: Rect::ZERO,
-            anchor: PopoverAnchor::BottomStart,
+            anchor: OverlayAnchor::BottomStart,
             gap: 0.0,
         },
     );
@@ -1200,7 +1200,7 @@ impl AutocompleteWidget {
             chrome,
             NewWidget::new(suggestion_list),
             false,
-            PopoverAnchor::BottomStart,
+            OverlayAnchor::BottomStart,
         )
         .with_gap(OVERLAY_GAP);
 
@@ -1330,7 +1330,7 @@ impl AutocompleteWidget {
                             owner: Some(owner_id),
                             owner_kind: OwnerKind::Autocomplete,
                             rect,
-                            anchor: PopoverAnchor::BottomStart,
+                            anchor: OverlayAnchor::BottomStart,
                             gap: OVERLAY_GAP_PX,
                         },
                     );
@@ -1408,7 +1408,7 @@ impl AutocompleteWidget {
                                 owner: Some(owner_id),
                                 owner_kind: OwnerKind::Autocomplete,
                                 rect,
-                                anchor: PopoverAnchor::BottomStart,
+                                anchor: OverlayAnchor::BottomStart,
                                 gap: OVERLAY_GAP_PX,
                             },
                         ))
@@ -1519,7 +1519,7 @@ impl AutocompleteWidget {
                         owner: Some(owner_id),
                         owner_kind: OwnerKind::Autocomplete,
                         rect,
-                        anchor: PopoverAnchor::BottomStart,
+                        anchor: OverlayAnchor::BottomStart,
                         gap: OVERLAY_GAP_PX,
                     },
                 );
