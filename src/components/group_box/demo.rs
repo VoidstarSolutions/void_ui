@@ -154,13 +154,13 @@ fn outline_section(theme: &Theme, state: &GroupBoxDemo) -> Box<AnyWidgetView<Gro
     group_box(
         flex_col((
             radio("Light", |s: &mut GroupBoxDemo| s.appearance = Some(0))
-                .active(state.appearance == Some(0))
+                .selected(state.appearance == Some(0))
                 .render(theme),
             radio("Dark", |s: &mut GroupBoxDemo| s.appearance = Some(1))
-                .active(state.appearance == Some(1))
+                .selected(state.appearance == Some(1))
                 .render(theme),
             radio("System", |s: &mut GroupBoxDemo| s.appearance = Some(2))
-                .active(state.appearance == Some(2))
+                .selected(state.appearance == Some(2))
                 .render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)

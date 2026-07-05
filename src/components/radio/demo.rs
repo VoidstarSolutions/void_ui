@@ -46,11 +46,11 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     let disabled_example = with_source!(theme, {
         flex_row((
             radio("Disabled unselected", |_: &mut S| {})
-                .active(false)
+                .selected(false)
                 .disabled(true)
                 .render(theme),
             radio("Disabled selected", |_: &mut S| {})
-                .active(true)
+                .selected(true)
                 .disabled(true)
                 .render(theme),
         ))
@@ -127,7 +127,7 @@ fn build_toggle_child<S: 'static>(selected: bool, theme: &Theme) -> ToggleChildV
     let t = *theme;
     Box::new(
         radio("Radio Button", |_: &mut S| {})
-            .active(selected)
+            .selected(selected)
             .render(&t),
     )
 }
@@ -257,13 +257,13 @@ fn build_group_child<S: 'static>(selected: usize, theme: &Theme) -> GroupChildVi
     Box::new(
         flex_row((
             radio("Option A", move |_: &mut S| 0usize)
-                .active(selected == 0)
+                .selected(selected == 0)
                 .render(&t),
             radio("Option B", move |_: &mut S| 1usize)
-                .active(selected == 1)
+                .selected(selected == 1)
                 .render(&t),
             radio("Option C", move |_: &mut S| 2usize)
-                .active(selected == 2)
+                .selected(selected == 2)
                 .render(&t),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Center)

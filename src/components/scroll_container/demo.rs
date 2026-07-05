@@ -194,17 +194,17 @@ fn make_inner_view(theme: &Theme, vis: DemoState) -> impl WidgetView<DemoState> 
         radio("Always visible", move |s: &mut DemoState| {
             *s = ScrollBarVisibility::AlwaysVisible;
         })
-        .active(vis == ScrollBarVisibility::AlwaysVisible)
+        .selected(vis == ScrollBarVisibility::AlwaysVisible)
         .render(theme),
         radio("On activity", move |s: &mut DemoState| {
             *s = ScrollBarVisibility::OnActivity;
         })
-        .active(vis == ScrollBarVisibility::OnActivity)
+        .selected(vis == ScrollBarVisibility::OnActivity)
         .render(theme),
         radio("Always hidden", move |s: &mut DemoState| {
             *s = ScrollBarVisibility::AlwaysHidden;
         })
-        .active(vis == ScrollBarVisibility::AlwaysHidden)
+        .selected(vis == ScrollBarVisibility::AlwaysHidden)
         .render(theme),
     ))
     .cross_axis_alignment(CrossAxisAlignment::Center)
