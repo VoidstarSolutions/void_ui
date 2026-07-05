@@ -9,6 +9,7 @@
 //! component, it belongs in that component's module instead.
 
 mod anchor;
+pub(crate) mod binding;
 mod surface;
 
 pub use anchor::OverlayAnchor;

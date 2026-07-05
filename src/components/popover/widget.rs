@@ -31,7 +31,7 @@ use masonry::core::{
     UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Point, Rect, Size};
+use masonry::kurbo::{Axis, Point, Size};
 use masonry::layout::{LenReq, Length};
 use masonry::properties::Padding;
 use masonry::widgets::ButtonPress;
@@ -39,9 +39,9 @@ use masonry::widgets::ButtonPress;
 use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
 use crate::components::click::{self, ClickPhase};
+use crate::overlay::binding::{PortalBinding, PortalOpenCtx};
 use crate::overlay::{OverlayAnchor, OverlaySurface, SurfaceStyle};
-use crate::overlay_portal::{PortalOwner, PortalVisibility};
-use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
+use crate::overlay_scope::OverlayScopeHandle;
 
 /// Gap between the trigger and the popover surface, scaled with density.
 fn surface_gap(theme: &Theme) -> Length {
@@ -57,12 +57,7 @@ enum Hosting {
     },
     Portal {
         trigger: WidgetPod<dyn Widget>,
-        scope: OverlayScopeHandle,
-        key: u64,
-        /// Last window-space anchor rect pushed to the slot; `compose` uses
-        /// it to re-anchor only when we actually moved (mirrors
-        /// `ThemedDropdownButton::compose`).
-        last_anchor_rect_window: Option<Rect>,
+        binding: PortalBinding,
     },
 }
 
@@ -131,9 +126,7 @@ impl PopoverHost {
         Self {
             hosting: Hosting::Portal {
                 trigger: trigger.to_pod(),
-                scope,
-                key,
-                last_anchor_rect_window: None,
+                binding: PortalBinding::new(scope, key, popover_dismiss_hook),
             },
             open: false,
             anchor,
@@ -188,44 +181,7 @@ impl PopoverHost {
         if !this.widget.open {
             return;
         }
-        let Hosting::Portal {
-            scope,
-            key,
-            last_anchor_rect_window,
-            ..
-        } = &mut this.widget.hosting
-        else {
-            return;
-        };
-        let Some(scope_id) = scope.widget_id() else {
-            return;
-        };
-        let key = *key;
-        let owner_id = this.ctx.widget_id();
-        let anchor = this.widget.anchor;
-        let gap = surface_gap(&this.widget.theme).get();
-        let rect = Rect::from_origin_size(
-            this.ctx.to_window(Point::ORIGIN),
-            this.ctx.border_box_size(),
-        );
-        *last_anchor_rect_window = Some(rect);
-        this.ctx.mutate_later(scope_id, move |mut w| {
-            let mut scope = w.downcast::<OverlayScope>();
-            OverlayScope::set_portal_visible(
-                &mut scope,
-                key,
-                true,
-                PortalVisibility {
-                    owner: Some(PortalOwner {
-                        id: owner_id,
-                        on_dismiss: popover_dismiss_hook,
-                    }),
-                    rect,
-                    anchor,
-                    gap,
-                },
-            );
-        });
+        this.widget.push_open_state(&mut this.ctx, true);
     }
 
     /// Sync the host's `open` flag after the portal slot dismissed its
@@ -286,74 +242,29 @@ pub(crate) fn popover_dismiss_hook(mut w: WidgetMut<'_, dyn Widget>) {
 
 // --- MARK: INTERNAL HELPERS
 
-/// Body of `push_open_state`, shared between the `EventCtx` and `ActionCtx`
-/// flavors below — both context types expose the same `mutate_child_later`,
-/// `mutate_later`, `to_window`, `border_box_size`, `widget_id`, and
-/// `request_compose` methods, but as separate inherent impls rather than a
-/// shared trait, so the body is factored out as a macro instead.
-macro_rules! push_open_state_body {
-    ($self:ident, $ctx:ident, $open:ident) => {
-        match &mut $self.hosting {
+impl PopoverHost {
+    /// Push `open` to whichever host mounts the content. Generic over the
+    /// context (`EventCtx` for click/Escape, `ActionCtx` for keyboard
+    /// activation, `UpdateCtx` for stash-close, `MutateCtx` via
+    /// [`Self::refresh_portal`]) — see [`PortalOpenCtx`].
+    fn push_open_state(&mut self, ctx: &mut impl PortalOpenCtx, open: bool) {
+        let anchor = self.anchor;
+        let gap = surface_gap(&self.theme).get();
+        match &mut self.hosting {
             Hosting::InTree { overlay_host } => {
-                $ctx.mutate_child_later(overlay_host, move |mut w| {
-                    AnchoredOverlay::set_overlay_visible(&mut w, $open);
+                ctx.queue_mutate(overlay_host.id(), move |mut w| {
+                    let mut overlay = w.downcast::<AnchoredOverlay>();
+                    AnchoredOverlay::set_overlay_visible(&mut overlay, open);
                 });
             }
-            Hosting::Portal {
-                scope,
-                key,
-                last_anchor_rect_window,
-                ..
-            } => {
-                // Unreachable in practice: the OnceLock fills at the scope's
-                // `WidgetAdded`, before any descendant event can fire.
-                let Some(scope_id) = scope.widget_id() else {
-                    return;
-                };
-                let key = *key;
-                let owner_id = $ctx.widget_id();
-                let anchor = $self.anchor;
-                let gap = surface_gap(&$self.theme).get();
-                let rect =
-                    Rect::from_origin_size($ctx.to_window(Point::ORIGIN), $ctx.border_box_size());
-                *last_anchor_rect_window = Some(rect);
-                $ctx.mutate_later(scope_id, move |mut w| {
-                    let mut scope = w.downcast::<OverlayScope>();
-                    OverlayScope::set_portal_visible(
-                        &mut scope,
-                        key,
-                        $open,
-                        PortalVisibility {
-                            owner: Some(PortalOwner {
-                                id: owner_id,
-                                on_dismiss: popover_dismiss_hook,
-                            }),
-                            rect,
-                            anchor,
-                            gap,
-                        },
-                    );
-                });
-                if $open {
-                    $ctx.request_compose();
-                    $ctx.request_anim_frame();
+            Hosting::Portal { binding, .. } => {
+                if open {
+                    binding.open(ctx, anchor, gap);
+                } else {
+                    binding.close(ctx);
                 }
             }
         }
-    };
-}
-
-impl PopoverHost {
-    /// Push `open` to whichever host mounts the content. `EventCtx` flavor —
-    /// used by click and Escape handling.
-    fn push_open_state(&mut self, ctx: &mut EventCtx<'_>, open: bool) {
-        push_open_state_body!(self, ctx, open);
-    }
-
-    /// `ActionCtx` flavor of [`Self::push_open_state`] — used by the
-    /// trigger's bubbled `ButtonPress` (keyboard activation).
-    fn push_open_state_action(&mut self, ctx: &mut ActionCtx<'_>, open: bool) {
-        push_open_state_body!(self, ctx, open);
     }
 }
 
@@ -429,7 +340,7 @@ impl Widget for PopoverHost {
             ctx.set_handled();
             let open = !self.open;
             self.open = open;
-            self.push_open_state_action(ctx, open);
+            self.push_open_state(ctx, open);
             ctx.request_paint_only();
         }
     }
@@ -468,32 +379,7 @@ impl Widget for PopoverHost {
             // close — for both hosting modes.
             Update::StashedChanged(true) if self.open => {
                 self.open = false;
-                match &mut self.hosting {
-                    Hosting::InTree { overlay_host } => {
-                        ctx.mutate_child_later(overlay_host, |mut w| {
-                            AnchoredOverlay::set_overlay_visible(&mut w, false);
-                        });
-                    }
-                    Hosting::Portal { scope, key, .. } => {
-                        if let Some(scope_id) = scope.widget_id() {
-                            let key = *key;
-                            ctx.mutate_later(scope_id, move |mut w| {
-                                let mut scope = w.downcast::<OverlayScope>();
-                                OverlayScope::set_portal_visible(
-                                    &mut scope,
-                                    key,
-                                    false,
-                                    PortalVisibility {
-                                        owner: None,
-                                        rect: Rect::ZERO,
-                                        anchor: OverlayAnchor::BottomStart,
-                                        gap: 0.0,
-                                    },
-                                );
-                            });
-                        }
-                    }
-                }
+                self.push_open_state(ctx, false);
                 ctx.request_paint_only();
             }
             _ => {}
@@ -517,28 +403,9 @@ impl Widget for PopoverHost {
         if !self.open {
             return;
         }
-        let Hosting::Portal {
-            scope,
-            key,
-            last_anchor_rect_window,
-            ..
-        } = &mut self.hosting
-        else {
-            return;
-        };
-        let Some(scope_id) = scope.widget_id() else {
-            return;
-        };
-        let rect = Rect::from_origin_size(ctx.to_window(Point::ZERO), ctx.border_box_size());
-        if *last_anchor_rect_window == Some(rect) {
-            return;
+        if let Hosting::Portal { binding, .. } = &mut self.hosting {
+            binding.reanchor(ctx);
         }
-        *last_anchor_rect_window = Some(rect);
-        let key = *key;
-        ctx.mutate_later(scope_id, move |mut w| {
-            let mut scope = w.downcast::<OverlayScope>();
-            OverlayScope::set_portal_placement(&mut scope, key, rect);
-        });
     }
 
     /// Keeps a still-open portal popover's [`Self::compose`] running every
@@ -639,6 +506,7 @@ mod tests {
     use masonry::core::TextEvent;
     use masonry::core::keyboard::{Key, NamedKey};
     use masonry::core::{Handled, NewWidget};
+    use masonry::kurbo::Rect;
     use masonry::layout::SizeDef;
     use masonry::testing::TestHarness;
     use masonry::theme::default_property_set;
@@ -647,6 +515,7 @@ mod tests {
 
     use super::*;
     use crate::components::button::widget::ThemedButton;
+    use crate::overlay_scope::OverlayScope;
 
     fn button(label: &str, theme: &Theme) -> NewWidget<dyn Widget> {
         NewWidget::new(ThemedButton::new(
