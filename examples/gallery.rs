@@ -398,9 +398,12 @@ fn density_radii_block(theme: &Theme) -> impl WidgetView<State> + use<> {
         .gap(Length::px(8.0))
     };
     flex_col((
-        kv("row", format!("{:.0} px", d.row)),
-        kv("col", format!("{:.0} px", d.col)),
         kv("pad", format!("{:.0} px", d.pad)),
+        kv("pad_h/v", format!("{:.0}/{:.0} px", d.pad_h, d.pad_v)),
+        kv("gap", format!("{:.0} px", d.gap)),
+        kv("gap_lg", format!("{:.0} px", d.gap_lg)),
+        kv("control", format!("{:.0} px", d.control)),
+        kv("row_h", format!("{:.0} px", d.row_height)),
         kv("ui_fs", format!("{:.0} px", d.ui_font_size)),
         kv("radius.s", format!("{:.0} px", r.small)),
         kv("radius.l", format!("{:.0} px", r.large)),

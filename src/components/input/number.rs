@@ -177,7 +177,7 @@ impl<F> NumberInput<F> {
         let text = affixed_row!(prefix, core, suffix, theme);
         let row = flex_row((text.flex(1.0), steppers))
             .cross_axis_alignment(CrossAxisAlignment::Center)
-            .gap(Length::px(f64::from(theme.density.col)));
+            .gap(Length::px(f64::from(theme.density.gap_lg)));
 
         field_chrome(row, theme)
     }
