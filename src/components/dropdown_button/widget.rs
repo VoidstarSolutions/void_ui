@@ -50,6 +50,9 @@ use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 pub enum DropdownButtonAction {
     /// Menu item at `index` was selected.
     ItemSelected(usize),
+    /// The menu's open state changed (uncontrolled), or the user requested a
+    /// change (controlled — the widget does not self-toggle then).
+    OpenChanged(bool),
 }
 
 widget_id_handle!(
@@ -124,6 +127,9 @@ pub struct ThemedDropdownButton {
     disabled: bool,
     theme: Theme,
     pub(super) open: bool,
+    /// When true, `open` mirrors a host prop and internal toggles only
+    /// submit [`DropdownButtonAction::OpenChanged`] instead of self-mutating.
+    controlled: bool,
     /// Keyboard-highlighted item index for roving-tab-stop navigation.
     /// `None` means no keyboard highlight; updated on arrow keys and cleared
     /// when the menu closes or an item is selected.
@@ -196,6 +202,7 @@ impl ThemedDropdownButton {
             disabled,
             theme: *theme,
             open: false,
+            controlled: false,
             highlighted: None,
         }
     }
@@ -233,8 +240,17 @@ impl ThemedDropdownButton {
             disabled,
             theme,
             open: false,
+            controlled: false,
             highlighted: None,
         }
+    }
+
+    /// Set the initial open state and whether it is host-controlled.
+    #[must_use]
+    pub fn with_open_state(mut self, open: bool, controlled: bool) -> Self {
+        self.open = open;
+        self.controlled = controlled;
+        self
     }
 
     fn text_color_for(theme: &Theme, variant: ButtonVariant, disabled: bool) -> Color {
@@ -337,6 +353,10 @@ impl ThemedDropdownButton {
                 this.widget.open = false;
                 this.widget.highlighted = None;
                 this.widget.close_menu(&mut this.ctx);
+                this.ctx
+                    .submit_action::<DropdownButtonAction>(DropdownButtonAction::OpenChanged(
+                        false,
+                    ));
             }
 
             let theme = this.widget.theme;
@@ -419,8 +439,33 @@ impl ThemedDropdownButton {
             this.widget.open = false;
             this.widget.highlighted = None;
             this.widget.close_menu(&mut this.ctx);
+            this.ctx
+                .submit_action::<DropdownButtonAction>(DropdownButtonAction::OpenChanged(false));
             this.ctx.request_paint_only();
         }
+    }
+
+    /// Apply a host-driven open state (the rebuild path for `.open(bool)`).
+    /// No-op when the value is already current, so it is safe to call on
+    /// every rebuild.
+    pub fn set_open(this: &mut WidgetMut<'_, Self>, open: bool) {
+        if this.widget.open == open {
+            return;
+        }
+        this.widget.open = open;
+        if open {
+            this.widget.open_menu(&mut this.ctx);
+        } else {
+            this.widget.highlighted = None;
+            this.widget.close_menu(&mut this.ctx);
+        }
+        this.ctx.request_paint_only();
+    }
+
+    /// Switch between controlled and uncontrolled mode (the rebuild path for
+    /// a view that gains/loses its `.open(bool)` prop across rebuilds).
+    pub fn set_controlled(this: &mut WidgetMut<'_, Self>, controlled: bool) {
+        this.widget.controlled = controlled;
     }
 }
 
@@ -543,32 +588,42 @@ impl Widget for ThemedDropdownButton {
                     && press.button.is_none()
                     && let Some(index) = self.highlighted
                 {
-                    self.open = false;
-                    self.highlighted = None;
-                    self.close_menu(ctx);
+                    if !self.controlled {
+                        self.open = false;
+                        self.highlighted = None;
+                        self.close_menu(ctx);
+                    }
                     ctx.submit_action::<Self::Action>(DropdownButtonAction::ItemSelected(index));
+                    ctx.submit_action::<Self::Action>(DropdownButtonAction::OpenChanged(false));
                     ctx.set_handled();
                     ctx.request_paint_only();
                     return;
                 }
-                if self.open {
-                    self.open = false;
-                    self.highlighted = None;
-                    self.close_menu(ctx);
-                } else {
-                    self.open = true;
-                    self.open_menu(ctx);
+                let desired = !self.open;
+                if !self.controlled {
+                    if desired {
+                        self.open = true;
+                        self.open_menu(ctx);
+                    } else {
+                        self.open = false;
+                        self.highlighted = None;
+                        self.close_menu(ctx);
+                    }
                 }
+                ctx.submit_action::<Self::Action>(DropdownButtonAction::OpenChanged(desired));
             }
             ctx.set_handled();
             ctx.request_paint_only();
             return;
         }
         if let Some(&MenuItemSelected(index)) = action.downcast_ref::<MenuItemSelected>() {
-            self.open = false;
-            self.highlighted = None;
-            self.close_menu(ctx);
+            if !self.controlled {
+                self.open = false;
+                self.highlighted = None;
+                self.close_menu(ctx);
+            }
             ctx.submit_action::<Self::Action>(DropdownButtonAction::ItemSelected(index));
+            ctx.submit_action::<Self::Action>(DropdownButtonAction::OpenChanged(false));
             ctx.set_handled();
             ctx.request_paint_only();
         }
@@ -609,9 +664,12 @@ impl Widget for ThemedDropdownButton {
             Key::Named(NamedKey::Escape) => {
                 // Close without selecting; returns focus to the trigger button
                 // naturally (it was always focused).
-                self.open = false;
-                self.highlighted = None;
-                self.close_menu(ctx);
+                if !self.controlled {
+                    self.open = false;
+                    self.highlighted = None;
+                    self.close_menu(ctx);
+                }
+                ctx.submit_action::<Self::Action>(DropdownButtonAction::OpenChanged(false));
                 ctx.set_handled();
                 ctx.request_paint_only();
             }
@@ -624,6 +682,9 @@ impl Widget for ThemedDropdownButton {
             Update::WidgetAdded => {
                 ctx.set_disabled(self.disabled);
                 self.handle.set(ctx.widget_id());
+                if self.open {
+                    self.open_menu(ctx);
+                }
             }
             // The wrapped `ThemedButton` is the actual focus target now, so we
             // react to `ChildFocusChanged` — masonry's "focus entered/left my
@@ -637,9 +698,12 @@ impl Widget for ThemedDropdownButton {
             Update::ChildFocusChanged(false)
                 if self.open && matches!(self.hosting, Hosting::InTree { .. }) =>
             {
-                self.open = false;
-                self.highlighted = None;
-                self.close_menu(ctx);
+                if !self.controlled {
+                    self.open = false;
+                    self.highlighted = None;
+                    self.close_menu(ctx);
+                }
+                ctx.submit_action::<Self::Action>(DropdownButtonAction::OpenChanged(false));
                 ctx.request_paint_only();
             }
             // A trigger stashed mid-open (e.g. a tab/panel container hiding us
@@ -652,6 +716,7 @@ impl Widget for ThemedDropdownButton {
                 self.open = false;
                 self.highlighted = None;
                 self.close_menu(ctx);
+                ctx.submit_action::<Self::Action>(DropdownButtonAction::OpenChanged(false));
                 ctx.request_paint_only();
             }
             _ => {}
@@ -821,5 +886,45 @@ mod tests {
             ThemedDropdownButton::icon_color_for(&theme, true),
             theme.palette.text_faint
         );
+    }
+
+    #[test]
+    fn controlled_mode_reports_open_changed_without_self_toggling() {
+        use masonry::core::NewWidget;
+        use masonry::kurbo::Point;
+        use masonry::testing::TestHarness;
+        use masonry::theme::default_property_set;
+        use xilem::view::PointerButton;
+
+        let theme = Theme::default();
+        let widget = ThemedDropdownButton::new(
+            "Menu".into(),
+            None,
+            vec!["A".into(), "B".into()],
+            ButtonVariant::Default,
+            false,
+            &theme,
+        )
+        .with_open_state(false, true);
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+
+        h.mouse_move(Point::new(10.0, 10.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+
+        assert!(
+            !h.edit_root_widget(|wm| wm.widget.open),
+            "controlled dropdown must not self-open"
+        );
+        let open_changed = std::iter::from_fn(|| h.pop_action::<DropdownButtonAction>()).find_map(
+            |(a, _)| match a {
+                DropdownButtonAction::OpenChanged(v) => Some(v),
+                DropdownButtonAction::ItemSelected(_) => None,
+            },
+        );
+        assert_eq!(open_changed, Some(true));
+
+        h.edit_root_widget(|mut wm| ThemedDropdownButton::set_open(&mut wm, true));
+        assert!(h.edit_root_widget(|wm| wm.widget.open));
     }
 }

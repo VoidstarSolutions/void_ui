@@ -38,6 +38,9 @@ use crate::overlay_portal::{OverlayPortal, PortalContentView, PortalPlacement, p
 
 type ItemCallback<State, Action> = Box<dyn Fn(&mut State) -> Action + Send + Sync>;
 
+/// Boxed open-change observer: `Fn(&mut State, new_open) -> Action`.
+type OpenChangeFn<State, Action> = Arc<dyn Fn(&mut State, bool) -> Action + Send + Sync>;
+
 /// Builder for a dropdown button.
 ///
 /// Create with [`dropdown_button`]; add menu items via [`Self::item`].
@@ -49,6 +52,8 @@ pub struct DropdownButton<State, Action> {
     items: Vec<(ArcStr, ItemCallback<State, Action>)>,
     variant: ButtonVariant,
     disabled: bool,
+    open: Option<bool>,
+    on_open_change: Option<OpenChangeFn<State, Action>>,
     phantom: PhantomData<fn(State) -> Action>,
 }
 
@@ -68,6 +73,8 @@ where
         items: Vec::new(),
         variant: ButtonVariant::Default,
         disabled: false,
+        open: None,
+        on_open_change: None,
         phantom: PhantomData,
     }
 }
@@ -104,6 +111,23 @@ where
         self
     }
 
+    /// Host-control the menu's open state (controlled mode). See
+    /// [`Self::on_open_change`]. Omit for the default uncontrolled behavior.
+    pub fn open(mut self, open: bool) -> Self {
+        self.open = Some(open);
+        self
+    }
+
+    /// Observe open/close transitions (fires in both controlled and
+    /// uncontrolled mode) with the new open state.
+    pub fn on_open_change<G>(mut self, f: G) -> Self
+    where
+        G: Fn(&mut State, bool) -> Action + Send + Sync + 'static,
+    {
+        self.on_open_change = Some(Arc::new(f));
+        self
+    }
+
     /// Materialize the xilem view at the supplied theme.
     pub fn render(self, theme: &Theme) -> DropdownButtonView<State, Action> {
         let item_labels: Vec<ArcStr> = self.items.iter().map(|(lbl, _)| lbl.clone()).collect();
@@ -115,6 +139,8 @@ where
             variant: self.variant,
             disabled: self.disabled,
             theme: *theme,
+            open: self.open,
+            on_open_change: self.on_open_change,
             phantom: PhantomData,
         }
     }
@@ -132,6 +158,8 @@ pub struct DropdownButtonView<State, Action> {
     variant: ButtonVariant,
     disabled: bool,
     theme: Theme,
+    open: Option<bool>,
+    on_open_change: Option<OpenChangeFn<State, Action>>,
     phantom: PhantomData<fn(State) -> Action>,
 }
 
@@ -193,7 +221,8 @@ where
                 handle.clone(),
                 portal.scope().clone(),
                 key,
-            );
+            )
+            .with_open_state(self.open.unwrap_or(false), self.open.is_some());
             let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
             (
                 element,
@@ -213,7 +242,8 @@ where
                 self.variant,
                 self.disabled,
                 &self.theme,
-            );
+            )
+            .with_open_state(self.open.unwrap_or(false), self.open.is_some());
             let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
             (
                 element,
@@ -249,6 +279,12 @@ where
         }
         if self.item_labels != prev.item_labels {
             ThemedDropdownButton::set_items(&mut element, self.item_labels.clone());
+        }
+        if self.open.is_some() != prev.open.is_some() {
+            ThemedDropdownButton::set_controlled(&mut element, self.open.is_some());
+        }
+        if let Some(open) = self.open {
+            ThemedDropdownButton::set_open(&mut element, open);
         }
 
         if let MenuBinding::Portal {
@@ -308,6 +344,10 @@ where
                         MessageResult::Stale
                     }
                 }
+                DropdownButtonAction::OpenChanged(open) => match &self.on_open_change {
+                    Some(f) => MessageResult::Action(f(app_state, open)),
+                    None => MessageResult::Nop,
+                },
             },
             None => MessageResult::Stale,
         }
