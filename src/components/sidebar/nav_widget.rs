@@ -209,14 +209,6 @@ pub struct ThemedSidebarNav {
 
 // --- MARK: HELPERS
 impl ThemedSidebarNav {
-    /// Item rect for `index`, falling back to an estimate when `placed` is
-    /// empty (cleared by `set_items`, not yet rebuilt by layout). Items are
-    /// vertical; `y` is estimated from `last_avg_item_height` (the real
-    /// average from the last layout, which tracks variable-height items far
-    /// better than a fixed per-item guess) when available, falling back to a
-    /// theme-metric guess only before the very first layout has ever run.
-    /// `x` always spans from 0. Shared with `tabs` via
-    /// [`item_list::item_rect_or_estimate`].
     fn pad_h(&self) -> f64 {
         f64::from(self.theme.density.pad_h)
     }
@@ -225,6 +217,14 @@ impl ThemedSidebarNav {
         f64::from(self.theme.density.pad_v)
     }
 
+    /// Item rect for `index`, falling back to an estimate when `placed` is
+    /// empty (cleared by `set_items`, not yet rebuilt by layout). Items are
+    /// vertical; `y` is estimated from `last_avg_item_height` (the real
+    /// average from the last layout, which tracks variable-height items far
+    /// better than a fixed per-item guess) when available, falling back to a
+    /// theme-metric guess only before the very first layout has ever run.
+    /// `x` always spans from 0. Shared with `tabs` via
+    /// [`item_list::item_rect_or_estimate`].
     fn item_rect_or_estimate(&self, index: usize) -> Rect {
         let item_h = self
             .last_avg_item_height
