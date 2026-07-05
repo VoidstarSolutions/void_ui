@@ -15,6 +15,7 @@
 pub mod alert;
 pub mod autocomplete;
 pub mod badge;
+pub mod breadcrumb;
 pub mod button;
 pub mod button_group;
 pub mod card;
@@ -50,6 +51,7 @@ pub mod tooltip;
 pub use alert::{Alert, AlertVariant, alert};
 pub use autocomplete::{Autocomplete, autocomplete};
 pub use badge::{Badge, badge, pill};
+pub use breadcrumb::{Breadcrumb, BreadcrumbSegment, breadcrumb, segment};
 pub use button::{Button, ButtonVariant, ButtonView, button};
 pub use button_group::{ButtonGroup, button_group, toggle_button_group};
 pub use card::{Card, card};
@@ -112,6 +114,7 @@ pub enum ComponentKind {
     Alert,
     Autocomplete,
     Badge,
+    Breadcrumb,
     Button,
     ButtonGroup,
     Card,
@@ -151,6 +154,7 @@ impl ComponentKind {
             Self::Alert => "Alert",
             Self::Autocomplete => "Autocomplete",
             Self::Badge => "Badge",
+            Self::Breadcrumb => "Breadcrumb",
             Self::Button => "Button",
             Self::ButtonGroup => "Button Group",
             Self::Card => "Card",
@@ -190,6 +194,7 @@ impl ComponentKind {
             Self::Alert,
             Self::Autocomplete,
             Self::Badge,
+            Self::Breadcrumb,
             Self::Button,
             Self::ButtonGroup,
             Self::Card,
