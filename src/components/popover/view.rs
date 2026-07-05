@@ -26,10 +26,10 @@ use std::sync::Arc;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
-use crate::overlay::OverlayAnchor;
 use super::widget::{PopoverHost, PopoverSurface, SurfaceStyle};
 use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
+use crate::overlay::OverlayAnchor;
 use crate::overlay_portal::{
     OverlayPortal, PortalContentView, PortalContentViewState, PortalPlacement, portal_from_env,
 };

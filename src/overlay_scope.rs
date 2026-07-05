@@ -831,7 +831,7 @@ mod tests {
     use masonry::testing::TestHarness;
 
     use super::*;
-use crate::overlay::OverlayAnchor;
+    use crate::overlay::OverlayAnchor;
     use crate::overlay_portal::OwnerKind;
 
     /// Scope content standing in for "the app under the popover": records
