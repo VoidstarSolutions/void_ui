@@ -190,7 +190,7 @@ impl<F, State, Action> ButtonView<F, State, Action> {
         } else if let Some(tint) = self.tint {
             tint
         } else if self.variant == ButtonVariant::Link {
-            self.theme.palette.teal
+            self.theme.palette.accent
         } else {
             self.theme.palette.text
         }
@@ -408,12 +408,12 @@ mod tests {
     }
 
     #[test]
-    fn link_variant_uses_teal_text_but_default_icon_color() {
+    fn link_variant_uses_accent_text_but_default_icon_color() {
         let theme = Theme::dark();
         let view = button(|(): &mut ()| ())
             .variant(ButtonVariant::Link)
             .render::<(), ()>(&theme);
-        assert_eq!(view.text_color(), theme.palette.teal);
+        assert_eq!(view.text_color(), theme.palette.accent);
         assert_eq!(view.icon_color(), theme.palette.text);
     }
 

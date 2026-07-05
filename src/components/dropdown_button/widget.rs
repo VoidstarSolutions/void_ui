@@ -329,7 +329,7 @@ impl ThemedDropdownButton {
         if disabled {
             theme.palette.text_faint
         } else if variant == ButtonVariant::Link {
-            theme.palette.teal
+            theme.palette.accent
         } else {
             theme.palette.text
         }
@@ -861,7 +861,7 @@ mod tests {
         let theme = Theme::default();
         assert_eq!(
             ThemedDropdownButton::text_color_for(&theme, ButtonVariant::Link, false),
-            theme.palette.teal
+            theme.palette.accent
         );
     }
 

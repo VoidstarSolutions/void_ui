@@ -327,13 +327,13 @@ impl ThemedButton {
 
     /// Resolves `(background, border)` colors for the current state.
     ///
-    /// | state           | Default      | Danger       | Primary    | Ghost        | Warning      |
-    /// |-----------------|--------------|--------------|------------|--------------|--------------|
-    /// | disabled        | transparent  | transparent  | transparent| transparent  | transparent  |
-    /// | rest            | transparent  | transparent  | teal_soft  | transparent/border| transparent |
-    /// | hover           | `surface_2`  | `coral_soft` | `teal`     | `surface_2`  | `amber_soft` |
-    /// | pressed         | `surface_hi` | `coral`      | `teal`     | `surface_hi` | `amber`      |
-    /// | active (toggle) | `surface_2`  | `coral_soft` | `teal_soft`| `surface_2`  | `amber_soft` |
+    /// | state           | Default      | Danger        | Primary       | Ghost        | Warning        |
+    /// |-----------------|--------------|---------------|---------------|--------------|----------------|
+    /// | disabled        | transparent  | transparent   | transparent   | transparent  | transparent    |
+    /// | rest            | `surface`    | `danger_soft` | `accent_soft` | transparent/border | `warning_soft` |
+    /// | hover           | `surface_2`  | `danger`      | `accent`      | `surface_2`  | `warning`      |
+    /// | pressed         | `surface_hi` | `danger_deep` | `accent_deep` | `surface_hi` | `warning_deep` |
+    /// | active (toggle) | `surface_2`  | `danger_soft` | `accent_soft` | `surface_2`  | `warning_soft` |
     fn resolve_colors(&self, hovered: bool, pressed: bool) -> (Color, Color) {
         let p = &self.theme.palette;
         if self.disabled {
@@ -352,61 +352,61 @@ impl ThemedButton {
             }
             ButtonVariant::Danger => {
                 let bg = if pressed {
-                    p.coral_deep
+                    p.danger_deep
                 } else if hovered {
-                    p.coral
+                    p.danger
                 } else {
-                    p.coral_soft
+                    p.danger_soft
                 };
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Primary => {
                 let bg = if pressed {
-                    p.teal_deep
+                    p.accent_deep
                 } else if hovered {
-                    p.teal
+                    p.accent
                 } else {
-                    p.teal_soft
+                    p.accent_soft
                 };
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Warning => {
                 let bg = if pressed {
-                    p.amber_deep
+                    p.warning_deep
                 } else if hovered {
-                    p.amber
+                    p.warning
                 } else {
-                    p.amber_soft
+                    p.warning_soft
                 };
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Secondary => {
                 let bg = if pressed {
-                    p.violet_deep
+                    p.secondary_deep
                 } else if hovered {
-                    p.violet
+                    p.secondary
                 } else {
-                    p.violet_soft
+                    p.secondary_soft
                 };
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Success => {
                 let bg = if pressed {
-                    p.green_deep
+                    p.success_deep
                 } else if hovered {
-                    p.green
+                    p.success
                 } else {
-                    p.green_soft
+                    p.success_soft
                 };
                 (bg, Color::TRANSPARENT)
             }
             ButtonVariant::Info => {
                 let bg = if pressed {
-                    p.blue_deep
+                    p.info_deep
                 } else if hovered {
-                    p.blue
+                    p.info
                 } else {
-                    p.blue_soft
+                    p.info_soft
                 };
                 (bg, Color::TRANSPARENT)
             }
