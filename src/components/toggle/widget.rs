@@ -176,7 +176,7 @@ impl ToggleWidget {
         if self.disabled {
             self.theme.palette.text_faint
         } else {
-            // Near-white with a slight cool tint — readable on both teal and gray tracks.
+            // Near-white with a slight cool tint — readable on both accent and gray tracks.
             crate::theme::oklch(0.97, 0.005, 240.0)
         }
     }

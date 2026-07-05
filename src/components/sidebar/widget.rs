@@ -1,6 +1,6 @@
 //! Masonry widget for the Tessera sidebar nav item.
 //!
-//! A full-width, left-aligned nav row. When `active`, a 3 px teal accent bar
+//! A full-width, left-aligned nav row. When `active`, a 3 px accent bar
 //! is painted on the left edge and the label renders in the full text color.
 //! Pointer state (hover, press) is read from the widget context, matching the
 //! same paint-driven pattern as [`crate::components::button::widget::ThemedButton`].

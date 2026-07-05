@@ -451,7 +451,7 @@ impl ThemedDropdownButton {
             let disabled = this.widget.disabled;
             with_trigger!(this, |trigger| {
                 ThemedButton::set_variant(&mut trigger, variant);
-                // Link gains/loses teal text; other variants share the default color.
+                // Link gains/loses accent text; other variants share the default color.
                 if !disabled
                     && (variant == ButtonVariant::Link || prev_variant == ButtonVariant::Link)
                 {

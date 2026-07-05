@@ -38,13 +38,13 @@ pub enum AlertVariant {
     /// Neutral message — no accent color, no default icon.
     #[default]
     Default,
-    /// Informational — blue accent, info icon.
+    /// Informational — info accent, info icon.
     Info,
-    /// Positive confirmation — green accent, check icon.
+    /// Positive confirmation — success accent, check icon.
     Success,
-    /// Caution — amber accent, triangle-alert icon.
+    /// Caution — warning accent, triangle-alert icon.
     Warning,
-    /// Error — coral accent, circle-x icon.
+    /// Error — danger accent, circle-x icon.
     Error,
 }
 

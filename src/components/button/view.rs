@@ -298,7 +298,7 @@ where
         }
         if self.variant != prev.variant {
             ThemedButton::set_variant(&mut element, self.variant);
-            // Link gains/loses teal text; Text and others revert to default.
+            // Link gains/loses accent text; Text and others revert to default.
             if !self.disabled
                 && (self.variant == ButtonVariant::Link || prev.variant == ButtonVariant::Link)
             {

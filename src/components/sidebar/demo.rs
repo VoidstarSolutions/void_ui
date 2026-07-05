@@ -130,7 +130,7 @@ fn build_inner(theme: &Theme, state: &SidebarDemo) -> impl WidgetView<SidebarDem
         flex_col((
             title_block,
             separator().render(theme),
-            header("Active — teal accent bar on the selected nav item"),
+            header("Active — accent bar on the selected nav item"),
             active_example,
             header("Default — hover shows fill, label muted when inactive"),
             default_example,

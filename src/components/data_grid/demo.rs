@@ -401,7 +401,7 @@ pub fn tick_columns<State: 'static>(base_time_ns: i64) -> Vec<ColumnDef<DemoTick
         // `Option<u64>` is `Ord` (None sorts before Some), so unknown
         // sizes cluster at the ascending end.
         .sortable_by_key(|t: &DemoTick| t.size),
-        // Conditional formatting: buys green, sells coral (the classic
+        // Conditional formatting: buys success, sells danger (the classic
         // trading convention), unknown faint — see `side_color`.
         colored_text_column(
             "Side",
