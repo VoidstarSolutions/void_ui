@@ -121,11 +121,7 @@ impl PortalBinding {
 
     /// The portal key, for component-specific slot-child pushes (menu
     /// highlight, suggestion items, theme) that go beyond visibility.
-    ///
-    /// Unused until the next consumer (`dropdown_button`/`autocomplete`/
-    /// `dialog`) is ported onto `PortalBinding`.
     #[must_use]
-    #[allow(dead_code)]
     pub(crate) fn key(&self) -> u64 {
         self.key
     }
@@ -134,8 +130,8 @@ impl PortalBinding {
     /// silently no-op when it isn't; callers that must not flip their own
     /// `open` flag in that state check this first.
     ///
-    /// Unused until the next consumer (`dropdown_button`/`autocomplete`/
-    /// `dialog`) is ported onto `PortalBinding`.
+    /// Unused until the next consumer (`autocomplete`/`dialog`) is ported
+    /// onto `PortalBinding`.
     #[must_use]
     #[allow(dead_code)]
     pub(crate) fn is_ready(&self) -> bool {
@@ -143,11 +139,7 @@ impl PortalBinding {
     }
 
     /// The scope's widget id, for component-specific `mutate_later` pushes.
-    ///
-    /// Unused until the next consumer (`dropdown_button`/`autocomplete`/
-    /// `dialog`) is ported onto `PortalBinding`.
     #[must_use]
-    #[allow(dead_code)]
     pub(crate) fn scope_widget_id(&self) -> Option<WidgetId> {
         self.scope.widget_id()
     }
