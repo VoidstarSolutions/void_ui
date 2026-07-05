@@ -37,10 +37,10 @@ use masonry::peniko::Color;
 use masonry::properties::Padding;
 use masonry::widgets::ButtonPress;
 
-use crate::overlay::OverlayAnchor;
 use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
 use crate::components::click::{self, ClickPhase};
+use crate::overlay::OverlayAnchor;
 use crate::overlay_portal::{OwnerKind, PortalVisibility};
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 

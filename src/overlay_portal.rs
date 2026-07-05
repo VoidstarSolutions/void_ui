@@ -300,8 +300,8 @@ use masonry::kurbo::{Axis, Point, Rect, Size};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef, UnitPoint};
 
 use crate::components::dropdown_button::widget::ThemedDropdownButton;
-use crate::overlay::OverlayAnchor;
 use crate::components::popover::widget::PopoverHost;
+use crate::overlay::OverlayAnchor;
 
 /// What kind of widget owns a [`PortalChild`], and therefore how
 /// [`PortalSlot::dismiss_outside`] notifies it of an outside-press dismissal.

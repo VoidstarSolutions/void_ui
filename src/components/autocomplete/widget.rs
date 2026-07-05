@@ -33,9 +33,9 @@ use crate::anchored_overlay::AnchoredOverlay;
 use crate::components::input::widget::{InputCleared, InputFrame};
 use crate::components::input::{stripped_text_input_props, text_area_props};
 use crate::components::item_list;
-use crate::overlay::OverlayAnchor;
 use crate::components::scroll_container::widget::{ContentClip, ScrollView};
 use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
+use crate::overlay::OverlayAnchor;
 use crate::overlay_portal::{OwnerKind, PortalSlot, PortalVisibility};
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
