@@ -21,9 +21,12 @@ pub use density::Density;
 pub use palette::Palette;
 pub use typography::{FontStack, Typography};
 
-/// Corner radii — Tessera ships two sizes (`--radius`, `--radius-lg`).
+/// Corner radii — Tessera's `--radius` / `--radius-lg`, plus a `tiny` step
+/// for compact form controls.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Radii {
+    /// Compact form controls — checkbox boxes. 3px.
+    pub tiny: f32,
     /// `--radius` — cards, pills, buttons. 6px.
     pub small: f32,
     /// `--radius-lg` — large surfaces, dialogs. 10px.
@@ -34,6 +37,7 @@ impl Radii {
     #[must_use]
     pub const fn default_stack() -> Self {
         Self {
+            tiny: 3.0,
             small: 6.0,
             large: 10.0,
         }
@@ -121,5 +125,22 @@ impl Theme {
 impl Default for Theme {
     fn default() -> Self {
         Self::dark()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Radii, Theme};
+
+    /// Both theme variants share the default radius stack, including the
+    /// `tiny` token used by compact form controls (checkbox box).
+    #[test]
+    fn radii_default_stack_has_tiny_token() {
+        let r = Radii::default_stack();
+        assert!((r.tiny - 3.0).abs() < f32::EPSILON);
+        assert!((r.small - 6.0).abs() < f32::EPSILON);
+        assert!((r.large - 10.0).abs() < f32::EPSILON);
+        assert_eq!(Theme::dark().radius, r);
+        assert_eq!(Theme::light().radius, r);
     }
 }

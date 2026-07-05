@@ -423,6 +423,7 @@ fn density_radii_block(theme: &Theme) -> impl WidgetView<State> + use<> {
         kv("col", format!("{:.0} px", d.col)),
         kv("pad", format!("{:.0} px", d.pad)),
         kv("ui_fs", format!("{:.0} px", d.ui_font_size)),
+        kv("radius.t", format!("{:.0} px", r.tiny)),
         kv("radius.s", format!("{:.0} px", r.small)),
         kv("radius.l", format!("{:.0} px", r.large)),
     ))
