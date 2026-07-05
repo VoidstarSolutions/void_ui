@@ -87,7 +87,11 @@ impl Widget for HeaderClickable {
         // Shared Down→capture / Up-iff-active-and-hovered recognizer.
         // No focus request on Down — headers don't own the keyboard
         // (the grid's copy shortcut does).
-        if let Some(ClickPhase::Up(Some(state))) = click::primary_click(ctx, event) {
+        if let Some(ClickPhase::Up {
+            state,
+            completed: true,
+        }) = click::primary_click(ctx, event)
+        {
             ctx.submit_action::<Self::Action>(HeaderClicked {
                 multi: state.modifiers.shift(),
             });

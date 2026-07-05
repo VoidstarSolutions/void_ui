@@ -124,8 +124,11 @@ impl Widget for RowClickable {
         match click::primary_click(ctx, event) {
             // Rows take keyboard focus so a subsequent Ctrl/Cmd+C lands
             // inside the grid (see the module docs).
-            Some(ClickPhase::Down) => ctx.request_focus(),
-            Some(ClickPhase::Up(Some(state))) => {
+            Some(ClickPhase::Down(_)) => ctx.request_focus(),
+            Some(ClickPhase::Up {
+                state,
+                completed: true,
+            }) => {
                 ctx.submit_action::<Self::Action>(row_click_action(state.modifiers));
             }
             _ => {}
