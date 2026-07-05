@@ -48,7 +48,7 @@ pub struct CollapsibleTogglePressed;
 
 /// Pointer interaction state of the header row, combined into a single
 /// field so the widget doesn't accumulate independent bool flags.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 struct HeaderPointerState {
     hovered: bool,
     pressed: bool,
@@ -361,7 +361,7 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
                 self.header_keyboard_pressed = false;
                 ctx.request_paint_only();
             }
-            Update::FocusChanged(_) => {
+            Update::DisabledChanged(_) | Update::FocusChanged(_) => {
                 ctx.request_paint_only();
             }
             _ => {}
