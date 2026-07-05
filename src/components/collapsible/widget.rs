@@ -76,6 +76,12 @@ fn make_title(text: ArcStr, theme: &Theme) -> NewWidget<Label> {
 /// via [`AnimatedClip`].
 ///
 /// Emits [`CollapsibleTogglePressed`] when the header row is clicked.
+// `open`/`header_hovered`/`header_pressed`/`header_keyboard_pressed` are
+// independent flags with no shared state machine to fold them into — each
+// can be true or false regardless of the others (e.g. open-while-hovered,
+// pointer-pressed-while-keyboard-pressed mid-transition) — so an enum would
+// just relocate the same four independent facts, not simplify them.
+#[allow(clippy::struct_excessive_bools)]
 pub struct CollapsibleWidget<W: Widget + ?Sized> {
     title: WidgetPod<Label>,
     chevron: WidgetPod<Label>,
@@ -86,6 +92,11 @@ pub struct CollapsibleWidget<W: Widget + ?Sized> {
     header_hovered: bool,
     /// True while the header is being pressed.
     header_pressed: bool,
+    /// True for the span between a Space/Enter key-down and its matching
+    /// key-up (or an intervening focus loss) — the keyboard equivalent of
+    /// `header_pressed`, so keyboard activation shows the same pressed fill
+    /// a pointer click does.
+    header_keyboard_pressed: bool,
     /// Header height in the last layout pass (icon-font-size + 2 × `PAD_V`).
     current_header_height: f64,
     /// Widget width from the last layout pass.
@@ -105,6 +116,7 @@ impl<W: Widget + ?Sized> CollapsibleWidget<W> {
             open,
             header_hovered: false,
             header_pressed: false,
+            header_keyboard_pressed: false,
             current_header_height: 0.0,
             current_width: 0.0,
         }
@@ -173,7 +185,7 @@ impl<W: Widget + ?Sized> CollapsibleWidget<W> {
 impl<W: Widget + ?Sized> CollapsibleWidget<W> {
     fn header_bg(&self) -> Color {
         let p = &self.theme.palette;
-        if self.header_pressed && self.header_hovered {
+        if (self.header_pressed && self.header_hovered) || self.header_keyboard_pressed {
             p.surface_hi
         } else if self.header_hovered {
             p.surface_2
@@ -244,8 +256,17 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
         _props: &mut PropertiesMut<'_>,
         event: &TextEvent,
     ) {
-        if ctx.is_focus_target() && interaction::keyboard_activate(event, true) {
+        if !ctx.is_focus_target() {
+            return;
+        }
+        if interaction::keyboard_press_start(event, true) {
             ctx.set_handled();
+            self.header_keyboard_pressed = true;
+            ctx.request_paint_only();
+        } else if interaction::keyboard_activate(event, true) {
+            ctx.set_handled();
+            self.header_keyboard_pressed = false;
+            ctx.request_paint_only();
             ctx.submit_action::<Self::Action>(CollapsibleTogglePressed);
         }
     }
@@ -267,6 +288,12 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
         {
             self.header_hovered = false;
             ctx.request_paint_only();
+        }
+        if matches!(event, Update::FocusChanged(false)) {
+            // Losing focus mid-press (e.g. Tab away while Space is still
+            // held) would otherwise leave `header_keyboard_pressed` stuck
+            // true with no matching key-up ever arriving to clear it.
+            self.header_keyboard_pressed = false;
         }
         if let Update::FocusChanged(_) = event {
             ctx.request_paint_only();
@@ -486,5 +513,37 @@ mod tests {
 
         h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
         assert!(h.pop_action::<CollapsibleTogglePressed>().is_some());
+    }
+
+    #[test]
+    fn space_key_down_shows_the_pressed_fill_until_key_up() {
+        // Regression: on_text_event used to only ever act on key-up, so
+        // Space/Enter "clicking" the header showed no pressed-fill feedback
+        // the way a pointer click does.
+        let mut h = harness();
+        h.focus_on(Some(h.root_id()));
+
+        assert!(!h.edit_root_widget(|wm| wm.widget.header_keyboard_pressed));
+        h.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
+        assert!(h.edit_root_widget(|wm| wm.widget.header_keyboard_pressed));
+        assert!(
+            h.pop_action::<CollapsibleTogglePressed>().is_none(),
+            "not yet activated"
+        );
+
+        h.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
+        assert!(!h.edit_root_widget(|wm| wm.widget.header_keyboard_pressed));
+        assert!(h.pop_action::<CollapsibleTogglePressed>().is_some());
+    }
+
+    #[test]
+    fn losing_focus_mid_press_clears_the_keyboard_pressed_flag() {
+        let mut h = harness();
+        h.focus_on(Some(h.root_id()));
+        h.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
+        assert!(h.edit_root_widget(|wm| wm.widget.header_keyboard_pressed));
+
+        h.focus_on(None);
+        assert!(!h.edit_root_widget(|wm| wm.widget.header_keyboard_pressed));
     }
 }
