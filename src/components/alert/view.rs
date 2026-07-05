@@ -56,10 +56,10 @@ impl AlertVariant {
     pub(crate) fn colors(self, palette: &Palette) -> (Color, Color, Color) {
         match self {
             Self::Default => (palette.text, palette.surface, palette.border),
-            Self::Info => (palette.blue, palette.blue_soft, palette.blue),
-            Self::Success => (palette.green, palette.green_soft, palette.green),
-            Self::Warning => (palette.amber, palette.amber_soft, palette.amber),
-            Self::Error => (palette.coral, palette.coral_soft, palette.coral),
+            Self::Info => (palette.info, palette.info_soft, palette.info),
+            Self::Success => (palette.success, palette.success_soft, palette.success),
+            Self::Warning => (palette.warning, palette.warning_soft, palette.warning),
+            Self::Error => (palette.danger, palette.danger_soft, palette.danger),
         }
     }
 
@@ -282,7 +282,7 @@ mod tests {
     fn typed_variants_use_their_accent_color_and_default_icon() {
         for theme in [Theme::dark(), Theme::light()] {
             let p = &theme.palette;
-            assert_eq!(AlertVariant::Info.colors(p), (p.blue, p.blue_soft, p.blue));
+            assert_eq!(AlertVariant::Info.colors(p), (p.info, p.info_soft, p.info));
             assert_eq!(
                 icon_char(AlertVariant::Info.default_icon()),
                 icon_char(Some(IconName::Info))
@@ -290,7 +290,7 @@ mod tests {
 
             assert_eq!(
                 AlertVariant::Success.colors(p),
-                (p.green, p.green_soft, p.green)
+                (p.success, p.success_soft, p.success)
             );
             assert_eq!(
                 icon_char(AlertVariant::Success.default_icon()),
@@ -299,7 +299,7 @@ mod tests {
 
             assert_eq!(
                 AlertVariant::Warning.colors(p),
-                (p.amber, p.amber_soft, p.amber)
+                (p.warning, p.warning_soft, p.warning)
             );
             assert_eq!(
                 icon_char(AlertVariant::Warning.default_icon()),
@@ -308,7 +308,7 @@ mod tests {
 
             assert_eq!(
                 AlertVariant::Error.colors(p),
-                (p.coral, p.coral_soft, p.coral)
+                (p.danger, p.danger_soft, p.danger)
             );
             assert_eq!(
                 icon_char(AlertVariant::Error.default_icon()),
