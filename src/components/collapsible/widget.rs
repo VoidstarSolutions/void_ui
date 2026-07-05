@@ -31,10 +31,6 @@ use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 
 // --- MARK: CONSTANTS
 
-/// Vertical padding inside the header row.
-const PAD_V: f64 = 6.0;
-/// Horizontal padding inside the header row.
-const PAD_H: f64 = 8.0;
 /// Gap between the title label and the trailing chevron.
 const CHEVRON_GAP: f64 = 4.0;
 /// Thickness of the separator line below the header.
@@ -109,7 +105,7 @@ pub struct CollapsibleWidget<W: Widget + ?Sized> {
     /// `header_state.pressed`, so keyboard activation shows the same pressed
     /// fill a pointer click does.
     header_keyboard_pressed: bool,
-    /// Header height in the last layout pass (icon-font-size + 2 × `PAD_V`).
+    /// Header height in the last layout pass (icon-font-size + 2 × `density.pad_v`).
     current_header_height: f64,
     /// Widget width from the last layout pass.
     current_width: f64,
@@ -255,7 +251,7 @@ impl<W: Widget + ?Sized> CollapsibleWidget<W> {
     }
 
     fn header_height(&self) -> f64 {
-        f64::from(self.theme.density.ui_font_size) + 2.0 * PAD_V
+        f64::from(self.theme.density.ui_font_size) + 2.0 * f64::from(self.theme.density.pad_v)
     }
 }
 
@@ -422,17 +418,19 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         let icon_sz = f64::from(self.theme.density.ui_font_size);
+        let pad_h = f64::from(self.theme.density.pad_h);
+        let pad_v = f64::from(self.theme.density.pad_v);
         let header_h = self.header_height();
         self.current_header_height = header_h;
         self.current_width = size.width;
 
         // Title: left side of header, leaving room for chevron + gaps.
-        let title_w = (size.width - PAD_H * 2.0 - CHEVRON_GAP - icon_sz).max(0.0);
+        let title_w = (size.width - pad_h * 2.0 - CHEVRON_GAP - icon_sz).max(0.0);
         ctx.run_layout(&mut self.title, Size::new(title_w, header_h));
-        ctx.place_child(&mut self.title, Point::new(PAD_H, PAD_V));
+        ctx.place_child(&mut self.title, Point::new(pad_h, pad_v));
 
         // Chevron: right-aligned, vertically centred in the header row.
-        let chevron_x = size.width - PAD_H - icon_sz;
+        let chevron_x = size.width - pad_h - icon_sz;
         let chevron_y = (header_h - icon_sz) * 0.5;
         ctx.run_layout(&mut self.chevron, Size::new(icon_sz, icon_sz));
         ctx.place_child(&mut self.chevron, Point::new(chevron_x, chevron_y));
@@ -638,5 +636,30 @@ mod tests {
             h.pop_action::<CollapsibleTogglePressed>().is_none(),
             "disabled collapsible must not toggle on click"
         );
+    }
+}
+
+#[cfg(test)]
+mod density_tests {
+    use masonry::widgets::SizedBox;
+
+    use super::*;
+    use crate::theme::Density;
+
+    fn header_height_at(density: Density) -> f64 {
+        let child = NewWidget::new(SizedBox::empty());
+        let theme = Theme::default().with_density(density);
+        CollapsibleWidget::new("title".into(), child, &theme, true).header_height()
+    }
+
+    #[test]
+    fn header_height_scales_with_density() {
+        // Balanced must keep the pre-token geometry: ui_font_size 12 + 2 × PAD_V(6).
+        assert!((header_height_at(Density::balanced()) - (12.0 + 2.0 * 6.0)).abs() < 1e-6);
+        assert!(header_height_at(Density::compact()) < header_height_at(Density::balanced()));
+        assert!(header_height_at(Density::balanced()) < header_height_at(Density::airy()));
+        let delta = header_height_at(Density::airy()) - header_height_at(Density::compact());
+        // font spread + pad_v spread
+        assert!((delta - ((13.0 - 11.0) + 2.0 * (8.0 - 4.0))).abs() < 1e-6);
     }
 }
