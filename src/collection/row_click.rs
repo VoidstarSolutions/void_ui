@@ -33,7 +33,7 @@ use crate::Theme;
 use crate::components::click::{self, ClickPhase};
 use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 
-/// Action emitted by [`RowClickable`] on primary-button release (or
+/// Action emitted by `RowClickable` on primary-button release (or
 /// Enter/Space activation). The receiver inspects the modifiers to decide
 /// whether this is a plain click (`replace`), a multi-select toggle
 /// (`action_mod`), or a shift-extend (`shift`).
@@ -251,7 +251,7 @@ use std::marker::PhantomData;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
-/// Wraps a child view in [`RowClickable`] and routes pointer release (or
+/// Wraps a child view in `RowClickable` and routes pointer release (or
 /// Enter/Space) + modifiers through the supplied `on_click` callback.
 ///
 /// `on_click` runs synchronously against the host's app state during

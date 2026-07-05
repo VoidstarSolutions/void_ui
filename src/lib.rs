@@ -70,7 +70,7 @@ pub use components::{
     MIN_PANEL_SIZE, NoTitle, Notification, NotificationPosition, Orientation, Popover,
     PopoverAnchor, PopoverHost, PopoverView, RangeSlider, RangeSliderView, ReadOnlyText,
     ReadOnlyTextView, Resizable, ResizablePanel, ResizablePanels, ResizablePanelsView,
-    ResizableView, RowClickAction, RowClickable, RustHighlighter, ScrollContainer,
+    ResizableView, RowClickAction, RustHighlighter, ScrollContainer,
     ScrollContainerView, ScrollState, SelectionState, Separator, SeparatorStyle, SidebarItem,
     SidebarItemView, SidebarNav, SidebarNavItem, SidebarNavView, SidebarPanel, SidebarPanelView,
     Slider, SliderView, SortDirection, SortState, Spinner, SpinnerView, SpinnerWidget, TitleState,
