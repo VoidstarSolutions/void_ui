@@ -22,7 +22,9 @@
 //!    view child (element path `…scope… / ViewId(key)`), so rebuilds, theme
 //!    swaps, and button callbacks inside popover content all work.
 //! 4. **Show/hide/place.** Open state never flows through the registry:
-//!    `PopoverHost` pushes visibility and anchor placement to the slot as
+//!    each host (`PopoverHost` and its three siblings for `dropdown_button`,
+//!    `autocomplete`, and `dialog`) pushes visibility and anchor placement to
+//!    the slot through [`crate::overlay::binding::PortalBinding`] as
 //!    *plain data* via `ctx.mutate_later(scope_id, …)`
 //!    ([`crate::overlay_scope::OverlayScope::set_portal_visible`] /
 //!    `set_portal_placement`), re-anchoring from `compose` while the trigger

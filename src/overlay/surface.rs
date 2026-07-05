@@ -40,9 +40,8 @@ impl SurfaceStyle {
 }
 
 /// Transparent wrapper that paints rounded background/border chrome around
-/// arbitrary popover content. `AnchoredOverlay` is purely structural — it
-/// doesn't paint chrome — so whatever it hosts must paint its own (mirrors
-/// `MenuContent`, which does the same for dropdown menus).
+/// arbitrary overlay content, used by both `AnchoredOverlay` and
+/// `PortalSlot` hosts.
 pub(crate) struct OverlaySurface {
     content: WidgetPod<dyn Widget>,
     bg: Color,
