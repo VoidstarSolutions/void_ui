@@ -129,11 +129,7 @@ impl PortalBinding {
     /// Whether the scope widget is mounted (its handle filled). All methods
     /// silently no-op when it isn't; callers that must not flip their own
     /// `open` flag in that state check this first.
-    ///
-    /// Unused until the next consumer (`autocomplete`/`dialog`) is ported
-    /// onto `PortalBinding`.
     #[must_use]
-    #[allow(dead_code)]
     pub(crate) fn is_ready(&self) -> bool {
         self.scope.widget_id().is_some()
     }
