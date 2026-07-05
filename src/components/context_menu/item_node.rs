@@ -32,10 +32,6 @@ const SUBMENU_GAP: f64 = 1.0;
 
 /// Total height of a separator row (line centered within it).
 pub(crate) const SEPARATOR_ROW_HEIGHT: f64 = 9.0;
-/// Gap between the leading-glyph gutter and the label.
-const ICON_GAP: f64 = 8.0;
-/// Minimum gap between the label column and the trailing shortcut column.
-const SHORTCUT_GAP: f64 = 24.0;
 /// Vertical gap between an item's label and its sub-title line.
 const SUBTITLE_GAP: f64 = 2.0;
 
@@ -59,7 +55,7 @@ pub(crate) struct NodeActivated(pub(crate) usize);
 /// a menu has an icon or is checkable.
 #[must_use]
 pub(crate) fn gutter_glyph_width(theme: &Theme) -> f64 {
-    f64::from(theme.density.ui_font_size) + ICON_GAP
+    f64::from(theme.density.ui_font_size) + f64::from(theme.density.pad_h)
 }
 
 /// Whether a spec reserves the gutter (checkable or icon-bearing).
@@ -409,6 +405,8 @@ impl Widget for MenuItemNode {
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
+        // 3 × pad_h = the pre-token 24 px minimum label↔shortcut gap at balanced.
+        let shortcut_gap = 3.0 * f64::from(self.theme.density.pad_h);
         match axis {
             Axis::Vertical => Length::px(self.row_height()),
             Axis::Horizontal => {
@@ -430,7 +428,7 @@ impl Widget for MenuItemNode {
                     max_label = max_label.max(measure(subtitle));
                 }
                 let shortcut_col = if let Some(shortcut) = &mut self.shortcut {
-                    SHORTCUT_GAP + measure(shortcut)
+                    shortcut_gap + measure(shortcut)
                 } else {
                     0.0
                 };
