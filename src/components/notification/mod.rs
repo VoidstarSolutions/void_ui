@@ -19,7 +19,7 @@ mod view;
 mod widget;
 
 pub use view::{
-    DEFAULT_NOTIFICATION_WIDTH, DEFAULT_TIMEOUT, Notification, NotificationPosition,
-    NotificationView, OnClose, notification, notification_layer, notification_overlay,
-    notification_stack,
+    DEFAULT_NOTIFICATION_WIDTH, DEFAULT_TIMEOUT, Notification, NotificationLayerView,
+    NotificationPosition, NotificationView, OnClose, notification, notification_layer,
+    notification_overlay, notification_stack,
 };

@@ -59,11 +59,15 @@ pub use button_group::{ButtonGroup, button_group, toggle_button_group};
 pub use card::{Card, card};
 pub use checkbox::{Checkbox, CheckboxView, checkbox};
 pub use clipboard::{Clipboard, ClipboardView, clipboard};
-pub use code_view::{ReadOnlyText, ReadOnlyTextView, RustHighlighter, read_only_text};
+pub use code_view::{
+    Highlighter, ReadOnlyText, ReadOnlyTextView, RustHighlighter, TokenKind, TokenSpan,
+    read_only_text,
+};
 pub use collapsible::{Collapsible, CollapsibleView, collapsible};
+pub use context_menu::{ContextMenuAction, ContextMenuArea};
 pub use context_menu::{
-    ContextMenuAreaBuilder, ContextMenuAreaView, Menu, MenuItem, MenuView, context_menu_area, item,
-    menu,
+    ContextMenuAreaBuilder, ContextMenuAreaView, Menu, MenuItem, MenuView, Submenu,
+    context_menu_area, item, menu, submenu,
 };
 pub use data_grid::{
     CellAlign, ClickableRow, ColumnDef, ColumnId, ColumnWidths, DataGrid, FilterState,
@@ -82,10 +86,11 @@ pub use input::{
 pub use label::{Label, LabelAlignment, label};
 pub use list::{List, list};
 pub use notification::{
-    DEFAULT_NOTIFICATION_WIDTH, DEFAULT_TIMEOUT, Notification, NotificationPosition, notification,
-    notification_layer, notification_overlay, notification_stack,
+    DEFAULT_NOTIFICATION_WIDTH, DEFAULT_TIMEOUT, Notification, NotificationLayerView,
+    NotificationPosition, notification, notification_layer, notification_overlay,
+    notification_stack,
 };
-pub use popover::{Popover, PopoverAnchor, PopoverHost, PopoverView, popover};
+pub use popover::{Popover, PopoverAnchor, PopoverHost, PopoverOpenChanged, PopoverView, popover};
 pub use resizable::{
     MIN_PANEL_SIZE, Resizable, ResizablePanel, ResizablePanels, ResizablePanelsView, ResizableView,
     h_resizable, h_resizable_panels, v_resizable, v_resizable_panels,
