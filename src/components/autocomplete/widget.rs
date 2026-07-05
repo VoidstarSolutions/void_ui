@@ -268,8 +268,7 @@ impl Widget for SuggestionList {
     ) {
         let p = &self.theme.palette;
         let corner = f64::from(self.theme.radius.small);
-        let bg_rect =
-            RoundedRect::from_origin_size(Point::ORIGIN, ctx.border_box_size(), corner);
+        let bg_rect = RoundedRect::from_origin_size(Point::ORIGIN, ctx.border_box_size(), corner);
         painter.fill(bg_rect, p.surface_hi).draw();
         painter
             .stroke(bg_rect, &Stroke::new(LIST_BORDER), p.border_strong)
