@@ -13,7 +13,6 @@
 
 use masonry::accesskit;
 use masonry::accesskit::{Node, Role};
-use masonry::core::keyboard::{Key, NamedKey};
 use masonry::core::{
     AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
     PaintCtx, PointerButton, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent,
@@ -28,6 +27,7 @@ use masonry::widgets::{ButtonPress, Label};
 use super::ButtonVariant;
 use crate::Theme;
 use crate::components::click::{self, ClickPhase};
+use crate::components::interaction::{self, InteractionState};
 use crate::components::spinner::widget::SpinnerWidget;
 
 /// Corner radius (`border-radius: 5px`).
@@ -38,7 +38,14 @@ pub(crate) const CORNER_RADIUS: f64 = 5.0;
 /// Border thickness for the active and focus states.
 const BORDER_WIDTH: f64 = 1.0;
 /// Inset of the focus ring from the button edge.
-const FOCUS_RING_INSET: f64 = 2.0;
+///
+/// Deliberately larger than the shared
+/// [`crate::focus_ring::FOCUS_RING_INSET`] (1.5): the button's ring sits
+/// inside a filled, [`CORNER_RADIUS`]-rounded background (the per-corner
+/// focus radii below subtract this inset from the background radii), and
+/// the extra half-pixel keeps the ring visually separated from the fill
+/// edge. Named distinctly so it no longer shadows the shared constant.
+const BUTTON_FOCUS_RING_INSET: f64 = 2.0;
 /// Gap between a leading icon and the label.
 const ICON_GAP: f64 = 5.0;
 
@@ -486,11 +493,7 @@ impl Widget for ThemedButton {
         if self.disabled || self.loading {
             return;
         }
-        if let TextEvent::Keyboard(event) = event
-            && event.state.is_up()
-            && (matches!(&event.key, Key::Character(c) if c == " ")
-                || event.key == Key::Named(NamedKey::Enter))
-        {
+        if interaction::keyboard_activate(event, true) {
             ctx.set_handled();
             if let Some(payload) = &self.clipboard_payload {
                 ctx.set_clipboard(payload.to_string());
@@ -508,7 +511,7 @@ impl Widget for ThemedButton {
         if self.disabled || self.loading {
             return;
         }
-        if event.action == accesskit::Action::Click {
+        if interaction::is_access_click(event) {
             if let Some(payload) = &self.clipboard_payload {
                 ctx.set_clipboard(payload.to_string());
             }
@@ -517,20 +520,7 @@ impl Widget for ThemedButton {
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        match event {
-            // Propagate the host-supplied initial `disabled` to masonry on
-            // widget add. `with_disabled` only sets the widget-internal field;
-            // without this, the first build leaves masonry's `is_disabled()`
-            // out of sync with paint state, breaking event routing and the
-            // accessibility pass that drives `node.set_disabled()`.
-            Update::WidgetAdded => {
-                ctx.set_disabled(self.disabled);
-            }
-            Update::HoveredChanged(_) | Update::DisabledChanged(_) | Update::FocusChanged(_) => {
-                ctx.request_paint_only();
-            }
-            _ => {}
-        }
+        interaction::interaction_update(ctx, event, self.disabled);
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
@@ -672,9 +662,11 @@ impl Widget for ThemedButton {
         painter: &mut Painter<'_>,
     ) {
         let size = ctx.border_box_size();
-        let hovered = ctx.is_hovered();
-        let pressed = ctx.is_active() && hovered;
-        let focused = ctx.is_focus_target();
+        let InteractionState {
+            hovered,
+            pressed,
+            focused,
+        } = InteractionState::from_paint_ctx(ctx);
         let (bg, border) = self.resolve_colors(hovered, pressed);
 
         let rect = RoundedRect::from_origin_size(Point::ORIGIN, size, self.corners);
@@ -688,7 +680,7 @@ impl Widget for ThemedButton {
         }
 
         if focused && !self.disabled {
-            let inset = FOCUS_RING_INSET;
+            let inset = BUTTON_FOCUS_RING_INSET;
             let focus_rect = RoundedRect::from_origin_size(
                 Point::new(inset, inset),
                 Size::new(
@@ -752,5 +744,54 @@ impl Widget for ThemedButton {
 
     fn accepts_text_input(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use masonry::core::keyboard::{Key, NamedKey};
+    use masonry::core::{NewWidget, TextEvent};
+    use masonry::kurbo::Point;
+    use masonry::testing::TestHarness;
+    use masonry::theme::default_property_set;
+    use masonry::widgets::Label;
+
+    use super::*;
+    use crate::Theme;
+
+    fn harness_with(disabled: bool) -> TestHarness<ThemedButton> {
+        let widget = ThemedButton::new(NewWidget::new(Label::new("Go")), &Theme::dark())
+            .with_disabled(disabled);
+        TestHarness::create_with_size(default_property_set(), NewWidget::new(widget), (120, 32))
+    }
+
+    #[test]
+    fn pointer_click_submits_press() {
+        let mut h = harness_with(false);
+        h.mouse_move(Point::new(60.0, 16.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+        assert!(h.pop_action::<ButtonPress>().is_some());
+    }
+
+    #[test]
+    fn disabled_button_ignores_clicks_and_keys() {
+        let mut h = harness_with(true);
+        h.mouse_move(Point::new(60.0, 16.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+        assert!(h.pop_action::<ButtonPress>().is_none());
+    }
+
+    #[test]
+    fn space_and_enter_activate_when_focused() {
+        let mut h = harness_with(false);
+        h.focus_on(Some(h.root_id()));
+
+        h.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
+        assert!(h.pop_action::<ButtonPress>().is_some());
+
+        h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
+        assert!(h.pop_action::<ButtonPress>().is_some());
     }
 }
