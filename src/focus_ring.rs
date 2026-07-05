@@ -14,17 +14,21 @@ use masonry::kurbo::Stroke;
 
 use crate::Theme;
 
-/// Stroke width of a focus ring, in logical pixels.
+/// Stroke width of a focus ring, in logical pixels — a deliberate constant
+/// accessibility affordance that must stay visible at compact density, so it
+/// doesn't scale with density.
 pub const FOCUS_RING_WIDTH: f64 = 1.5;
 
 /// How far outside a widget's geometry the focus ring sits, in logical pixels.
 /// Used by circular/tab-indicator shapes (slider thumbs, radio buttons, tab
-/// pills) that draw the ring as an outset around the visual shape.
+/// pills) that draw the ring as an outset around the visual shape. Focus-ring
+/// chrome, not density-scaled.
 pub const FOCUS_RING_OUTSET: f64 = 2.0;
 
 /// How far inside a widget's border-box the focus ring sits, in logical pixels.
 /// Used by box-shaped form controls (checkboxes, toggles, row items) where the
 /// ring is an inset overlay within the widget's own layout footprint.
+/// Focus-ring chrome, not density-scaled.
 pub const FOCUS_RING_INSET: f64 = 1.5;
 
 /// Strokes `shape` as a focus ring in the theme's focus color.

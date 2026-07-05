@@ -177,6 +177,8 @@ impl Widget for VoidScrollBar {
         _props: &mut PropertiesMut<'_>,
         interval: u64,
     ) {
+        // Fade-out duration for the scrollbar thumb — an animation timing
+        // value, not spacing, so it doesn't scale with density.
         const FADE_MILLIS: f32 = 300.0;
         // Quantize the frame interval to whole microseconds: a u16 µs count
         // converts to f32 losslessly, and a >65 ms frame just clamps the step.

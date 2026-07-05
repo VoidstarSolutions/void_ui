@@ -24,7 +24,7 @@ use crate::components::click::{self, ClickPhase};
 use crate::components::interaction::{self, InteractionState};
 use crate::focus_ring::{FOCUS_RING_OUTSET, paint_focus_ring};
 
-/// Circle border stroke width.
+/// Circle border stroke width — ring chrome, not density-scaled.
 const BORDER_WIDTH: f64 = 1.5;
 
 /// Themed radio button widget.

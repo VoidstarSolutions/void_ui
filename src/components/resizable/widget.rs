@@ -40,7 +40,8 @@ use crate::Theme;
 /// Thickness of the visual divider line at rest — matches [`Separator`](crate::Separator)'s
 /// default 1px line so a resizable divider reads the same as a static one.
 const HANDLE_THICKNESS: f64 = 1.0;
-/// Half-width of the invisible grab region on each side of a handle's center.
+/// Half-width of the invisible grab region on each side of a handle's
+/// center — a hit-target dimension that must not shrink at compact density.
 const GRAB_HALF: f64 = 8.0;
 /// Structural minimum panel size in pixels, used as a collapse-prevention floor;
 /// callers may set per-panel minimums via [`ResizableWidget::set_min_sizes`]/
@@ -52,7 +53,8 @@ const ARROW_NUDGE_PX: f64 = 16.0;
 /// Pixel adjustment per arrow-key press while Shift is held, for finer-grained
 /// keyboard nudging.
 const ARROW_NUDGE_FINE_PX: f64 = 1.0;
-/// Width of the focus ring stroke drawn around the active handle's grab zone.
+/// Width of the focus ring stroke drawn around the active handle's grab
+/// zone — focus-ring chrome, not density-scaled.
 const FOCUS_RING_WIDTH: f64 = 1.5;
 
 // --- MARK: ACTION

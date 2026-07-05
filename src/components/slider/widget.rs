@@ -30,11 +30,13 @@ use super::{SliderChanged, SliderValue};
 use crate::focus_ring::{FOCUS_RING_OUTSET, FOCUS_RING_WIDTH, paint_focus_ring};
 use crate::{Orientation, Theme};
 
-/// Thickness of the track and fill bar.
+/// Thickness of the track and fill bar — track stroke thickness reads as
+/// chrome (like a border); scaling it with density is a visual-design
+/// decision out of scope for a pixel-identical refactor.
 const TRACK_HEIGHT: f64 = 4.0;
-/// Gap between the thumb edge and the focus ring.
 /// Clearance from the widget edge to the thumbs' travel limits — keeps the
 /// thumbs and their focus rings from being clipped at the ends of the track.
+/// Derived from the exempt focus-ring constants, so not density-scaled.
 const EDGE_PAD: f64 = FOCUS_RING_OUTSET + FOCUS_RING_WIDTH;
 
 /// Identifies which thumb a gesture or keyboard adjustment targets.

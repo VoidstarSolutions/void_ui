@@ -22,12 +22,12 @@ use crate::Theme;
 use crate::components::item_list;
 use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 
-/// Border width of the menu's background chrome.
+/// Border width of the menu's background chrome — hairline chrome, not density-scaled.
 const BORDER_WIDTH: f64 = 1.0;
-/// Inset of the keyboard-highlight ring from its item's bounds.
+/// Inset of the keyboard-highlight ring from its item's bounds — focus chrome, not density-scaled.
 const HIGHLIGHT_RING_INSET: f64 = FOCUS_RING_INSET;
 /// Minimum menu width in logical pixels, ensuring a readable popup even when
-/// all item labels are very short.
+/// all item labels are very short — a clamp, not a density-scaled dimension.
 const MIN_MENU_WIDTH: f64 = 80.0;
 
 /// Action emitted when the user selects item `0` (the index) from the menu.

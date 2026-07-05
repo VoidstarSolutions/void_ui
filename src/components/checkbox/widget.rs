@@ -27,9 +27,10 @@ use crate::components::icon::{IconName, icon};
 use crate::components::interaction::{self, InteractionState};
 use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 
-/// Stroke width of the box border.
+/// Stroke width of the box border — hairline chrome, not density-scaled.
 const BOX_BORDER: f64 = 1.0;
-/// Uniform padding around the widget — provides clearance for the focus ring.
+/// Uniform padding around the widget — provides clearance for the exempt
+/// focus ring, so it doesn't scale with density either.
 const PAD: f64 = 2.0;
 
 /// Interactive checkbox widget.

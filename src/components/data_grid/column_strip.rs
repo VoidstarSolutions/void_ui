@@ -42,7 +42,9 @@ use masonry::peniko::Color;
 /// strip itself receives pointer events there (the way masonry's `Split`
 /// reserves its bar region); it's reserved on **every** strip — resizable
 /// or not — so End-aligned content in header/body/filter rows lands at
-/// the same x by construction. Also the hover tolerance.
+/// the same x by construction. Also the hover tolerance. A resize hit-target
+/// half-width; hit targets must not shrink at compact density, so this
+/// doesn't scale with density.
 const GRAB_ZONE: f64 = 6.0;
 
 /// The width a cell is laid out at inside its column slot: the column

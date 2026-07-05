@@ -12,7 +12,11 @@ use masonry::peniko::Color;
 
 use super::view::{Orientation, SeparatorStyle};
 
+/// Length of the drawn segment in a dashed separator's pattern — dash-pattern
+/// chrome, not density-scaled.
 const DASH_ON: f64 = 4.0;
+/// Length of the gap segment in a dashed separator's pattern — dash-pattern
+/// chrome, not density-scaled.
 const DASH_OFF: f64 = 2.0;
 
 pub struct SeparatorWidget {

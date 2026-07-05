@@ -18,7 +18,7 @@ use masonry::properties::Padding;
 
 use crate::Theme;
 
-/// Border width of the overlay surface's chrome.
+/// Border width of the overlay surface's chrome — hairline chrome, not density-scaled.
 const BORDER_WIDTH: f64 = 1.0;
 
 /// Which corner radius an [`OverlaySurface`] paints, per

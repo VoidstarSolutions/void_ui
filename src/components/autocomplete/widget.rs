@@ -40,19 +40,20 @@ use crate::overlay::binding::{self, PortalBinding};
 use crate::overlay_portal::PortalSlot;
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
-/// Suggestion list border stroke width.
+/// Suggestion list border stroke width — hairline chrome, not density-scaled.
 const LIST_BORDER: f64 = 1.0;
-/// Inset of the keyboard-highlight ring from the item bounds.
+/// Inset of the keyboard-highlight ring from the item bounds — focus chrome, not density-scaled.
 const HIGHLIGHT_RING_INSET: f64 = FOCUS_RING_INSET;
-/// Minimum suggestion list width in logical pixels.
+/// Minimum suggestion list width in logical pixels — a clamp, not a density-scaled dimension.
 const MIN_LIST_WIDTH: f64 = 80.0;
-/// Maximum visible height for the suggestion list before it scrolls, px.
+/// Maximum visible height for the suggestion list before it scrolls, px — a clamp, not a density-scaled dimension.
 const MAX_LIST_HEIGHT: f64 = 200.0;
 /// Max results for a typed-prefix match. Browsing the unfiltered list (empty
 /// query) isn't capped — the list scrolls — but typing should narrow to a
 /// short, scannable set rather than every match in a huge dataset.
 const MAX_SUGGESTIONS: usize = 20;
-/// Gap between the input field and the suggestion list overlay, px.
+/// Gap between the input field and the suggestion list overlay, px — a fixed
+/// anchor offset, not a density-scaled spacing token.
 const OVERLAY_GAP_PX: f64 = 2.0;
 /// Gap as a [`Length`] (used by the in-tree `AnchoredOverlay`).
 const OVERLAY_GAP: Length = Length::const_px(OVERLAY_GAP_PX);

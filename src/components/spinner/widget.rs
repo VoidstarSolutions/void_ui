@@ -17,7 +17,8 @@ use masonry::kurbo::{Affine, Arc as KurboArc, Axis, BezPath, Point, Shape, Size,
 use masonry::layout::{LenReq, Length};
 use masonry::peniko::Color;
 
-/// Sweep angle (radians) of the spinner arc — leaves a ~60° gap.
+/// Sweep angle (radians) of the spinner arc — leaves a ~60° gap. An angle,
+/// not spacing, so it doesn't scale with density.
 const SPINNER_SWEEP: f64 = std::f64::consts::TAU * (300.0 / 360.0);
 
 /// Partial-circle `BezPath` in unit-square (0..1) space. Computed once and
