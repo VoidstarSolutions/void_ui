@@ -110,30 +110,44 @@ impl Default for Density {
 }
 
 #[cfg(test)]
-#[allow(clippy::float_cmp)]
 mod tests {
     use super::Density;
+
+    /// Asserts two f32 token values are equal within `f32::EPSILON`, with a
+    /// meaningful failure message naming the token.
+    fn assert_token_eq(name: &str, actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() < f32::EPSILON,
+            "{name}: expected {expected}, got {actual}"
+        );
+    }
 
     /// Balanced is the default step: its token values must reproduce the
     /// hardcoded per-component constants they replace, pixel for pixel.
     #[test]
     fn balanced_tokens_match_pre_token_constants() {
         let d = Density::balanced();
-        assert_eq!(d.gap, 6.0); // checkbox/toggle LABEL_GAP, radio RADIO_GAP
-        assert_eq!(d.gap_lg, 15.0); // former `col` inline gap
-        assert_eq!(d.pad_h, 8.0); // sidebar/collapsible PAD_H, menu ICON_GAP
-        assert_eq!(d.pad_v, 6.0); // sidebar/collapsible PAD_V
-        assert_eq!(d.control, 14.0); // RADIO_DIAMETER, slider THUMB_DIAMETER
-        assert_eq!(d.row_height, 24.0); // data_grid DEFAULT_ROW_HEIGHT
+        // checkbox/toggle LABEL_GAP, radio RADIO_GAP
+        assert_token_eq("gap", d.gap, 6.0);
+        // former `col` inline gap
+        assert_token_eq("gap_lg", d.gap_lg, 15.0);
+        // sidebar/collapsible PAD_H, menu ICON_GAP
+        assert_token_eq("pad_h", d.pad_h, 8.0);
+        // sidebar/collapsible PAD_V
+        assert_token_eq("pad_v", d.pad_v, 6.0);
+        // RADIO_DIAMETER, slider THUMB_DIAMETER
+        assert_token_eq("control", d.control, 14.0);
+        // data_grid DEFAULT_ROW_HEIGHT
+        assert_token_eq("row_height", d.row_height, 24.0);
     }
 
     /// `gap_lg` inherits the exact former `col` values so the five inline-gap
     /// call sites migrated off `col` stay pixel-identical at every step.
     #[test]
     fn gap_lg_inherits_col_values() {
-        assert_eq!(Density::compact().gap_lg, 12.0);
-        assert_eq!(Density::balanced().gap_lg, 15.0);
-        assert_eq!(Density::airy().gap_lg, 19.0);
+        assert_token_eq("compact gap_lg", Density::compact().gap_lg, 12.0);
+        assert_token_eq("balanced gap_lg", Density::balanced().gap_lg, 15.0);
+        assert_token_eq("airy gap_lg", Density::airy().gap_lg, 19.0);
     }
 
     #[test]
