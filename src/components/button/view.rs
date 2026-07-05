@@ -353,11 +353,13 @@ where
         if self.accessible_name != prev.accessible_name {
             ThemedButton::set_accessibility_label(&mut element, self.accessible_name.clone());
         }
-        if self.corners != prev.corners {
+        if self.corners != prev.corners
+            || (self.corners.is_none() && self.theme.radius != prev.theme.radius)
+        {
             use masonry::kurbo::RoundedRectRadii as R;
             let radii = self
                 .corners
-                .unwrap_or_else(|| R::from_single_radius(super::widget::CORNER_RADIUS));
+                .unwrap_or_else(|| R::from_single_radius(f64::from(self.theme.radius.small)));
             ThemedButton::set_corners(&mut element, radii);
         }
         // Label text is not re-applied here; masonry's Label doesn't expose

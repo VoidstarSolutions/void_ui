@@ -41,8 +41,6 @@ use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
 /// Vertical padding above/below the suggestion list content.
 const LIST_PAD_V: f64 = 4.0;
-/// Suggestion list chrome corner radius.
-const LIST_CORNER: f64 = 5.0;
 /// Suggestion list border stroke width.
 const LIST_BORDER: f64 = 1.0;
 /// Inset of the keyboard-highlight ring from the item bounds.
@@ -269,8 +267,9 @@ impl Widget for SuggestionList {
         painter: &mut Painter<'_>,
     ) {
         let p = &self.theme.palette;
+        let corner = f64::from(self.theme.radius.small);
         let bg_rect =
-            RoundedRect::from_origin_size(Point::ORIGIN, ctx.border_box_size(), LIST_CORNER);
+            RoundedRect::from_origin_size(Point::ORIGIN, ctx.border_box_size(), corner);
         painter.fill(bg_rect, p.surface_hi).draw();
         painter
             .stroke(bg_rect, &Stroke::new(LIST_BORDER), p.border_strong)

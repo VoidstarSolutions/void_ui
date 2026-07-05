@@ -30,11 +30,6 @@ use crate::Theme;
 use crate::components::click::{self, ClickPhase};
 use crate::components::spinner::widget::SpinnerWidget;
 
-/// Corner radius (`border-radius: 5px`).
-///
-/// Single source of truth for the button corner radius — the view-layer
-/// fallback and the button-group outer corners both reference this.
-pub(crate) const CORNER_RADIUS: f64 = 5.0;
 /// Border thickness for the active and focus states.
 const BORDER_WIDTH: f64 = 1.0;
 /// Inset of the focus ring from the button edge.
@@ -70,8 +65,8 @@ pub struct ThemedButton {
     /// When set, written to the system clipboard whenever the button fires.
     clipboard_payload: Option<ArcStr>,
     /// Per-corner radii for the background and focus-ring shapes.
-    /// Defaults to a uniform `CORNER_RADIUS`; button groups override this to
-    /// round only the outer edges of the group.
+    /// Defaults to a uniform `theme.radius.small`; button groups override
+    /// this to round only the outer edges of the group.
     corners: RoundedRectRadii,
 }
 
@@ -95,7 +90,7 @@ impl ThemedButton {
             spinner: None,
             accessibility_label: None,
             clipboard_payload: None,
-            corners: RoundedRectRadii::from_single_radius(CORNER_RADIUS),
+            corners: RoundedRectRadii::from_single_radius(f64::from(theme.radius.small)),
         }
     }
 
