@@ -1,18 +1,20 @@
 //! Layout density — three predefined steps mirroring Tessera's
 //! `data-density` attribute (`compact` / `balanced` / `airy`).
 //!
-//! Density carries the small handful of sizes that scale together for the
-//! whole UI: chart cell pitch, surface padding, and the UI control font
-//! size. Component-specific values (a chip's vertical padding, an
-//! inspector row's gap) compose from these.
+//! Density carries the sizes that scale together when a user picks a
+//! density step: surface padding (`pad`), control font size
+//! (`ui_font_size`), button padding (`button_pad_h`/`button_pad_v`),
+//! row/header padding (`pad_h`/`pad_v`), intra-component gaps
+//! (`gap`/`gap_lg`), the base control glyph size (`control`), and the
+//! data-row baseline (`row_height`). Components derive their spacing from
+//! these tokens — component-specific values are documented ratios of a
+//! token, not free-standing constants. Chart-domain pitches (P&F box
+//! sizes) are deliberately *not* part of this type; chart products own
+//! their own pitch constants.
 
 /// Sizes that should scale together when a user picks a density step.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Density {
-    /// Chart row height (P&F box vertical pitch), in px.
-    pub row: f32,
-    /// Chart column width (P&F box horizontal pitch), in px.
-    pub col: f32,
     /// Default inner padding for surfaces (cards, panels), in px.
     pub pad: f32,
     /// Base font size for UI controls (topbar buttons, inspector chips,
@@ -49,8 +51,6 @@ impl Density {
     #[must_use]
     pub const fn compact() -> Self {
         Self {
-            row: 14.0,
-            col: 12.0,
             pad: 10.0,
             ui_font_size: 11.0,
             button_pad_v: 3.0,
@@ -68,8 +68,6 @@ impl Density {
     #[must_use]
     pub const fn balanced() -> Self {
         Self {
-            row: 17.0,
-            col: 15.0,
             pad: 12.0,
             ui_font_size: 12.0,
             button_pad_v: 5.0,
@@ -87,8 +85,6 @@ impl Density {
     #[must_use]
     pub const fn airy() -> Self {
         Self {
-            row: 22.0,
-            col: 19.0,
             pad: 16.0,
             ui_font_size: 13.0,
             button_pad_v: 8.0,
@@ -148,6 +144,19 @@ mod tests {
         assert_token_eq("compact gap_lg", Density::compact().gap_lg, 12.0);
         assert_token_eq("balanced gap_lg", Density::balanced().gap_lg, 15.0);
         assert_token_eq("airy gap_lg", Density::airy().gap_lg, 19.0);
+    }
+
+    /// The list footer spinner used to be `row (17) + pad (12)` = 29 px at
+    /// balanced. It now derives from `row_height`; this pins the balanced
+    /// value so the pixel-identity invariant is checked, not assumed.
+    #[test]
+    fn footer_arithmetic_preserves_balanced_pixels() {
+        let d = Density::balanced();
+        let height = f64::from(d.row_height) + 5.0;
+        assert!(
+            (height - 29.0).abs() < f64::EPSILON,
+            "expected 29.0, got {height}"
+        );
     }
 
     #[test]
