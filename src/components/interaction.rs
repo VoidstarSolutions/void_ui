@@ -20,7 +20,6 @@ use masonry::core::{AccessEvent, PaintCtx, TextEvent, Update, UpdateCtx};
 /// the focused radio; Enter is reserved for the form's default action).
 /// The caller owns the side effects — `ctx.set_handled()` and submitting
 /// its action — as well as any disabled/focus-target guards.
-#[allow(dead_code)]
 pub(crate) fn keyboard_activate(event: &TextEvent, accept_enter: bool) -> bool {
     let TextEvent::Keyboard(key) = event else {
         return false;
@@ -35,7 +34,6 @@ pub(crate) fn keyboard_activate(event: &TextEvent, accept_enter: bool) -> bool {
 /// One comparison today, but it is the single definition of "what counts
 /// as an accessibility activation" for every press widget — future
 /// additions (e.g. `accesskit::Action::Default`) land here once.
-#[allow(dead_code)]
 pub(crate) fn is_access_click(event: &AccessEvent) -> bool {
     event.action == accesskit::Action::Click
 }
@@ -49,7 +47,6 @@ pub(crate) fn is_access_click(event: &AccessEvent) -> bool {
 /// Widgets with extra update concerns (sidebar item has no `disabled`
 /// field; tabs and collapsible track positional hover state) keep their
 /// own `update()`.
-#[allow(dead_code)]
 pub(crate) fn interaction_update(ctx: &mut UpdateCtx<'_>, event: &Update, disabled: bool) {
     match event {
         Update::WidgetAdded => {
@@ -66,7 +63,6 @@ pub(crate) fn interaction_update(ctx: &mut UpdateCtx<'_>, event: &Update, disabl
 /// every press widget's `paint()`: `pressed` is the shared
 /// "active *and* hovered" definition (dragging out of the widget
 /// releases the pressed appearance).
-#[allow(dead_code)]
 pub(crate) struct InteractionState {
     pub(crate) hovered: bool,
     pub(crate) pressed: bool,
@@ -74,7 +70,6 @@ pub(crate) struct InteractionState {
 }
 
 impl InteractionState {
-    #[allow(dead_code)]
     pub(crate) fn from_paint_ctx(ctx: &PaintCtx<'_>) -> Self {
         let hovered = ctx.is_hovered();
         Self {
