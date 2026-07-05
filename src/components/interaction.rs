@@ -49,6 +49,7 @@ pub(crate) fn is_access_click(event: &AccessEvent) -> bool {
 /// Widgets with extra update concerns (sidebar item has no `disabled`
 /// field; tabs and collapsible track positional hover state) keep their
 /// own `update()`.
+#[allow(dead_code)]
 pub(crate) fn interaction_update(ctx: &mut UpdateCtx<'_>, event: &Update, disabled: bool) {
     match event {
         Update::WidgetAdded => {
@@ -65,6 +66,7 @@ pub(crate) fn interaction_update(ctx: &mut UpdateCtx<'_>, event: &Update, disabl
 /// every press widget's `paint()`: `pressed` is the shared
 /// "active *and* hovered" definition (dragging out of the widget
 /// releases the pressed appearance).
+#[allow(dead_code)]
 pub(crate) struct InteractionState {
     pub(crate) hovered: bool,
     pub(crate) pressed: bool,
@@ -72,6 +74,7 @@ pub(crate) struct InteractionState {
 }
 
 impl InteractionState {
+    #[allow(dead_code)]
     pub(crate) fn from_paint_ctx(ctx: &PaintCtx<'_>) -> Self {
         let hovered = ctx.is_hovered();
         Self {
