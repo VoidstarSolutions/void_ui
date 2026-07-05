@@ -29,19 +29,19 @@ pub(crate) type RenderRow<State, Item> =
 
 /// Lazy-load config: fire `callback` when the active range comes within
 /// `threshold` items of the end.
-pub(crate) struct Lazy<State> {
+pub(crate) struct Lazy<State, Action> {
     pub(crate) threshold: u64,
-    pub(crate) callback: Arc<dyn Fn(&mut State) + Send + Sync>,
+    pub(crate) callback: Arc<dyn Fn(&mut State) -> Action + Send + Sync>,
 }
 
 /// All inputs needed to materialize the virtualized body.
-pub(crate) struct CollectionBodyParams<State, Item> {
+pub(crate) struct CollectionBodyParams<State, Item, Action> {
     pub(crate) item_count: u64,
     pub(crate) items: ItemsFn<State, Item>,
     pub(crate) id_source: IdSource<Item>,
     pub(crate) selection_lens: Option<SelectionLens<State>>,
     pub(crate) scroll: ScrollState,
-    pub(crate) lazy: Option<Lazy<State>>,
+    pub(crate) lazy: Option<Lazy<State, Action>>,
     pub(crate) render_row: RenderRow<State, Item>,
     pub(crate) theme: Theme,
 }
@@ -49,12 +49,13 @@ pub(crate) struct CollectionBodyParams<State, Item> {
 /// Builds the virtualized body view. The substrate owns virtualization,
 /// scroll-to-anchor, lazy-load, keyboard nav, selection background, and
 /// click routing; the caller supplies only per-row content via `render_row`.
-pub(crate) fn collection_body<State, Item>(
-    params: CollectionBodyParams<State, Item>,
-) -> impl WidgetView<State, ()> + use<State, Item>
+pub(crate) fn collection_body<State, Item, Action>(
+    params: CollectionBodyParams<State, Item, Action>,
+) -> impl WidgetView<State, Action> + use<State, Item, Action>
 where
     State: 'static,
     Item: 'static,
+    Action: Default + 'static,
 {
     let CollectionBodyParams {
         item_count,
@@ -128,11 +129,11 @@ where
     }
 }
 
-struct CollectionBodyView<V, State> {
+struct CollectionBodyView<V, State, Action> {
     child: V,
     scroll: ScrollState,
     item_count: u64,
-    lazy: Option<Lazy<State>>,
+    lazy: Option<Lazy<State, Action>>,
 }
 
 struct CollectionBodyViewState<S> {
@@ -140,12 +141,13 @@ struct CollectionBodyViewState<S> {
     applied_generation: u64,
 }
 
-impl<V, State> ViewMarker for CollectionBodyView<V, State> {}
+impl<V, State, Action> ViewMarker for CollectionBodyView<V, State, Action> {}
 
-impl<State, V> View<State, (), ViewCtx> for CollectionBodyView<V, State>
+impl<State, Action, V> View<State, Action, ViewCtx> for CollectionBodyView<V, State, Action>
 where
     State: 'static,
-    V: View<State, (), ViewCtx, Element = Pod<VirtualScrollWidget>>,
+    Action: Default + 'static,
+    V: View<State, Action, ViewCtx, Element = Pod<VirtualScrollWidget>>,
 {
     type Element = Pod<CollectionBodyWidget>;
     type ViewState = CollectionBodyViewState<V::ViewState>;
@@ -197,10 +199,11 @@ where
         message: &mut MessageCtx,
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
-    ) -> MessageResult<()> {
+    ) -> MessageResult<Action> {
         // Only peek once the message has stopped routing to a child:
         // maybe_take_message debug-asserts the path is empty, so probing
         // mid-route would panic.
+        let mut lazy_action: Option<Action> = None;
         if message.remaining_path().is_empty()
             && let Some(lazy) = self.lazy.as_ref()
         {
@@ -208,14 +211,21 @@ where
             // still routes onward to the child so virtualization handles it.
             message.maybe_take_message::<VirtualScrollAction>(|action| {
                 if nearing_end(self.item_count, action.target.end, lazy.threshold) {
-                    (lazy.callback)(app_state);
+                    lazy_action = Some((lazy.callback)(app_state));
                 }
                 false
             });
         }
         let vs = CollectionBodyWidget::virtual_scroll_mut(&mut element);
-        self.child
-            .message(&mut view_state.child_state, message, vs, app_state)
+        let child_result = self
+            .child
+            .message(&mut view_state.child_state, message, vs, app_state);
+        match lazy_action {
+            // The lazy-load callback's action wins: it must reach the root
+            // so the host's app logic re-runs with the grown item_count.
+            Some(action) => MessageResult::Action(action),
+            None => child_result,
+        }
     }
 }
 
@@ -404,7 +414,7 @@ mod tests {
                 let items_fn = Arc::clone(items_fn);
                 let id_source = id_source.clone();
                 let selection_lens = Some(Arc::clone(lens));
-                let row = clickable_row(
+                let row: crate::collection::row_click::ClickableRow<_, S, (), _> = clickable_row(
                     row_view,
                     is_selected,
                     theme,
@@ -425,7 +435,7 @@ mod tests {
 
         // Keep this baseline wired to the code path it measures: if
         // `collection_body`'s signature changes, this test won't compile.
-        let _ = collection_body::<S, u64>;
+        let _ = collection_body::<S, u64, ()>;
 
         let items: Vec<Row> = (0..ROWS as u64)
             .map(|i| Row {
@@ -538,6 +548,45 @@ mod tests {
             theme: Theme::default(),
         });
 
+        assert_widget_view(&view);
+    }
+
+    #[derive(Default, Debug, PartialEq)]
+    struct Marker;
+
+    #[test]
+    fn collection_body_is_generic_over_the_host_action() {
+        use std::sync::Arc;
+
+        use xilem::WidgetView;
+        use xilem::view::label;
+
+        use super::{CollectionBodyParams, Lazy, RenderRow, collection_body};
+        use crate::Theme;
+        use crate::collection::{IdSource, ItemsFn, ScrollState};
+
+        struct S {
+            items: Vec<u64>,
+        }
+        fn assert_widget_view<V: WidgetView<S, Marker>>(_: &V) {}
+
+        let items: ItemsFn<S, u64> = Arc::new(|s: &S| &s.items[..]);
+        let render_row: RenderRow<S, u64> =
+            Arc::new(|item: &u64, _selected, _theme| Box::new(label(format!("row {item}"))));
+
+        let view = collection_body(CollectionBodyParams {
+            item_count: 3,
+            items,
+            id_source: IdSource::Position,
+            selection_lens: None,
+            scroll: ScrollState::new(),
+            lazy: Some(Lazy {
+                threshold: 8,
+                callback: Arc::new(|_state: &mut S| Marker),
+            }),
+            render_row,
+            theme: Theme::default(),
+        });
         assert_widget_view(&view);
     }
 }

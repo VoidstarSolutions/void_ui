@@ -313,7 +313,7 @@ where
 
     let lazy = on_load_more.map(|callback| Lazy {
         threshold: load_threshold,
-        callback,
+        callback: Arc::new(move |state: &mut State| callback(state)),
     });
 
     let body: Box<AnyWidgetView<State>> = if item_count == 0 && loading {
