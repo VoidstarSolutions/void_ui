@@ -24,10 +24,6 @@ pub(crate) enum ClickPhase<'a> {
     /// Carries the pointer state so positional widgets can hit-test the
     /// press (`ctx.local_position(state.position)`). The widget adds its
     /// own Down side effects (focus, repaint, pressed-index tracking).
-    /// None of the four users migrated in this task read the field yet
-    /// (they don't need positional refinement) — the tabs/collapsible
-    /// migrations in later tasks are the first readers.
-    #[allow(dead_code)]
     Down(&'a PointerState),
     /// A primary-button release. `completed` ⇒ the press completed a
     /// click (the pointer was still captured *and* inside the widget —
