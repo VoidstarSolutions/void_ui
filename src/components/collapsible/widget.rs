@@ -46,24 +46,40 @@ const SEPARATOR_WIDTH: f64 = 1.0;
 #[derive(Debug, Clone)]
 pub struct CollapsibleTogglePressed;
 
+/// Pointer interaction state of the header row, combined into a single
+/// field so the widget doesn't accumulate independent bool flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct HeaderPointerState {
+    hovered: bool,
+    pressed: bool,
+}
+
 // --- MARK: WIDGET HELPERS
 
-fn make_chevron(open: bool, theme: &Theme) -> NewWidget<Label> {
+fn make_chevron(open: bool, theme: &Theme, disabled: bool) -> NewWidget<Label> {
     let name = if open {
         IconName::ChevronDown
     } else {
         IconName::ChevronRight
     };
-    icon(name)
-        .color(theme.palette.text_muted)
-        .build_widget(theme)
+    let color = if disabled {
+        theme.palette.text_faint
+    } else {
+        theme.palette.text_muted
+    };
+    icon(name).color(color).build_widget(theme)
 }
 
-fn make_title(text: ArcStr, theme: &Theme) -> NewWidget<Label> {
+fn make_title(text: ArcStr, theme: &Theme, disabled: bool) -> NewWidget<Label> {
+    let color = if disabled {
+        theme.palette.text_faint
+    } else {
+        theme.palette.text
+    };
     let mut lbl = Label::new(text)
         .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
         .prepare();
-    lbl.properties.insert(ContentColor::new(theme.palette.text));
+    lbl.properties.insert(ContentColor::new(color));
     lbl
 }
 
@@ -76,26 +92,22 @@ fn make_title(text: ArcStr, theme: &Theme) -> NewWidget<Label> {
 /// via [`AnimatedClip`].
 ///
 /// Emits [`CollapsibleTogglePressed`] when the header row is clicked.
-// `open`/`header_hovered`/`header_pressed`/`header_keyboard_pressed` are
-// independent flags with no shared state machine to fold them into — each
-// can be true or false regardless of the others (e.g. open-while-hovered,
-// pointer-pressed-while-keyboard-pressed mid-transition) — so an enum would
-// just relocate the same four independent facts, not simplify them.
-#[allow(clippy::struct_excessive_bools)]
+// `open`, `disabled`, and `header_keyboard_pressed` are independent flags with
+// no shared state machine to fold them into; pointer hover/press live together
+// in `header_state`.
 pub struct CollapsibleWidget<W: Widget + ?Sized> {
     title: WidgetPod<Label>,
     chevron: WidgetPod<Label>,
     body: WidgetPod<AnimatedClip<W>>,
     theme: Theme,
     open: bool,
-    /// True while the pointer is inside the header area.
-    header_hovered: bool,
-    /// True while the header is being pressed.
-    header_pressed: bool,
+    disabled: bool,
+    /// Header hover/press state, combined to keep the bool-field count down.
+    header_state: HeaderPointerState,
     /// True for the span between a Space/Enter key-down and its matching
     /// key-up (or an intervening focus loss) — the keyboard equivalent of
-    /// `header_pressed`, so keyboard activation shows the same pressed fill
-    /// a pointer click does.
+    /// `header_state.pressed`, so keyboard activation shows the same pressed
+    /// fill a pointer click does.
     header_keyboard_pressed: bool,
     /// Header height in the last layout pass (icon-font-size + 2 × `PAD_V`).
     current_header_height: f64,
@@ -107,15 +119,21 @@ pub struct CollapsibleWidget<W: Widget + ?Sized> {
 
 impl<W: Widget + ?Sized> CollapsibleWidget<W> {
     #[must_use]
-    pub fn new(title: ArcStr, child: NewWidget<W>, theme: &Theme, open: bool) -> Self {
+    pub fn new(
+        title: ArcStr,
+        child: NewWidget<W>,
+        theme: &Theme,
+        open: bool,
+        disabled: bool,
+    ) -> Self {
         Self {
-            title: make_title(title, theme).to_pod(),
-            chevron: make_chevron(open, theme).to_pod(),
+            title: make_title(title, theme, disabled).to_pod(),
+            chevron: make_chevron(open, theme, disabled).to_pod(),
             body: WidgetPod::new(AnimatedClip::new(child, Axis::Vertical, open)),
             theme: *theme,
             open,
-            header_hovered: false,
-            header_pressed: false,
+            disabled,
+            header_state: HeaderPointerState::default(),
             header_keyboard_pressed: false,
             current_header_height: 0.0,
             current_width: 0.0,
@@ -135,9 +153,20 @@ impl<W: Widget + ?Sized> CollapsibleWidget<W> {
     pub fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
         if this.widget.theme != *theme {
             this.widget.theme = *theme;
+            let disabled = this.widget.disabled;
+            let title_color = if disabled {
+                theme.palette.text_faint
+            } else {
+                theme.palette.text
+            };
+            let chevron_color = if disabled {
+                theme.palette.text_faint
+            } else {
+                theme.palette.text_muted
+            };
             {
                 let mut chevron = this.ctx.get_mut(&mut this.widget.chevron);
-                chevron.insert_prop(ContentColor::new(theme.palette.text_muted));
+                chevron.insert_prop(ContentColor::new(chevron_color));
                 Label::insert_style(
                     &mut chevron,
                     StyleProperty::FontSize(theme.density.ui_font_size),
@@ -145,7 +174,7 @@ impl<W: Widget + ?Sized> CollapsibleWidget<W> {
             }
             {
                 let mut title = this.ctx.get_mut(&mut this.widget.title);
-                title.insert_prop(ContentColor::new(theme.palette.text));
+                title.insert_prop(ContentColor::new(title_color));
                 Label::insert_style(
                     &mut title,
                     StyleProperty::FontSize(theme.density.ui_font_size),
@@ -158,6 +187,33 @@ impl<W: Widget + ?Sized> CollapsibleWidget<W> {
     pub fn set_title(this: &mut WidgetMut<'_, Self>, text: ArcStr) {
         let mut title = this.ctx.get_mut(&mut this.widget.title);
         Label::set_text(&mut title, text);
+    }
+
+    pub fn set_disabled(this: &mut WidgetMut<'_, Self>, disabled: bool) {
+        if this.widget.disabled != disabled {
+            this.widget.disabled = disabled;
+            this.ctx.set_disabled(disabled);
+            let theme = this.widget.theme;
+            let title_color = if disabled {
+                theme.palette.text_faint
+            } else {
+                theme.palette.text
+            };
+            let chevron_color = if disabled {
+                theme.palette.text_faint
+            } else {
+                theme.palette.text_muted
+            };
+            {
+                let mut title = this.ctx.get_mut(&mut this.widget.title);
+                title.insert_prop(ContentColor::new(title_color));
+            }
+            {
+                let mut chevron = this.ctx.get_mut(&mut this.widget.chevron);
+                chevron.insert_prop(ContentColor::new(chevron_color));
+            }
+            this.ctx.request_paint_only();
+        }
     }
 
     pub fn set_open(this: &mut WidgetMut<'_, Self>, open: bool) {
@@ -184,10 +240,13 @@ impl<W: Widget + ?Sized> CollapsibleWidget<W> {
 
 impl<W: Widget + ?Sized> CollapsibleWidget<W> {
     fn header_bg(&self) -> Color {
+        if self.disabled {
+            return Color::TRANSPARENT;
+        }
         let p = &self.theme.palette;
-        if (self.header_pressed && self.header_hovered) || self.header_keyboard_pressed {
+        if (self.header_state.pressed && self.header_state.hovered) || self.header_keyboard_pressed {
             p.surface_hi
-        } else if self.header_hovered {
+        } else if self.header_state.hovered {
             p.surface_2
         } else {
             Color::TRANSPARENT
@@ -210,17 +269,20 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
         _props: &mut PropertiesMut<'_>,
         event: &PointerEvent,
     ) {
+        if self.disabled {
+            return;
+        }
         match event {
             PointerEvent::Move(update) => {
                 let pos = ctx.local_position(update.current.position);
                 let in_header = pos.y < self.current_header_height;
-                if in_header != self.header_hovered {
-                    self.header_hovered = in_header;
+                if in_header != self.header_state.hovered {
+                    self.header_state.hovered = in_header;
                     ctx.request_paint_only();
                 }
             }
-            PointerEvent::Leave(_) if self.header_hovered => {
-                self.header_hovered = false;
+            PointerEvent::Leave(_) if self.header_state.hovered => {
+                self.header_state.hovered = false;
                 ctx.request_paint_only();
             }
             // Shared primary-click recognizer; the capture guard only
@@ -231,18 +293,18 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
                 ctx.local_position(state.position).y < self.current_header_height
             }) {
                 Some(ClickPhase::Down(_)) => {
-                    self.header_pressed = true;
+                    self.header_state.pressed = true;
                     ctx.request_focus();
                     ctx.request_paint_only();
                 }
-                Some(ClickPhase::Up { state, completed }) if self.header_pressed => {
+                Some(ClickPhase::Up { state, completed }) if self.header_state.pressed => {
                     let pos = ctx.local_position(state.position);
                     let in_header = pos.y < self.current_header_height;
                     if completed && in_header {
                         ctx.submit_action::<Self::Action>(CollapsibleTogglePressed);
                     }
-                    self.header_pressed = false;
-                    self.header_hovered = in_header;
+                    self.header_state.pressed = false;
+                    self.header_state.hovered = in_header;
                     ctx.request_paint_only();
                 }
                 Some(ClickPhase::Up { .. }) | None => {}
@@ -256,7 +318,7 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
         _props: &mut PropertiesMut<'_>,
         event: &TextEvent,
     ) {
-        if !ctx.is_focus_target() {
+        if self.disabled || !ctx.is_focus_target() {
             return;
         }
         if interaction::keyboard_press_start(event, true) {
@@ -277,26 +339,32 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
         _props: &mut PropertiesMut<'_>,
         event: &AccessEvent,
     ) {
+        if self.disabled {
+            return;
+        }
         if ctx.target() == ctx.widget_id() && interaction::is_access_click(event) {
             ctx.submit_action::<Self::Action>(CollapsibleTogglePressed);
         }
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        if let Update::HoveredChanged(false) = event
-            && self.header_hovered
-        {
-            self.header_hovered = false;
-            ctx.request_paint_only();
-        }
-        if matches!(event, Update::FocusChanged(false)) {
-            // Losing focus mid-press (e.g. Tab away while Space is still
-            // held) would otherwise leave `header_keyboard_pressed` stuck
-            // true with no matching key-up ever arriving to clear it.
-            self.header_keyboard_pressed = false;
-        }
-        if let Update::FocusChanged(_) = event {
-            ctx.request_paint_only();
+        match event {
+            Update::WidgetAdded => ctx.set_disabled(self.disabled),
+            Update::HoveredChanged(false) if self.header_state.hovered => {
+                self.header_state.hovered = false;
+                ctx.request_paint_only();
+            }
+            Update::FocusChanged(false) => {
+                // Losing focus mid-press (e.g. Tab away while Space is still
+                // held) would otherwise leave `header_keyboard_pressed` stuck
+                // true with no matching key-up ever arriving to clear it.
+                self.header_keyboard_pressed = false;
+                ctx.request_paint_only();
+            }
+            Update::FocusChanged(_) => {
+                ctx.request_paint_only();
+            }
+            _ => {}
         }
     }
 
@@ -421,7 +489,9 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
         _props: &PropertiesRef<'_>,
         node: &mut Node,
     ) {
-        node.add_action(accesskit::Action::Click);
+        if !self.disabled {
+            node.add_action(accesskit::Action::Click);
+        }
         node.set_expanded(self.open);
     }
 
@@ -435,7 +505,7 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
     }
 
     fn accepts_focus(&self) -> bool {
-        true
+        !self.disabled
     }
 
     fn accepts_text_input(&self) -> bool {
@@ -459,9 +529,10 @@ mod tests {
     use super::{CollapsibleTogglePressed, CollapsibleWidget};
     use crate::Theme;
 
-    fn harness() -> TestHarness<CollapsibleWidget<dyn Widget>> {
+    fn harness(disabled: bool) -> TestHarness<CollapsibleWidget<dyn Widget>> {
         let body = NewWidget::new(Label::new("body")).erased();
-        let widget = CollapsibleWidget::new(ArcStr::from("Section"), body, &Theme::dark(), true);
+        let widget =
+            CollapsibleWidget::new(ArcStr::from("Section"), body, &Theme::dark(), true, disabled);
         TestHarness::create_with_size(default_property_set(), NewWidget::new(widget), (200, 120))
     }
 
@@ -473,7 +544,7 @@ mod tests {
 
     #[test]
     fn clicking_the_header_toggles() {
-        let mut h = harness();
+        let mut h = harness(false);
         let target = header_center(&mut h);
         h.mouse_move(target);
         h.mouse_button_press(Some(PointerButton::Primary));
@@ -483,7 +554,7 @@ mod tests {
 
     #[test]
     fn clicking_the_body_does_not_toggle() {
-        let mut h = harness();
+        let mut h = harness(false);
         let header_h = h.edit_root_widget(|wm| wm.widget.current_header_height);
         h.mouse_move(Point::new(100.0, header_h + 30.0));
         h.mouse_button_press(Some(PointerButton::Primary));
@@ -493,7 +564,7 @@ mod tests {
 
     #[test]
     fn dragging_from_header_into_body_cancels() {
-        let mut h = harness();
+        let mut h = harness(false);
         let target = header_center(&mut h);
         let header_h = h.edit_root_widget(|wm| wm.widget.current_header_height);
         h.mouse_move(target);
@@ -505,7 +576,7 @@ mod tests {
 
     #[test]
     fn space_and_enter_activate_when_focused() {
-        let mut h = harness();
+        let mut h = harness(false);
         h.focus_on(Some(h.root_id()));
 
         h.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
@@ -520,7 +591,7 @@ mod tests {
         // Regression: on_text_event used to only ever act on key-up, so
         // Space/Enter "clicking" the header showed no pressed-fill feedback
         // the way a pointer click does.
-        let mut h = harness();
+        let mut h = harness(false);
         h.focus_on(Some(h.root_id()));
 
         assert!(!h.edit_root_widget(|wm| wm.widget.header_keyboard_pressed));
@@ -538,12 +609,25 @@ mod tests {
 
     #[test]
     fn losing_focus_mid_press_clears_the_keyboard_pressed_flag() {
-        let mut h = harness();
+        let mut h = harness(false);
         h.focus_on(Some(h.root_id()));
         h.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
         assert!(h.edit_root_widget(|wm| wm.widget.header_keyboard_pressed));
 
         h.focus_on(None);
         assert!(!h.edit_root_widget(|wm| wm.widget.header_keyboard_pressed));
+    }
+
+    #[test]
+    fn disabled_suppresses_header_click_and_keyboard() {
+        let mut h = harness(true);
+        let target = header_center(&mut h);
+        h.mouse_move(target);
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+        assert!(
+            h.pop_action::<CollapsibleTogglePressed>().is_none(),
+            "disabled collapsible must not toggle on click"
+        );
     }
 }

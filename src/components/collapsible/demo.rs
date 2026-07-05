@@ -95,6 +95,22 @@ fn static_examples(
     (open_example, closed_example)
 }
 
+fn disabled_row(theme: &Theme) -> impl WidgetView<CollapsibleDemo> + use<> {
+    with_source!(theme, {
+        collapsible(
+            "Disabled section",
+            flex_col((label("This header cannot be toggled.")
+                .color(theme.palette.text_muted)
+                .render(theme),))
+            .cross_axis_alignment(CrossAxisAlignment::Start),
+            |_: &mut CollapsibleDemo| {},
+        )
+        .open(false)
+        .disabled(true)
+        .render(theme)
+    })
+}
+
 fn interactive_examples(
     theme: &Theme,
     state: &CollapsibleDemo,
@@ -207,6 +223,8 @@ fn build_inner(theme: &Theme, state: &CollapsibleDemo) -> impl WidgetView<Collap
             with_inputs,
             header("Nested collapsibles"),
             nested,
+            header("Disabled"),
+            disabled_row(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .gap(Length::px(16.0)),
