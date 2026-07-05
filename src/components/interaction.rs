@@ -6,8 +6,10 @@
 //! block were each written near-verbatim in five widgets (button,
 //! checkbox, toggle, radio, sidebar item). Centralizing them here means
 //! a future change to activation semantics lands once instead of
-//! drifting across copies. The pointer press machine lives next door in
-//! [`super::click`].
+//! drifting across copies. The sidebar panel strip and nav item
+//! (`sidebar/panel_widget.rs`, `sidebar/nav_widget.rs`) still hand-roll
+//! these blocks pending a follow-up port. The pointer press machine
+//! lives next door in [`super::click`].
 
 use masonry::accesskit;
 use masonry::core::keyboard::{Key, NamedKey};
