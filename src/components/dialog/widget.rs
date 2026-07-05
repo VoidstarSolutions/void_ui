@@ -13,12 +13,12 @@ use masonry::core::{
     UpdateCtx, Widget, WidgetMut,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Rect, Size};
+use masonry::kurbo::{Axis, Size};
 use masonry::layout::{LenReq, Length};
 
 use crate::overlay::OverlayAnchor;
-use crate::overlay_portal::{PortalOwner, PortalVisibility};
-use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
+use crate::overlay::binding::{PortalBinding, PortalOpenCtx};
+use crate::overlay_scope::OverlayScopeHandle;
 
 /// Action submitted by [`DialogHost`] when the portal slot dismisses the
 /// dialog's content in response to an outside press.
@@ -39,59 +39,35 @@ pub(crate) fn dialog_dismiss_hook(mut w: WidgetMut<'_, dyn Widget>) {
 ///
 /// The dialog's content lives in the portal slot, registered separately via
 /// [`crate::overlay_portal::OverlayPortal`]; this widget exists purely to
-/// hold the `(scope, key, open)` triple and to be the [`DialogDismissed`]
-/// action source.
+/// hold the binding + `open` flag and to be the [`DialogDismissed`] action
+/// source.
 pub struct DialogHost {
-    scope: OverlayScopeHandle,
-    key: u64,
+    binding: PortalBinding,
     open: bool,
-}
-
-/// Push `$self`'s current open/closed state to the portal slot via
-/// `$ctx.mutate_later`. Shared between [`DialogHost::set_open`] (a
-/// [`WidgetMut`]'s `MutateCtx`) and [`Widget::update`]'s `UpdateCtx` — both
-/// expose `widget_id`/`mutate_later` as separate inherent impls rather than a
-/// shared trait, hence the macro (mirrors `push_open_state_body!` in
-/// `popover/widget.rs`).
-///
-/// `anchor_rect_window` is ignored for [`OverlayAnchor::ViewportQuarter`]
-/// (see [`OverlayScope::set_portal_visible`]), so `Rect::ZERO` is passed
-/// unconditionally; likewise there is no gap concept for a centered dialog.
-macro_rules! push_visibility_body {
-    ($self:expr, $ctx:expr) => {{
-        // The scope's `WidgetAdded` runs before any descendant's (it's an
-        // ancestor), so by the time this widget exists the handle is filled.
-        let scope_id = $self
-            .scope
-            .widget_id()
-            .expect("overlay_scope ancestor must be mounted before DialogHost");
-        let key = $self.key;
-        let open = $self.open;
-        let owner = $ctx.widget_id();
-        $ctx.mutate_later(scope_id, move |mut w| {
-            let mut scope = w.downcast::<OverlayScope>();
-            OverlayScope::set_portal_visible(
-                &mut scope,
-                key,
-                open,
-                PortalVisibility {
-                    owner: Some(PortalOwner {
-                        id: owner,
-                        on_dismiss: dialog_dismiss_hook,
-                    }),
-                    rect: Rect::ZERO,
-                    anchor: OverlayAnchor::ViewportQuarter,
-                    gap: 0.0,
-                },
-            );
-        });
-    }};
 }
 
 impl DialogHost {
     #[must_use]
     pub(crate) fn new(scope: OverlayScopeHandle, key: u64, open: bool) -> Self {
-        Self { scope, key, open }
+        Self {
+            binding: PortalBinding::new(scope, key, dialog_dismiss_hook),
+            open,
+        }
+    }
+
+    /// Push the current open/closed state to the portal slot.
+    /// [`OverlayAnchor::ViewportQuarter`] has no trigger rect and no gap;
+    /// the binding passes [`Rect::ZERO`](masonry::kurbo::Rect::ZERO) and
+    /// skips the re-anchor loop for that variant. A not-yet-mounted scope
+    /// is a silent no-op (unified error handling — the scope's
+    /// `WidgetAdded` runs before any descendant's, so in practice the
+    /// handle is always filled here; the previous `expect` never fired).
+    fn push_visibility(&mut self, ctx: &mut impl PortalOpenCtx) {
+        if self.open {
+            self.binding.open(ctx, OverlayAnchor::ViewportQuarter, 0.0);
+        } else {
+            self.binding.close(ctx);
+        }
     }
 
     /// Push a new open/closed state to the portal slot, if it changed.
@@ -100,7 +76,7 @@ impl DialogHost {
             return;
         }
         this.widget.open = open;
-        push_visibility_body!(this.widget, this.ctx);
+        this.widget.push_visibility(&mut this.ctx);
     }
 }
 
@@ -116,7 +92,7 @@ impl Widget for DialogHost {
         if let Update::WidgetAdded = event
             && self.open
         {
-            push_visibility_body!(self, ctx);
+            self.push_visibility(ctx);
         }
     }
 
