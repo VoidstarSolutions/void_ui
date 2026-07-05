@@ -39,6 +39,7 @@ use crate::collection::{
 };
 use crate::components::input::input;
 use crate::components::spinner::spinner;
+use crate::theme::Density;
 
 /// Boxed stable item-id projector (`Fn(&Item) -> u64`).
 type ItemIdFn<Item> = Arc<dyn Fn(&Item) -> u64 + Send + Sync>;
@@ -48,8 +49,14 @@ type SearchChange<State> = Arc<dyn Fn(&mut State, String) + Send + Sync>;
 /// [`Lazy`] before being handed to `collection_body`.
 type LoadMore<State> = Arc<dyn Fn(&mut State) + Send + Sync>;
 
-/// Default fixed item height when [`List::item_height`] is unset.
-const DEFAULT_ITEM_HEIGHT: f64 = 32.0;
+/// Default item height when [`List::item_height`] is unset: 4/3 of the
+/// density row baseline, rounded (24 × 4/3 = the pre-token 32 px at
+/// balanced) — list rows carry taller content (two-line items, avatars)
+/// than grid rows.
+fn default_item_height(density: &Density) -> f64 {
+    (f64::from(density.row_height) * 4.0 / 3.0).round()
+}
+
 /// Default lazy-load threshold when [`List::load_threshold`] is unset: the
 /// host's `on_load_more` fires once the active range comes within this many
 /// items of `item_count`.
@@ -75,7 +82,7 @@ const DEFAULT_LOAD_THRESHOLD: u64 = 20;
 pub struct List<State, Item> {
     items: Option<ItemsFn<State, Item>>,
     item_count: u64,
-    item_height: f64,
+    item_height: Option<f64>,
     render_item: Option<RenderRow<State, Item>>,
     item_id: Option<ItemIdFn<Item>>,
     selection_lens: Option<SelectionLens<State>>,
@@ -99,7 +106,7 @@ where
         Self {
             items: None,
             item_count: 0,
-            item_height: DEFAULT_ITEM_HEIGHT,
+            item_height: None,
             render_item: None,
             item_id: None,
             selection_lens: None,
@@ -129,9 +136,10 @@ where
         self
     }
 
-    /// Fixed pixel item height (defaults to [`DEFAULT_ITEM_HEIGHT`]).
+    /// Fixed pixel item height (defaults to 4/3 of the theme's density row
+    /// baseline).
     pub fn item_height(mut self, item_height: f64) -> Self {
-        self.item_height = item_height;
+        self.item_height = Some(item_height);
         self
     }
 
@@ -283,6 +291,7 @@ where
         on_load_more,
         load_threshold,
     } = list;
+    let item_height = item_height.unwrap_or_else(|| default_item_height(&theme.density));
 
     // Default the data accessor to an empty slice and the renderer to an
     // empty cell when unset, mirroring `data_grid::build_grid_view`'s
@@ -394,6 +403,20 @@ mod tests {
     use crate::Theme;
     use crate::collection::CollectionBodyWidget;
     use crate::label;
+
+    #[test]
+    fn default_item_height_follows_density() {
+        use crate::theme::Density;
+
+        use super::default_item_height;
+
+        // 24 × 4/3 = the pre-token DEFAULT_ITEM_HEIGHT of 32 at balanced.
+        assert!((default_item_height(&Density::balanced()) - 32.0).abs() < 1e-6);
+        assert!(
+            default_item_height(&Density::compact()) < default_item_height(&Density::balanced())
+        );
+        assert!(default_item_height(&Density::balanced()) < default_item_height(&Density::airy()));
+    }
 
     /// A [`RawProxy`] that drops every message — the test builds the view
     /// directly and never expects a proxied message back.
