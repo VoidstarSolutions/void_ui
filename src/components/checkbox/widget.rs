@@ -47,6 +47,11 @@ pub struct CheckboxWidget {
     check_icon: WidgetPod<Label>,
     /// Optional text label rendered to the right of the box.
     label: Option<WidgetPod<dyn Widget>>,
+    /// True for the span between a Space/Enter key-down and its matching
+    /// key-up (or an intervening focus loss) — the keyboard equivalent of
+    /// the pointer-driven `pressed` flag read from the widget context, so
+    /// keyboard activation shows the same pressed fill a pointer click does.
+    keyboard_pressed: bool,
 }
 
 // --- MARK: BUILDERS
@@ -72,6 +77,7 @@ impl CheckboxWidget {
                 .build_widget(theme)
                 .to_pod(),
             label: None,
+            keyboard_pressed: false,
         }
     }
 
@@ -239,8 +245,14 @@ impl Widget for CheckboxWidget {
         if self.disabled {
             return;
         }
-        if interaction::keyboard_activate(event, true) {
+        if interaction::keyboard_press_start(event, true) {
             ctx.set_handled();
+            self.keyboard_pressed = true;
+            ctx.request_paint_only();
+        } else if interaction::keyboard_activate(event, true) {
+            ctx.set_handled();
+            self.keyboard_pressed = false;
+            ctx.request_paint_only();
             ctx.submit_action::<Self::Action>(CheckboxPress);
         }
     }
@@ -260,6 +272,12 @@ impl Widget for CheckboxWidget {
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        // Losing focus mid-press (e.g. Tab away while Space is still held)
+        // would otherwise leave `keyboard_pressed` stuck true with no
+        // matching key-up ever arriving to clear it.
+        if matches!(event, Update::FocusChanged(false)) {
+            self.keyboard_pressed = false;
+        }
         interaction::interaction_update(ctx, event, self.disabled);
     }
 
@@ -355,6 +373,7 @@ impl Widget for CheckboxWidget {
             pressed,
             focused,
         } = InteractionState::from_paint_ctx(ctx);
+        let pressed = pressed || self.keyboard_pressed;
         let box_sz = self.box_size();
 
         let content_h = (size.height - 2.0 * PAD).max(0.0);
@@ -480,5 +499,38 @@ mod tests {
             h.pop_action::<CheckboxPress>().is_some(),
             "checkboxes accept Enter as well as Space"
         );
+    }
+
+    #[test]
+    fn space_key_down_shows_the_pressed_fill_until_key_up() {
+        // Regression: on_text_event used to only ever fire on key-up, so
+        // Space/Enter "clicking" showed no pressed-fill feedback the way a
+        // pointer click does (pointer-down captures the pointer; keyboard
+        // activation never does).
+        let mut h = harness();
+        h.focus_on(Some(h.root_id()));
+
+        assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+        h.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
+        assert!(h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+        assert!(
+            h.pop_action::<CheckboxPress>().is_none(),
+            "not yet activated"
+        );
+
+        h.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
+        assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+        assert!(h.pop_action::<CheckboxPress>().is_some());
+    }
+
+    #[test]
+    fn losing_focus_mid_press_clears_the_keyboard_pressed_flag() {
+        let mut h = harness();
+        h.focus_on(Some(h.root_id()));
+        h.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
+        assert!(h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+
+        h.focus_on(None);
+        assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
     }
 }

@@ -46,6 +46,11 @@ pub struct ThemedSidebarItem {
     theme: Theme,
     /// Host-controlled selected-row state.
     active: bool,
+    /// True for the span between a Space/Enter key-down and its matching
+    /// key-up (or an intervening focus loss) — the keyboard equivalent of
+    /// the pointer-driven `pressed` flag read from the widget context, so
+    /// keyboard activation shows the same pressed fill a pointer click does.
+    keyboard_pressed: bool,
 }
 
 // --- MARK: BUILDERS
@@ -57,6 +62,7 @@ impl ThemedSidebarItem {
             child: child.erased().to_pod(),
             theme: *theme,
             active: false,
+            keyboard_pressed: false,
         }
     }
 
@@ -105,7 +111,7 @@ impl ThemedSidebarItem {
     /// | active         | `surface_2`  |
     fn resolve_bg(&self, hovered: bool, pressed: bool) -> Color {
         let p = &self.theme.palette;
-        if pressed && hovered {
+        if pressed {
             p.surface_hi
         } else if self.active || hovered {
             p.surface_2
@@ -148,8 +154,14 @@ impl Widget for ThemedSidebarItem {
         _props: &mut PropertiesMut<'_>,
         event: &TextEvent,
     ) {
-        if interaction::keyboard_activate(event, true) {
+        if interaction::keyboard_press_start(event, true) {
             ctx.set_handled();
+            self.keyboard_pressed = true;
+            ctx.request_paint_only();
+        } else if interaction::keyboard_activate(event, true) {
+            ctx.set_handled();
+            self.keyboard_pressed = false;
+            ctx.request_paint_only();
             ctx.submit_action::<Self::Action>(ButtonPress { button: None });
         }
     }
@@ -172,6 +184,12 @@ impl Widget for ThemedSidebarItem {
         // `interaction::interaction_update`). Known API inconsistency —
         // adding `disabled` to sidebar items is tracked in the
         // API-consistency plan.
+        if matches!(event, Update::FocusChanged(false)) {
+            // Losing focus mid-press (e.g. Tab away while Space is still
+            // held) would otherwise leave `keyboard_pressed` stuck true
+            // with no matching key-up ever arriving to clear it.
+            self.keyboard_pressed = false;
+        }
         match event {
             Update::HoveredChanged(_) | Update::FocusChanged(_) => {
                 ctx.request_paint_only();
@@ -236,6 +254,7 @@ impl Widget for ThemedSidebarItem {
             pressed,
             focused,
         } = InteractionState::from_paint_ctx(ctx);
+        let pressed = pressed || self.keyboard_pressed;
         let p = &self.theme.palette;
 
         let bg = self.resolve_bg(hovered, pressed);
@@ -343,5 +362,34 @@ mod tests {
 
         h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
         assert!(h.pop_action::<ButtonPress>().is_some());
+    }
+
+    #[test]
+    fn space_key_down_shows_the_pressed_fill_until_key_up() {
+        // Regression: on_text_event used to only ever fire on key-up, so
+        // Space/Enter "clicking" showed no pressed-fill feedback the way a
+        // pointer click does.
+        let mut h = harness();
+        h.focus_on(Some(h.root_id()));
+
+        assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+        h.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
+        assert!(h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+        assert!(h.pop_action::<ButtonPress>().is_none(), "not yet activated");
+
+        h.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
+        assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+        assert!(h.pop_action::<ButtonPress>().is_some());
+    }
+
+    #[test]
+    fn losing_focus_mid_press_clears_the_keyboard_pressed_flag() {
+        let mut h = harness();
+        h.focus_on(Some(h.root_id()));
+        h.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
+        assert!(h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+
+        h.focus_on(None);
+        assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
     }
 }

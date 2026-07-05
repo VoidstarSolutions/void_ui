@@ -41,6 +41,12 @@ pub struct ToggleWidget {
     theme: Theme,
     /// Optional text label rendered to the right of the track.
     label: Option<WidgetPod<dyn Widget>>,
+    /// True for the span between a Space/Enter key-down and its matching
+    /// key-up (or an intervening focus loss) — the keyboard equivalent of
+    /// the pointer-driven `pressed` flag read from the widget context, so
+    /// keyboard activation shows the same pressed track fill a pointer
+    /// click does.
+    keyboard_pressed: bool,
 }
 
 // --- MARK: BUILDERS
@@ -53,6 +59,7 @@ impl ToggleWidget {
             disabled,
             theme: *theme,
             label: None,
+            keyboard_pressed: false,
         }
     }
 
@@ -220,8 +227,14 @@ impl Widget for ToggleWidget {
         if self.disabled {
             return;
         }
-        if interaction::keyboard_activate(event, true) {
+        if interaction::keyboard_press_start(event, true) {
             ctx.set_handled();
+            self.keyboard_pressed = true;
+            ctx.request_paint_only();
+        } else if interaction::keyboard_activate(event, true) {
+            ctx.set_handled();
+            self.keyboard_pressed = false;
+            ctx.request_paint_only();
             ctx.submit_action::<Self::Action>(TogglePress);
         }
     }
@@ -241,6 +254,12 @@ impl Widget for ToggleWidget {
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        // Losing focus mid-press (e.g. Tab away while Space is still held)
+        // would otherwise leave `keyboard_pressed` stuck true with no
+        // matching key-up ever arriving to clear it.
+        if matches!(event, Update::FocusChanged(false)) {
+            self.keyboard_pressed = false;
+        }
         interaction::interaction_update(ctx, event, self.disabled);
     }
 
@@ -320,6 +339,7 @@ impl Widget for ToggleWidget {
             pressed,
             focused,
         } = InteractionState::from_paint_ctx(ctx);
+        let pressed = pressed || self.keyboard_pressed;
 
         let track_h = self.track_height();
         let track_w = self.track_width();
@@ -566,5 +586,34 @@ mod tests {
 
         h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
         assert!(h.pop_action::<TogglePress>().is_some());
+    }
+
+    #[test]
+    fn space_key_down_shows_the_pressed_track_fill_until_key_up() {
+        // Regression: on_text_event used to only ever fire on key-up, so
+        // Space/Enter "clicking" showed no pressed-fill feedback the way a
+        // pointer click does.
+        let mut h = harness();
+        h.focus_on(Some(h.root_id()));
+
+        assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+        h.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
+        assert!(h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+        assert!(h.pop_action::<TogglePress>().is_none(), "not yet activated");
+
+        h.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
+        assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+        assert!(h.pop_action::<TogglePress>().is_some());
+    }
+
+    #[test]
+    fn losing_focus_mid_press_clears_the_keyboard_pressed_flag() {
+        let mut h = harness();
+        h.focus_on(Some(h.root_id()));
+        h.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
+        assert!(h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+
+        h.focus_on(None);
+        assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
     }
 }

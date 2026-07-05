@@ -67,6 +67,13 @@ fn make_chevron(collapsed: bool, theme: &Theme) -> NewWidget<Label> {
 /// [`AnimatedClip`].
 ///
 /// Emits [`SidebarTogglePressed`] when the strip is clicked.
+// `collapsed`/`strip_hovered`/`strip_pressed`/`strip_keyboard_pressed` are
+// independent flags with no shared state machine to fold them into — each
+// can be true or false regardless of the others (e.g. collapsed-while-
+// hovered, pointer-pressed-while-keyboard-pressed mid-transition) — so an
+// enum would just relocate the same four independent facts, not simplify
+// them.
+#[allow(clippy::struct_excessive_bools)]
 pub struct ThemedSidebarPanel<W: Widget + ?Sized> {
     content: WidgetPod<AnimatedClip<W>>,
     chevron: WidgetPod<Label>,
@@ -76,6 +83,11 @@ pub struct ThemedSidebarPanel<W: Widget + ?Sized> {
     strip_hovered: bool,
     /// True while the strip is being pressed.
     strip_pressed: bool,
+    /// True for the span between a Space/Enter key-down and its matching
+    /// key-up (or an intervening focus loss) — the keyboard equivalent of
+    /// `strip_pressed`, so keyboard activation shows the same pressed fill
+    /// a pointer click does.
+    strip_keyboard_pressed: bool,
     /// Left x coordinate of the strip in the last layout pass.
     current_strip_x: f64,
     /// Widget height from the last layout pass.
@@ -93,6 +105,7 @@ impl<W: Widget + ?Sized> ThemedSidebarPanel<W> {
             collapsed,
             strip_hovered: false,
             strip_pressed: false,
+            strip_keyboard_pressed: false,
             current_strip_x: 0.0,
             current_height: 0.0,
         }
@@ -146,7 +159,7 @@ impl<W: Widget + ?Sized> ThemedSidebarPanel<W> {
 impl<W: Widget + ?Sized> ThemedSidebarPanel<W> {
     fn strip_bg(&self) -> Color {
         let p = &self.theme.palette;
-        if self.strip_pressed && self.strip_hovered {
+        if (self.strip_pressed && self.strip_hovered) || self.strip_keyboard_pressed {
             p.surface_hi
         } else if self.strip_hovered {
             p.surface_2
@@ -212,12 +225,22 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
         _props: &mut PropertiesMut<'_>,
         event: &TextEvent,
     ) {
-        if let TextEvent::Keyboard(event) = event
-            && event.state.is_up()
-            && (matches!(&event.key, Key::Character(c) if c == " ")
-                || event.key == Key::Named(NamedKey::Enter))
-        {
+        let TextEvent::Keyboard(event) = event else {
+            return;
+        };
+        let is_activation_key = matches!(&event.key, Key::Character(c) if c == " ")
+            || event.key == Key::Named(NamedKey::Enter);
+        if !is_activation_key {
+            return;
+        }
+        if event.state.is_down() {
             ctx.set_handled();
+            self.strip_keyboard_pressed = true;
+            ctx.request_paint_only();
+        } else if event.state.is_up() {
+            ctx.set_handled();
+            self.strip_keyboard_pressed = false;
+            ctx.request_paint_only();
             ctx.submit_action::<Self::Action>(SidebarTogglePressed);
         }
     }
@@ -239,6 +262,12 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
         {
             self.strip_hovered = false;
             ctx.request_paint_only();
+        }
+        if matches!(event, Update::FocusChanged(false)) {
+            // Losing focus mid-press (e.g. Tab away while Space is still
+            // held) would otherwise leave `strip_keyboard_pressed` stuck
+            // true with no matching key-up ever arriving to clear it.
+            self.strip_keyboard_pressed = false;
         }
         if let Update::FocusChanged(_) = event {
             ctx.request_paint_only();
@@ -375,5 +404,68 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
 
     fn make_trace_span(&self, id: WidgetId) -> tracing::Span {
         tracing::trace_span!("ThemedSidebarPanel", id = id.trace())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use masonry::core::keyboard::{Key, NamedKey};
+    use masonry::core::{NewWidget, TextEvent};
+    use masonry::layout::Length;
+    use masonry::testing::TestHarness;
+    use masonry::theme::default_property_set;
+    use masonry::widgets::SizedBox;
+
+    use super::{SidebarTogglePressed, ThemedSidebarPanel};
+    use crate::Theme;
+
+    fn harness() -> TestHarness<ThemedSidebarPanel<SizedBox>> {
+        let widget = ThemedSidebarPanel::new(
+            NewWidget::new(SizedBox::empty().size(Length::px(80.0), Length::px(200.0))),
+            &Theme::dark(),
+            false,
+        );
+        TestHarness::create_with_size(default_property_set(), NewWidget::new(widget), (100, 200))
+    }
+
+    #[test]
+    fn space_key_down_shows_the_pressed_fill_until_key_up() {
+        // Regression: on_text_event used to only ever act on key-up, so
+        // Space/Enter "clicking" the strip showed no pressed-fill feedback
+        // the way a pointer click does.
+        let mut h = harness();
+        h.focus_on(Some(h.root_id()));
+
+        assert!(!h.edit_root_widget(|wm| wm.widget.strip_keyboard_pressed));
+        h.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
+        assert!(h.edit_root_widget(|wm| wm.widget.strip_keyboard_pressed));
+        assert!(
+            h.pop_action::<SidebarTogglePressed>().is_none(),
+            "not yet activated"
+        );
+
+        h.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
+        assert!(!h.edit_root_widget(|wm| wm.widget.strip_keyboard_pressed));
+        assert!(h.pop_action::<SidebarTogglePressed>().is_some());
+    }
+
+    #[test]
+    fn enter_also_activates() {
+        let mut h = harness();
+        h.focus_on(Some(h.root_id()));
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Enter)));
+        h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
+        assert!(h.pop_action::<SidebarTogglePressed>().is_some());
+    }
+
+    #[test]
+    fn losing_focus_mid_press_clears_the_keyboard_pressed_flag() {
+        let mut h = harness();
+        h.focus_on(Some(h.root_id()));
+        h.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
+        assert!(h.edit_root_widget(|wm| wm.widget.strip_keyboard_pressed));
+
+        h.focus_on(None);
+        assert!(!h.edit_root_widget(|wm| wm.widget.strip_keyboard_pressed));
     }
 }

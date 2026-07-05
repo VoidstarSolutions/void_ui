@@ -31,6 +31,27 @@ pub(crate) fn keyboard_activate(event: &TextEvent, accept_enter: bool) -> bool {
             || (accept_enter && key.key == Key::Named(NamedKey::Enter)))
 }
 
+/// True when `event` is the key-*down* half of a press-widget activation:
+/// Space, or Enter when `accept_enter` is true — the same key predicate as
+/// [`keyboard_activate`], just on press instead of release.
+///
+/// Pointer interaction shows a "pressed" fill for the whole press-down span
+/// (`ClickPhase::Down` in [`super::click`]); [`keyboard_activate`] alone
+/// gives keyboard activation no equivalent, since it only ever fires once,
+/// on key-up. Callers should flip a `keyboard_pressed` field true here,
+/// repaint, and flip it back false (with another repaint) on the matching
+/// [`keyboard_activate`] key-up — and on focus loss, in case the key is
+/// released or the widget loses focus off-screen — so Space/Enter shows the
+/// same visual feedback a pointer click does.
+pub(crate) fn keyboard_press_start(event: &TextEvent, accept_enter: bool) -> bool {
+    let TextEvent::Keyboard(key) = event else {
+        return false;
+    };
+    key.state.is_down()
+        && (matches!(&key.key, Key::Character(c) if c == " ")
+            || (accept_enter && key.key == Key::Named(NamedKey::Enter)))
+}
+
 /// True when `event` is an assistive-technology Click activation.
 ///
 /// One comparison today, but it is the single definition of "what counts
@@ -87,7 +108,7 @@ mod tests {
     use masonry::core::TextEvent;
     use masonry::core::keyboard::{Key, NamedKey};
 
-    use super::{is_access_click, keyboard_activate};
+    use super::{is_access_click, keyboard_activate, keyboard_press_start};
 
     #[test]
     fn space_key_up_activates() {
@@ -114,6 +135,31 @@ mod tests {
         // Activation fires on key *up*, matching every existing widget block.
         let ev = TextEvent::key_down(Key::Character(" ".into()));
         assert!(!keyboard_activate(&ev, true));
+    }
+
+    #[test]
+    fn space_key_down_starts_the_press() {
+        let ev = TextEvent::key_down(Key::Character(" ".into()));
+        assert!(keyboard_press_start(&ev, true));
+        assert!(
+            keyboard_press_start(&ev, false),
+            "Space starts the press regardless of the Enter policy"
+        );
+    }
+
+    #[test]
+    fn enter_key_down_respects_the_accept_enter_policy() {
+        let ev = TextEvent::key_down(Key::Named(NamedKey::Enter));
+        assert!(keyboard_press_start(&ev, true));
+        assert!(!keyboard_press_start(&ev, false));
+    }
+
+    #[test]
+    fn key_up_does_not_start_the_press() {
+        // The press starts on key *down*, mirroring how pointer-down (not
+        // pointer-up) is what shows the pressed fill.
+        let ev = TextEvent::key_up(Key::Character(" ".into()));
+        assert!(!keyboard_press_start(&ev, true));
     }
 
     #[test]

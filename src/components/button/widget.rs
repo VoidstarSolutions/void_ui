@@ -50,6 +50,12 @@ const ICON_GAP: f64 = 5.0;
 /// resolve background / border / text colors at paint time. The host drives
 /// the `active` flag for "currently-selected toggle" semantics. Pointer state
 /// (hovered, pressed) is read from the widget context.
+// `active`/`disabled`/`loading`/`keyboard_pressed` are independent flags with
+// no shared state machine to fold them into — each can be true or false
+// regardless of the others (e.g. disabled-while-loading, active-while-
+// keyboard_pressed) — so an enum would just relocate the same four
+// independent facts, not simplify them.
+#[allow(clippy::struct_excessive_bools)]
 pub struct ThemedButton {
     child: WidgetPod<dyn Widget>,
     theme: Theme,
@@ -75,6 +81,11 @@ pub struct ThemedButton {
     /// Defaults to a uniform `theme.radius.small`; button groups override
     /// this to round only the outer edges of the group.
     corners: RoundedRectRadii,
+    /// True for the span between a Space/Enter key-down and its matching
+    /// key-up (or an intervening focus loss) — the keyboard equivalent of
+    /// the pointer-driven `pressed` flag read from the widget context, so
+    /// keyboard activation shows the same pressed fill a pointer click does.
+    keyboard_pressed: bool,
 }
 
 // --- MARK: BUILDERS
@@ -98,6 +109,7 @@ impl ThemedButton {
             accessibility_label: None,
             clipboard_payload: None,
             corners: RoundedRectRadii::from_single_radius(f64::from(theme.radius.small)),
+            keyboard_pressed: false,
         }
     }
 
@@ -488,8 +500,14 @@ impl Widget for ThemedButton {
         if self.disabled || self.loading {
             return;
         }
-        if interaction::keyboard_activate(event, true) {
+        if interaction::keyboard_press_start(event, true) {
             ctx.set_handled();
+            self.keyboard_pressed = true;
+            ctx.request_paint_only();
+        } else if interaction::keyboard_activate(event, true) {
+            ctx.set_handled();
+            self.keyboard_pressed = false;
+            ctx.request_paint_only();
             if let Some(payload) = &self.clipboard_payload {
                 ctx.set_clipboard(payload.to_string());
             }
@@ -515,6 +533,12 @@ impl Widget for ThemedButton {
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        // Losing focus mid-press (e.g. Tab away while Space is still held)
+        // would otherwise leave `keyboard_pressed` stuck true with no
+        // matching key-up ever arriving to clear it.
+        if matches!(event, Update::FocusChanged(false)) {
+            self.keyboard_pressed = false;
+        }
         interaction::interaction_update(ctx, event, self.disabled);
     }
 
@@ -662,6 +686,10 @@ impl Widget for ThemedButton {
             pressed,
             focused,
         } = InteractionState::from_paint_ctx(ctx);
+        // `pressed` alone only reflects pointer-capture; keyboard activation
+        // never captures the pointer, so it needs `keyboard_pressed` folded
+        // in to show the same pressed fill Space/Enter that a pointer click does.
+        let pressed = pressed || self.keyboard_pressed;
         let (bg, border) = self.resolve_colors(hovered, pressed);
 
         let rect = RoundedRect::from_origin_size(Point::ORIGIN, size, self.corners);
@@ -788,5 +816,43 @@ mod tests {
 
         h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
         assert!(h.pop_action::<ButtonPress>().is_some());
+    }
+
+    #[test]
+    fn space_key_down_shows_the_pressed_fill_until_key_up() {
+        // Regression test: `on_text_event` used to only ever fire on key-up,
+        // so Space/Enter "clicking" a button submitted its action correctly
+        // but never showed any pressed-fill feedback — pointer clicks show a
+        // pressed background because pointer-down captures the pointer;
+        // keyboard activation never captures the pointer, so `pressed` in
+        // `InteractionState` stayed false the whole time.
+        let mut h = harness_with(false);
+        h.focus_on(Some(h.root_id()));
+
+        assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+
+        h.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
+        assert!(h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+        assert!(h.pop_action::<ButtonPress>().is_none(), "not yet activated");
+
+        h.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
+        assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+        assert!(h.pop_action::<ButtonPress>().is_some());
+    }
+
+    #[test]
+    fn losing_focus_mid_press_clears_the_keyboard_pressed_flag() {
+        // Tabbing away (or the window losing focus) while Space is still
+        // physically held down means the key-up that would normally clear
+        // `keyboard_pressed` never reaches this widget — without the
+        // `FocusChanged(false)` handling in `update()`, the pressed fill
+        // would stay stuck the next time the widget paints.
+        let mut h = harness_with(false);
+        h.focus_on(Some(h.root_id()));
+        h.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
+        assert!(h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+
+        h.focus_on(None);
+        assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
     }
 }
