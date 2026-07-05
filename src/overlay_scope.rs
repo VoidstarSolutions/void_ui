@@ -216,7 +216,7 @@ impl OverlayScope {
     /// *window* coordinates; converted here with `to_local` exactly like the
     /// dropdown's scope push (robust to scrolling/transforms between the
     /// scope and the trigger). For
-    /// [`crate::components::popover::PopoverAnchor::ViewportQuarter`],
+    /// [`crate::overlay::OverlayAnchor::ViewportQuarter`],
     /// `anchor_rect_window` is ignored — pass [`Rect::ZERO`] — since
     /// `PortalSlot::layout` centers that variant in its own size rather than
     /// any placement rect.
@@ -831,7 +831,7 @@ mod tests {
     use masonry::testing::TestHarness;
 
     use super::*;
-    use crate::components::popover::PopoverAnchor;
+use crate::overlay::OverlayAnchor;
     use crate::overlay_portal::OwnerKind;
 
     /// Scope content standing in for "the app under the popover": records
@@ -926,7 +926,7 @@ mod tests {
                     owner: None,
                     owner_kind: OwnerKind::Popover,
                     rect: Rect::new(10.0, 10.0, 110.0, 40.0),
-                    anchor: PopoverAnchor::BottomStart,
+                    anchor: OverlayAnchor::BottomStart,
                     gap: 4.0,
                 },
             );
@@ -1021,7 +1021,7 @@ mod tests {
                     owner: None,
                     owner_kind: OwnerKind::Popover,
                     rect: Rect::new(10.0, 10.0, 110.0, 40.0),
-                    anchor: PopoverAnchor::BottomStart,
+                    anchor: OverlayAnchor::BottomStart,
                     gap: 4.0,
                 },
             );
@@ -1061,7 +1061,7 @@ mod tests {
                     owner: None,
                     owner_kind: OwnerKind::Dialog,
                     rect: Rect::ZERO,
-                    anchor: PopoverAnchor::ViewportQuarter,
+                    anchor: OverlayAnchor::ViewportQuarter,
                     gap: 0.0,
                 },
             );

@@ -37,7 +37,7 @@ use masonry::peniko::Color;
 use masonry::properties::Padding;
 use masonry::widgets::ButtonPress;
 
-use super::PopoverAnchor;
+use crate::overlay::OverlayAnchor;
 use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
 use crate::components::click::{self, ClickPhase};
@@ -79,7 +79,7 @@ enum Hosting {
 pub struct PopoverHost {
     hosting: Hosting,
     open: bool,
-    anchor: PopoverAnchor,
+    anchor: OverlayAnchor,
     theme: Theme,
     /// The trigger's own widget id, captured at construction. Used by
     /// `on_action` to ignore bubbled `ButtonPress` actions that originate
@@ -93,7 +93,7 @@ impl PopoverHost {
     pub fn new(
         trigger: NewWidget<impl Widget + ?Sized>,
         mut content: NewWidget<impl Widget + ?Sized>,
-        anchor: PopoverAnchor,
+        anchor: OverlayAnchor,
         theme: &Theme,
     ) -> Self {
         let trigger = trigger.erased();
@@ -125,7 +125,7 @@ impl PopoverHost {
     #[must_use]
     pub(crate) fn new_portal(
         trigger: NewWidget<impl Widget + ?Sized>,
-        anchor: PopoverAnchor,
+        anchor: OverlayAnchor,
         theme: &Theme,
         scope: OverlayScopeHandle,
         key: u64,
@@ -172,7 +172,7 @@ impl PopoverHost {
 
     /// Change the anchor — forwarded immediately to the live `AnchoredOverlay`
     /// in-tree, re-pushed to the scope's slot (if open) in portal mode.
-    pub fn set_anchor(this: &mut WidgetMut<'_, Self>, anchor: PopoverAnchor) {
+    pub fn set_anchor(this: &mut WidgetMut<'_, Self>, anchor: OverlayAnchor) {
         if this.widget.anchor == anchor {
             return;
         }
@@ -477,7 +477,7 @@ impl Widget for PopoverHost {
                                         owner: None,
                                         owner_kind: OwnerKind::Popover,
                                         rect: Rect::ZERO,
-                                        anchor: PopoverAnchor::BottomStart,
+                                        anchor: OverlayAnchor::BottomStart,
                                         gap: 0.0,
                                     },
                                 );
@@ -784,7 +784,7 @@ mod tests {
         let trigger = button("Open", &theme);
         let trigger_id = trigger.id();
         let content = NewWidget::new(Label::new("Content")).erased();
-        let widget = PopoverHost::new(trigger, content, PopoverAnchor::BottomStart, &theme);
+        let widget = PopoverHost::new(trigger, content, OverlayAnchor::BottomStart, &theme);
         let h = TestHarness::create(default_property_set(), NewWidget::new(widget));
         (h, trigger_id)
     }
@@ -838,7 +838,7 @@ mod tests {
         let host = NewWidget::new(PopoverHost::new(
             trigger,
             content,
-            PopoverAnchor::BottomStart,
+            OverlayAnchor::BottomStart,
             &theme,
         ));
 
@@ -908,7 +908,7 @@ mod tests {
         let trigger_id = trigger.id();
         let content = button("Inside", &theme);
         let content_id = content.id();
-        let widget = PopoverHost::new(trigger, content, PopoverAnchor::BottomStart, &theme);
+        let widget = PopoverHost::new(trigger, content, OverlayAnchor::BottomStart, &theme);
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
         h.focus_on(Some(trigger_id));
@@ -937,7 +937,7 @@ mod tests {
         let trigger = masonry::widgets::Label::new("trigger").prepare().erased();
         let host = NewWidget::new(PopoverHost::new_portal(
             trigger,
-            PopoverAnchor::BottomStart,
+            OverlayAnchor::BottomStart,
             &theme,
             handle.clone(),
             key,
@@ -1088,7 +1088,7 @@ mod tests {
         let trigger = masonry::widgets::Label::new("trigger").prepare().erased();
         let host = NewWidget::new(PopoverHost::new_portal(
             trigger,
-            PopoverAnchor::BottomStart,
+            OverlayAnchor::BottomStart,
             &theme,
             handle.clone(),
             key,

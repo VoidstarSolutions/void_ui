@@ -105,7 +105,7 @@ pub(crate) type PortalContentViewState<State, Action> =
 ///
 /// [`crate::components::popover`] registers [`Self::Trigger`] entries: hidden
 /// until [`PortalSlot::set_visible`] shows them anchored to a trigger rect
-/// (in scope-local coordinates) via [`PopoverAnchor`], wrapped in
+/// (in scope-local coordinates) via [`OverlayAnchor`], wrapped in
 /// [`PopoverSurface`] chrome to match in-tree popovers.
 ///
 /// [`crate::components::notification`] registers [`Self::Corner`] entries:
@@ -300,7 +300,7 @@ use masonry::kurbo::{Axis, Point, Rect, Size};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef, UnitPoint};
 
 use crate::components::dropdown_button::widget::ThemedDropdownButton;
-use crate::components::popover::PopoverAnchor;
+use crate::overlay::OverlayAnchor;
 use crate::components::popover::widget::PopoverHost;
 
 /// What kind of widget owns a [`PortalChild`], and therefore how
@@ -334,9 +334,9 @@ pub struct PortalVisibility {
     /// [`crate::overlay_scope::OverlayScope::set_portal_visible`], converted
     /// to the scope's local coordinates before reaching
     /// [`PortalSlot::set_visible`]. Ignored for
-    /// [`PopoverAnchor::ViewportQuarter`] — pass [`Rect::ZERO`].
+    /// [`OverlayAnchor::ViewportQuarter`] — pass [`Rect::ZERO`].
     pub rect: Rect,
-    pub anchor: PopoverAnchor,
+    pub anchor: OverlayAnchor,
     pub gap: f64,
 }
 
@@ -356,7 +356,7 @@ struct PortalChild {
     /// Trigger's anchor rect in the *scope's* local coordinates. Unused for
     /// [`PortalPlacement::Corner`] children.
     placement: Rect,
-    anchor: PopoverAnchor,
+    anchor: OverlayAnchor,
     /// Gap between trigger edge and surface, px, in the open direction.
     /// Unused for [`PortalPlacement::Corner`] children.
     gap: f64,
@@ -374,7 +374,7 @@ impl PortalChild {
             owner_kind: OwnerKind::Popover,
             visible: matches!(mode, PortalPlacement::Corner(_)),
             placement: Rect::ZERO,
-            anchor: PopoverAnchor::BottomStart,
+            anchor: OverlayAnchor::BottomStart,
             gap: 0.0,
             placed: Rect::ZERO,
             mode,
@@ -625,7 +625,7 @@ impl Widget for PortalSlot {
                     // Snug to intrinsic content size — see `AnchoredOverlay::layout`.
                     let mut child_size =
                         ctx.compute_size(&mut child.widget, SizeDef::MIN, LayoutSize::from(size));
-                    if child.anchor == PopoverAnchor::ViewportQuarter {
+                    if child.anchor == OverlayAnchor::ViewportQuarter {
                         // Dialogs (the only `ViewportQuarter` consumer) should
                         // never be taller than they are wide, even if their
                         // content's min-content size is narrow and tall.
@@ -636,7 +636,7 @@ impl Widget for PortalSlot {
                     // in the slot's own size (the scope's content box) instead
                     // of `child.placement`.
                     let container = match child.anchor {
-                        PopoverAnchor::ViewportQuarter => {
+                        OverlayAnchor::ViewportQuarter => {
                             Rect::from_origin_size(Point::ORIGIN, size)
                         }
                         _ => child.placement,
@@ -644,13 +644,13 @@ impl Widget for PortalSlot {
                     let offset = child.anchor.child_offset(container.size(), child_size)
                         + container.origin().to_vec2();
                     let offset = match child.anchor {
-                        PopoverAnchor::BottomStart
-                        | PopoverAnchor::BottomCenter
-                        | PopoverAnchor::BottomEnd => Point::new(offset.x, offset.y + child.gap),
-                        PopoverAnchor::TopStart
-                        | PopoverAnchor::TopCenter
-                        | PopoverAnchor::TopEnd => Point::new(offset.x, offset.y - child.gap),
-                        PopoverAnchor::ViewportQuarter => offset,
+                        OverlayAnchor::BottomStart
+                        | OverlayAnchor::BottomCenter
+                        | OverlayAnchor::BottomEnd => Point::new(offset.x, offset.y + child.gap),
+                        OverlayAnchor::TopStart
+                        | OverlayAnchor::TopCenter
+                        | OverlayAnchor::TopEnd => Point::new(offset.x, offset.y - child.gap),
+                        OverlayAnchor::ViewportQuarter => offset,
                     };
                     ctx.place_child(&mut child.widget, offset);
                     child.placed = Rect::from_origin_size(offset, child_size);
@@ -849,7 +849,7 @@ mod tests {
     use masonry::kurbo::{Point, Rect, Size};
     use masonry::testing::TestHarness;
 
-    use crate::components::popover::PopoverAnchor;
+    use crate::overlay::OverlayAnchor;
 
     fn test_child() -> NewWidget<dyn Widget> {
         masonry::widgets::Label::new("popover body")
@@ -1015,7 +1015,7 @@ mod tests {
                     owner: None,
                     owner_kind: OwnerKind::Popover,
                     rect: placement,
-                    anchor: PopoverAnchor::BottomStart,
+                    anchor: OverlayAnchor::BottomStart,
                     gap: 4.0,
                 },
             );
@@ -1040,7 +1040,7 @@ mod tests {
                     owner: None,
                     owner_kind: OwnerKind::Dialog,
                     rect: Rect::ZERO,
-                    anchor: PopoverAnchor::ViewportQuarter,
+                    anchor: OverlayAnchor::ViewportQuarter,
                     gap: 0.0,
                 },
             );
@@ -1068,7 +1068,7 @@ mod tests {
                     owner: None,
                     owner_kind: OwnerKind::Dialog,
                     rect: Rect::ZERO,
-                    anchor: PopoverAnchor::ViewportQuarter,
+                    anchor: OverlayAnchor::ViewportQuarter,
                     gap: 0.0,
                 },
             );
@@ -1109,7 +1109,7 @@ mod tests {
                     owner: None,
                     owner_kind: OwnerKind::Popover,
                     rect: placement,
-                    anchor: PopoverAnchor::BottomStart,
+                    anchor: OverlayAnchor::BottomStart,
                     gap: 0.0,
                 },
             );
@@ -1136,7 +1136,7 @@ mod tests {
                     owner: None,
                     owner_kind: OwnerKind::Popover,
                     rect: placement,
-                    anchor: PopoverAnchor::BottomStart,
+                    anchor: OverlayAnchor::BottomStart,
                     gap: 0.0,
                 },
             );
@@ -1177,7 +1177,7 @@ mod tests {
                     owner: None,
                     owner_kind: OwnerKind::Popover,
                     rect: placement,
-                    anchor: PopoverAnchor::BottomStart,
+                    anchor: OverlayAnchor::BottomStart,
                     gap: 0.0,
                 },
             );

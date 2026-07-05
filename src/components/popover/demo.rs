@@ -11,8 +11,9 @@ use crate::Theme;
 use crate::components::IconName;
 use crate::components::ScrollBarVisibility;
 use crate::components::button::button;
-use crate::components::popover::{PopoverAnchor, popover};
+use crate::components::popover::popover;
 use crate::label;
+use crate::overlay::OverlayAnchor;
 use crate::overlay_scope::overlay_scope;
 use crate::scroll_container;
 use crate::separator;
@@ -79,7 +80,7 @@ fn anchor_row(theme: &Theme) -> impl WidgetView<PopoverDemo> + use<> {
                         .render(theme),
                     label("BottomStart").render(theme),
                 )
-                .anchor(PopoverAnchor::BottomStart)
+                .anchor(OverlayAnchor::BottomStart)
                 .render(theme),
                 popover(
                     button(|_: &mut PopoverDemo| {})
@@ -88,7 +89,7 @@ fn anchor_row(theme: &Theme) -> impl WidgetView<PopoverDemo> + use<> {
                         .render(theme),
                     label("BottomCenter").render(theme),
                 )
-                .anchor(PopoverAnchor::BottomCenter)
+                .anchor(OverlayAnchor::BottomCenter)
                 .render(theme),
                 popover(
                     button(|_: &mut PopoverDemo| {})
@@ -97,7 +98,7 @@ fn anchor_row(theme: &Theme) -> impl WidgetView<PopoverDemo> + use<> {
                         .render(theme),
                     label("BottomEnd").render(theme),
                 )
-                .anchor(PopoverAnchor::BottomEnd)
+                .anchor(OverlayAnchor::BottomEnd)
                 .render(theme),
             ))
             .cross_axis_alignment(CrossAxisAlignment::Center)
@@ -110,7 +111,7 @@ fn anchor_row(theme: &Theme) -> impl WidgetView<PopoverDemo> + use<> {
                         .render(theme),
                     label("TopStart").render(theme),
                 )
-                .anchor(PopoverAnchor::TopStart)
+                .anchor(OverlayAnchor::TopStart)
                 .render(theme),
                 popover(
                     button(|_: &mut PopoverDemo| {})
@@ -119,7 +120,7 @@ fn anchor_row(theme: &Theme) -> impl WidgetView<PopoverDemo> + use<> {
                         .render(theme),
                     label("TopCenter").render(theme),
                 )
-                .anchor(PopoverAnchor::TopCenter)
+                .anchor(OverlayAnchor::TopCenter)
                 .render(theme),
                 popover(
                     button(|_: &mut PopoverDemo| {})
@@ -128,7 +129,7 @@ fn anchor_row(theme: &Theme) -> impl WidgetView<PopoverDemo> + use<> {
                         .render(theme),
                     label("TopEnd").render(theme),
                 )
-                .anchor(PopoverAnchor::TopEnd)
+                .anchor(OverlayAnchor::TopEnd)
                 .render(theme),
             ))
             .cross_axis_alignment(CrossAxisAlignment::Center)

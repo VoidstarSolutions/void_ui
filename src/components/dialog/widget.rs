@@ -16,7 +16,7 @@ use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Rect, Size};
 use masonry::layout::{LenReq, Length};
 
-use crate::components::popover::PopoverAnchor;
+use crate::overlay::OverlayAnchor;
 use crate::overlay_portal::{OwnerKind, PortalVisibility};
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
@@ -45,7 +45,7 @@ pub struct DialogHost {
 /// shared trait, hence the macro (mirrors `push_open_state_body!` in
 /// `popover/widget.rs`).
 ///
-/// `anchor_rect_window` is ignored for [`PopoverAnchor::ViewportQuarter`]
+/// `anchor_rect_window` is ignored for [`OverlayAnchor::ViewportQuarter`]
 /// (see [`OverlayScope::set_portal_visible`]), so `Rect::ZERO` is passed
 /// unconditionally; likewise there is no gap concept for a centered dialog.
 macro_rules! push_visibility_body {
@@ -69,7 +69,7 @@ macro_rules! push_visibility_body {
                     owner: Some(owner),
                     owner_kind: OwnerKind::Dialog,
                     rect: Rect::ZERO,
-                    anchor: PopoverAnchor::ViewportQuarter,
+                    anchor: OverlayAnchor::ViewportQuarter,
                     gap: 0.0,
                 },
             );

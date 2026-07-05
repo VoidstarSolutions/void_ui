@@ -40,7 +40,7 @@ use crate::anchored_overlay::AnchoredOverlay;
 use crate::components::button::ButtonVariant;
 use crate::components::button::widget::ThemedButton;
 use crate::components::icon::IconName;
-use crate::components::popover::PopoverAnchor;
+use crate::overlay::OverlayAnchor;
 use crate::overlay_portal::{OwnerKind, PortalSlot, PortalVisibility};
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
@@ -118,7 +118,7 @@ macro_rules! close_menu_body {
                                 owner: None,
                                 owner_kind: OwnerKind::DropdownButton,
                                 rect: Rect::ZERO,
-                                anchor: PopoverAnchor::BottomStart,
+                                anchor: OverlayAnchor::BottomStart,
                                 gap: 0.0,
                             },
                         );
@@ -162,7 +162,7 @@ macro_rules! open_menu_body {
                                 owner: Some(owner_id),
                                 owner_kind: OwnerKind::DropdownButton,
                                 rect,
-                                anchor: PopoverAnchor::BottomStart,
+                                anchor: OverlayAnchor::BottomStart,
                                 gap: 0.0,
                             },
                         );
@@ -268,7 +268,7 @@ impl ThemedDropdownButton {
             trigger,
             NewWidget::new(MenuContent::new(items.clone(), theme)),
             false,
-            PopoverAnchor::BottomStart,
+            OverlayAnchor::BottomStart,
         );
         Self {
             hosting: Hosting::InTree {
