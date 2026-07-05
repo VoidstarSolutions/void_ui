@@ -7,7 +7,9 @@
 //! row/header click wrappers, checkbox, toggle, radio, sidebar item,
 //! tabs, collapsible header). Centralizing it means a future change to
 //! the press semantics (pointer-capture loss, cancel rules, non-primary
-//! buttons) lands once instead of drifting across copies.
+//! buttons) lands once instead of drifting across copies. Two sidebar
+//! widgets (`sidebar/panel_widget.rs`, `sidebar/nav_widget.rs`) still
+//! hand-roll the pattern pending a follow-up port.
 //!
 //! The recognizer owns only the *shared* control flow: it captures the
 //! pointer on Down (gated by the caller's hit test in
