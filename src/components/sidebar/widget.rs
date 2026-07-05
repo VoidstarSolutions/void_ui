@@ -30,10 +30,6 @@ use crate::focus_ring::{FOCUS_RING_OUTSET, paint_focus_ring};
 const ACCENT_WIDTH: f64 = 3.0;
 /// Corner radius of the accent bar.
 const ACCENT_RADIUS: f64 = 1.5;
-/// Horizontal gap between the accent area and the label (and right edge).
-const PAD_H: f64 = 8.0;
-/// Vertical padding above and below the label.
-const PAD_V: f64 = 6.0;
 
 /// Themed, interactive sidebar navigation item.
 ///
@@ -194,9 +190,11 @@ impl Widget for ThemedSidebarItem {
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
+        let pad_h = f64::from(self.theme.density.pad_h);
+        let pad_v = f64::from(self.theme.density.pad_v);
         let (main_pad, cross_pad) = match axis {
-            Axis::Horizontal => (ACCENT_WIDTH + 2.0 * PAD_H, 2.0 * PAD_V),
-            Axis::Vertical => (2.0 * PAD_V, ACCENT_WIDTH + 2.0 * PAD_H),
+            Axis::Horizontal => (ACCENT_WIDTH + 2.0 * pad_h, 2.0 * pad_v),
+            Axis::Vertical => (2.0 * pad_v, ACCENT_WIDTH + 2.0 * pad_h),
         };
         let inner_cross = cross_length.map(|c| Length::px((c.get() - cross_pad).max(0.0)));
         let auto_length = len_req.into();
@@ -212,14 +210,16 @@ impl Widget for ThemedSidebarItem {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
+        let pad_h = f64::from(self.theme.density.pad_h);
+        let pad_v = f64::from(self.theme.density.pad_v);
         let inner = Size::new(
-            (size.width - ACCENT_WIDTH - 2.0 * PAD_H).max(0.0),
-            (size.height - 2.0 * PAD_V).max(0.0),
+            (size.width - ACCENT_WIDTH - 2.0 * pad_h).max(0.0),
+            (size.height - 2.0 * pad_v).max(0.0),
         );
         let child_size = ctx.compute_size(&mut self.child, SizeDef::fit(inner), inner.into());
         ctx.run_layout(&mut self.child, child_size);
-        let child_x = ACCENT_WIDTH + PAD_H;
-        let child_y = PAD_V + ((inner.height - child_size.height) * 0.5).max(0.0);
+        let child_x = ACCENT_WIDTH + pad_h;
+        let child_y = pad_v + ((inner.height - child_size.height) * 0.5).max(0.0);
         ctx.place_child(&mut self.child, Point::new(child_x, child_y));
         ctx.derive_baselines(&self.child);
     }
