@@ -126,13 +126,13 @@ fn interactive_examples(
         collapsible(
             "Section with inputs",
             flex_col((
-                checkbox(state.check_a, |s: &mut CollapsibleDemo| {
-                    s.check_a = !s.check_a;
+                checkbox(state.check_a, |s: &mut CollapsibleDemo, checked: bool| {
+                    s.check_a = checked;
                 })
                 .label("Option A")
                 .render(theme),
-                checkbox(state.check_b, |s: &mut CollapsibleDemo| {
-                    s.check_b = !s.check_b;
+                checkbox(state.check_b, |s: &mut CollapsibleDemo, checked: bool| {
+                    s.check_b = checked;
                 })
                 .label("Option B")
                 .render(theme),

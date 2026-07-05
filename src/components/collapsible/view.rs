@@ -8,8 +8,8 @@
 //! collapsible(
 //!     "Advanced options",
 //!     flex_col((
-//!         checkbox("Enable debug mode", |s: &mut State| s.debug = !s.debug)
-//!             .checked(s.debug)
+//!         checkbox(state.debug, |s: &mut State, checked: bool| s.debug = checked)
+//!             .label("Enable debug mode")
 //!             .render(&theme),
 //!     )),
 //!     |s: &mut State| s.advanced_open = !s.advanced_open,

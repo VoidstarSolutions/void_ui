@@ -2,7 +2,7 @@
 //!
 //! ```ignore
 //! use void_ui::components::checkbox;
-//! checkbox(state.enabled, |s: &mut State| s.enabled = !s.enabled)
+//! checkbox(state.enabled, |s: &mut State, checked: bool| s.enabled = checked)
 //!     .label("Enable feature")
 //!     .render(&theme)
 //! ```
@@ -33,8 +33,9 @@ pub struct Checkbox<F> {
 /// Create a new checkbox with the given checked state and toggle callback.
 ///
 /// The callback is invoked on primary-pointer release inside the widget and on
-/// Space / Enter while the widget is focused. The host is responsible for
-/// toggling its own state in the callback.
+/// Space / Enter while the widget is focused. The callback receives the
+/// **new** checked value (`!checked` at the time of the press); the host
+/// stores it in its own state.
 pub fn checkbox<F>(checked: bool, callback: F) -> Checkbox<F> {
     Checkbox {
         checked,
@@ -62,7 +63,7 @@ impl<F> Checkbox<F> {
     where
         State: 'static,
         Action: 'static,
-        F: Fn(&mut State) -> Action + Send + Sync + 'static,
+        F: Fn(&mut State, bool) -> Action + Send + Sync + 'static,
     {
         CheckboxView {
             checked: self.checked,
@@ -94,7 +95,7 @@ impl<F, State, Action> View<State, Action, ViewCtx> for CheckboxView<F, State, A
 where
     State: 'static,
     Action: 'static,
-    F: Fn(&mut State) -> Action + Send + Sync + 'static,
+    F: Fn(&mut State, bool) -> Action + Send + Sync + 'static,
 {
     type Element = Pod<CheckboxWidget>;
     type ViewState = ();
@@ -207,8 +208,28 @@ where
         app_state: &mut State,
     ) -> MessageResult<Action> {
         match message.take_message::<CheckboxPress>() {
-            Some(_) => MessageResult::Action((self.callback)(app_state)),
+            // `checked` is the host-controlled prop this view was rendered
+            // with; the widget never self-toggles, so the new value is its
+            // negation by construction.
+            Some(_) => MessageResult::Action((self.callback)(app_state, !self.checked)),
             None => MessageResult::Stale,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::checkbox;
+    use crate::Theme;
+
+    /// Compile-level contract: the callback receives the NEW checked value.
+    #[test]
+    fn callback_takes_the_new_checked_value() {
+        let theme = Theme::default();
+        let _ = checkbox(false, |s: &mut bool, checked: bool| {
+            *s = checked;
+        })
+        .label("check")
+        .render::<bool, ()>(&theme);
     }
 }

@@ -69,12 +69,18 @@ fn build_inner(theme: &Theme, state: &ToggleDemo) -> impl WidgetView<ToggleDemo>
 
     let bare = with_source!(theme, {
         flex_row((
-            toggle(bare_a, |s: &mut ToggleDemo| s.bare[0] = !s.bare[0]).render(theme),
-            toggle(bare_b, |s: &mut ToggleDemo| s.bare[1] = !s.bare[1]).render(theme),
-            toggle(false, |_: &mut ToggleDemo| {})
+            toggle(bare_a, |s: &mut ToggleDemo, checked: bool| {
+                s.bare[0] = checked;
+            })
+            .render(theme),
+            toggle(bare_b, |s: &mut ToggleDemo, checked: bool| {
+                s.bare[1] = checked;
+            })
+            .render(theme),
+            toggle(false, |_: &mut ToggleDemo, _| {})
                 .disabled(true)
                 .render(theme),
-            toggle(true, |_: &mut ToggleDemo| {})
+            toggle(true, |_: &mut ToggleDemo, _| {})
                 .disabled(true)
                 .render(theme),
         ))
@@ -84,21 +90,21 @@ fn build_inner(theme: &Theme, state: &ToggleDemo) -> impl WidgetView<ToggleDemo>
 
     let labeled = with_source!(theme, {
         flex_row((
-            toggle(labeled_a, |s: &mut ToggleDemo| {
-                s.labeled[0] = !s.labeled[0];
+            toggle(labeled_a, |s: &mut ToggleDemo, checked: bool| {
+                s.labeled[0] = checked;
             })
             .label("Off")
             .render(theme),
-            toggle(labeled_b, |s: &mut ToggleDemo| {
-                s.labeled[1] = !s.labeled[1];
+            toggle(labeled_b, |s: &mut ToggleDemo, checked: bool| {
+                s.labeled[1] = checked;
             })
             .label("On")
             .render(theme),
-            toggle(false, |_: &mut ToggleDemo| {})
+            toggle(false, |_: &mut ToggleDemo, _| {})
                 .label("Disabled off")
                 .disabled(true)
                 .render(theme),
-            toggle(true, |_: &mut ToggleDemo| {})
+            toggle(true, |_: &mut ToggleDemo, _| {})
                 .label("Disabled on")
                 .disabled(true)
                 .render(theme),
