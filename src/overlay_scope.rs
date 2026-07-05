@@ -52,7 +52,7 @@ use xilem_masonry::core::{
 use xilem_masonry::{Pod, ViewCtx, WidgetView};
 
 use crate::Theme;
-use crate::components::popover::widget::{PopoverSurface, SurfaceStyle};
+use crate::overlay::{OverlaySurface, SurfaceStyle};
 use crate::overlay_portal::{
     OverlayPortal, PortalContentView, PortalContentViewState, PortalEntry, PortalPlacement,
     PortalSlot, PortalVisibility, portal_from_env,
@@ -434,7 +434,7 @@ const CONTENT_VIEW_ID: ViewId = ViewId::new(0);
 /// Wrap freshly-built portal content for mounting in the [`PortalSlot`].
 ///
 /// [`PortalPlacement::Trigger`] entries (popovers) get the popover chrome:
-/// density padding on the content, [`PopoverSurface`] for background/border.
+/// density padding on the content, [`OverlaySurface`] for background/border.
 /// Mirrors `PopoverHost::new`'s in-tree wrapping so portal and fallback
 /// popovers look identical.
 ///
@@ -454,7 +454,7 @@ fn wrap_portal_content(
             content
                 .properties
                 .insert(Padding::all(Length::px(f64::from(theme.density.pad))));
-            NewWidget::new(PopoverSurface::new(content, theme, style)).erased()
+            NewWidget::new(OverlaySurface::new(content, theme, style)).erased()
         }
         PortalPlacement::BareTrigger | PortalPlacement::Corner(_) => pod.new_widget.erased(),
     }
@@ -465,7 +465,7 @@ fn wrap_portal_content(
 /// Pod<Passthrough>>>`) builds/rebuilds/tears down directly.
 ///
 /// [`PortalPlacement::Trigger`] slot children are that `Passthrough` wrapped
-/// in [`PopoverSurface`] chrome, so unwrap one layer first.
+/// in [`OverlaySurface`] chrome, so unwrap one layer first.
 /// [`PortalPlacement::BareTrigger`] and [`PortalPlacement::Corner`] slot
 /// children mount the `Passthrough` bare (see [`wrap_portal_content`]), so
 /// `child` (itself type-erased to `dyn Widget`) already *is* it — the
@@ -477,8 +477,8 @@ fn with_portal_content<R>(
 ) -> R {
     match placement {
         PortalPlacement::Trigger => {
-            let mut surface = child.downcast::<PopoverSurface>();
-            f(PopoverSurface::content_mut(&mut surface))
+            let mut surface = child.downcast::<OverlaySurface>();
+            f(OverlaySurface::content_mut(&mut surface))
         }
         PortalPlacement::BareTrigger | PortalPlacement::Corner(_) => f(child),
     }
@@ -709,8 +709,8 @@ where
                             if m.theme != entry.theme {
                                 let mut child = PortalSlot::child_mut(&mut slot, entry.key)
                                     .expect("mounted entry must have a slot child");
-                                let mut surface = child.downcast::<PopoverSurface>();
-                                PopoverSurface::set_theme(&mut surface, &entry.theme);
+                                let mut surface = child.downcast::<OverlaySurface>();
+                                OverlaySurface::set_theme(&mut surface, &entry.theme);
                             }
                         }
                         PortalPlacement::BareTrigger => {}

@@ -47,7 +47,7 @@ use super::widget::{DialogDismissed, DialogHost};
 use crate::Theme;
 use crate::components::button::{ButtonVariant, button};
 use crate::components::icon::IconName;
-use crate::components::popover::widget::SurfaceStyle;
+use crate::overlay::SurfaceStyle;
 use crate::overlay_portal::{OverlayPortal, PortalContentView, PortalPlacement};
 use crate::overlay_scope::root_portal;
 

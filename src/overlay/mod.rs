@@ -9,5 +9,7 @@
 //! component, it belongs in that component's module instead.
 
 mod anchor;
+mod surface;
 
 pub use anchor::OverlayAnchor;
+pub(crate) use surface::{OverlaySurface, SurfaceStyle};

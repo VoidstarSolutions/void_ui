@@ -34,7 +34,7 @@ use super::widget::{
     LabelListHandle, SuggestionList, SuggestionSelected, TextAreaHandle,
 };
 use crate::Theme;
-use crate::components::popover::widget::SurfaceStyle;
+use crate::overlay::SurfaceStyle;
 use crate::overlay_portal::{OverlayPortal, PortalContentView, PortalPlacement, portal_from_env};
 
 type OnChanged<State, Action> = Arc<dyn Fn(&mut State, String) -> Action + Send + Sync + 'static>;
