@@ -333,7 +333,7 @@ impl ThemedButton {
     /// | rest            | transparent  | transparent  | teal_soft  | transparent/border| transparent |
     /// | hover           | `surface_2`  | `coral_soft` | `teal`     | `surface_2`  | `amber_soft` |
     /// | pressed         | `surface_hi` | `coral`      | `teal`     | `surface_hi` | `amber`      |
-    /// | active (toggle) | `surface_2`  | `coral_soft` | `teal_soft`| transparent  | `amber_soft` |
+    /// | active (toggle) | `surface_2`  | `coral_soft` | `teal_soft`| `surface_2`  | `amber_soft` |
     fn resolve_colors(&self, hovered: bool, pressed: bool) -> (Color, Color) {
         let p = &self.theme.palette;
         if self.disabled {
@@ -410,16 +410,20 @@ impl ThemedButton {
                 };
                 (bg, Color::TRANSPARENT)
             }
-            // Ghost: always-visible border, fill on hover/press.
+            // Ghost: always-visible border, fill on hover/press/active.
             ButtonVariant::Ghost => {
                 let bg = if pressed {
                     p.surface_hi
-                } else if hovered {
+                } else if self.active || hovered {
                     p.surface_2
                 } else {
                     Color::TRANSPARENT
                 };
-                let border = if hovered { p.border_strong } else { p.border };
+                let border = if self.active || hovered {
+                    p.border_strong
+                } else {
+                    p.border
+                };
                 (bg, border)
             }
             // Link: no background or border.
