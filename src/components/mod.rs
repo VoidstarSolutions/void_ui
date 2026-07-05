@@ -14,8 +14,10 @@
 
 pub mod alert;
 pub mod autocomplete;
+pub mod badge;
 pub mod button;
 pub mod button_group;
+pub mod card;
 pub mod checkbox;
 pub(crate) mod click;
 pub mod clipboard;
@@ -46,8 +48,10 @@ pub mod tooltip;
 
 pub use alert::{Alert, AlertVariant, alert};
 pub use autocomplete::{Autocomplete, autocomplete};
+pub use badge::{Badge, badge, pill};
 pub use button::{Button, ButtonVariant, ButtonView, button};
 pub use button_group::{ButtonGroup, button_group, toggle_button_group};
+pub use card::{Card, card};
 pub use checkbox::{Checkbox, CheckboxView, checkbox};
 pub use clipboard::{Clipboard, ClipboardView, clipboard};
 pub use code_view::{ReadOnlyText, ReadOnlyTextView, RustHighlighter, read_only_text};
@@ -106,8 +110,10 @@ pub use tooltip::{Tooltip, TooltipView, tooltip};
 pub enum ComponentKind {
     Alert,
     Autocomplete,
+    Badge,
     Button,
     ButtonGroup,
+    Card,
     DropdownButton,
     Checkbox,
     Clipboard,
@@ -143,8 +149,10 @@ impl ComponentKind {
         match self {
             Self::Alert => "Alert",
             Self::Autocomplete => "Autocomplete",
+            Self::Badge => "Badge",
             Self::Button => "Button",
             Self::ButtonGroup => "Button Group",
+            Self::Card => "Card",
             Self::DropdownButton => "Dropdown Button",
             Self::Checkbox => "Checkbox",
             Self::Clipboard => "Clipboard",
@@ -180,8 +188,10 @@ impl ComponentKind {
         &[
             Self::Alert,
             Self::Autocomplete,
+            Self::Badge,
             Self::Button,
             Self::ButtonGroup,
+            Self::Card,
             Self::Checkbox,
             Self::Clipboard,
             Self::CodeView,

@@ -50,7 +50,10 @@ pub enum AlertVariant {
 
 impl AlertVariant {
     /// Foreground / background / border colors for this variant.
-    fn colors(self, palette: &Palette) -> (Color, Color, Color) {
+    ///
+    /// `pub(crate)` so other components (e.g. `badge`) can share the same
+    /// semantic color mapping instead of duplicating it.
+    pub(crate) fn colors(self, palette: &Palette) -> (Color, Color, Color) {
         match self {
             Self::Default => (palette.text, palette.surface, palette.border),
             Self::Info => (palette.blue, palette.blue_soft, palette.blue),
