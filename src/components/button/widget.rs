@@ -452,12 +452,12 @@ impl Widget for ThemedButton {
         // Shared Down→capture / Up-iff-active-and-hovered recognizer
         // (drag out of the button to cancel the press).
         match click::primary_click(ctx, event) {
-            Some(ClickPhase::Down) => {
+            Some(ClickPhase::Down(_)) => {
                 ctx.request_focus();
                 ctx.request_paint_only();
             }
-            Some(ClickPhase::Up(completed)) => {
-                if completed.is_some() {
+            Some(ClickPhase::Up { completed, .. }) => {
+                if completed {
                     if let Some(payload) = &self.clipboard_payload {
                         ctx.set_clipboard(payload.to_string());
                     }
