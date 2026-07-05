@@ -2,14 +2,13 @@
 //! chevron separator, for app-chrome navigation (`Trade Dashboard › Trade dashboard`).
 //!
 //! [`Breadcrumb::render`] composes [`crate::button`], [`crate::icon`], and
-//! [`crate::label`] in a `flex_row`, wrapped in a minimal masonry widget
-//! ([`widget::BreadcrumbNav`]) whose only job is to report
-//! `Role::Navigation` to assistive tech — pure composition alone can't
-//! override its own accessibility role.
+//! [`crate::label`] in a `flex_row`, marking the whole trail as a navigation
+//! landmark and the current segment as `AriaCurrent::Page` via
+//! [`super::access_wrap::annotate`] — pure composition alone can't override
+//! its own accessibility node.
 
 #[cfg(feature = "gallery")]
 pub mod demo;
 mod view;
-mod widget;
 
 pub use view::{Breadcrumb, BreadcrumbSegment, breadcrumb, segment};

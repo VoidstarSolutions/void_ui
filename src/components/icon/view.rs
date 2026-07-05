@@ -14,9 +14,10 @@ use std::borrow::Cow;
 
 use masonry::parley::{FontFamily, FontFamilyName};
 use masonry::peniko::Color;
-use xilem::WidgetView;
+use xilem::{AnyWidgetView, WidgetView};
 
 use crate::Theme;
+use crate::components::access_wrap::{self, AccessAnnotation};
 use crate::label;
 use lucide_icons::Icon as IconName;
 
@@ -28,6 +29,7 @@ pub struct Icon {
     pub(super) name: IconName,
     pub(super) color: Option<Color>,
     pub(super) size: Option<f32>,
+    pub(super) decorative: bool,
 }
 
 impl From<IconName> for Icon {
@@ -36,6 +38,7 @@ impl From<IconName> for Icon {
             name,
             color: None,
             size: None,
+            decorative: false,
         }
     }
 }
@@ -61,6 +64,17 @@ impl Icon {
         self
     }
 
+    /// Hide this icon from assistive tech entirely.
+    ///
+    /// Use for purely decorative glyphs with no semantic content of their
+    /// own (e.g. a chevron used only as a visual separator) — without this,
+    /// a screen reader will try to announce the icon's raw Lucide glyph
+    /// codepoint, which has no meaningful pronunciation.
+    pub fn decorative(mut self) -> Self {
+        self.decorative = true;
+        self
+    }
+
     /// Materialize the xilem view at the supplied theme.
     #[must_use = "View values do nothing unless provided to Xilem."]
     pub fn render<State, Action>(
@@ -74,13 +88,19 @@ impl Icon {
         let ch = char::from(self.name);
         let color = self.color.unwrap_or(theme.palette.text);
         let size = self.size.unwrap_or(theme.density.ui_font_size);
-        label(String::from(ch))
+        let glyph = label(String::from(ch))
             .font(FontFamily::Single(FontFamilyName::Named(Cow::Borrowed(
                 "lucide",
             ))))
             .text_size(size)
             .color(color)
             .line_height(1.0)
-            .render(theme)
+            .render(theme);
+        if self.decorative {
+            Box::new(access_wrap::annotate(glyph, AccessAnnotation::Hidden))
+                as Box<AnyWidgetView<State, Action>>
+        } else {
+            Box::new(glyph) as Box<AnyWidgetView<State, Action>>
+        }
     }
 }

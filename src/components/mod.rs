@@ -12,6 +12,7 @@
 //! component value so that swapping themes is a single state change in
 //! the host, not a tree walk.
 
+pub(crate) mod access_wrap;
 pub mod alert;
 pub mod autocomplete;
 pub mod badge;

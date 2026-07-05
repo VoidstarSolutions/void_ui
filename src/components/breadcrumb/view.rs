@@ -7,7 +7,9 @@
 //! get "last segment styled as current by default" for free by simply not
 //! attaching a callback to it, no separate "is current" flag needed. There is
 //! no custom masonry widget: [`Breadcrumb::render`] composes
-//! [`crate::button`], [`crate::icon`], and [`crate::label`] in a `flex_row`.
+//! [`crate::button`], [`crate::icon`], and [`crate::label`] in a `flex_row`,
+//! marking the whole trail as a navigation landmark and the current segment
+//! as `AriaCurrent::Page` via [`access_wrap::annotate`].
 //!
 //! ```ignore
 //! use void_ui::{breadcrumb, segment};
@@ -19,13 +21,12 @@
 //! ```
 
 use masonry::core::ArcStr;
-use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::layout::Length;
 use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, flex_row};
-use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
+use xilem::{AnyWidgetView, WidgetView};
 
-use super::widget::{BreadcrumbCurrent, BreadcrumbNav};
+use crate::components::access_wrap::{self, AccessAnnotation};
 use crate::{ButtonVariant, IconName, Theme, button, icon, label};
 
 type SelectCallback<State, Action> = Box<dyn Fn(&mut State) -> Action + Send + Sync>;
@@ -99,6 +100,7 @@ impl<State, Action> Breadcrumb<State, Action> {
                     icon(IconName::ChevronRight)
                         .color(theme.palette.text_faint)
                         .size(theme.typography.size_caption)
+                        .decorative()
                         .render(theme),
                 ));
             }
@@ -110,136 +112,16 @@ impl<State, Action> Breadcrumb<State, Action> {
                         .tint(theme.palette.text_muted)
                         .render(theme),
                 ),
-                None => Box::new(BreadcrumbCurrentView {
-                    inner: label(seg.label).color(theme.palette.text).render(theme),
-                }),
+                None => Box::new(access_wrap::annotate(
+                    label(seg.label).color(theme.palette.text).render(theme),
+                    AccessAnnotation::CurrentPage,
+                )),
             };
             children.push(view);
         }
         let trail = flex_row(children)
             .cross_axis_alignment(CrossAxisAlignment::Center)
             .gap(Length::px(f64::from(theme.density.pad) / 3.0));
-        BreadcrumbNavView { inner: trail }
-    }
-}
-
-/// Wraps a breadcrumb trail view in [`BreadcrumbNav`] so it's announced as a
-/// navigation landmark. A thin hand-written [`View`], mirroring the
-/// transparent single-child pattern `xilem_masonry`'s own `sized_box` uses,
-/// since `flex_row` alone has no accessibility-role override to reach for.
-struct BreadcrumbNavView<V> {
-    inner: V,
-}
-
-impl<V> ViewMarker for BreadcrumbNavView<V> {}
-
-impl<State, Action, V> View<State, Action, ViewCtx> for BreadcrumbNavView<V>
-where
-    State: 'static,
-    Action: 'static,
-    V: WidgetView<State, Action>,
-{
-    type Element = Pod<BreadcrumbNav>;
-    type ViewState = V::ViewState;
-
-    fn build(&self, ctx: &mut ViewCtx, state: &mut State) -> (Self::Element, Self::ViewState) {
-        let (child, child_state) = self.inner.build(ctx, state);
-        let widget = BreadcrumbNav::new(child.new_widget);
-        (ctx.create_pod(widget), child_state)
-    }
-
-    fn rebuild(
-        &self,
-        prev: &Self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
-        state: &mut State,
-    ) {
-        let mut child = BreadcrumbNav::child_mut(&mut element);
-        self.inner
-            .rebuild(&prev.inner, view_state, ctx, child.downcast(), state);
-    }
-
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
-    ) {
-        let mut child = BreadcrumbNav::child_mut(&mut element);
-        self.inner.teardown(view_state, ctx, child.downcast());
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        mut element: Mut<'_, Self::Element>,
-        state: &mut State,
-    ) -> MessageResult<Action> {
-        let mut child = BreadcrumbNav::child_mut(&mut element);
-        self.inner
-            .message(view_state, message, child.downcast(), state)
-    }
-}
-
-/// Wraps the trailing current-location segment in [`BreadcrumbCurrent`] so
-/// it's marked `AriaCurrent::Page`. Same shape as [`BreadcrumbNavView`]; see
-/// its docs for why this can't just be a `label()` property.
-struct BreadcrumbCurrentView<V> {
-    inner: V,
-}
-
-impl<V> ViewMarker for BreadcrumbCurrentView<V> {}
-
-impl<State, Action, V> View<State, Action, ViewCtx> for BreadcrumbCurrentView<V>
-where
-    State: 'static,
-    Action: 'static,
-    V: WidgetView<State, Action>,
-{
-    type Element = Pod<BreadcrumbCurrent>;
-    type ViewState = V::ViewState;
-
-    fn build(&self, ctx: &mut ViewCtx, state: &mut State) -> (Self::Element, Self::ViewState) {
-        let (child, child_state) = self.inner.build(ctx, state);
-        let widget = BreadcrumbCurrent::new(child.new_widget);
-        (ctx.create_pod(widget), child_state)
-    }
-
-    fn rebuild(
-        &self,
-        prev: &Self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
-        state: &mut State,
-    ) {
-        let mut child = BreadcrumbCurrent::child_mut(&mut element);
-        self.inner
-            .rebuild(&prev.inner, view_state, ctx, child.downcast(), state);
-    }
-
-    fn teardown(
-        &self,
-        view_state: &mut Self::ViewState,
-        ctx: &mut ViewCtx,
-        mut element: Mut<'_, Self::Element>,
-    ) {
-        let mut child = BreadcrumbCurrent::child_mut(&mut element);
-        self.inner.teardown(view_state, ctx, child.downcast());
-    }
-
-    fn message(
-        &self,
-        view_state: &mut Self::ViewState,
-        message: &mut MessageCtx,
-        mut element: Mut<'_, Self::Element>,
-        state: &mut State,
-    ) -> MessageResult<Action> {
-        let mut child = BreadcrumbCurrent::child_mut(&mut element);
-        self.inner
-            .message(view_state, message, child.downcast(), state)
+        access_wrap::annotate(trail, AccessAnnotation::Navigation)
     }
 }
