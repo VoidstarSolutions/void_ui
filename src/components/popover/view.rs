@@ -26,10 +26,10 @@ use std::sync::Arc;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
-use super::widget::{PopoverHost, PopoverSurface, SurfaceStyle};
+use super::widget::PopoverHost;
 use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
-use crate::overlay::OverlayAnchor;
+use crate::overlay::{OverlayAnchor, OverlaySurface, SurfaceStyle};
 use crate::overlay_portal::{
     OverlayPortal, PortalContentView, PortalContentViewState, PortalPlacement, portal_from_env,
 };
@@ -235,8 +235,8 @@ where
                 );
                 drop(primary);
                 let mut overlay = AnchoredOverlay::overlay_mut(&mut overlay_host);
-                let mut surface = overlay.downcast::<PopoverSurface>();
-                let mut content = PopoverSurface::content_mut(&mut surface);
+                let mut surface = overlay.downcast::<OverlaySurface>();
+                let mut content = OverlaySurface::content_mut(&mut surface);
                 self.content.rebuild(
                     &prev.content,
                     content_vs,
@@ -285,8 +285,8 @@ where
                     .teardown(&mut view_state.trigger_vs, ctx, primary.downcast());
                 drop(primary);
                 let mut overlay = AnchoredOverlay::overlay_mut(&mut overlay_host);
-                let mut surface = overlay.downcast::<PopoverSurface>();
-                let mut content = PopoverSurface::content_mut(&mut surface);
+                let mut surface = overlay.downcast::<OverlaySurface>();
+                let mut content = OverlaySurface::content_mut(&mut surface);
                 self.content.teardown(content_vs, ctx, content.downcast());
             }
         }
@@ -325,8 +325,8 @@ where
                 match result {
                     MessageResult::Nop => {
                         let mut overlay = AnchoredOverlay::overlay_mut(&mut overlay_host);
-                        let mut surface = overlay.downcast::<PopoverSurface>();
-                        let mut content = PopoverSurface::content_mut(&mut surface);
+                        let mut surface = overlay.downcast::<OverlaySurface>();
+                        let mut content = OverlaySurface::content_mut(&mut surface);
                         self.content
                             .message(content_vs, message, content.downcast(), app_state)
                     }

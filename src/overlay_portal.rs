@@ -15,7 +15,7 @@
 //!    on rebuild it refreshes the entry, on teardown it deregisters.
 //! 3. **Mount.** The scope's own view (`OverlayScopeRootView` in
 //!    `overlay_scope.rs`) diffs the registry on every build/rebuild and
-//!    mounts each entry — wrapped in `PopoverSurface` chrome — as a real view
+//!    mounts each entry — wrapped in `OverlaySurface` chrome — as a real view
 //!    child of the scope inside [`PortalSlot`]. The diff iterates to a
 //!    fixpoint because building/rebuilding/tearing-down an entry can itself
 //!    register or deregister *nested* popovers mid-diff. Content is a genuine
@@ -73,7 +73,7 @@ use xilem_masonry::core::{AnyView, Resource, View, ViewPathTracker};
 use xilem_masonry::{Pod, ViewCtx};
 
 use crate::Theme;
-use crate::components::popover::widget::SurfaceStyle;
+use crate::overlay::SurfaceStyle;
 use crate::overlay_scope::OverlayScopeHandle;
 
 /// Erased popover-content view stored in the portal registry. Equivalent to
@@ -106,7 +106,7 @@ pub(crate) type PortalContentViewState<State, Action> =
 /// [`crate::components::popover`] registers [`Self::Trigger`] entries: hidden
 /// until [`PortalSlot::set_visible`] shows them anchored to a trigger rect
 /// (in scope-local coordinates) via [`OverlayAnchor`], wrapped in
-/// [`PopoverSurface`] chrome to match in-tree popovers.
+/// [`OverlaySurface`] chrome to match in-tree popovers.
 ///
 /// [`crate::components::notification`] registers [`Self::Corner`] entries:
 /// always visible, aligned to one of the scope's corners/edges via
@@ -117,7 +117,7 @@ pub(crate) type PortalContentViewState<State, Action> =
 ///
 /// [`crate::components::dropdown_button`] registers [`Self::BareTrigger`]
 /// entries: anchored and shown/hidden exactly like [`Self::Trigger`], but
-/// mounted without [`crate::components::popover::widget::PopoverSurface`]
+/// mounted without [`crate::overlay::OverlaySurface`]
 /// chrome — `MenuContent` already paints its own background/border, and
 /// wrapping it again would double up padding and chrome.
 #[derive(Clone, Copy, Debug, PartialEq)]
