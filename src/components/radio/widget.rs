@@ -30,7 +30,7 @@ const RADIO_DIAMETER: f64 = 14.0;
 const RADIO_GAP: f64 = 6.0;
 /// Circle border stroke width.
 const BORDER_WIDTH: f64 = 1.5;
-/// Radius of the inner selection dot (drawn when `active`).
+/// Radius of the inner selection dot (drawn when `selected`).
 const DOT_RADIUS: f64 = 3.5;
 
 /// Themed radio button widget.

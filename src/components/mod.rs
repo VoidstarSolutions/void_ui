@@ -5,7 +5,7 @@
 //!
 //! ```ignore
 //! use void_ui::components::button;
-//! button("Reset view", |_: &mut State| {}).render(&theme)
+//! button(|_: &mut State| {}).label("Reset view").render(&theme)
 //! ```
 //!
 //! Theme is passed at the render boundary rather than stored on each

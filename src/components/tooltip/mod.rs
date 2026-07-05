@@ -7,7 +7,7 @@
 //! use void_ui::components::{button, tooltip};
 //! tooltip(
 //!     "Reset the chart to defaults",
-//!     button("Reset", |_: &mut State| {}).render(&theme),
+//!     button(|_: &mut State| {}).label("Reset").render(&theme),
 //! )
 //! .render(&theme)
 //! ```
