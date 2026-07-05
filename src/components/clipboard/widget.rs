@@ -33,7 +33,7 @@ const COPIED_DURATION: f64 = 1.5;
 
 fn make_icon(copied: bool, theme: &Theme) -> NewWidget<Label> {
     let (lucide, color) = if copied {
-        (LucideIcon::Check, theme.palette.teal)
+        (LucideIcon::Check, theme.palette.accent)
     } else {
         (LucideIcon::Copy, theme.palette.text_muted)
     };
@@ -79,7 +79,7 @@ impl ClipboardWidget {
         if this.widget.theme != *theme {
             this.widget.theme = *theme;
             let color = if this.widget.copied {
-                theme.palette.teal
+                theme.palette.accent
             } else {
                 theme.palette.text_muted
             };
@@ -106,7 +106,7 @@ impl ClipboardWidget {
             this.widget.copied = copied;
             this.widget.copied_t = 0.0;
             let (lucide, color) = if copied {
-                (LucideIcon::Check, this.widget.theme.palette.teal)
+                (LucideIcon::Check, this.widget.theme.palette.accent)
             } else {
                 (LucideIcon::Copy, this.widget.theme.palette.text_muted)
             };

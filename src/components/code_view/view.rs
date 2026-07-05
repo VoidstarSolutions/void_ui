@@ -160,7 +160,7 @@ where
             self.theme.density.pad,
             self.right_inset,
             self.theme.typography.size_caption,
-            self.theme.palette.teal_soft,
+            self.theme.palette.accent_soft,
         );
         (ctx.create_pod(widget), ())
     }
@@ -201,7 +201,7 @@ where
                 BORDER_WIDTH,
                 self.theme.radius.small,
                 self.theme.density.pad,
-                self.theme.palette.teal_soft,
+                self.theme.palette.accent_soft,
             );
         }
         if (self.theme.typography.size_caption - prev.theme.typography.size_caption).abs()

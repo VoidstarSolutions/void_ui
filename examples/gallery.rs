@@ -233,8 +233,8 @@ fn theme_panel(theme: &Theme) -> impl WidgetView<State> {
         surfaces_block(theme),
         section_header("Accents", theme),
         accents_block(theme),
-        section_header("Domain", theme),
-        domain_block(theme),
+        section_header("Semantic", theme),
+        semantic_block(theme),
         section_header("Text", theme),
         text_block(theme),
         section_header("Density · Radii", theme),
@@ -346,13 +346,34 @@ fn accents_block(theme: &Theme) -> impl WidgetView<State> + use<> {
     .gap(6.0)
 }
 
-fn domain_block(theme: &Theme) -> impl WidgetView<State> + use<> {
+fn semantic_block(theme: &Theme) -> impl WidgetView<State> + use<> {
     let p = &theme.palette;
-    flex_row((
-        swatch_tile("target", p.target, theme),
-        swatch_tile("compare", p.compare, theme),
+    flex_wrap((
+        (
+            swatch_tile("accent", p.accent, theme),
+            swatch_tile("accent_deep", p.accent_deep, theme),
+            swatch_tile("accent_soft", p.accent_soft, theme),
+            swatch_tile("danger", p.danger, theme),
+            swatch_tile("danger_deep", p.danger_deep, theme),
+            swatch_tile("danger_soft", p.danger_soft, theme),
+            swatch_tile("warning", p.warning, theme),
+            swatch_tile("warning_deep", p.warning_deep, theme),
+            swatch_tile("warning_soft", p.warning_soft, theme),
+        ),
+        (
+            swatch_tile("secondary", p.secondary, theme),
+            swatch_tile("secondary_deep", p.secondary_deep, theme),
+            swatch_tile("secondary_soft", p.secondary_soft, theme),
+            swatch_tile("success", p.success, theme),
+            swatch_tile("success_deep", p.success_deep, theme),
+            swatch_tile("success_soft", p.success_soft, theme),
+            swatch_tile("info", p.info, theme),
+            swatch_tile("info_deep", p.info_deep, theme),
+            swatch_tile("info_soft", p.info_soft, theme),
+            swatch_tile("focus", p.focus, theme),
+        ),
     ))
-    .gap(Length::px(6.0))
+    .gap(6.0)
 }
 
 fn text_block(theme: &Theme) -> impl WidgetView<State> + use<> {
@@ -402,6 +423,7 @@ fn density_radii_block(theme: &Theme) -> impl WidgetView<State> + use<> {
         kv("col", format!("{:.0} px", d.col)),
         kv("pad", format!("{:.0} px", d.pad)),
         kv("ui_fs", format!("{:.0} px", d.ui_font_size)),
+        kv("radius.t", format!("{:.0} px", r.tiny)),
         kv("radius.s", format!("{:.0} px", r.small)),
         kv("radius.l", format!("{:.0} px", r.large)),
     ))

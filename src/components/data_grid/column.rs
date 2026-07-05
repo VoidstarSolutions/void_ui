@@ -354,7 +354,7 @@ where
 /// `fmt` projects the displayed (and clipboard) text exactly like
 /// [`text_column`]; `color` picks the label color from the row and the
 /// active [`Theme`] (so it resolves correctly across theme variants —
-/// pass `theme.palette.green` / `theme.palette.coral`, etc.). Number
+/// pass `theme.palette.success` / `theme.palette.danger`, etc.). Number
 /// and string *formatting* is just the `fmt` closure; this adds the
 /// conditional *color* on top.
 pub fn colored_text_column<R, State, F, C>(

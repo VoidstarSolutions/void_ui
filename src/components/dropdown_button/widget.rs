@@ -329,7 +329,7 @@ impl ThemedDropdownButton {
         if disabled {
             theme.palette.text_faint
         } else if variant == ButtonVariant::Link {
-            theme.palette.teal
+            theme.palette.accent
         } else {
             theme.palette.text
         }
@@ -451,7 +451,7 @@ impl ThemedDropdownButton {
             let disabled = this.widget.disabled;
             with_trigger!(this, |trigger| {
                 ThemedButton::set_variant(&mut trigger, variant);
-                // Link gains/loses teal text; other variants share the default color.
+                // Link gains/loses accent text; other variants share the default color.
                 if !disabled
                     && (variant == ButtonVariant::Link || prev_variant == ButtonVariant::Link)
                 {
@@ -861,7 +861,7 @@ mod tests {
         let theme = Theme::default();
         assert_eq!(
             ThemedDropdownButton::text_color_for(&theme, ButtonVariant::Link, false),
-            theme.palette.teal
+            theme.palette.accent
         );
     }
 

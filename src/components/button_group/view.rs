@@ -34,7 +34,6 @@ use xilem::view::{AnyFlexChild, CrossAxisAlignment, FlexExt as _, flex_col, flex
 use xilem::{AnyWidgetView, WidgetView};
 
 use crate::Theme;
-use crate::components::button::widget::CORNER_RADIUS;
 use crate::components::button::{ButtonVariant, button};
 
 /// Returns the appropriate `RoundedRectRadii` for a button at position `i`
@@ -42,10 +41,9 @@ use crate::components::button::{ButtonVariant, button};
 ///
 /// Only the outer edges of the group are rounded; inner edges are square so
 /// adjacent buttons form a seamless segmented control.
-fn position_corners(i: usize, count: usize, vertical: bool) -> RoundedRectRadii {
+fn position_corners(i: usize, count: usize, vertical: bool, r: f64) -> RoundedRectRadii {
     let first = i == 0;
     let last = i + 1 == count;
-    let r = CORNER_RADIUS;
     if vertical {
         RoundedRectRadii::new(
             if first { r } else { 0.0 }, // top_left
@@ -147,7 +145,8 @@ impl<F> ButtonGroup<F> {
         let btn_children: Vec<AnyFlexChild<State, Action>> = (0..count)
             .map(|i| {
                 let cb = self.callback.clone();
-                let corners = position_corners(i, count, self.vertical);
+                let corners =
+                    position_corners(i, count, self.vertical, f64::from(theme.radius.small));
                 button(move |s: &mut State| cb(s, i))
                     .label(self.items[i].clone())
                     .variant(self.variant)

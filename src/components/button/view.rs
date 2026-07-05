@@ -190,7 +190,7 @@ impl<F, State, Action> ButtonView<F, State, Action> {
         } else if let Some(tint) = self.tint {
             tint
         } else if self.variant == ButtonVariant::Link {
-            self.theme.palette.teal
+            self.theme.palette.accent
         } else {
             self.theme.palette.text
         }
@@ -298,7 +298,7 @@ where
         }
         if self.variant != prev.variant {
             ThemedButton::set_variant(&mut element, self.variant);
-            // Link gains/loses teal text; Text and others revert to default.
+            // Link gains/loses accent text; Text and others revert to default.
             if !self.disabled
                 && (self.variant == ButtonVariant::Link || prev.variant == ButtonVariant::Link)
             {
@@ -353,11 +353,13 @@ where
         if self.accessible_name != prev.accessible_name {
             ThemedButton::set_accessibility_label(&mut element, self.accessible_name.clone());
         }
-        if self.corners != prev.corners {
+        if self.corners != prev.corners
+            || (self.corners.is_none() && self.theme.radius != prev.theme.radius)
+        {
             use masonry::kurbo::RoundedRectRadii as R;
             let radii = self
                 .corners
-                .unwrap_or_else(|| R::from_single_radius(super::widget::CORNER_RADIUS));
+                .unwrap_or_else(|| R::from_single_radius(f64::from(self.theme.radius.small)));
             ThemedButton::set_corners(&mut element, radii);
         }
         // Label text is not re-applied here; masonry's Label doesn't expose
@@ -408,12 +410,12 @@ mod tests {
     }
 
     #[test]
-    fn link_variant_uses_teal_text_but_default_icon_color() {
+    fn link_variant_uses_accent_text_but_default_icon_color() {
         let theme = Theme::dark();
         let view = button(|(): &mut ()| ())
             .variant(ButtonVariant::Link)
             .render::<(), ()>(&theme);
-        assert_eq!(view.text_color(), theme.palette.teal);
+        assert_eq!(view.text_color(), theme.palette.accent);
         assert_eq!(view.icon_color(), theme.palette.text);
     }
 

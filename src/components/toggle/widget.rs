@@ -158,13 +158,13 @@ impl ToggleWidget {
         let p = &self.theme.palette;
         if self.disabled {
             return if self.checked {
-                p.teal_soft
+                p.accent_soft
             } else {
                 p.surface_2
             };
         }
         if self.checked {
-            if pressed { p.teal_deep } else { p.teal }
+            if pressed { p.accent_deep } else { p.accent }
         } else if pressed || hovered {
             p.surface_hi
         } else {
@@ -176,7 +176,7 @@ impl ToggleWidget {
         if self.disabled {
             self.theme.palette.text_faint
         } else {
-            // Near-white with a slight cool tint — readable on both teal and gray tracks.
+            // Near-white with a slight cool tint — readable on both accent and gray tracks.
             crate::theme::oklch(0.97, 0.005, 240.0)
         }
     }

@@ -385,7 +385,7 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
                 Size::new((w - 2.0 * inset).max(0.0), (h - 2.0 * inset).max(0.0)),
             );
             painter
-                .stroke(focus_rect, &Stroke::new(FOCUS_RING_WIDTH), p.teal)
+                .stroke(focus_rect, &Stroke::new(FOCUS_RING_WIDTH), p.focus)
                 .draw();
         }
 

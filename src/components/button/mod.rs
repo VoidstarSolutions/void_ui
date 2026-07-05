@@ -19,21 +19,21 @@ pub enum ButtonVariant {
     /// Neutral — the default Tessera `.tb-btn` style.
     #[default]
     Default,
-    /// Destructive action — coral accent tones on hover and active.
+    /// Destructive action — danger accent tones on hover and active.
     Danger,
-    /// Primary action — teal fill, always-visible background.
+    /// Primary action — accent fill, always-visible background.
     Primary,
-    /// Secondary action — violet accent tones, less prominent than Primary.
+    /// Secondary action — secondary accent tones, less prominent than Primary.
     Secondary,
-    /// Destructive-adjacent caution — amber accent tones.
+    /// Destructive-adjacent caution — warning accent tones.
     Warning,
-    /// Positive confirmation — green accent tones.
+    /// Positive confirmation — success accent tones.
     Success,
-    /// Neutral information — blue accent tones.
+    /// Neutral information — info accent tones.
     Info,
     /// Subtle — always-visible border, no fill until hover.
     Ghost,
-    /// Hyperlink style — teal text, no background or border.
+    /// Hyperlink style — accent text, no background or border.
     Link,
     /// Completely flat — no background, no border, no hover fill.
     Text,

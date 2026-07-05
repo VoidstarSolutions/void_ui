@@ -39,6 +39,6 @@ where
     S: for<'a> PaintShape<'a>,
 {
     painter
-        .stroke(shape, &Stroke::new(FOCUS_RING_WIDTH), theme.palette.teal)
+        .stroke(shape, &Stroke::new(FOCUS_RING_WIDTH), theme.palette.focus)
         .draw();
 }

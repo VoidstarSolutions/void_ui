@@ -41,8 +41,6 @@ use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
 /// Vertical padding above/below the suggestion list content.
 const LIST_PAD_V: f64 = 4.0;
-/// Suggestion list chrome corner radius.
-const LIST_CORNER: f64 = 5.0;
 /// Suggestion list border stroke width.
 const LIST_BORDER: f64 = 1.0;
 /// Inset of the keyboard-highlight ring from the item bounds.
@@ -269,8 +267,8 @@ impl Widget for SuggestionList {
         painter: &mut Painter<'_>,
     ) {
         let p = &self.theme.palette;
-        let bg_rect =
-            RoundedRect::from_origin_size(Point::ORIGIN, ctx.border_box_size(), LIST_CORNER);
+        let corner = f64::from(self.theme.radius.small);
+        let bg_rect = RoundedRect::from_origin_size(Point::ORIGIN, ctx.border_box_size(), corner);
         painter.fill(bg_rect, p.surface_hi).draw();
         painter
             .stroke(bg_rect, &Stroke::new(LIST_BORDER), p.border_strong)
@@ -953,10 +951,10 @@ fn apply_chrome_theme(sb: &mut WidgetMut<'_, SizedBox>, theme: &Theme) {
         let mut ta = widgets::TextInput::text_mut(ti);
         ta.insert_prop(ContentColor::new(theme.palette.text));
         ta.insert_prop(CaretColor {
-            color: theme.palette.teal,
+            color: theme.palette.accent,
         });
         ta.insert_prop(SelectionColor {
-            color: theme.palette.teal_soft,
+            color: theme.palette.accent_soft,
         });
         widgets::TextArea::insert_style(
             &mut ta,

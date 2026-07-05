@@ -24,8 +24,6 @@ use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 
 /// Vertical padding above and below the item list.
 const MENU_PAD_V: f64 = 4.0;
-/// Corner radius of the menu's background chrome.
-const CORNER_RADIUS: f64 = 5.0;
 /// Border width of the menu's background chrome.
 const BORDER_WIDTH: f64 = 1.0;
 /// Inset of the keyboard-highlight ring from its item's bounds.
@@ -288,8 +286,8 @@ impl Widget for MenuContent {
         // Background/border chrome — formerly drawn by the wrapping
         // `PopoverLayer` (`popover_layer.rs::paint`); `MenuContent` now paints
         // it directly since it's hosted in-tree, with no such wrapper.
-        let bg_rect =
-            RoundedRect::from_origin_size(Point::ORIGIN, ctx.border_box_size(), CORNER_RADIUS);
+        let corner = f64::from(self.theme.radius.small);
+        let bg_rect = RoundedRect::from_origin_size(Point::ORIGIN, ctx.border_box_size(), corner);
         painter.fill(bg_rect, p.surface_hi).draw();
         painter
             .stroke(bg_rect, &Stroke::new(BORDER_WIDTH), p.border_strong)

@@ -186,10 +186,10 @@ pub(crate) fn text_area_props(theme: &Theme) -> PropertySet {
     let mut props = PropertySet::new();
     props.insert(ContentColor::new(theme.palette.text));
     props.insert(CaretColor {
-        color: theme.palette.teal,
+        color: theme.palette.accent,
     });
     props.insert(SelectionColor {
-        color: theme.palette.teal_soft,
+        color: theme.palette.accent_soft,
     });
     props
 }
@@ -386,10 +386,10 @@ where
         if theme_changed {
             text_area.insert_prop(ContentColor::new(self.theme.palette.text));
             text_area.insert_prop(CaretColor {
-                color: self.theme.palette.teal,
+                color: self.theme.palette.accent,
             });
             text_area.insert_prop(SelectionColor {
-                color: self.theme.palette.teal_soft,
+                color: self.theme.palette.accent_soft,
             });
             widgets::TextArea::insert_style(
                 &mut text_area,

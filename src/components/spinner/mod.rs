@@ -7,7 +7,7 @@
 //! use void_ui::spinner;
 //!
 //! spinner().render(&theme)
-//! spinner().color(theme.palette.teal).size(24.0).render(&theme)
+//! spinner().color(theme.palette.accent).size(24.0).render(&theme)
 //! ```
 
 #[cfg(feature = "gallery")]

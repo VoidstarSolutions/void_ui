@@ -125,13 +125,13 @@ impl ThemedRadio {
             return (p.text_faint, p.text_faint);
         }
         let ring = if self.active || pressed {
-            p.teal
+            p.accent
         } else if hovered {
             p.border_strong
         } else {
             p.border
         };
-        let dot = p.teal;
+        let dot = p.accent;
         (ring, dot)
     }
 }

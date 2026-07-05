@@ -452,11 +452,11 @@ impl SliderWidget {
             return (p.surface_2, p.text_faint, p.text_faint);
         }
         let thumb = if active || hovered {
-            p.teal_deep
+            p.accent_deep
         } else {
-            p.teal
+            p.accent
         };
-        (p.surface_2, p.teal, thumb)
+        (p.surface_2, p.accent, thumb)
     }
 
     /// A bar spanning `[main_start, main_end]` along the main axis, centered

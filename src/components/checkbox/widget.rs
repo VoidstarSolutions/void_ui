@@ -26,8 +26,6 @@ use crate::Theme;
 use crate::components::icon::{IconName, icon};
 use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 
-/// Corner radius of the checkbox box.
-const BOX_RADIUS: f64 = 3.0;
 /// Stroke width of the box border.
 const BOX_BORDER: f64 = 1.0;
 /// Gap between the box edge and the focus ring.
@@ -59,7 +57,7 @@ impl CheckboxWidget {
             if disabled {
                 theme.palette.text_faint
             } else {
-                theme.palette.teal
+                theme.palette.accent
             }
         } else {
             Color::TRANSPARENT
@@ -91,7 +89,7 @@ impl CheckboxWidget {
             if disabled {
                 theme.palette.text_faint
             } else {
-                theme.palette.teal
+                theme.palette.accent
             }
         } else {
             Color::TRANSPARENT
@@ -183,11 +181,11 @@ impl CheckboxWidget {
         }
         if self.checked {
             let bg = if pressed || hovered {
-                p.teal
+                p.accent
             } else {
-                p.teal_soft
+                p.accent_soft
             };
-            (bg, p.teal)
+            (bg, p.accent)
         } else {
             let bg = if pressed {
                 p.surface_hi
@@ -379,10 +377,11 @@ impl Widget for CheckboxWidget {
         let box_x = PAD;
         let box_y = PAD + ((content_h - box_sz) * 0.5).max(0.0);
 
+        let box_radius = f64::from(self.theme.radius.tiny);
         let box_rect = RoundedRect::from_origin_size(
             Point::new(box_x, box_y),
             Size::new(box_sz, box_sz),
-            BOX_RADIUS,
+            box_radius,
         );
 
         let (bg, border) = self.resolve_box_colors(hovered, pressed);
@@ -398,7 +397,7 @@ impl Widget for CheckboxWidget {
             let focus_rect = RoundedRect::from_origin_size(
                 Point::new(box_x - inset, box_y - inset),
                 Size::new(box_sz + 2.0 * inset, box_sz + 2.0 * inset),
-                BOX_RADIUS + inset,
+                box_radius + inset,
             );
             paint_focus_ring(painter, focus_rect, &self.theme);
         }
