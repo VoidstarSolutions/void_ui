@@ -642,7 +642,7 @@ impl Widget for ResizableWidget {
                     .stroke(
                         focus_rect,
                         &Stroke::new(FOCUS_RING_WIDTH),
-                        self.theme.palette.teal,
+                        self.theme.palette.focus,
                     )
                     .draw();
             }
