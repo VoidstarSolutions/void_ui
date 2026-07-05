@@ -23,11 +23,28 @@
 //! `ChildFocusChanged(false)` fires reliably. Portal popovers close only via
 //! outside press, Escape, or trigger toggle — the content is not a
 //! descendant, so Tab-away focus loss does not reach the host.
+//!
+//! ## Open-state modes
+//!
+//! - **Uncontrolled** (default, no `.open()` supplied on the view): exactly
+//!   the behavior above, plus [`PopoverOpenChanged`] (`new_state`) is
+//!   submitted on every open/close transition — trigger click, keyboard
+//!   activation, Escape, focus-out dismissal, stash-close, or portal
+//!   outside-press ([`PopoverHost::mark_closed`]).
+//! - **Controlled** (`.open(bool)` supplied): the widget mirrors the prop.
+//!   Internal user intents do *not* mutate `open` or push visibility — they
+//!   only submit `PopoverOpenChanged(desired)`; the host is expected to
+//!   update its own state in `on_open_change`, and the next rebuild applies
+//!   it via [`PopoverHost::set_open`]. Two safety exceptions force-close the
+//!   visuals in both modes (with `PopoverOpenChanged(false)` still
+//!   submitted): `Update::StashedChanged(true)` (a stashed trigger can't be
+//!   clicked to dismiss) and the portal slot's own outside-press dismissal
+//!   (the slot has already hidden the content before `mark_closed` runs).
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
     AccessCtx, ActionCtx, ChildrenIds, ComposeCtx, ErasedAction, EventCtx, LayoutCtx, MeasureCtx,
-    NewWidget, NoAction, PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, Update,
+    NewWidget, PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, Update,
     UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
@@ -47,6 +64,13 @@ use crate::overlay_scope::OverlayScopeHandle;
 fn surface_gap(theme: &Theme) -> Length {
     Length::px(f64::from(theme.density.pad) / 3.0)
 }
+
+/// Action emitted by [`PopoverHost`] whenever its open state changes — or,
+/// in controlled mode, whenever the user *requests* a change (the widget
+/// does not self-toggle then; the host applies the new state via
+/// [`PopoverHost::set_open`], typically by updating the `.open(bool)` prop).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PopoverOpenChanged(pub bool);
 
 /// How this host mounts its content: permanently in-tree (fallback, no
 /// scope ancestor), or portal-mounted in the nearest scope's `PortalSlot`
@@ -70,6 +94,9 @@ enum Hosting {
 pub struct PopoverHost {
     hosting: Hosting,
     open: bool,
+    /// When true, `open` mirrors a host prop and internal toggles only
+    /// submit [`PopoverOpenChanged`] instead of self-mutating.
+    controlled: bool,
     anchor: OverlayAnchor,
     theme: Theme,
     /// The trigger's own widget id, captured at construction. Used by
@@ -105,6 +132,7 @@ impl PopoverHost {
                 overlay_host: NewWidget::new(overlay_host).to_pod(),
             },
             open: false,
+            controlled: false,
             anchor,
             theme: *theme,
             trigger_id,
@@ -129,10 +157,19 @@ impl PopoverHost {
                 binding: PortalBinding::new(scope, key, popover_dismiss_hook),
             },
             open: false,
+            controlled: false,
             anchor,
             theme: *theme,
             trigger_id,
         }
+    }
+
+    /// Set the initial open state and whether it is host-controlled.
+    #[must_use]
+    pub fn with_open_state(mut self, open: bool, controlled: bool) -> Self {
+        self.open = open;
+        self.controlled = controlled;
+        self
     }
 }
 
@@ -196,11 +233,37 @@ impl PopoverHost {
     /// content (outside press). The slot already hid the content; this
     /// only keeps the trigger's notion of "open" honest so the next click
     /// re-opens instead of "closing" an already-closed popover.
+    ///
+    /// Both modes set `open` to `false` here: the slot already hid the
+    /// content, so the mirror must go false or the next trigger click would
+    /// "close" a closed popover. Controlled hosts observe
+    /// [`PopoverOpenChanged`] and re-apply `true` via [`Self::set_open`] if
+    /// they disagree.
     pub(crate) fn mark_closed(this: &mut WidgetMut<'_, Self>) {
         if this.widget.open {
             this.widget.open = false;
+            this.ctx
+                .submit_action::<PopoverOpenChanged>(PopoverOpenChanged(false));
             this.ctx.request_paint_only();
         }
+    }
+
+    /// Apply a host-driven open state (the rebuild path for `.open(bool)`).
+    /// Pushes visibility to whichever host mounts the content; no-op when the
+    /// value is already current, so it is safe to call on every rebuild.
+    pub fn set_open(this: &mut WidgetMut<'_, Self>, open: bool) {
+        if this.widget.open == open {
+            return;
+        }
+        this.widget.open = open;
+        this.widget.push_open_state(&mut this.ctx, open);
+        this.ctx.request_paint_only();
+    }
+
+    /// Switch between controlled and uncontrolled mode (the rebuild path for
+    /// a view that gains/loses its `.open(bool)` prop across rebuilds).
+    pub fn set_controlled(this: &mut WidgetMut<'_, Self>, controlled: bool) {
+        this.widget.controlled = controlled;
     }
 
     /// Mutable access to the `overlay_host` for the view layer's in-tree
@@ -278,7 +341,7 @@ impl PopoverHost {
 
 // --- MARK: IMPL WIDGET
 impl Widget for PopoverHost {
-    type Action = NoAction;
+    type Action = PopoverOpenChanged;
 
     fn on_pointer_event(
         &mut self,
@@ -293,9 +356,12 @@ impl Widget for PopoverHost {
             Some(ClickPhase::Up {
                 completed: true, ..
             }) => {
-                let open = !self.open;
-                self.open = open;
-                self.push_open_state(ctx, open);
+                let desired = !self.open;
+                if !self.controlled {
+                    self.open = desired;
+                    self.push_open_state(ctx, desired);
+                }
+                ctx.submit_action::<Self::Action>(PopoverOpenChanged(desired));
                 ctx.request_paint_only();
             }
             _ => {}
@@ -316,8 +382,11 @@ impl Widget for PopoverHost {
             && self.open
         {
             ctx.set_handled();
-            self.open = false;
-            self.push_open_state(ctx, false);
+            if !self.controlled {
+                self.open = false;
+                self.push_open_state(ctx, false);
+            }
+            ctx.submit_action::<Self::Action>(PopoverOpenChanged(false));
             ctx.request_paint_only();
         }
     }
@@ -346,9 +415,12 @@ impl Widget for PopoverHost {
             && source == self.trigger_id
         {
             ctx.set_handled();
-            let open = !self.open;
-            self.open = open;
-            self.push_open_state(ctx, open);
+            let desired = !self.open;
+            if !self.controlled {
+                self.open = desired;
+                self.push_open_state(ctx, desired);
+            }
+            ctx.submit_action::<Self::Action>(PopoverOpenChanged(desired));
             ctx.request_paint_only();
         }
     }
@@ -367,15 +439,28 @@ impl Widget for PopoverHost {
     /// the scope's outside-press dismissal handles it instead.
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
-            Update::WidgetAdded | Update::FocusChanged(_) => {
+            Update::WidgetAdded => {
+                if self.open {
+                    // Applies an initially-open popover once mounted. For a
+                    // portal popover layout hasn't run yet, so the pushed
+                    // anchor rect starts at the origin; `compose` (armed by
+                    // the push) re-anchors it right after the first layout.
+                    self.push_open_state(ctx, true);
+                }
+                ctx.request_paint_only();
+            }
+            Update::FocusChanged(_) => {
                 ctx.request_paint_only();
             }
             Update::ChildFocusChanged(false) if self.open => {
                 if let Hosting::InTree { overlay_host } = &mut self.hosting {
-                    self.open = false;
-                    ctx.mutate_child_later(overlay_host, |mut w| {
-                        AnchoredOverlay::set_overlay_visible(&mut w, false);
-                    });
+                    if !self.controlled {
+                        self.open = false;
+                        ctx.mutate_child_later(overlay_host, |mut w| {
+                            AnchoredOverlay::set_overlay_visible(&mut w, false);
+                        });
+                    }
+                    ctx.submit_action::<Self::Action>(PopoverOpenChanged(false));
                     ctx.request_paint_only();
                 }
             }
@@ -384,10 +469,15 @@ impl Widget for PopoverHost {
             // popover, and the overlay would stay visible/painted once the
             // host is unstashed even though `self.open` is now false. Close
             // eagerly — mirrors `ThemedDropdownButton`'s disabled-mid-open
-            // close — for both hosting modes.
+            // close — for both hosting modes. This is a safety close: it
+            // force-closes visuals even in controlled mode (the widget still
+            // reports the change via `PopoverOpenChanged`; the host is
+            // expected to re-apply `true` via `set_open` on its next rebuild
+            // if it disagrees).
             Update::StashedChanged(true) if self.open => {
                 self.open = false;
                 self.push_open_state(ctx, false);
+                ctx.submit_action::<Self::Action>(PopoverOpenChanged(false));
                 ctx.request_paint_only();
             }
             _ => {}
@@ -946,5 +1036,54 @@ mod tests {
             (after.y0 - before.y0 - 30.0).abs() < 1e-6,
             "re-anchored placement must track the scroll translation"
         );
+    }
+
+    /// Uncontrolled hosts observe every open/close transition via
+    /// `PopoverOpenChanged` — the view's `on_open_change` contract.
+    #[test]
+    fn toggling_submits_open_changed_actions() {
+        let (mut h, trigger_id) = harness();
+        h.focus_on(Some(trigger_id));
+
+        h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
+        assert_eq!(
+            h.pop_action::<PopoverOpenChanged>().map(|(a, _)| a),
+            Some(PopoverOpenChanged(true))
+        );
+        h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Escape)));
+        assert_eq!(
+            h.pop_action::<PopoverOpenChanged>().map(|(a, _)| a),
+            Some(PopoverOpenChanged(false))
+        );
+    }
+
+    /// In controlled mode the widget never self-toggles: a trigger activation
+    /// submits the *desired* state and leaves `open` for the host to apply
+    /// via `set_open`.
+    #[test]
+    fn controlled_mode_suppresses_internal_toggling() {
+        let theme = Theme::dark();
+        let trigger = button("Open", &theme);
+        let trigger_id = trigger.id();
+        let content = NewWidget::new(Label::new("Content")).erased();
+        let widget = PopoverHost::new(trigger, content, OverlayAnchor::BottomStart, &theme)
+            .with_open_state(false, true);
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+
+        h.focus_on(Some(trigger_id));
+        h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
+        assert!(
+            !h.edit_root_widget(|wm| wm.widget.open),
+            "controlled popover must not self-open"
+        );
+        assert_eq!(
+            h.pop_action::<PopoverOpenChanged>().map(|(a, _)| a),
+            Some(PopoverOpenChanged(true)),
+            "controlled popover must report the desired state"
+        );
+
+        // Host applies the prop: set_open flips the widget + overlay.
+        h.edit_root_widget(|mut wm| PopoverHost::set_open(&mut wm, true));
+        assert!(h.edit_root_widget(|wm| wm.widget.open));
     }
 }

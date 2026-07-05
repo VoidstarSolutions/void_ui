@@ -20,7 +20,9 @@ use crate::separator;
 use crate::with_source;
 
 #[derive(Debug, Default)]
-struct PopoverDemo;
+struct PopoverDemo {
+    controlled_open: bool,
+}
 
 type InnerView = Box<AnyWidgetView<PopoverDemo>>;
 type InnerViewState = <InnerView as View<PopoverDemo, (), ViewCtx>>::ViewState;
@@ -139,7 +141,32 @@ fn anchor_row(theme: &Theme) -> impl WidgetView<PopoverDemo> + use<> {
     })
 }
 
-fn build_inner(theme: &Theme) -> impl WidgetView<PopoverDemo> + use<> {
+fn controlled_row(theme: &Theme, open: bool) -> impl WidgetView<PopoverDemo> + use<> {
+    with_source!(theme, {
+        flex_row((
+            popover(
+                button(|_: &mut PopoverDemo| {})
+                    .label("Controlled")
+                    .render(theme),
+                label("Open state lives in app state.").render(theme),
+            )
+            .open(open)
+            .on_open_change(|s: &mut PopoverDemo, open| s.controlled_open = open)
+            .render(theme),
+            button(move |s: &mut PopoverDemo| s.controlled_open = !s.controlled_open)
+                .label(if open {
+                    "Close from outside"
+                } else {
+                    "Open from outside"
+                })
+                .render(theme),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .gap(Length::px(8.0))
+    })
+}
+
+fn build_inner(theme: &Theme, state: &PopoverDemo) -> impl WidgetView<PopoverDemo> + use<> {
     let header = |text: &'static str| {
         label(text)
             .text_size(theme.typography.size_caption)
@@ -169,6 +196,8 @@ fn build_inner(theme: &Theme) -> impl WidgetView<PopoverDemo> + use<> {
             basic_row(theme),
             header("Anchor Variants"),
             anchor_row(theme),
+            header("Controlled"),
+            controlled_row(theme, state.controlled_open),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(16.0)),
@@ -186,8 +215,8 @@ impl<S: 'static> View<S, (), ViewCtx> for PopoverDemoPanel {
     type Element = Pod<Passthrough>;
 
     fn build(&self, ctx: &mut ViewCtx, _: &mut S) -> (Self::Element, Self::ViewState) {
-        let mut state = PopoverDemo;
-        let inner_view: InnerView = Box::new(build_inner(&self.theme));
+        let mut state = PopoverDemo::default();
+        let inner_view: InnerView = Box::new(build_inner(&self.theme, &state));
         let (element, inner_state) = inner_view.build(ctx, &mut state);
         (
             element,
@@ -207,7 +236,7 @@ impl<S: 'static> View<S, (), ViewCtx> for PopoverDemoPanel {
         element: Mut<'_, Pod<Passthrough>>,
         _: &mut S,
     ) {
-        let new_inner: InnerView = Box::new(build_inner(&self.theme));
+        let new_inner: InnerView = Box::new(build_inner(&self.theme, &vs.state));
         new_inner.rebuild(
             &vs.inner_view,
             &mut vs.inner_state,
