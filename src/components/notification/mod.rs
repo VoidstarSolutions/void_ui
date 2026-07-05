@@ -8,8 +8,8 @@
 //!
 //! notification("Saved successfully.")
 //!     .variant(AlertVariant::Success)
-//!     .with_timeout(Duration::from_secs(3))
 //!     .on_close(|s: &mut State| s.dismiss())
+//!     .with_timeout(Duration::from_secs(3))
 //!     .render(&theme)
 //! ```
 
@@ -20,5 +20,6 @@ mod widget;
 
 pub use view::{
     DEFAULT_NOTIFICATION_WIDTH, DEFAULT_TIMEOUT, Notification, NotificationPosition,
-    NotificationView, notification, notification_layer, notification_overlay, notification_stack,
+    NotificationView, OnClose, notification, notification_layer, notification_overlay,
+    notification_stack,
 };

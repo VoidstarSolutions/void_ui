@@ -13,8 +13,8 @@
 //!
 //! notification("Saved successfully.")
 //!     .variant(AlertVariant::Success)
-//!     .with_timeout(Duration::from_secs(3))
 //!     .on_close(|s: &mut State| s.dismiss_toast(id))
+//!     .with_timeout(Duration::from_secs(3))
 //!     .render(&theme)
 //! ```
 //!
@@ -43,6 +43,26 @@ use crate::overlay::SurfaceStyle;
 use crate::overlay_portal::{PortalContentView, PortalPlacement, portal_from_env};
 use crate::{AlertVariant, IconName, Theme};
 
+/// Attached close callback for a [`Notification`] — see
+/// [`Notification::on_close`]. Wrapping (rather than storing `F` bare)
+/// makes [`Notification::with_timeout`] only nameable once a callback
+/// exists, so "auto-dismiss with nobody to notify" cannot compile.
+#[derive(Clone)]
+pub struct OnClose<F>(F);
+
+impl<State, Action, F> CloseCallback<State, Action> for OnClose<F>
+where
+    F: Fn(&mut State) -> Action + Send + Sync + 'static,
+{
+    fn enabled() -> bool {
+        true
+    }
+
+    fn call(&self, state: &mut State) -> Action {
+        (self.0)(state)
+    }
+}
+
 /// Default auto-dismiss delay, matching gpui-component's notification default.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -61,7 +81,6 @@ pub struct Notification<C = ()> {
     icon: Option<IconName>,
     show_icon: bool,
     timeout: Option<Duration>,
-    timeout_explicit: bool,
     created_at: Instant,
     on_close: C,
 }
@@ -69,8 +88,9 @@ pub struct Notification<C = ()> {
 /// Create a notification with the given message.
 ///
 /// Defaults to [`AlertVariant::Default`] (no accent color, no icon) and a
-/// [`DEFAULT_TIMEOUT`] auto-dismiss countdown (only takes effect once
-/// [`Notification::on_close`] is set — see [`Self::with_timeout`]).
+/// [`DEFAULT_TIMEOUT`] auto-dismiss countdown (the countdown only arms once
+/// [`Notification::on_close`] is set; [`Self::with_timeout`] is likewise
+/// only available after it).
 /// `created_at` defaults to [`Instant::now`] at the point this builder is
 /// constructed — override with [`Self::created_at`] if this notification's
 /// host widget may be reused for a different toast across rebuilds (see that
@@ -83,7 +103,6 @@ pub fn notification(message: impl Into<ArcStr>) -> Notification {
         icon: None,
         show_icon: true,
         timeout: Some(DEFAULT_TIMEOUT),
-        timeout_explicit: false,
         created_at: Instant::now(),
         on_close: (),
     }
@@ -116,26 +135,9 @@ impl<C> Notification<C> {
         self
     }
 
-    /// Auto-dismiss after `duration` of being shown.
-    ///
-    /// The countdown starts from [`Self::created_at`] (which defaults to
-    /// [`Instant::now`] at the time [`notification`] was called) —
-    /// override it explicitly if this card's host widget may be reused for
-    /// a different toast across rebuilds, e.g. in a `flex_col` stack.
-    ///
-    /// Requires [`Self::on_close`] — with no callback there is nothing to
-    /// notify when the timeout elapses, so [`Self::render`] panics if this
-    /// is called without one.
-    pub fn with_timeout(mut self, duration: Duration) -> Self {
-        self.timeout = Some(duration);
-        self.timeout_explicit = true;
-        self
-    }
-
     /// Disable auto-dismiss; the card persists until the user clicks X.
     pub fn no_timeout(mut self) -> Self {
         self.timeout = None;
-        self.timeout_explicit = false;
         self
     }
 
@@ -157,7 +159,10 @@ impl<C> Notification<C> {
 
     /// Show a close (X) button and arm the auto-dismiss timer (if any);
     /// both invoke `on_close` when triggered.
-    pub fn on_close<F>(self, on_close: F) -> Notification<F> {
+    ///
+    /// Returns the timeout-capable builder state — [`Self::with_timeout`] is
+    /// only available after this call.
+    pub fn on_close<F>(self, on_close: F) -> Notification<OnClose<F>> {
         Notification {
             message: self.message,
             title: self.title,
@@ -165,18 +170,12 @@ impl<C> Notification<C> {
             icon: self.icon,
             show_icon: self.show_icon,
             timeout: self.timeout,
-            timeout_explicit: self.timeout_explicit,
             created_at: self.created_at,
-            on_close,
+            on_close: OnClose(on_close),
         }
     }
 
     /// Materialize the xilem view at the supplied theme.
-    ///
-    /// # Panics
-    ///
-    /// Panics if [`Self::with_timeout`] was called without [`Self::on_close`]
-    /// — such a timeout can never fire, since there is no callback to notify.
     #[must_use = "View values do nothing unless provided to Xilem."]
     pub fn render<State, Action>(
         self,
@@ -192,10 +191,6 @@ impl<C> Notification<C> {
         // rarely a real constraint.
         C: CloseCallback<State, Action> + Clone + Send + Sync + 'static,
     {
-        assert!(
-            !self.timeout_explicit || C::enabled(),
-            "Notification::with_timeout() has no effect without Notification::on_close()"
-        );
         let timeout = if C::enabled() { self.timeout } else { None };
         let armed_at = timeout.map(|_| self.created_at);
         // Errors interrupt assistive technology immediately (`Role::Alert` +
@@ -234,6 +229,30 @@ impl<C> Notification<C> {
             on_close,
             phantom: PhantomData,
         }
+    }
+}
+
+impl<F> Notification<OnClose<F>> {
+    /// Auto-dismiss after `duration` of being shown.
+    ///
+    /// The countdown starts from [`Notification::created_at`] (which
+    /// defaults to [`Instant::now`] at the time [`notification`] was
+    /// called) — override it explicitly if this card's host widget may be
+    /// reused for a different toast across rebuilds, e.g. in a `flex_col`
+    /// stack.
+    ///
+    /// Only available after [`Notification::on_close`] — with no callback
+    /// there is nothing to notify when the timeout elapses, and that
+    /// ordering is enforced at compile time:
+    ///
+    /// ```compile_fail
+    /// use void_ui::components::notification::notification;
+    /// // No .on_close(..) → with_timeout does not exist on this state.
+    /// let _ = notification("hi").with_timeout(std::time::Duration::from_secs(2));
+    /// ```
+    pub fn with_timeout(mut self, duration: Duration) -> Self {
+        self.timeout = Some(duration);
+        self
     }
 }
 
@@ -497,13 +516,13 @@ mod tests {
     use super::{NotificationPosition, UnitPoint, notification};
     use crate::Theme;
 
+    /// `with_timeout` is only reachable after `on_close` — enforced by the
+    /// type system (see the `compile_fail` doctest on `with_timeout`).
     #[test]
-    #[should_panic(
-        expected = "Notification::with_timeout() has no effect without Notification::on_close()"
-    )]
-    fn render_panics_on_explicit_timeout_without_on_close() {
+    fn with_timeout_after_on_close_builds() {
         let theme = Theme::default();
         let _ = notification("hi")
+            .on_close(|(): &mut ()| {})
             .with_timeout(std::time::Duration::from_secs(2))
             .render::<(), ()>(&theme);
     }
@@ -512,8 +531,8 @@ mod tests {
     fn render_allows_explicit_timeout_with_on_close() {
         let theme = Theme::default();
         let _ = notification("hi")
-            .with_timeout(std::time::Duration::from_secs(2))
             .on_close(|(): &mut ()| {})
+            .with_timeout(std::time::Duration::from_secs(2))
             .render::<(), ()>(&theme);
     }
 
@@ -522,18 +541,6 @@ mod tests {
         let theme = Theme::default();
         // No explicit .with_timeout() call — the default DEFAULT_TIMEOUT must not panic.
         let _ = notification("hi").render::<(), ()>(&theme);
-    }
-
-    #[test]
-    fn no_timeout_after_with_timeout_does_not_panic_without_on_close() {
-        let theme = Theme::default();
-        // .no_timeout() after .with_timeout() clears the explicit-timeout
-        // flag too, so this must not trigger the "with_timeout() has no
-        // effect without on_close()" panic.
-        let _ = notification("hi")
-            .with_timeout(std::time::Duration::from_secs(2))
-            .no_timeout()
-            .render::<(), ()>(&theme);
     }
 
     #[test]
