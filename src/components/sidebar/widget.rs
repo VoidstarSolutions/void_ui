@@ -51,6 +51,8 @@ pub struct ThemedSidebarItem {
     /// the pointer-driven `pressed` flag read from the widget context, so
     /// keyboard activation shows the same pressed fill a pointer click does.
     keyboard_pressed: bool,
+    /// Host-controlled disabled state.
+    disabled: bool,
 }
 
 // --- MARK: BUILDERS
@@ -63,6 +65,7 @@ impl ThemedSidebarItem {
             theme: *theme,
             active: false,
             keyboard_pressed: false,
+            disabled: false,
         }
     }
 
@@ -70,6 +73,13 @@ impl ThemedSidebarItem {
     #[must_use]
     pub fn with_active(mut self, active: bool) -> Self {
         self.active = active;
+        self
+    }
+
+    /// Suppresses all interaction and mutes the visual appearance.
+    #[must_use]
+    pub fn with_disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
         self
     }
 }
@@ -97,6 +107,15 @@ impl ThemedSidebarItem {
     pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
         this.ctx.get_mut(&mut this.widget.child)
     }
+
+    /// Sets the disabled state. Syncs with masonry's event-routing flag.
+    pub fn set_disabled(this: &mut WidgetMut<'_, Self>, disabled: bool) {
+        if this.widget.disabled != disabled {
+            this.widget.disabled = disabled;
+            this.ctx.set_disabled(disabled);
+            this.ctx.request_paint_only();
+        }
+    }
 }
 
 // --- MARK: PAINT STATE
@@ -110,6 +129,9 @@ impl ThemedSidebarItem {
     /// | pressed        | `surface_hi` |
     /// | active         | `surface_2`  |
     fn resolve_bg(&self, hovered: bool, pressed: bool) -> Color {
+        if self.disabled {
+            return Color::TRANSPARENT;
+        }
         let p = &self.theme.palette;
         if pressed {
             p.surface_hi
@@ -131,6 +153,9 @@ impl Widget for ThemedSidebarItem {
         _props: &mut PropertiesMut<'_>,
         event: &PointerEvent,
     ) {
+        if self.disabled {
+            return;
+        }
         match click::primary_click(ctx, event) {
             Some(ClickPhase::Down(_)) => {
                 ctx.request_focus();
@@ -154,6 +179,9 @@ impl Widget for ThemedSidebarItem {
         _props: &mut PropertiesMut<'_>,
         event: &TextEvent,
     ) {
+        if self.disabled {
+            return;
+        }
         if interaction::keyboard_press_start(event, true) {
             ctx.set_handled();
             self.keyboard_pressed = true;
@@ -172,18 +200,15 @@ impl Widget for ThemedSidebarItem {
         _props: &mut PropertiesMut<'_>,
         event: &AccessEvent,
     ) {
+        if self.disabled {
+            return;
+        }
         if interaction::is_access_click(event) {
             ctx.submit_action::<Self::Action>(ButtonPress { button: None });
         }
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        // NOTE: unlike button/checkbox/toggle/radio, the sidebar item has
-        // no `disabled` field, so there is no WidgetAdded disabled sync
-        // and no DisabledChanged repaint here (it cannot adopt
-        // `interaction::interaction_update`). Known API inconsistency —
-        // adding `disabled` to sidebar items is tracked in the
-        // API-consistency plan.
         if matches!(event, Update::FocusChanged(false)) {
             // Losing focus mid-press (e.g. Tab away while Space is still
             // held) would otherwise leave `keyboard_pressed` stuck true
@@ -191,7 +216,12 @@ impl Widget for ThemedSidebarItem {
             self.keyboard_pressed = false;
         }
         match event {
-            Update::HoveredChanged(_) | Update::FocusChanged(_) => {
+            // Sync masonry's disabled flag on first attach (matches the
+            // checkbox/button pattern; previously missing here).
+            Update::WidgetAdded => {
+                ctx.set_disabled(self.disabled);
+            }
+            Update::HoveredChanged(_) | Update::FocusChanged(_) | Update::DisabledChanged(_) => {
                 ctx.request_paint_only();
             }
             _ => {}
@@ -263,7 +293,7 @@ impl Widget for ThemedSidebarItem {
             painter.fill(bg_rect, bg).draw();
         }
 
-        if self.active {
+        if self.active && !self.disabled {
             let accent = RoundedRect::from_origin_size(
                 Point::ORIGIN,
                 Size::new(ACCENT_WIDTH, size.height),
@@ -296,7 +326,9 @@ impl Widget for ThemedSidebarItem {
         _props: &PropertiesRef<'_>,
         node: &mut Node,
     ) {
-        node.add_action(accesskit::Action::Click);
+        if !self.disabled {
+            node.add_action(accesskit::Action::Click);
+        }
     }
 
     fn children_ids(&self) -> ChildrenIds {
@@ -308,7 +340,7 @@ impl Widget for ThemedSidebarItem {
     }
 
     fn accepts_focus(&self) -> bool {
-        true
+        !self.disabled
     }
 
     fn accepts_text_input(&self) -> bool {
@@ -391,5 +423,24 @@ mod tests {
 
         h.focus_on(None);
         assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+    }
+
+    #[test]
+    fn disabled_suppresses_click() {
+        let theme = Theme::default();
+        let widget =
+            ThemedSidebarItem::new(NewWidget::new(Label::new("Nav")), &theme).with_disabled(true);
+        let mut h = TestHarness::create_with_size(
+            default_property_set(),
+            NewWidget::new(widget),
+            (200, 32),
+        );
+        h.mouse_move(Point::new(20.0, 16.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+        assert!(
+            h.pop_action::<ButtonPress>().is_none(),
+            "disabled sidebar item must not emit ButtonPress"
+        );
     }
 }
