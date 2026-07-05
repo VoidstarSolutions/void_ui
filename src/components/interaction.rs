@@ -11,7 +11,7 @@
 
 use masonry::accesskit;
 use masonry::core::keyboard::{Key, NamedKey};
-use masonry::core::{AccessEvent, TextEvent};
+use masonry::core::{AccessEvent, PaintCtx, TextEvent, Update, UpdateCtx};
 
 /// True when `event` is a keyboard activation for a press widget: a
 /// key-*up* of Space, or of Enter when `accept_enter` is true.
@@ -38,6 +38,48 @@ pub(crate) fn keyboard_activate(event: &TextEvent, accept_enter: bool) -> bool {
 #[allow(dead_code)]
 pub(crate) fn is_access_click(event: &AccessEvent) -> bool {
     event.action == accesskit::Action::Click
+}
+
+/// The shared `update()` block for disabled-aware press widgets:
+/// propagate the host-supplied initial `disabled` to masonry on widget
+/// add (without this, the first build leaves masonry's `is_disabled()`
+/// out of sync with paint state, breaking event routing and the
+/// accessibility pass), and repaint on hover / disabled / focus changes.
+///
+/// Widgets with extra update concerns (sidebar item has no `disabled`
+/// field; tabs and collapsible track positional hover state) keep their
+/// own `update()`.
+pub(crate) fn interaction_update(ctx: &mut UpdateCtx<'_>, event: &Update, disabled: bool) {
+    match event {
+        Update::WidgetAdded => {
+            ctx.set_disabled(disabled);
+        }
+        Update::HoveredChanged(_) | Update::DisabledChanged(_) | Update::FocusChanged(_) => {
+            ctx.request_paint_only();
+        }
+        _ => {}
+    }
+}
+
+/// Snapshot of the pointer/focus interaction flags read at the top of
+/// every press widget's `paint()`: `pressed` is the shared
+/// "active *and* hovered" definition (dragging out of the widget
+/// releases the pressed appearance).
+pub(crate) struct InteractionState {
+    pub(crate) hovered: bool,
+    pub(crate) pressed: bool,
+    pub(crate) focused: bool,
+}
+
+impl InteractionState {
+    pub(crate) fn from_paint_ctx(ctx: &PaintCtx<'_>) -> Self {
+        let hovered = ctx.is_hovered();
+        Self {
+            hovered,
+            pressed: ctx.is_active() && hovered,
+            focused: ctx.is_focus_target(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -98,5 +140,21 @@ mod tests {
             data: None,
         };
         assert!(!is_access_click(&focus));
+    }
+
+    #[test]
+    fn interaction_update_syncs_disabled_on_widget_added() {
+        use masonry::core::NewWidget;
+        use masonry::testing::{ModularWidget, TestHarness};
+        use masonry::theme::default_property_set;
+
+        // A widget built with `disabled: true` must propagate that to
+        // masonry's system disabled flag when first attached — the exact
+        // behavior of the WidgetAdded arm the four widgets duplicate.
+        let widget = ModularWidget::new(()).update_fn(|(), ctx, _props, event| {
+            super::interaction_update(ctx, event, true);
+        });
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+        h.edit_root_widget(|wm| assert!(wm.ctx.is_disabled()));
     }
 }
