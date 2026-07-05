@@ -352,14 +352,14 @@ fn xorshift64(state: &mut u64) -> u64 {
     x
 }
 
-/// Conditional color for the `Side` column: buys green, sells coral
+/// Conditional color for the `Side` column: buys success, sells danger
 /// (the classic trading convention), unknown faint. Theme-aware so it
 /// resolves correctly across variants. Exercised by the `Side` column's
 /// `colored_text_column` and unit-tested below.
 fn side_color(side: Option<DemoSide>, theme: &Theme) -> Color {
     match side {
-        Some(DemoSide::Buy) => theme.palette.green,
-        Some(DemoSide::Sell) => theme.palette.coral,
+        Some(DemoSide::Buy) => theme.palette.success,
+        Some(DemoSide::Sell) => theme.palette.danger,
         None => theme.palette.text_faint,
     }
 }
@@ -740,13 +740,13 @@ fn stock_quotes() -> &'static [StockQuote] {
     Q
 }
 
-/// Conditional color for a signed change value: positive green, negative
-/// coral, flat faint — the universal up/down convention. Theme-aware.
+/// Conditional color for a signed change value: positive success, negative
+/// danger, flat faint — the universal up/down convention. Theme-aware.
 fn change_color(v: f64, theme: &Theme) -> Color {
     if v > 0.0 {
-        theme.palette.green
+        theme.palette.success
     } else if v < 0.0 {
-        theme.palette.coral
+        theme.palette.danger
     } else {
         theme.palette.text_faint
     }
@@ -1300,10 +1300,13 @@ mod tests {
     #[test]
     fn side_color_uses_trading_palette() {
         let theme = Theme::default();
-        assert_eq!(side_color(Some(DemoSide::Buy), &theme), theme.palette.green);
+        assert_eq!(
+            side_color(Some(DemoSide::Buy), &theme),
+            theme.palette.success
+        );
         assert_eq!(
             side_color(Some(DemoSide::Sell), &theme),
-            theme.palette.coral
+            theme.palette.danger
         );
         assert_eq!(side_color(None, &theme), theme.palette.text_faint);
     }

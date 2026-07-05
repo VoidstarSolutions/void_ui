@@ -12,7 +12,7 @@
 //! separator().label("Section").render(&theme)
 //!
 //! // Vertical dashed with a custom color
-//! separator().vertical().dashed().color(theme.palette.teal).render(&theme)
+//! separator().vertical().dashed().color(theme.palette.accent).render(&theme)
 //! ```
 
 #[cfg(feature = "gallery")]

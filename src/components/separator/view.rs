@@ -4,7 +4,7 @@
 //! use void_ui::separator;
 //!
 //! separator().render(&theme)
-//! separator().vertical().dashed().color(theme.palette.teal).render(&theme)
+//! separator().vertical().dashed().color(theme.palette.accent).render(&theme)
 //! separator().label("Section").render(&theme)
 //! ```
 

@@ -15,7 +15,7 @@
 //!
 //! ```ignore
 //! icon(IconName::ChevronLeft).render(&theme)
-//! icon(IconName::Plus).color(theme.palette.teal).size(20.0).render(&theme)
+//! icon(IconName::Plus).color(theme.palette.accent).size(20.0).render(&theme)
 //! ```
 
 #[cfg(feature = "gallery")]
