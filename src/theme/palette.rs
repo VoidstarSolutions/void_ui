@@ -89,12 +89,6 @@ pub struct Palette {
     pub info_deep: Color,
     /// Focus-ring stroke color.
     pub focus: Color,
-
-    // Domain semantics (mapped to accents in source, kept as fields for
-    // future themes that may diverge)
-    pub target: Color,
-    pub target_soft: Color,
-    pub compare: Color,
 }
 
 impl Palette {
@@ -172,10 +166,6 @@ impl Palette {
             info_soft: blue_soft,
             info_deep: blue_deep,
             focus: teal,
-
-            target: oklch(0.70, 0.060, 145.0),
-            target_soft: oklcha(0.70, 0.060, 145.0, 0.18),
-            compare: oklch(0.70, 0.050, 250.0),
         }
     }
 
@@ -253,35 +243,7 @@ impl Palette {
             info_soft: blue_soft,
             info_deep: blue_deep,
             focus: teal,
-
-            target: oklch(0.50, 0.075, 145.0),
-            target_soft: oklcha(0.50, 0.075, 145.0, 0.14),
-            compare: oklch(0.50, 0.050, 250.0),
         }
-    }
-
-    /// Semantic alias — Tessera maps `--signal: var(--amber)`.
-    #[must_use]
-    pub fn signal(&self) -> Color {
-        self.amber
-    }
-
-    /// Semantic alias for the translucent signal fill.
-    #[must_use]
-    pub fn signal_soft(&self) -> Color {
-        self.amber_soft
-    }
-
-    /// Semantic alias — Tessera maps `--pattern: var(--violet)`.
-    #[must_use]
-    pub fn pattern(&self) -> Color {
-        self.violet
-    }
-
-    /// Semantic alias for the translucent pattern fill.
-    #[must_use]
-    pub fn pattern_soft(&self) -> Color {
-        self.violet_soft
     }
 }
 
