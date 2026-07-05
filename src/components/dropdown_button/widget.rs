@@ -427,13 +427,15 @@ impl ThemedDropdownButton {
         });
     }
 
-    /// Sync `open`/`highlighted` after the menu closed without going through
-    /// our own event handlers — either the portal slot dismissed it (outside
-    /// press; `PortalSlot::dismiss_outside`) or a portal-mounted
-    /// `MenuContentView` handled an item selection directly (see
-    /// `super::view::MenuContentView::message`). Both call this via
-    /// `mutate_later(handle)`. Also pushes the closed state to the slot —
-    /// idempotent if it's already hidden.
+    /// Sync `open`/`highlighted` after the portal slot dismissed the menu
+    /// without going through our own event handlers (outside press;
+    /// `PortalSlot::dismiss_outside`), called via `mutate_later(handle)` from
+    /// [`dropdown_dismiss_hook`]. The slot has *already hidden* the content,
+    /// so the mirror must go `false` in both modes — a genuine safety close,
+    /// like `Update::StashedChanged(true)`. Controlled hosts observe
+    /// [`DropdownButtonAction::OpenChanged`] and re-apply `true` via
+    /// [`Self::set_open`] if they disagree. Also pushes the closed state to
+    /// the slot — idempotent since it's already hidden.
     pub(crate) fn mark_closed(this: &mut WidgetMut<'_, Self>) {
         if this.widget.open {
             this.widget.open = false;
@@ -443,6 +445,27 @@ impl ThemedDropdownButton {
                 .submit_action::<DropdownButtonAction>(DropdownButtonAction::OpenChanged(false));
             this.ctx.request_paint_only();
         }
+    }
+
+    /// Close after a portal-mounted `MenuContentView` handled an ordinary
+    /// item selection (see `super::view::MenuContentView::message`, which
+    /// calls this via `mutate_later(handle)`). Unlike [`Self::mark_closed`],
+    /// nothing has pre-hidden the slot content here — this *is* the close —
+    /// so it must honor controlled mode exactly like the in-tree
+    /// `MenuItemSelected` branch of `on_action`: gate the mutation behind
+    /// `!controlled`, always report the `OpenChanged(false)` desire.
+    pub(crate) fn close_for_selection(this: &mut WidgetMut<'_, Self>) {
+        if !this.widget.open {
+            return;
+        }
+        if !this.widget.controlled {
+            this.widget.open = false;
+            this.widget.highlighted = None;
+            this.widget.close_menu(&mut this.ctx);
+        }
+        this.ctx
+            .submit_action::<DropdownButtonAction>(DropdownButtonAction::OpenChanged(false));
+        this.ctx.request_paint_only();
     }
 
     /// Apply a host-driven open state (the rebuild path for `.open(bool)`).
@@ -926,5 +949,113 @@ mod tests {
 
         h.edit_root_widget(|mut wm| ThemedDropdownButton::set_open(&mut wm, true));
         assert!(h.edit_root_widget(|wm| wm.widget.open));
+    }
+
+    /// Portal-mode item selection routes through
+    /// `MenuContentView::message` → `mutate_later` →
+    /// [`ThemedDropdownButton::close_for_selection`] — nothing pre-hides the
+    /// slot content on that path, so in controlled mode it must NOT
+    /// self-close (unlike [`ThemedDropdownButton::mark_closed`]'s genuine
+    /// externally-dismissed case); it only reports the `OpenChanged(false)`
+    /// desire and leaves the menu visible until the host applies the prop.
+    #[test]
+    fn portal_selection_close_respects_controlled_mode() {
+        use masonry::core::NewWidget;
+        use masonry::layout::AsUnit;
+        use masonry::testing::TestHarness;
+        use masonry::theme::default_property_set;
+
+        // Navigate scope content → Align → SizedBox → dropdown and run `f`.
+        fn with_dropdown<R>(
+            h: &mut TestHarness<OverlayScope>,
+            f: impl FnOnce(&mut WidgetMut<'_, ThemedDropdownButton>) -> R,
+        ) -> R {
+            h.edit_root_widget(|mut wm| {
+                let mut content = OverlayScope::content_mut(&mut wm);
+                let mut align = content.downcast::<masonry::widgets::Align>();
+                let mut sized = masonry::widgets::Align::child_mut(&mut align);
+                let mut sized = sized.downcast::<masonry::widgets::SizedBox>();
+                let mut dropdown = masonry::widgets::SizedBox::child_mut(&mut sized)
+                    .expect("sized box has the dropdown child");
+                let mut dropdown = dropdown.downcast::<ThemedDropdownButton>();
+                f(&mut dropdown)
+            })
+        }
+
+        let theme = Theme::default();
+        let scope_handle = OverlayScopeHandle::new();
+        let key = 7;
+
+        let dropdown = ThemedDropdownButton::new_portal(
+            DropdownButtonConfig {
+                label_text: "Menu".into(),
+                icon: None,
+                items: vec!["A".into(), "B".into()],
+                variant: ButtonVariant::Default,
+                disabled: false,
+                theme,
+            },
+            DropdownButtonHandle::new(),
+            scope_handle.clone(),
+            key,
+        )
+        .with_open_state(false, true);
+        let sized = masonry::widgets::SizedBox::new(NewWidget::new(dropdown).erased())
+            .width(100.0.px())
+            .height(40.0.px())
+            .prepare();
+        let content =
+            masonry::widgets::Align::new(masonry::layout::UnitPoint::TOP_LEFT, sized.erased())
+                .prepare()
+                .erased();
+        let menu = NewWidget::new(MenuContent::new(vec!["A".into(), "B".into()], &theme)).erased();
+        let scope = OverlayScope::new(
+            scope_handle,
+            content,
+            vec![(
+                key,
+                menu,
+                crate::overlay_portal::PortalPlacement::BareTrigger,
+            )],
+        );
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(scope));
+
+        // The host applies `.open(true)` (controlled): menu becomes visible.
+        with_dropdown(&mut h, |d| ThemedDropdownButton::set_open(d, true));
+        h.edit_root_widget(|mut wm| {
+            let slot = OverlayScope::portal_slot_mut(&mut wm);
+            assert!(
+                slot.widget.placed_rect(key).is_some(),
+                "slot child must be visible after the host applies open"
+            );
+        });
+
+        // An ordinary portal item selection lands here via `mutate_later`.
+        with_dropdown(&mut h, |d| {
+            ThemedDropdownButton::close_for_selection(d);
+        });
+
+        assert!(
+            with_dropdown(&mut h, |d| d.widget.open),
+            "controlled dropdown must not self-close on portal item selection"
+        );
+        h.edit_root_widget(|mut wm| {
+            let slot = OverlayScope::portal_slot_mut(&mut wm);
+            assert!(
+                slot.widget.placed_rect(key).is_some(),
+                "slot child must stay visible while the host keeps open=true"
+            );
+        });
+        let open_changed = std::iter::from_fn(|| h.pop_action::<DropdownButtonAction>())
+            .filter_map(|(a, _)| match a {
+                DropdownButtonAction::OpenChanged(v) => Some(v),
+                DropdownButtonAction::ItemSelected(_) => None,
+            })
+            .last();
+        assert_eq!(
+            open_changed,
+            Some(false),
+            "selection must still report the OpenChanged(false) desire"
+        );
     }
 }

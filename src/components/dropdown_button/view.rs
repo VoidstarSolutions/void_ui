@@ -423,7 +423,10 @@ where
                 if let Some(dropdown_id) = self.dropdown_handle.widget_id() {
                     element.ctx.mutate_later(dropdown_id, |mut w| {
                         let mut dropdown = w.downcast::<ThemedDropdownButton>();
-                        ThemedDropdownButton::mark_closed(&mut dropdown);
+                        // Not `mark_closed`: nothing pre-hid the slot content
+                        // here — this IS the close — so it must honor
+                        // controlled mode.
+                        ThemedDropdownButton::close_for_selection(&mut dropdown);
                     });
                 }
                 match self.items.get(index) {
