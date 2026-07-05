@@ -35,9 +35,9 @@
 //!    press is not consumed — it also acts on whatever was under it, and
 //!    because nothing occludes the scope while a popover is open, scroll and
 //!    hover keep working underneath (the open popover re-anchors via
-//!    `PopoverHost::compose`). Owners are notified via `mutate_later` →
-//!    `PopoverHost::mark_closed` (safely skipped by masonry if the owner was
-//!    removed in the interim).
+//!    `PopoverHost::compose`). Owners are notified via `mutate_later` calling
+//!    the erased [`DismissHook`] registered in [`PortalOwner::on_dismiss`]
+//!    (safely skipped by masonry if the owner was removed in the interim).
 //!
 //! # Known v1 limitations (intentional)
 //!
@@ -299,24 +299,44 @@ use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, Size};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef, UnitPoint};
 
-use crate::components::dropdown_button::widget::ThemedDropdownButton;
-use crate::components::popover::widget::PopoverHost;
 use crate::overlay::OverlayAnchor;
 
-/// What kind of widget owns a [`PortalChild`], and therefore how
-/// [`PortalSlot::dismiss_outside`] notifies it of an outside-press dismissal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OwnerKind {
-    /// A `PopoverHost`, notified via [`PopoverHost::mark_closed`].
-    Popover,
-    /// A `DialogHost`, notified by submitting `DialogDismissed`.
-    Dialog,
-    /// A `ThemedDropdownButton`, notified via
-    /// [`crate::components::dropdown_button::widget::ThemedDropdownButton::mark_closed`].
-    DropdownButton,
-    /// An `AutocompleteWidget`, notified via
-    /// [`crate::components::autocomplete::widget::AutocompleteWidget::mark_closed`].
-    Autocomplete,
+/// How [`PortalSlot::dismiss_outside`] notifies a dismissed child's owner:
+/// a plain `fn` pointer invoked with a [`WidgetMut`] for the owner widget
+/// via `mutate_later`. A `fn` pointer (not a closure/`Box<dyn Fn>`) because
+/// it is `Copy + Send + 'static` — it threads through `mutate_later`'s
+/// `FnOnce(..) + Send + 'static` closure and through the plain-data
+/// [`PortalVisibility`] struct with no allocation — and because owners need
+/// no captured state: the hook receives the owner widget itself and
+/// downcasts (or submits an action) from there. Each owner component
+/// defines its own hook next to its `mark_closed`; the portal knows nothing
+/// about who its consumers are.
+pub type DismissHook = fn(WidgetMut<'_, dyn Widget>);
+
+/// The owner to notify when an outside press dismisses a portal child.
+#[derive(Clone, Copy)]
+pub struct PortalOwner {
+    /// The owner widget's id — the `mutate_later` target.
+    pub id: WidgetId,
+    /// Called with the owner's `WidgetMut` when its child is dismissed.
+    pub on_dismiss: DismissHook,
+}
+
+impl PartialEq for PortalOwner {
+    /// Owners are keyed by widget identity alone: a given owner widget
+    /// always registers the same hook, and comparing `fn` pointers is
+    /// unreliable (`unpredictable_function_pointer_comparisons`).
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl fmt::Debug for PortalOwner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PortalOwner")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Show/hide arguments for a portal child: who owns it (for outside-press
@@ -326,10 +346,9 @@ pub enum OwnerKind {
 /// clippy's `too_many_arguments`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PortalVisibility {
-    /// Owner to notify when an outside press dismisses this child. `None` in
-    /// tests / ownerless pushes.
-    pub owner: Option<WidgetId>,
-    pub owner_kind: OwnerKind,
+    /// Owner to notify when an outside press dismisses this child. `None`
+    /// in tests / ownerless pushes and for every close push.
+    pub owner: Option<PortalOwner>,
     /// Trigger's anchor rect. In window coordinates for
     /// [`crate::overlay_scope::OverlayScope::set_portal_visible`], converted
     /// to the scope's local coordinates before reaching
@@ -344,11 +363,10 @@ pub struct PortalVisibility {
 struct PortalChild {
     key: u64,
     widget: WidgetPod<dyn Widget>,
-    /// Owner to notify (via `owner_kind`) when an outside press dismisses
-    /// this child. `None` in tests / ownerless pushes, and unused for
-    /// [`PortalPlacement::Corner`] children.
-    owner: Option<WidgetId>,
-    owner_kind: OwnerKind,
+    /// Owner to notify when an outside press dismisses this child. `None` in
+    /// tests / ownerless pushes, and unused for [`PortalPlacement::Corner`]
+    /// children.
+    owner: Option<PortalOwner>,
     /// [`PortalPlacement::Trigger`] children start hidden and are shown via
     /// [`Self::set_visible`]; [`PortalPlacement::Corner`] children are always
     /// visible.
@@ -371,7 +389,6 @@ impl PortalChild {
             key,
             widget,
             owner: None,
-            owner_kind: OwnerKind::Popover,
             visible: matches!(mode, PortalPlacement::Corner(_)),
             placement: Rect::ZERO,
             anchor: OverlayAnchor::BottomStart,
@@ -470,7 +487,6 @@ impl PortalSlot {
         };
         if child.visible == visible
             && child.owner == placement.owner
-            && child.owner_kind == placement.owner_kind
             && child.placement == placement.rect
             && child.anchor == placement.anchor
             && (child.gap - placement.gap).abs() < f64::EPSILON
@@ -479,7 +495,6 @@ impl PortalSlot {
         }
         child.visible = visible;
         child.owner = placement.owner;
-        child.owner_kind = placement.owner_kind;
         child.placement = placement.rect;
         child.anchor = placement.anchor;
         child.gap = placement.gap;
@@ -523,9 +538,9 @@ impl PortalSlot {
     /// presses inside its trigger rect are the trigger's (its own click
     /// handler toggles on Up — dismissing on the Down half too would make
     /// the toggle re-open a popover the dismissal just closed). Owners of
-    /// dismissed children are notified via `mutate_later` →
-    /// [`PopoverHost::mark_closed`] (safely skipped by masonry if the owner
-    /// was removed in the interim).
+    /// dismissed children are notified via `mutate_later` invoking the
+    /// erased [`DismissHook`] stored in their [`PortalOwner`] (safely skipped
+    /// by masonry if the owner was removed in the interim).
     pub(crate) fn dismiss_outside(this: &mut WidgetMut<'_, Self>, pos: Point) {
         if this
             .widget
@@ -543,26 +558,7 @@ impl PortalSlot {
             child.visible = false;
             dismissed = true;
             if let Some(owner) = child.owner {
-                match child.owner_kind {
-                    OwnerKind::Popover => this.ctx.mutate_later(owner, |mut w| {
-                        let mut host = w.downcast::<PopoverHost>();
-                        PopoverHost::mark_closed(&mut host);
-                    }),
-                    OwnerKind::Dialog => this.ctx.mutate_later(owner, |mut w| {
-                        w.ctx
-                            .submit_action::<crate::components::dialog::widget::DialogDismissed>(
-                                crate::components::dialog::widget::DialogDismissed,
-                            );
-                    }),
-                    OwnerKind::DropdownButton => this.ctx.mutate_later(owner, |mut w| {
-                        let mut dropdown = w.downcast::<ThemedDropdownButton>();
-                        ThemedDropdownButton::mark_closed(&mut dropdown);
-                    }),
-                    OwnerKind::Autocomplete => this.ctx.mutate_later(owner, |mut w| {
-                        let mut ac = w.downcast::<crate::components::autocomplete::widget::AutocompleteWidget>();
-                        crate::components::autocomplete::widget::AutocompleteWidget::mark_closed(&mut ac);
-                    }),
-                }
+                this.ctx.mutate_later(owner.id, owner.on_dismiss);
             }
         }
         if dismissed {
@@ -1013,7 +1009,6 @@ mod tests {
                 true,
                 PortalVisibility {
                     owner: None,
-                    owner_kind: OwnerKind::Popover,
                     rect: placement,
                     anchor: OverlayAnchor::BottomStart,
                     gap: 4.0,
@@ -1038,7 +1033,6 @@ mod tests {
                 true,
                 PortalVisibility {
                     owner: None,
-                    owner_kind: OwnerKind::Dialog,
                     rect: Rect::ZERO,
                     anchor: OverlayAnchor::ViewportQuarter,
                     gap: 0.0,
@@ -1066,7 +1060,6 @@ mod tests {
                 true,
                 PortalVisibility {
                     owner: None,
-                    owner_kind: OwnerKind::Dialog,
                     rect: Rect::ZERO,
                     anchor: OverlayAnchor::ViewportQuarter,
                     gap: 0.0,
@@ -1107,7 +1100,6 @@ mod tests {
                 true,
                 PortalVisibility {
                     owner: None,
-                    owner_kind: OwnerKind::Popover,
                     rect: placement,
                     anchor: OverlayAnchor::BottomStart,
                     gap: 0.0,
@@ -1134,7 +1126,6 @@ mod tests {
                 true,
                 PortalVisibility {
                     owner: None,
-                    owner_kind: OwnerKind::Popover,
                     rect: placement,
                     anchor: OverlayAnchor::BottomStart,
                     gap: 0.0,
@@ -1175,7 +1166,6 @@ mod tests {
                 true,
                 PortalVisibility {
                     owner: None,
-                    owner_kind: OwnerKind::Popover,
                     rect: placement,
                     anchor: OverlayAnchor::BottomStart,
                     gap: 0.0,

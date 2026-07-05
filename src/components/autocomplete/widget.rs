@@ -36,7 +36,7 @@ use crate::components::item_list;
 use crate::components::scroll_container::widget::{ContentClip, ScrollView};
 use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 use crate::overlay::OverlayAnchor;
-use crate::overlay_portal::{OwnerKind, PortalSlot, PortalVisibility};
+use crate::overlay_portal::{PortalOwner, PortalSlot, PortalVisibility};
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
 /// Vertical padding above/below the suggestion list content.
@@ -972,7 +972,6 @@ fn close_portal_slot(scope: &mut WidgetMut<'_, OverlayScope>, key: u64) {
         false,
         PortalVisibility {
             owner: None,
-            owner_kind: OwnerKind::Autocomplete,
             rect: Rect::ZERO,
             anchor: OverlayAnchor::BottomStart,
             gap: 0.0,
@@ -1327,8 +1326,10 @@ impl AutocompleteWidget {
                         key,
                         true,
                         PortalVisibility {
-                            owner: Some(owner_id),
-                            owner_kind: OwnerKind::Autocomplete,
+                            owner: Some(PortalOwner {
+                                id: owner_id,
+                                on_dismiss: autocomplete_dismiss_hook,
+                            }),
                             rect,
                             anchor: OverlayAnchor::BottomStart,
                             gap: OVERLAY_GAP_PX,
@@ -1405,8 +1406,10 @@ impl AutocompleteWidget {
                         Some((
                             should_open,
                             PortalVisibility {
-                                owner: Some(owner_id),
-                                owner_kind: OwnerKind::Autocomplete,
+                                owner: Some(PortalOwner {
+                                    id: owner_id,
+                                    on_dismiss: autocomplete_dismiss_hook,
+                                }),
                                 rect,
                                 anchor: OverlayAnchor::BottomStart,
                                 gap: OVERLAY_GAP_PX,
@@ -1516,8 +1519,10 @@ impl AutocompleteWidget {
                     key,
                     true,
                     PortalVisibility {
-                        owner: Some(owner_id),
-                        owner_kind: OwnerKind::Autocomplete,
+                        owner: Some(PortalOwner {
+                            id: owner_id,
+                            on_dismiss: autocomplete_dismiss_hook,
+                        }),
                         rect,
                         anchor: OverlayAnchor::BottomStart,
                         gap: OVERLAY_GAP_PX,
@@ -1852,6 +1857,14 @@ impl AutocompleteWidget {
         this.ctx.request_paint_only();
         this.ctx.request_accessibility_update();
     }
+}
+
+/// Dismiss hook registered with the portal slot (see
+/// [`crate::overlay_portal::DismissHook`]): syncs `open`/`filtered`
+/// after an outside-press dismissal via [`AutocompleteWidget::mark_closed`].
+pub(crate) fn autocomplete_dismiss_hook(mut w: WidgetMut<'_, dyn Widget>) {
+    let mut ac = w.downcast::<AutocompleteWidget>();
+    AutocompleteWidget::mark_closed(&mut ac);
 }
 
 // --- MARK: IMPL WIDGET

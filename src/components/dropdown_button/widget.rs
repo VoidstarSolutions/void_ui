@@ -41,7 +41,7 @@ use crate::components::button::ButtonVariant;
 use crate::components::button::widget::ThemedButton;
 use crate::components::icon::IconName;
 use crate::overlay::OverlayAnchor;
-use crate::overlay_portal::{OwnerKind, PortalSlot, PortalVisibility};
+use crate::overlay_portal::{PortalOwner, PortalSlot, PortalVisibility};
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
 /// Action type emitted by [`ThemedDropdownButton`].
@@ -116,7 +116,6 @@ macro_rules! close_menu_body {
                             false,
                             PortalVisibility {
                                 owner: None,
-                                owner_kind: OwnerKind::DropdownButton,
                                 rect: Rect::ZERO,
                                 anchor: OverlayAnchor::BottomStart,
                                 gap: 0.0,
@@ -159,8 +158,10 @@ macro_rules! open_menu_body {
                             key,
                             true,
                             PortalVisibility {
-                                owner: Some(owner_id),
-                                owner_kind: OwnerKind::DropdownButton,
+                                owner: Some(PortalOwner {
+                                    id: owner_id,
+                                    on_dismiss: dropdown_dismiss_hook,
+                                }),
                                 rect,
                                 anchor: OverlayAnchor::BottomStart,
                                 gap: 0.0,
@@ -510,6 +511,14 @@ impl ThemedDropdownButton {
             this.ctx.request_paint_only();
         }
     }
+}
+
+/// Dismiss hook registered with the portal slot (see
+/// [`crate::overlay_portal::DismissHook`]): syncs `open`/`highlighted`
+/// after an outside-press dismissal via [`ThemedDropdownButton::mark_closed`].
+pub(crate) fn dropdown_dismiss_hook(mut w: WidgetMut<'_, dyn Widget>) {
+    let mut dropdown = w.downcast::<ThemedDropdownButton>();
+    ThemedDropdownButton::mark_closed(&mut dropdown);
 }
 
 // --- MARK: INTERNAL HELPERS

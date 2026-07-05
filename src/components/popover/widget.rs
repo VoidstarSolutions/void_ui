@@ -40,7 +40,7 @@ use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
 use crate::components::click::{self, ClickPhase};
 use crate::overlay::{OverlayAnchor, OverlaySurface, SurfaceStyle};
-use crate::overlay_portal::{OwnerKind, PortalVisibility};
+use crate::overlay_portal::{PortalOwner, PortalVisibility};
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
 /// Gap between the trigger and the popover surface, scaled with density.
@@ -201,7 +201,7 @@ impl PopoverHost {
             return;
         };
         let key = *key;
-        let owner = Some(this.ctx.widget_id());
+        let owner_id = this.ctx.widget_id();
         let anchor = this.widget.anchor;
         let gap = surface_gap(&this.widget.theme).get();
         let rect = Rect::from_origin_size(
@@ -216,8 +216,10 @@ impl PopoverHost {
                 key,
                 true,
                 PortalVisibility {
-                    owner,
-                    owner_kind: OwnerKind::Popover,
+                    owner: Some(PortalOwner {
+                        id: owner_id,
+                        on_dismiss: popover_dismiss_hook,
+                    }),
                     rect,
                     anchor,
                     gap,
@@ -274,6 +276,14 @@ impl PopoverHost {
     }
 }
 
+/// Dismiss hook registered with the portal slot (see
+/// [`crate::overlay_portal::DismissHook`]): syncs `open` after an
+/// outside-press dismissal via [`PopoverHost::mark_closed`].
+pub(crate) fn popover_dismiss_hook(mut w: WidgetMut<'_, dyn Widget>) {
+    let mut host = w.downcast::<PopoverHost>();
+    PopoverHost::mark_closed(&mut host);
+}
+
 // --- MARK: INTERNAL HELPERS
 
 /// Body of `push_open_state`, shared between the `EventCtx` and `ActionCtx`
@@ -301,7 +311,7 @@ macro_rules! push_open_state_body {
                     return;
                 };
                 let key = *key;
-                let owner = Some($ctx.widget_id());
+                let owner_id = $ctx.widget_id();
                 let anchor = $self.anchor;
                 let gap = surface_gap(&$self.theme).get();
                 let rect =
@@ -314,8 +324,10 @@ macro_rules! push_open_state_body {
                         key,
                         $open,
                         PortalVisibility {
-                            owner,
-                            owner_kind: OwnerKind::Popover,
+                            owner: Some(PortalOwner {
+                                id: owner_id,
+                                on_dismiss: popover_dismiss_hook,
+                            }),
                             rect,
                             anchor,
                             gap,
@@ -473,7 +485,6 @@ impl Widget for PopoverHost {
                                     false,
                                     PortalVisibility {
                                         owner: None,
-                                        owner_kind: OwnerKind::Popover,
                                         rect: Rect::ZERO,
                                         anchor: OverlayAnchor::BottomStart,
                                         gap: 0.0,

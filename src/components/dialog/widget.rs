@@ -17,13 +17,22 @@ use masonry::kurbo::{Axis, Rect, Size};
 use masonry::layout::{LenReq, Length};
 
 use crate::overlay::OverlayAnchor;
-use crate::overlay_portal::{OwnerKind, PortalVisibility};
+use crate::overlay_portal::{PortalOwner, PortalVisibility};
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
 /// Action submitted by [`DialogHost`] when the portal slot dismisses the
 /// dialog's content in response to an outside press.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DialogDismissed;
+
+/// Dismiss hook registered with the portal slot (see
+/// [`crate::overlay_portal::DismissHook`]): unlike the widget-downcast
+/// hooks, dialogs are notified by submitting [`DialogDismissed`] from the
+/// owner — the view layer's `with_action_widget` routing turns that into
+/// the host app's `on_dismiss` callback.
+pub(crate) fn dialog_dismiss_hook(mut w: WidgetMut<'_, dyn Widget>) {
+    w.ctx.submit_action::<DialogDismissed>(DialogDismissed);
+}
 
 /// Zero-footprint widget pushing a dialog's open state to the enclosing
 /// [`crate::overlay_scope`]'s portal slot.
@@ -66,8 +75,10 @@ macro_rules! push_visibility_body {
                 key,
                 open,
                 PortalVisibility {
-                    owner: Some(owner),
-                    owner_kind: OwnerKind::Dialog,
+                    owner: Some(PortalOwner {
+                        id: owner,
+                        on_dismiss: dialog_dismiss_hook,
+                    }),
                     rect: Rect::ZERO,
                     anchor: OverlayAnchor::ViewportQuarter,
                     gap: 0.0,
