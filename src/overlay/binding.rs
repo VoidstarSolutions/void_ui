@@ -268,7 +268,11 @@ impl PortalBinding {
 /// `binding` is `Some` only when the widget is in portal-hosting mode; each
 /// caller extracts it from its own `Hosting` enum (which also carries
 /// component-specific fields `PortalBinding` doesn't know about).
-pub(crate) fn compose_reanchor(ctx: &mut ComposeCtx<'_>, open: bool, binding: Option<&mut PortalBinding>) {
+pub(crate) fn compose_reanchor(
+    ctx: &mut ComposeCtx<'_>,
+    open: bool,
+    binding: Option<&mut PortalBinding>,
+) {
     if !open {
         return;
     }
