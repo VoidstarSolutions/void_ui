@@ -59,10 +59,18 @@ impl DialogHost {
     /// [`OverlayAnchor::ViewportQuarter`] has no trigger rect and no gap;
     /// the binding passes [`Rect::ZERO`](masonry::kurbo::Rect::ZERO) and
     /// skips the re-anchor loop for that variant. A not-yet-mounted scope
-    /// is a silent no-op (unified error handling — the scope's
-    /// `WidgetAdded` runs before any descendant's, so in practice the
-    /// handle is always filled here; the previous `expect` never fired).
+    /// is a silent no-op in release (unified error handling, shared with
+    /// popover/dropdown/autocomplete — see [`PortalBinding`]'s docs). Unlike
+    /// those, dialog has no in-tree fallback, so a scope that's genuinely
+    /// never ready here means an invisible dialog with no signal anything's
+    /// wrong; the `debug_assert` restores that signal in dev builds while
+    /// keeping release behavior a graceful no-op.
     fn push_visibility(&mut self, ctx: &mut impl PortalOpenCtx) {
+        debug_assert!(
+            self.binding.is_ready(),
+            "overlay_scope ancestor must be mounted before DialogHost pushes visibility \
+             (dialog has no in-tree fallback, unlike popover/dropdown/autocomplete)"
+        );
         if self.open {
             self.binding.open(ctx, OverlayAnchor::ViewportQuarter, 0.0);
         } else {
