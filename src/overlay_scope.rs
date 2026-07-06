@@ -52,7 +52,7 @@ use xilem_masonry::core::{
 use xilem_masonry::{Pod, ViewCtx, WidgetView};
 
 use crate::Theme;
-use crate::components::popover::widget::{PopoverSurface, SurfaceStyle};
+use crate::overlay::{OverlaySurface, SurfaceStyle};
 use crate::overlay_portal::{
     OverlayPortal, PortalContentView, PortalContentViewState, PortalEntry, PortalPlacement,
     PortalSlot, PortalVisibility, portal_from_env,
@@ -216,7 +216,7 @@ impl OverlayScope {
     /// *window* coordinates; converted here with `to_local` exactly like the
     /// dropdown's scope push (robust to scrolling/transforms between the
     /// scope and the trigger). For
-    /// [`crate::components::popover::PopoverAnchor::ViewportQuarter`],
+    /// [`crate::overlay::OverlayAnchor::ViewportQuarter`],
     /// `anchor_rect_window` is ignored — pass [`Rect::ZERO`] — since
     /// `PortalSlot::layout` centers that variant in its own size rather than
     /// any placement rect.
@@ -434,7 +434,7 @@ const CONTENT_VIEW_ID: ViewId = ViewId::new(0);
 /// Wrap freshly-built portal content for mounting in the [`PortalSlot`].
 ///
 /// [`PortalPlacement::Trigger`] entries (popovers) get the popover chrome:
-/// density padding on the content, [`PopoverSurface`] for background/border.
+/// density padding on the content, [`OverlaySurface`] for background/border.
 /// Mirrors `PopoverHost::new`'s in-tree wrapping so portal and fallback
 /// popovers look identical.
 ///
@@ -454,7 +454,7 @@ fn wrap_portal_content(
             content
                 .properties
                 .insert(Padding::all(Length::px(f64::from(theme.density.pad))));
-            NewWidget::new(PopoverSurface::new(content, theme, style)).erased()
+            NewWidget::new(OverlaySurface::new(content, theme, style)).erased()
         }
         PortalPlacement::BareTrigger | PortalPlacement::Corner(_) => pod.new_widget.erased(),
     }
@@ -465,7 +465,7 @@ fn wrap_portal_content(
 /// Pod<Passthrough>>>`) builds/rebuilds/tears down directly.
 ///
 /// [`PortalPlacement::Trigger`] slot children are that `Passthrough` wrapped
-/// in [`PopoverSurface`] chrome, so unwrap one layer first.
+/// in [`OverlaySurface`] chrome, so unwrap one layer first.
 /// [`PortalPlacement::BareTrigger`] and [`PortalPlacement::Corner`] slot
 /// children mount the `Passthrough` bare (see [`wrap_portal_content`]), so
 /// `child` (itself type-erased to `dyn Widget`) already *is* it — the
@@ -477,8 +477,8 @@ fn with_portal_content<R>(
 ) -> R {
     match placement {
         PortalPlacement::Trigger => {
-            let mut surface = child.downcast::<PopoverSurface>();
-            f(PopoverSurface::content_mut(&mut surface))
+            let mut surface = child.downcast::<OverlaySurface>();
+            f(OverlaySurface::content_mut(&mut surface))
         }
         PortalPlacement::BareTrigger | PortalPlacement::Corner(_) => f(child),
     }
@@ -709,8 +709,8 @@ where
                             if m.theme != entry.theme {
                                 let mut child = PortalSlot::child_mut(&mut slot, entry.key)
                                     .expect("mounted entry must have a slot child");
-                                let mut surface = child.downcast::<PopoverSurface>();
-                                PopoverSurface::set_theme(&mut surface, &entry.theme);
+                                let mut surface = child.downcast::<OverlaySurface>();
+                                OverlaySurface::set_theme(&mut surface, &entry.theme);
                             }
                         }
                         PortalPlacement::BareTrigger => {}
@@ -831,8 +831,8 @@ mod tests {
     use masonry::testing::TestHarness;
 
     use super::*;
-    use crate::components::popover::PopoverAnchor;
-    use crate::overlay_portal::OwnerKind;
+    use crate::overlay::OverlayAnchor;
+    use crate::overlay_portal::PortalOwner;
 
     /// Scope content standing in for "the app under the popover": records
     /// every pointer Down and Scroll delivered to it, so tests can assert
@@ -842,6 +842,7 @@ mod tests {
     struct EventProbe {
         downs: usize,
         scrolls: usize,
+        dismissals: usize,
     }
 
     impl Widget for EventProbe {
@@ -924,9 +925,8 @@ mod tests {
                 true,
                 PortalVisibility {
                     owner: None,
-                    owner_kind: OwnerKind::Popover,
                     rect: Rect::new(10.0, 10.0, 110.0, 40.0),
-                    anchor: PopoverAnchor::BottomStart,
+                    anchor: OverlayAnchor::BottomStart,
                     gap: 4.0,
                 },
             );
@@ -1019,9 +1019,8 @@ mod tests {
                 true,
                 PortalVisibility {
                     owner: None,
-                    owner_kind: OwnerKind::Popover,
                     rect: Rect::new(10.0, 10.0, 110.0, 40.0),
-                    anchor: PopoverAnchor::BottomStart,
+                    anchor: OverlayAnchor::BottomStart,
                     gap: 4.0,
                 },
             );
@@ -1059,9 +1058,8 @@ mod tests {
                 true,
                 PortalVisibility {
                     owner: None,
-                    owner_kind: OwnerKind::Dialog,
                     rect: Rect::ZERO,
-                    anchor: PopoverAnchor::ViewportQuarter,
+                    anchor: OverlayAnchor::ViewportQuarter,
                     gap: 0.0,
                 },
             );
@@ -1100,5 +1098,67 @@ mod tests {
 
         release_root_portal();
         assert!(root_portal::<(), ()>().is_none());
+    }
+
+    /// Dismiss hook standing in for a real owner's (`PopoverHost::mark_closed`
+    /// etc.): the slot must be able to notify an owner it knows nothing about.
+    fn probe_dismiss_hook(mut w: WidgetMut<'_, dyn Widget>) {
+        let probe = w.downcast::<EventProbe>();
+        probe.widget.dismissals += 1;
+    }
+
+    /// The portal has no registry of consumer types: an outside press must
+    /// reach the owner purely through the erased `DismissHook` stored in
+    /// `PortalVisibility`.
+    #[test]
+    fn outside_press_notifies_the_owner_through_the_erased_hook() {
+        let key = 3;
+        let content = NewWidget::new(EventProbe::default()).erased();
+        let owner_id = content.id();
+        let popover = masonry::widgets::Label::new("popover").prepare().erased();
+        let scope = OverlayScope::new(
+            OverlayScopeHandle::new(),
+            content,
+            vec![(key, popover, PortalPlacement::Trigger)],
+        );
+        let mut harness = TestHarness::create(
+            masonry::theme::default_property_set(),
+            NewWidget::new(scope),
+        );
+        harness.edit_root_widget(|mut wm| {
+            OverlayScope::set_portal_visible(
+                &mut wm,
+                key,
+                true,
+                PortalVisibility {
+                    owner: Some(PortalOwner {
+                        id: owner_id,
+                        on_dismiss: probe_dismiss_hook,
+                    }),
+                    rect: Rect::new(10.0, 10.0, 110.0, 40.0),
+                    anchor: OverlayAnchor::BottomStart,
+                    gap: 4.0,
+                },
+            );
+        });
+        // Press far outside both the popover content and the trigger rect.
+        harness.mouse_move(masonry::kurbo::Point::new(390.0, 390.0));
+        harness.mouse_button_press(Some(PointerButton::Primary));
+        harness.mouse_button_release(Some(PointerButton::Primary));
+        harness.edit_root_widget(|mut wm| {
+            let slot = OverlayScope::portal_slot_mut(&mut wm);
+            assert!(
+                slot.widget.placed_rect(key).is_none(),
+                "child must be dismissed"
+            );
+        });
+        harness.edit_root_widget(|mut wm| {
+            let mut content = OverlayScope::content_mut(&mut wm);
+            let probe = content.downcast::<EventProbe>();
+            assert_eq!(
+                probe.widget.dismissals, 1,
+                "outside press must invoke the owner's dismiss hook exactly once"
+            );
+        });
     }
 }

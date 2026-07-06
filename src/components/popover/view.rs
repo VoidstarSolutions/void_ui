@@ -9,7 +9,7 @@
 //!     button("Show info").render(&theme),
 //!     label("Some helpful information here.").render(&theme),
 //! )
-//! .anchor(PopoverAnchor::BottomStart)
+//! .anchor(OverlayAnchor::BottomStart)
 //! .render(&theme)
 //! ```
 //!
@@ -26,10 +26,10 @@ use std::sync::Arc;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
-use super::PopoverAnchor;
-use super::widget::{PopoverHost, PopoverSurface, SurfaceStyle};
+use super::widget::PopoverHost;
 use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
+use crate::overlay::{OverlayAnchor, OverlaySurface, SurfaceStyle};
 use crate::overlay_portal::{
     OverlayPortal, PortalContentView, PortalContentViewState, PortalPlacement, portal_from_env,
 };
@@ -42,7 +42,7 @@ use crate::overlay_portal::{
 pub struct Popover<State, Action, TriggerV, ContentV> {
     trigger: TriggerV,
     content: ContentV,
-    anchor: PopoverAnchor,
+    anchor: OverlayAnchor,
     phantom: PhantomData<fn(State) -> Action>,
 }
 
@@ -61,7 +61,7 @@ where
     Popover {
         trigger,
         content,
-        anchor: PopoverAnchor::BottomStart,
+        anchor: OverlayAnchor::BottomStart,
         phantom: PhantomData,
     }
 }
@@ -74,7 +74,7 @@ where
     ContentV: WidgetView<State, Action>,
 {
     /// Set where the content panel appears relative to the trigger.
-    pub fn anchor(mut self, anchor: PopoverAnchor) -> Self {
+    pub fn anchor(mut self, anchor: OverlayAnchor) -> Self {
         self.anchor = anchor;
         self
     }
@@ -99,7 +99,7 @@ where
 pub struct PopoverView<TriggerV, State, Action> {
     trigger: TriggerV,
     content: Arc<PortalContentView<State, Action>>,
-    anchor: PopoverAnchor,
+    anchor: OverlayAnchor,
     theme: Theme,
     phantom: PhantomData<fn(State) -> Action>,
 }
@@ -107,13 +107,13 @@ pub struct PopoverView<TriggerV, State, Action> {
 impl<TriggerV, State, Action> ViewMarker for PopoverView<TriggerV, State, Action> {}
 
 /// Map an anchor for use with the in-tree `AnchoredOverlay` fallback (no
-/// scope ancestor). [`PopoverAnchor::ViewportQuarter`] is meaningless without
+/// scope ancestor). [`OverlayAnchor::ViewportQuarter`] is meaningless without
 /// an enclosing scope/viewport to center against — `AnchoredOverlay` would
 /// place it relative to the trigger's own (typically tiny) footprint instead,
 /// so it's mapped to the default trigger-relative anchor.
-fn in_tree_anchor(anchor: PopoverAnchor) -> PopoverAnchor {
+fn in_tree_anchor(anchor: OverlayAnchor) -> OverlayAnchor {
     match anchor {
-        PopoverAnchor::ViewportQuarter => PopoverAnchor::BottomStart,
+        OverlayAnchor::ViewportQuarter => OverlayAnchor::BottomStart,
         other => other,
     }
 }
@@ -235,8 +235,8 @@ where
                 );
                 drop(primary);
                 let mut overlay = AnchoredOverlay::overlay_mut(&mut overlay_host);
-                let mut surface = overlay.downcast::<PopoverSurface>();
-                let mut content = PopoverSurface::content_mut(&mut surface);
+                let mut surface = overlay.downcast::<OverlaySurface>();
+                let mut content = OverlaySurface::content_mut(&mut surface);
                 self.content.rebuild(
                     &prev.content,
                     content_vs,
@@ -285,8 +285,8 @@ where
                     .teardown(&mut view_state.trigger_vs, ctx, primary.downcast());
                 drop(primary);
                 let mut overlay = AnchoredOverlay::overlay_mut(&mut overlay_host);
-                let mut surface = overlay.downcast::<PopoverSurface>();
-                let mut content = PopoverSurface::content_mut(&mut surface);
+                let mut surface = overlay.downcast::<OverlaySurface>();
+                let mut content = OverlaySurface::content_mut(&mut surface);
                 self.content.teardown(content_vs, ctx, content.downcast());
             }
         }
@@ -325,8 +325,8 @@ where
                 match result {
                     MessageResult::Nop => {
                         let mut overlay = AnchoredOverlay::overlay_mut(&mut overlay_host);
-                        let mut surface = overlay.downcast::<PopoverSurface>();
-                        let mut content = PopoverSurface::content_mut(&mut surface);
+                        let mut surface = overlay.downcast::<OverlaySurface>();
+                        let mut content = OverlaySurface::content_mut(&mut surface);
                         self.content
                             .message(content_vs, message, content.downcast(), app_state)
                     }

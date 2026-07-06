@@ -31,7 +31,7 @@ use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use xilem_masonry::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem_masonry::{Pod, ViewCtx, WidgetView};
 
-use crate::components::popover::PopoverAnchor;
+use crate::overlay::OverlayAnchor;
 
 /// Masonry widget that hosts a `primary` child (which alone dictates the
 /// container's measured size) and an `overlay` child anchored relative to
@@ -45,7 +45,7 @@ pub struct AnchoredOverlay {
     primary: WidgetPod<dyn Widget>,
     overlay: WidgetPod<dyn Widget>,
     overlay_visible: bool,
-    anchor: PopoverAnchor,
+    anchor: OverlayAnchor,
     /// Overlay's placed rect in this widget's local coordinates (set during
     /// `layout`, valid only while `overlay_visible`). Exposed so a host
     /// widget that needs to route pointer events to the overlay (e.g. for
@@ -67,7 +67,7 @@ impl AnchoredOverlay {
         primary: NewWidget<impl Widget + ?Sized>,
         overlay: NewWidget<impl Widget + ?Sized>,
         overlay_visible: bool,
-        anchor: PopoverAnchor,
+        anchor: OverlayAnchor,
     ) -> Self {
         Self {
             primary: primary.erased().to_pod(),
@@ -98,7 +98,7 @@ impl AnchoredOverlay {
 
     /// Change where the overlay is anchored relative to the primary.
     /// Triggers a layout pass when changed.
-    pub fn set_anchor(this: &mut WidgetMut<'_, Self>, anchor: PopoverAnchor) {
+    pub fn set_anchor(this: &mut WidgetMut<'_, Self>, anchor: OverlayAnchor) {
         if this.widget.anchor == anchor {
             return;
         }
@@ -193,15 +193,15 @@ impl Widget for AnchoredOverlay {
             // and is clipped only by a real `set_clip_path` ancestor.
             let offset = self.anchor.child_offset(size, overlay_size);
             let offset = match self.anchor {
-                PopoverAnchor::BottomStart
-                | PopoverAnchor::BottomCenter
-                | PopoverAnchor::BottomEnd => Point::new(offset.x, offset.y + self.gap.get()),
-                PopoverAnchor::TopStart | PopoverAnchor::TopCenter | PopoverAnchor::TopEnd => {
+                OverlayAnchor::BottomStart
+                | OverlayAnchor::BottomCenter
+                | OverlayAnchor::BottomEnd => Point::new(offset.x, offset.y + self.gap.get()),
+                OverlayAnchor::TopStart | OverlayAnchor::TopCenter | OverlayAnchor::TopEnd => {
                     Point::new(offset.x, offset.y - self.gap.get())
                 }
                 // `AnchoredOverlay` is never used with `ViewportQuarter` —
                 // that variant is only placed via `PortalSlot::layout`.
-                PopoverAnchor::ViewportQuarter => offset,
+                OverlayAnchor::ViewportQuarter => offset,
             };
             ctx.place_child(&mut self.overlay, offset);
             self.placed_overlay_rect = Rect::from_origin_size(offset, overlay_size);
@@ -246,7 +246,7 @@ pub fn anchored_overlay<State, Action, P, O>(
     primary: P,
     overlay: O,
     visible: bool,
-    anchor: PopoverAnchor,
+    anchor: OverlayAnchor,
 ) -> AnchoredOverlayView<P, O, State, Action>
 where
     State: 'static,
@@ -268,7 +268,7 @@ pub struct AnchoredOverlayView<P, O, State, Action> {
     primary: P,
     overlay: O,
     visible: bool,
-    anchor: PopoverAnchor,
+    anchor: OverlayAnchor,
     phantom: PhantomData<fn(State) -> Action>,
 }
 

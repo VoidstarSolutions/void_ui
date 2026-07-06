@@ -39,7 +39,7 @@ use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::widget::{NotificationHost, NotificationTimeout};
 use crate::components::alert::{CloseCallback, alert};
-use crate::components::popover::widget::SurfaceStyle;
+use crate::overlay::SurfaceStyle;
 use crate::overlay_portal::{PortalContentView, PortalPlacement, portal_from_env};
 use crate::{AlertVariant, IconName, Theme};
 

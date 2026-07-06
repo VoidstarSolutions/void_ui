@@ -15,14 +15,16 @@
 //!    on rebuild it refreshes the entry, on teardown it deregisters.
 //! 3. **Mount.** The scope's own view (`OverlayScopeRootView` in
 //!    `overlay_scope.rs`) diffs the registry on every build/rebuild and
-//!    mounts each entry — wrapped in `PopoverSurface` chrome — as a real view
+//!    mounts each entry — wrapped in `OverlaySurface` chrome — as a real view
 //!    child of the scope inside [`PortalSlot`]. The diff iterates to a
 //!    fixpoint because building/rebuilding/tearing-down an entry can itself
 //!    register or deregister *nested* popovers mid-diff. Content is a genuine
 //!    view child (element path `…scope… / ViewId(key)`), so rebuilds, theme
 //!    swaps, and button callbacks inside popover content all work.
 //! 4. **Show/hide/place.** Open state never flows through the registry:
-//!    `PopoverHost` pushes visibility and anchor placement to the slot as
+//!    each host (`PopoverHost` and its three siblings for `dropdown_button`,
+//!    `autocomplete`, and `dialog`) pushes visibility and anchor placement to
+//!    the slot through [`crate::overlay::binding::PortalBinding`] as
 //!    *plain data* via `ctx.mutate_later(scope_id, …)`
 //!    ([`crate::overlay_scope::OverlayScope::set_portal_visible`] /
 //!    `set_portal_placement`), re-anchoring from `compose` while the trigger
@@ -35,9 +37,9 @@
 //!    press is not consumed — it also acts on whatever was under it, and
 //!    because nothing occludes the scope while a popover is open, scroll and
 //!    hover keep working underneath (the open popover re-anchors via
-//!    `PopoverHost::compose`). Owners are notified via `mutate_later` →
-//!    `PopoverHost::mark_closed` (safely skipped by masonry if the owner was
-//!    removed in the interim).
+//!    `PopoverHost::compose`). Owners are notified via `mutate_later` calling
+//!    the erased [`DismissHook`] registered in [`PortalOwner::on_dismiss`]
+//!    (safely skipped by masonry if the owner was removed in the interim).
 //!
 //! # Known v1 limitations (intentional)
 //!
@@ -73,7 +75,7 @@ use xilem_masonry::core::{AnyView, Resource, View, ViewPathTracker};
 use xilem_masonry::{Pod, ViewCtx};
 
 use crate::Theme;
-use crate::components::popover::widget::SurfaceStyle;
+use crate::overlay::SurfaceStyle;
 use crate::overlay_scope::OverlayScopeHandle;
 
 /// Erased popover-content view stored in the portal registry. Equivalent to
@@ -105,8 +107,8 @@ pub(crate) type PortalContentViewState<State, Action> =
 ///
 /// [`crate::components::popover`] registers [`Self::Trigger`] entries: hidden
 /// until [`PortalSlot::set_visible`] shows them anchored to a trigger rect
-/// (in scope-local coordinates) via [`PopoverAnchor`], wrapped in
-/// [`PopoverSurface`] chrome to match in-tree popovers.
+/// (in scope-local coordinates) via [`OverlayAnchor`], wrapped in
+/// [`OverlaySurface`] chrome to match in-tree popovers.
 ///
 /// [`crate::components::notification`] registers [`Self::Corner`] entries:
 /// always visible, aligned to one of the scope's corners/edges via
@@ -117,7 +119,7 @@ pub(crate) type PortalContentViewState<State, Action> =
 ///
 /// [`crate::components::dropdown_button`] registers [`Self::BareTrigger`]
 /// entries: anchored and shown/hidden exactly like [`Self::Trigger`], but
-/// mounted without [`crate::components::popover::widget::PopoverSurface`]
+/// mounted without [`crate::overlay::OverlaySurface`]
 /// chrome — `MenuContent` already paints its own background/border, and
 /// wrapping it again would double up padding and chrome.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -299,24 +301,46 @@ use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, Size};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef, UnitPoint};
 
-use crate::components::dropdown_button::widget::ThemedDropdownButton;
-use crate::components::popover::PopoverAnchor;
-use crate::components::popover::widget::PopoverHost;
+use crate::overlay::OverlayAnchor;
 
-/// What kind of widget owns a [`PortalChild`], and therefore how
-/// [`PortalSlot::dismiss_outside`] notifies it of an outside-press dismissal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OwnerKind {
-    /// A `PopoverHost`, notified via [`PopoverHost::mark_closed`].
-    Popover,
-    /// A `DialogHost`, notified by submitting `DialogDismissed`.
-    Dialog,
-    /// A `ThemedDropdownButton`, notified via
-    /// [`crate::components::dropdown_button::widget::ThemedDropdownButton::mark_closed`].
-    DropdownButton,
-    /// An `AutocompleteWidget`, notified via
-    /// [`crate::components::autocomplete::widget::AutocompleteWidget::mark_closed`].
-    Autocomplete,
+/// How [`PortalSlot::dismiss_outside`] notifies a dismissed child's owner:
+/// a plain `fn` pointer invoked with a [`WidgetMut`] for the owner widget
+/// via `mutate_later`. A `fn` pointer (not a closure/`Box<dyn Fn>`) because
+/// it is `Copy + Send + 'static` — it threads through `mutate_later`'s
+/// `FnOnce(..) + Send + 'static` closure and through the plain-data
+/// [`PortalVisibility`] struct with no allocation — and because owners need
+/// no captured state: the hook receives the owner widget itself and
+/// downcasts (or submits an action) from there. Each owner component
+/// defines its own hook next to its `mark_closed`; the portal knows nothing
+/// about who its consumers are.
+pub type DismissHook = fn(WidgetMut<'_, dyn Widget>);
+
+/// The owner to notify when an outside press dismisses a portal child.
+#[derive(Clone, Copy)]
+pub struct PortalOwner {
+    /// The owner widget's id — the `mutate_later` target.
+    pub id: WidgetId,
+    /// Called with the owner's `WidgetMut` when its child is dismissed.
+    pub on_dismiss: DismissHook,
+}
+
+impl PartialEq for PortalOwner {
+    /// Owners are keyed by widget identity alone: a given owner widget
+    /// always registers the same hook, and comparing `fn` pointers is
+    /// unreliable (`unpredictable_function_pointer_comparisons`). This
+    /// assumes a live `WidgetId` is never reused for a different widget —
+    /// a masonry arena invariant, not something enforced here.
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl fmt::Debug for PortalOwner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PortalOwner")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Show/hide arguments for a portal child: who owns it (for outside-press
@@ -326,17 +350,16 @@ pub enum OwnerKind {
 /// clippy's `too_many_arguments`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PortalVisibility {
-    /// Owner to notify when an outside press dismisses this child. `None` in
-    /// tests / ownerless pushes.
-    pub owner: Option<WidgetId>,
-    pub owner_kind: OwnerKind,
+    /// Owner to notify when an outside press dismisses this child. `None`
+    /// in tests / ownerless pushes and for every close push.
+    pub owner: Option<PortalOwner>,
     /// Trigger's anchor rect. In window coordinates for
     /// [`crate::overlay_scope::OverlayScope::set_portal_visible`], converted
     /// to the scope's local coordinates before reaching
     /// [`PortalSlot::set_visible`]. Ignored for
-    /// [`PopoverAnchor::ViewportQuarter`] — pass [`Rect::ZERO`].
+    /// [`OverlayAnchor::ViewportQuarter`] — pass [`Rect::ZERO`].
     pub rect: Rect,
-    pub anchor: PopoverAnchor,
+    pub anchor: OverlayAnchor,
     pub gap: f64,
 }
 
@@ -344,11 +367,10 @@ pub struct PortalVisibility {
 struct PortalChild {
     key: u64,
     widget: WidgetPod<dyn Widget>,
-    /// Owner to notify (via `owner_kind`) when an outside press dismisses
-    /// this child. `None` in tests / ownerless pushes, and unused for
-    /// [`PortalPlacement::Corner`] children.
-    owner: Option<WidgetId>,
-    owner_kind: OwnerKind,
+    /// Owner to notify when an outside press dismisses this child. `None` in
+    /// tests / ownerless pushes, and unused for [`PortalPlacement::Corner`]
+    /// children.
+    owner: Option<PortalOwner>,
     /// [`PortalPlacement::Trigger`] children start hidden and are shown via
     /// [`Self::set_visible`]; [`PortalPlacement::Corner`] children are always
     /// visible.
@@ -356,7 +378,7 @@ struct PortalChild {
     /// Trigger's anchor rect in the *scope's* local coordinates. Unused for
     /// [`PortalPlacement::Corner`] children.
     placement: Rect,
-    anchor: PopoverAnchor,
+    anchor: OverlayAnchor,
     /// Gap between trigger edge and surface, px, in the open direction.
     /// Unused for [`PortalPlacement::Corner`] children.
     gap: f64,
@@ -371,10 +393,9 @@ impl PortalChild {
             key,
             widget,
             owner: None,
-            owner_kind: OwnerKind::Popover,
             visible: matches!(mode, PortalPlacement::Corner(_)),
             placement: Rect::ZERO,
-            anchor: PopoverAnchor::BottomStart,
+            anchor: OverlayAnchor::BottomStart,
             gap: 0.0,
             placed: Rect::ZERO,
             mode,
@@ -470,7 +491,6 @@ impl PortalSlot {
         };
         if child.visible == visible
             && child.owner == placement.owner
-            && child.owner_kind == placement.owner_kind
             && child.placement == placement.rect
             && child.anchor == placement.anchor
             && (child.gap - placement.gap).abs() < f64::EPSILON
@@ -479,7 +499,6 @@ impl PortalSlot {
         }
         child.visible = visible;
         child.owner = placement.owner;
-        child.owner_kind = placement.owner_kind;
         child.placement = placement.rect;
         child.anchor = placement.anchor;
         child.gap = placement.gap;
@@ -523,9 +542,9 @@ impl PortalSlot {
     /// presses inside its trigger rect are the trigger's (its own click
     /// handler toggles on Up — dismissing on the Down half too would make
     /// the toggle re-open a popover the dismissal just closed). Owners of
-    /// dismissed children are notified via `mutate_later` →
-    /// [`PopoverHost::mark_closed`] (safely skipped by masonry if the owner
-    /// was removed in the interim).
+    /// dismissed children are notified via `mutate_later` invoking the
+    /// erased [`DismissHook`] stored in their [`PortalOwner`] (safely skipped
+    /// by masonry if the owner was removed in the interim).
     pub(crate) fn dismiss_outside(this: &mut WidgetMut<'_, Self>, pos: Point) {
         if this
             .widget
@@ -543,26 +562,7 @@ impl PortalSlot {
             child.visible = false;
             dismissed = true;
             if let Some(owner) = child.owner {
-                match child.owner_kind {
-                    OwnerKind::Popover => this.ctx.mutate_later(owner, |mut w| {
-                        let mut host = w.downcast::<PopoverHost>();
-                        PopoverHost::mark_closed(&mut host);
-                    }),
-                    OwnerKind::Dialog => this.ctx.mutate_later(owner, |mut w| {
-                        w.ctx
-                            .submit_action::<crate::components::dialog::widget::DialogDismissed>(
-                                crate::components::dialog::widget::DialogDismissed,
-                            );
-                    }),
-                    OwnerKind::DropdownButton => this.ctx.mutate_later(owner, |mut w| {
-                        let mut dropdown = w.downcast::<ThemedDropdownButton>();
-                        ThemedDropdownButton::mark_closed(&mut dropdown);
-                    }),
-                    OwnerKind::Autocomplete => this.ctx.mutate_later(owner, |mut w| {
-                        let mut ac = w.downcast::<crate::components::autocomplete::widget::AutocompleteWidget>();
-                        crate::components::autocomplete::widget::AutocompleteWidget::mark_closed(&mut ac);
-                    }),
-                }
+                this.ctx.mutate_later(owner.id, owner.on_dismiss);
             }
         }
         if dismissed {
@@ -625,7 +625,7 @@ impl Widget for PortalSlot {
                     // Snug to intrinsic content size — see `AnchoredOverlay::layout`.
                     let mut child_size =
                         ctx.compute_size(&mut child.widget, SizeDef::MIN, LayoutSize::from(size));
-                    if child.anchor == PopoverAnchor::ViewportQuarter {
+                    if child.anchor == OverlayAnchor::ViewportQuarter {
                         // Dialogs (the only `ViewportQuarter` consumer) should
                         // never be taller than they are wide, even if their
                         // content's min-content size is narrow and tall.
@@ -636,7 +636,7 @@ impl Widget for PortalSlot {
                     // in the slot's own size (the scope's content box) instead
                     // of `child.placement`.
                     let container = match child.anchor {
-                        PopoverAnchor::ViewportQuarter => {
+                        OverlayAnchor::ViewportQuarter => {
                             Rect::from_origin_size(Point::ORIGIN, size)
                         }
                         _ => child.placement,
@@ -644,13 +644,13 @@ impl Widget for PortalSlot {
                     let offset = child.anchor.child_offset(container.size(), child_size)
                         + container.origin().to_vec2();
                     let offset = match child.anchor {
-                        PopoverAnchor::BottomStart
-                        | PopoverAnchor::BottomCenter
-                        | PopoverAnchor::BottomEnd => Point::new(offset.x, offset.y + child.gap),
-                        PopoverAnchor::TopStart
-                        | PopoverAnchor::TopCenter
-                        | PopoverAnchor::TopEnd => Point::new(offset.x, offset.y - child.gap),
-                        PopoverAnchor::ViewportQuarter => offset,
+                        OverlayAnchor::BottomStart
+                        | OverlayAnchor::BottomCenter
+                        | OverlayAnchor::BottomEnd => Point::new(offset.x, offset.y + child.gap),
+                        OverlayAnchor::TopStart
+                        | OverlayAnchor::TopCenter
+                        | OverlayAnchor::TopEnd => Point::new(offset.x, offset.y - child.gap),
+                        OverlayAnchor::ViewportQuarter => offset,
                     };
                     ctx.place_child(&mut child.widget, offset);
                     child.placed = Rect::from_origin_size(offset, child_size);
@@ -849,7 +849,7 @@ mod tests {
     use masonry::kurbo::{Point, Rect, Size};
     use masonry::testing::TestHarness;
 
-    use crate::components::popover::PopoverAnchor;
+    use crate::overlay::OverlayAnchor;
 
     fn test_child() -> NewWidget<dyn Widget> {
         masonry::widgets::Label::new("popover body")
@@ -1013,9 +1013,8 @@ mod tests {
                 true,
                 PortalVisibility {
                     owner: None,
-                    owner_kind: OwnerKind::Popover,
                     rect: placement,
-                    anchor: PopoverAnchor::BottomStart,
+                    anchor: OverlayAnchor::BottomStart,
                     gap: 4.0,
                 },
             );
@@ -1038,9 +1037,8 @@ mod tests {
                 true,
                 PortalVisibility {
                     owner: None,
-                    owner_kind: OwnerKind::Dialog,
                     rect: Rect::ZERO,
-                    anchor: PopoverAnchor::ViewportQuarter,
+                    anchor: OverlayAnchor::ViewportQuarter,
                     gap: 0.0,
                 },
             );
@@ -1066,9 +1064,8 @@ mod tests {
                 true,
                 PortalVisibility {
                     owner: None,
-                    owner_kind: OwnerKind::Dialog,
                     rect: Rect::ZERO,
-                    anchor: PopoverAnchor::ViewportQuarter,
+                    anchor: OverlayAnchor::ViewportQuarter,
                     gap: 0.0,
                 },
             );
@@ -1107,9 +1104,8 @@ mod tests {
                 true,
                 PortalVisibility {
                     owner: None,
-                    owner_kind: OwnerKind::Popover,
                     rect: placement,
-                    anchor: PopoverAnchor::BottomStart,
+                    anchor: OverlayAnchor::BottomStart,
                     gap: 0.0,
                 },
             );
@@ -1134,9 +1130,8 @@ mod tests {
                 true,
                 PortalVisibility {
                     owner: None,
-                    owner_kind: OwnerKind::Popover,
                     rect: placement,
-                    anchor: PopoverAnchor::BottomStart,
+                    anchor: OverlayAnchor::BottomStart,
                     gap: 0.0,
                 },
             );
@@ -1175,9 +1170,8 @@ mod tests {
                 true,
                 PortalVisibility {
                     owner: None,
-                    owner_kind: OwnerKind::Popover,
                     rect: placement,
-                    anchor: PopoverAnchor::BottomStart,
+                    anchor: OverlayAnchor::BottomStart,
                     gap: 0.0,
                 },
             );

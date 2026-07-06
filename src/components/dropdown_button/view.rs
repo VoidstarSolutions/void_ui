@@ -33,7 +33,7 @@ use super::widget::{
 };
 use crate::Theme;
 use crate::components::button::ButtonVariant;
-use crate::components::popover::widget::SurfaceStyle;
+use crate::overlay::SurfaceStyle;
 use crate::overlay_portal::{OverlayPortal, PortalContentView, PortalPlacement, portal_from_env};
 
 type ItemCallback<State, Action> = Box<dyn Fn(&mut State) -> Action + Send + Sync>;

@@ -33,10 +33,11 @@ use crate::anchored_overlay::AnchoredOverlay;
 use crate::components::input::widget::{InputCleared, InputFrame};
 use crate::components::input::{stripped_text_input_props, text_area_props};
 use crate::components::item_list;
-use crate::components::popover::PopoverAnchor;
 use crate::components::scroll_container::widget::{ContentClip, ScrollView};
 use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
-use crate::overlay_portal::{OwnerKind, PortalSlot, PortalVisibility};
+use crate::overlay::OverlayAnchor;
+use crate::overlay::binding::{self, PortalBinding};
+use crate::overlay_portal::PortalSlot;
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
 /// Vertical padding above/below the suggestion list content.
@@ -963,23 +964,6 @@ fn apply_chrome_theme(sb: &mut WidgetMut<'_, SizedBox>, theme: &Theme) {
     });
 }
 
-/// Canonical close-portal sentinel. Every "hide the portal slot" path uses
-/// this so the `PortalVisibility` fields can't silently diverge across callers.
-fn close_portal_slot(scope: &mut WidgetMut<'_, OverlayScope>, key: u64) {
-    OverlayScope::set_portal_visible(
-        scope,
-        key,
-        false,
-        PortalVisibility {
-            owner: None,
-            owner_kind: OwnerKind::Autocomplete,
-            rect: Rect::ZERO,
-            anchor: PopoverAnchor::BottomStart,
-            gap: 0.0,
-        },
-    );
-}
-
 /// Navigate to the `SuggestionList` in the in-tree overlay slot and invoke `f`.
 fn with_suggestion_list<R>(
     w: &mut WidgetMut<'_, AnchoredOverlay>,
@@ -1046,11 +1030,7 @@ enum Hosting {
     Portal {
         /// The input field chrome (`SizedBox` wrapping `InputFrame` → `TextInput` → `TextArea`).
         chrome: WidgetPod<SizedBox>,
-        scope: OverlayScopeHandle,
-        key: u64,
-        /// Last window-space anchor rect pushed to the slot; `compose` uses
-        /// it to re-anchor only when we actually moved.
-        last_anchor_rect_window: Option<Rect>,
+        binding: PortalBinding,
     },
 }
 
@@ -1200,7 +1180,7 @@ impl AutocompleteWidget {
             chrome,
             NewWidget::new(suggestion_list),
             false,
-            PopoverAnchor::BottomStart,
+            OverlayAnchor::BottomStart,
         )
         .with_gap(OVERLAY_GAP);
 
@@ -1252,9 +1232,7 @@ impl AutocompleteWidget {
         Self {
             hosting: Hosting::Portal {
                 chrome: chrome.to_pod(),
-                scope,
-                key,
-                last_anchor_rect_window: None,
+                binding: PortalBinding::new(scope, key, autocomplete_dismiss_hook),
             },
             all_suggestions,
             all_suggestions_lower,
@@ -1289,8 +1267,8 @@ impl AutocompleteWidget {
         // otherwise we'd get stuck open with nothing visible and no AT update,
         // and the `!self.open` guard on ChildFocusChanged would permanently
         // block future opens.
-        if let Hosting::Portal { scope, .. } = &self.hosting
-            && scope.widget_id().is_none()
+        if let Hosting::Portal { binding, .. } = &self.hosting
+            && !binding.is_ready()
         {
             return;
         }
@@ -1303,40 +1281,19 @@ impl AutocompleteWidget {
                     AnchoredOverlay::set_overlay_visible(&mut w, true);
                 });
             }
-            Hosting::Portal { scope, key, .. } => {
-                let scope_id = scope.widget_id().expect("checked above");
-                let key = *key;
-                let owner_id = ctx.widget_id();
-                let rect =
-                    Rect::from_origin_size(ctx.to_window(Point::ZERO), ctx.border_box_size());
+            Hosting::Portal { binding, .. } => {
+                let scope_id = binding.scope_widget_id().expect("checked is_ready above");
+                let key = binding.key();
                 let items = self.filtered.clone();
-                if let Hosting::Portal {
-                    last_anchor_rect_window,
-                    ..
-                } = &mut self.hosting
-                {
-                    *last_anchor_rect_window = Some(rect);
-                }
                 ctx.mutate_later(scope_id, move |mut w| {
                     let mut scope = w.downcast::<OverlayScope>();
                     with_portal_list(&mut scope, key, |list| {
                         SuggestionList::set_items(list, items);
                     });
-                    OverlayScope::set_portal_visible(
-                        &mut scope,
-                        key,
-                        true,
-                        PortalVisibility {
-                            owner: Some(owner_id),
-                            owner_kind: OwnerKind::Autocomplete,
-                            rect,
-                            anchor: PopoverAnchor::BottomStart,
-                            gap: OVERLAY_GAP_PX,
-                        },
-                    );
                 });
-                ctx.request_compose();
-                ctx.request_anim_frame();
+                // Items were queued first; mutate callbacks run in submission
+                // order, so the visibility push below observes the fresh items.
+                binding.open(ctx, OverlayAnchor::BottomStart, OVERLAY_GAP_PX);
             }
         }
         ctx.request_paint_only();
@@ -1351,16 +1308,7 @@ impl AutocompleteWidget {
                     AnchoredOverlay::set_overlay_visible(&mut w, false);
                 });
             }
-            Hosting::Portal { scope, key, .. } => {
-                let Some(scope_id) = scope.widget_id() else {
-                    return;
-                };
-                let key = *key;
-                ctx.mutate_later(scope_id, move |mut w| {
-                    let mut scope = w.downcast::<OverlayScope>();
-                    close_portal_slot(&mut scope, key);
-                });
-            }
+            Hosting::Portal { binding, .. } => binding.close(ctx),
         }
     }
 
@@ -1385,48 +1333,22 @@ impl AutocompleteWidget {
                     }
                 });
             }
-            Hosting::Portal { scope, key, .. } => {
-                if let Some(scope_id) = scope.widget_id() {
-                    let key = *key;
+            Hosting::Portal { binding, .. } => {
+                if let Some(scope_id) = binding.scope_widget_id() {
+                    let key = binding.key();
                     let items = self.filtered.clone();
-                    let visibility_update = if open_changed {
-                        let owner_id = ctx.widget_id();
-                        let rect = Rect::from_origin_size(
-                            ctx.to_window(Point::ZERO),
-                            ctx.border_box_size(),
-                        );
-                        if let Hosting::Portal {
-                            last_anchor_rect_window,
-                            ..
-                        } = &mut self.hosting
-                        {
-                            *last_anchor_rect_window = if should_open { Some(rect) } else { None };
-                        }
-                        Some((
-                            should_open,
-                            PortalVisibility {
-                                owner: Some(owner_id),
-                                owner_kind: OwnerKind::Autocomplete,
-                                rect,
-                                anchor: PopoverAnchor::BottomStart,
-                                gap: OVERLAY_GAP_PX,
-                            },
-                        ))
-                    } else {
-                        None
-                    };
                     ctx.mutate_later(scope_id, move |mut w| {
                         let mut scope = w.downcast::<OverlayScope>();
                         with_portal_list(&mut scope, key, |list| {
                             SuggestionList::set_items(list, items);
                         });
-                        if let Some((visible, visibility)) = visibility_update {
-                            OverlayScope::set_portal_visible(&mut scope, key, visible, visibility);
-                        }
                     });
-                    if open_changed && should_open {
-                        ctx.request_compose();
-                        ctx.request_anim_frame();
+                    if open_changed {
+                        if should_open {
+                            binding.open(ctx, OverlayAnchor::BottomStart, OVERLAY_GAP_PX);
+                        } else {
+                            binding.close(ctx);
+                        }
                     }
                 }
             }
@@ -1455,7 +1377,7 @@ impl AutocompleteWidget {
                 });
             }
             Hosting::Portal {
-                chrome, scope, key, ..
+                chrome, binding, ..
             } => {
                 let text_for_area = text.clone();
                 ctx.mutate_child_later(chrome, move |mut w| {
@@ -1464,20 +1386,7 @@ impl AutocompleteWidget {
                         widgets::TextArea::reset_text(ta, &text_for_area);
                     });
                 });
-                let Some(scope_id) = scope.widget_id() else {
-                    ctx.submit_action::<AutocompleteAction>(AutocompleteAction::TextChanged(
-                        selected,
-                    ));
-                    ctx.set_handled();
-                    ctx.request_paint_only();
-                    ctx.request_accessibility_update();
-                    return;
-                };
-                let key = *key;
-                ctx.mutate_later(scope_id, move |mut w| {
-                    let mut scope = w.downcast::<OverlayScope>();
-                    close_portal_slot(&mut scope, key);
-                });
+                binding.close(ctx);
             }
         }
 
@@ -1490,54 +1399,19 @@ impl AutocompleteWidget {
 
 // --- MARK: WIDGETMUT SETTERS
 impl AutocompleteWidget {
-    /// Opens or closes the Portal-mode slot to match `should_open`, called
-    /// after a setter has already determined `open_changed`. Shared by every
-    /// `WidgetMut`-based setter that can flip the dropdown open or closed as
-    /// a side effect of something other than direct user interaction (typing
-    /// and focus events compute this inline instead, since they run from
-    /// `ActionCtx`/`UpdateCtx` rather than a `WidgetMut`).
-    fn sync_portal_visibility(this: &mut WidgetMut<'_, Self>, scope_id: WidgetId, key: u64) {
+    /// Push the current `open` state to the Portal-mode slot. No-op in-tree or
+    /// while the scope is unmounted. Shared by every `WidgetMut`-based setter
+    /// that can flip the dropdown open or closed as a side effect (typing and
+    /// focus events go through `binding.open`/`close` inline instead, from
+    /// their own `ActionCtx`/`UpdateCtx`).
+    fn sync_portal_visibility(this: &mut WidgetMut<'_, Self>) {
         let should_open = this.widget.open;
-        if should_open {
-            let owner_id = this.ctx.widget_id();
-            let rect =
-                Rect::from_origin_size(this.ctx.to_window(Point::ZERO), this.ctx.border_box_size());
-            if let Hosting::Portal {
-                last_anchor_rect_window,
-                ..
-            } = &mut this.widget.hosting
-            {
-                *last_anchor_rect_window = Some(rect);
+        if let Hosting::Portal { binding, .. } = &mut this.widget.hosting {
+            if should_open {
+                binding.open(&mut this.ctx, OverlayAnchor::BottomStart, OVERLAY_GAP_PX);
+            } else {
+                binding.close(&mut this.ctx);
             }
-            this.ctx.mutate_later(scope_id, move |mut w| {
-                let mut scope = w.downcast::<OverlayScope>();
-                OverlayScope::set_portal_visible(
-                    &mut scope,
-                    key,
-                    true,
-                    PortalVisibility {
-                        owner: Some(owner_id),
-                        owner_kind: OwnerKind::Autocomplete,
-                        rect,
-                        anchor: PopoverAnchor::BottomStart,
-                        gap: OVERLAY_GAP_PX,
-                    },
-                );
-            });
-            this.ctx.request_compose();
-            this.ctx.request_anim_frame();
-        } else {
-            if let Hosting::Portal {
-                last_anchor_rect_window,
-                ..
-            } = &mut this.widget.hosting
-            {
-                *last_anchor_rect_window = None;
-            }
-            this.ctx.mutate_later(scope_id, move |mut w| {
-                let mut scope = w.downcast::<OverlayScope>();
-                close_portal_slot(&mut scope, key);
-            });
         }
     }
 
@@ -1579,9 +1453,7 @@ impl AutocompleteWidget {
                     }
                 });
             }
-            Hosting::Portal {
-                chrome, scope, key, ..
-            } => {
+            Hosting::Portal { chrome, binding } => {
                 {
                     let mut c = this.ctx.get_mut(chrome);
                     let mut sb = c.downcast::<SizedBox>();
@@ -1592,9 +1464,8 @@ impl AutocompleteWidget {
                         }
                     });
                 }
-                let scope_id = scope.widget_id();
-                let key = *key;
-                if let Some(scope_id) = scope_id {
+                if let Some(scope_id) = binding.scope_widget_id() {
+                    let key = binding.key();
                     let items = filtered.clone();
                     this.ctx.mutate_later(scope_id, move |mut w| {
                         let mut scope = w.downcast::<OverlayScope>();
@@ -1602,14 +1473,12 @@ impl AutocompleteWidget {
                             SuggestionList::set_items(list, items);
                         });
                     });
-                    if open_changed {
-                        Self::sync_portal_visibility(this, scope_id, key);
-                    }
                 }
             }
         }
 
         if open_changed {
+            Self::sync_portal_visibility(this);
             this.ctx.request_accessibility_update();
         }
     }
@@ -1647,10 +1516,9 @@ impl AutocompleteWidget {
                     AnchoredOverlay::set_overlay_visible(&mut h, should_open);
                 }
             }
-            Hosting::Portal { scope, key, .. } => {
-                let scope_id = scope.widget_id();
-                let key = *key;
-                if let Some(scope_id) = scope_id {
+            Hosting::Portal { binding, .. } => {
+                if let Some(scope_id) = binding.scope_widget_id() {
+                    let key = binding.key();
                     let items = filtered.clone();
                     this.ctx.mutate_later(scope_id, move |mut w| {
                         let mut scope = w.downcast::<OverlayScope>();
@@ -1658,14 +1526,12 @@ impl AutocompleteWidget {
                             SuggestionList::set_items(list, items);
                         });
                     });
-                    if open_changed {
-                        Self::sync_portal_visibility(this, scope_id, key);
-                    }
                 }
             }
         }
 
         if open_changed {
+            Self::sync_portal_visibility(this);
             this.ctx.request_accessibility_update();
         }
     }
@@ -1701,16 +1567,7 @@ impl AutocompleteWidget {
                     with_suggestion_list(&mut h, |list| SuggestionList::set_items(list, []));
                     AnchoredOverlay::set_overlay_visible(&mut h, false);
                 }
-                Hosting::Portal { scope, key, .. } => {
-                    let scope_id = scope.widget_id();
-                    let key = *key;
-                    if let Some(scope_id) = scope_id {
-                        this.ctx.mutate_later(scope_id, move |mut w| {
-                            let mut scope = w.downcast::<OverlayScope>();
-                            close_portal_slot(&mut scope, key);
-                        });
-                    }
-                }
+                Hosting::Portal { binding, .. } => binding.close(&mut this.ctx),
             }
             this.ctx.request_accessibility_update();
         }
@@ -1733,19 +1590,16 @@ impl AutocompleteWidget {
                 }
                 with_suggestion_list(&mut h, |list| SuggestionList::set_theme(list, theme));
             }
-            Hosting::Portal {
-                chrome, scope, key, ..
-            } => {
+            Hosting::Portal { chrome, binding } => {
                 {
                     let mut c = this.ctx.get_mut(chrome);
                     let mut sb = c.downcast::<SizedBox>();
                     apply_chrome_theme(&mut sb, theme);
                 }
 
-                let scope_id = scope.widget_id();
-                let key = *key;
-                let theme_copy = *theme;
-                if let Some(scope_id) = scope_id {
+                if let Some(scope_id) = binding.scope_widget_id() {
+                    let key = binding.key();
+                    let theme_copy = *theme;
                     this.ctx.mutate_later(scope_id, move |mut w| {
                         let mut scope = w.downcast::<OverlayScope>();
                         with_portal_list(&mut scope, key, |list| {
@@ -1775,16 +1629,7 @@ impl AutocompleteWidget {
                 let mut w = this.ctx.get_mut(overlay_host);
                 AnchoredOverlay::set_overlay_visible(&mut w, false);
             }
-            Hosting::Portal { scope, key, .. } => {
-                let scope_id = scope.widget_id();
-                let key = *key;
-                if let Some(scope_id) = scope_id {
-                    this.ctx.mutate_later(scope_id, move |mut w| {
-                        let mut scope = w.downcast::<OverlayScope>();
-                        close_portal_slot(&mut scope, key);
-                    });
-                }
-            }
+            Hosting::Portal { binding, .. } => binding.close(&mut this.ctx),
         }
         this.ctx.request_paint_only();
         this.ctx.request_accessibility_update();
@@ -1836,15 +1681,9 @@ impl AutocompleteWidget {
         }
 
         // Close the portal slot.
-        let (scope_id, key) = match &this.widget.hosting {
-            Hosting::Portal { scope, key, .. } => (scope.widget_id(), *key),
+        match &mut this.widget.hosting {
+            Hosting::Portal { binding, .. } => binding.close(&mut this.ctx),
             Hosting::InTree { .. } => unreachable!("portal_select called in in-tree mode"),
-        };
-        if let Some(scope_id) = scope_id {
-            this.ctx.mutate_later(scope_id, move |mut w| {
-                let mut scope = w.downcast::<OverlayScope>();
-                close_portal_slot(&mut scope, key);
-            });
         }
 
         this.ctx
@@ -1852,6 +1691,14 @@ impl AutocompleteWidget {
         this.ctx.request_paint_only();
         this.ctx.request_accessibility_update();
     }
+}
+
+/// Dismiss hook registered with the portal slot (see
+/// [`crate::overlay_portal::DismissHook`]): syncs `open`/`filtered`
+/// after an outside-press dismissal via [`AutocompleteWidget::mark_closed`].
+pub(crate) fn autocomplete_dismiss_hook(mut w: WidgetMut<'_, dyn Widget>) {
+    let mut ac = w.downcast::<AutocompleteWidget>();
+    AutocompleteWidget::mark_closed(&mut ac);
 }
 
 // --- MARK: IMPL WIDGET
@@ -1981,15 +1828,7 @@ impl Widget for AutocompleteWidget {
                         AnchoredOverlay::set_overlay_visible(&mut w, false);
                     });
                 }
-                Hosting::Portal { scope, key, .. } => {
-                    if let Some(scope_id) = scope.widget_id() {
-                        let key = *key;
-                        ctx.mutate_later(scope_id, move |mut w| {
-                            let mut scope = w.downcast::<OverlayScope>();
-                            close_portal_slot(&mut scope, key);
-                        });
-                    }
-                }
+                Hosting::Portal { binding, .. } => binding.close(ctx),
             }
             ctx.request_paint_only();
             ctx.request_accessibility_update();
@@ -2015,15 +1854,7 @@ impl Widget for AutocompleteWidget {
                             AnchoredOverlay::set_overlay_visible(&mut w, false);
                         });
                     }
-                    Hosting::Portal { scope, key, .. } => {
-                        if let Some(scope_id) = scope.widget_id() {
-                            let key = *key;
-                            ctx.mutate_later(scope_id, move |mut w| {
-                                let mut scope = w.downcast::<OverlayScope>();
-                                close_portal_slot(&mut scope, key);
-                            });
-                        }
-                    }
+                    Hosting::Portal { binding, .. } => binding.close(ctx),
                 }
                 ctx.request_paint_only();
                 ctx.request_accessibility_update();
@@ -2082,15 +1913,7 @@ impl Widget for AutocompleteWidget {
                             AnchoredOverlay::set_overlay_visible(&mut w, false);
                         });
                     }
-                    Hosting::Portal { scope, key, .. } => {
-                        if let Some(scope_id) = scope.widget_id() {
-                            let key = *key;
-                            ctx.mutate_later(scope_id, move |mut w| {
-                                let mut scope = w.downcast::<OverlayScope>();
-                                close_portal_slot(&mut scope, key);
-                            });
-                        }
-                    }
+                    Hosting::Portal { binding, .. } => binding.close(ctx),
                 }
                 ctx.request_paint_only();
                 ctx.request_accessibility_update();
@@ -2106,51 +1929,21 @@ impl Widget for AutocompleteWidget {
     /// Re-anchors a still-open portal-mode suggestion list as we move in
     /// window space (e.g. scrolling). No-op in-tree.
     fn compose(&mut self, ctx: &mut ComposeCtx<'_>) {
-        if !self.open {
-            return;
-        }
-        let Hosting::Portal {
-            scope,
-            key,
-            last_anchor_rect_window,
-            ..
-        } = &mut self.hosting
-        else {
-            return;
+        let binding = match &mut self.hosting {
+            Hosting::Portal { binding, .. } => Some(binding),
+            Hosting::InTree { .. } => None,
         };
-        let Some(scope_id) = scope.widget_id() else {
-            return;
-        };
-        let rect = Rect::from_origin_size(ctx.to_window(Point::ZERO), ctx.border_box_size());
-        if *last_anchor_rect_window == Some(rect) {
-            return;
-        }
-        *last_anchor_rect_window = Some(rect);
-        let key = *key;
-        ctx.mutate_later(scope_id, move |mut w| {
-            let mut scope = w.downcast::<OverlayScope>();
-            OverlayScope::set_portal_placement(&mut scope, key, rect);
-        });
+        binding::compose_reanchor(ctx, self.open, binding);
     }
 
-    /// Keeps compose running every frame while portal-mode is open, so the
-    /// list re-anchors regardless of pointer position or which ancestor scrolled.
-    ///
-    /// This is a deliberate busy-poll, not an oversight: masonry's compose
-    /// pass only calls a widget's `compose()` if that widget already
-    /// requested it, and there's no `Update` variant or timer API in the
-    /// pinned masonry version that notifies an arbitrary descendant when an
-    /// unrelated ancestor scrolls. Without that upstream hook, per-frame
-    /// polling while open is the only way to catch "some ancestor scrolled"
-    /// regardless of which one. Revisit this once masonry exposes a
-    /// scroll-changed notification or a timer primitive that isn't tied to
-    /// the display's refresh rate.
+    /// Keeps compose running every frame while portal-mode is open — see
+    /// [`binding::arm_reanchor_on_anim_frame`].
     fn on_anim_frame(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, _: u64) {
-        if !self.open || !matches!(self.hosting, Hosting::Portal { .. }) {
-            return;
-        }
-        ctx.request_compose();
-        ctx.request_anim_frame();
+        binding::arm_reanchor_on_anim_frame(
+            ctx,
+            self.open,
+            matches!(self.hosting, Hosting::Portal { .. }),
+        );
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {

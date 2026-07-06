@@ -13,74 +13,69 @@ use masonry::core::{
     UpdateCtx, Widget, WidgetMut,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Rect, Size};
+use masonry::kurbo::{Axis, Size};
 use masonry::layout::{LenReq, Length};
 
-use crate::components::popover::PopoverAnchor;
-use crate::overlay_portal::{OwnerKind, PortalVisibility};
-use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
+use crate::overlay::OverlayAnchor;
+use crate::overlay::binding::{PortalBinding, PortalOpenCtx};
+use crate::overlay_scope::OverlayScopeHandle;
 
 /// Action submitted by [`DialogHost`] when the portal slot dismisses the
 /// dialog's content in response to an outside press.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DialogDismissed;
 
+/// Dismiss hook registered with the portal slot (see
+/// [`crate::overlay_portal::DismissHook`]): unlike the widget-downcast
+/// hooks, dialogs are notified by submitting [`DialogDismissed`] from the
+/// owner — the view layer's `with_action_widget` routing turns that into
+/// the host app's `on_dismiss` callback.
+pub(crate) fn dialog_dismiss_hook(mut w: WidgetMut<'_, dyn Widget>) {
+    w.ctx.submit_action::<DialogDismissed>(DialogDismissed);
+}
+
 /// Zero-footprint widget pushing a dialog's open state to the enclosing
 /// [`crate::overlay_scope`]'s portal slot.
 ///
 /// The dialog's content lives in the portal slot, registered separately via
 /// [`crate::overlay_portal::OverlayPortal`]; this widget exists purely to
-/// hold the `(scope, key, open)` triple and to be the [`DialogDismissed`]
-/// action source.
+/// hold the binding + `open` flag and to be the [`DialogDismissed`] action
+/// source.
 pub struct DialogHost {
-    scope: OverlayScopeHandle,
-    key: u64,
+    binding: PortalBinding,
     open: bool,
-}
-
-/// Push `$self`'s current open/closed state to the portal slot via
-/// `$ctx.mutate_later`. Shared between [`DialogHost::set_open`] (a
-/// [`WidgetMut`]'s `MutateCtx`) and [`Widget::update`]'s `UpdateCtx` — both
-/// expose `widget_id`/`mutate_later` as separate inherent impls rather than a
-/// shared trait, hence the macro (mirrors `push_open_state_body!` in
-/// `popover/widget.rs`).
-///
-/// `anchor_rect_window` is ignored for [`PopoverAnchor::ViewportQuarter`]
-/// (see [`OverlayScope::set_portal_visible`]), so `Rect::ZERO` is passed
-/// unconditionally; likewise there is no gap concept for a centered dialog.
-macro_rules! push_visibility_body {
-    ($self:expr, $ctx:expr) => {{
-        // The scope's `WidgetAdded` runs before any descendant's (it's an
-        // ancestor), so by the time this widget exists the handle is filled.
-        let scope_id = $self
-            .scope
-            .widget_id()
-            .expect("overlay_scope ancestor must be mounted before DialogHost");
-        let key = $self.key;
-        let open = $self.open;
-        let owner = $ctx.widget_id();
-        $ctx.mutate_later(scope_id, move |mut w| {
-            let mut scope = w.downcast::<OverlayScope>();
-            OverlayScope::set_portal_visible(
-                &mut scope,
-                key,
-                open,
-                PortalVisibility {
-                    owner: Some(owner),
-                    owner_kind: OwnerKind::Dialog,
-                    rect: Rect::ZERO,
-                    anchor: PopoverAnchor::ViewportQuarter,
-                    gap: 0.0,
-                },
-            );
-        });
-    }};
 }
 
 impl DialogHost {
     #[must_use]
     pub(crate) fn new(scope: OverlayScopeHandle, key: u64, open: bool) -> Self {
-        Self { scope, key, open }
+        Self {
+            binding: PortalBinding::new(scope, key, dialog_dismiss_hook),
+            open,
+        }
+    }
+
+    /// Push the current open/closed state to the portal slot.
+    /// [`OverlayAnchor::ViewportQuarter`] has no trigger rect and no gap;
+    /// the binding passes [`Rect::ZERO`](masonry::kurbo::Rect::ZERO) and
+    /// skips the re-anchor loop for that variant. A not-yet-mounted scope
+    /// is a silent no-op in release (unified error handling, shared with
+    /// popover/dropdown/autocomplete — see [`PortalBinding`]'s docs). Unlike
+    /// those, dialog has no in-tree fallback, so a scope that's genuinely
+    /// never ready here means an invisible dialog with no signal anything's
+    /// wrong; the `debug_assert` restores that signal in dev builds while
+    /// keeping release behavior a graceful no-op.
+    fn push_visibility(&mut self, ctx: &mut impl PortalOpenCtx) {
+        debug_assert!(
+            self.binding.is_ready(),
+            "overlay_scope ancestor must be mounted before DialogHost pushes visibility \
+             (dialog has no in-tree fallback, unlike popover/dropdown/autocomplete)"
+        );
+        if self.open {
+            self.binding.open(ctx, OverlayAnchor::ViewportQuarter, 0.0);
+        } else {
+            self.binding.close(ctx);
+        }
     }
 
     /// Push a new open/closed state to the portal slot, if it changed.
@@ -89,7 +84,7 @@ impl DialogHost {
             return;
         }
         this.widget.open = open;
-        push_visibility_body!(this.widget, this.ctx);
+        this.widget.push_visibility(&mut this.ctx);
     }
 }
 
@@ -105,7 +100,7 @@ impl Widget for DialogHost {
         if let Update::WidgetAdded = event
             && self.open
         {
-            push_visibility_body!(self, ctx);
+            self.push_visibility(ctx);
         }
     }
 

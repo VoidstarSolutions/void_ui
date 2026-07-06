@@ -31,21 +31,17 @@ use masonry::core::{
     UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Point, Rect, RoundedRect, Size, Stroke};
+use masonry::kurbo::{Axis, Point, Size};
 use masonry::layout::{LenReq, Length};
-use masonry::peniko::Color;
 use masonry::properties::Padding;
 use masonry::widgets::ButtonPress;
 
-use super::PopoverAnchor;
 use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
 use crate::components::click::{self, ClickPhase};
-use crate::overlay_portal::{OwnerKind, PortalVisibility};
-use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
-
-/// Border width of the popover surface's chrome.
-const BORDER_WIDTH: f64 = 1.0;
+use crate::overlay::binding::{self, PortalBinding, PortalOpenCtx};
+use crate::overlay::{OverlayAnchor, OverlaySurface, SurfaceStyle};
+use crate::overlay_scope::OverlayScopeHandle;
 
 /// Gap between the trigger and the popover surface, scaled with density.
 fn surface_gap(theme: &Theme) -> Length {
@@ -61,12 +57,7 @@ enum Hosting {
     },
     Portal {
         trigger: WidgetPod<dyn Widget>,
-        scope: OverlayScopeHandle,
-        key: u64,
-        /// Last window-space anchor rect pushed to the slot; `compose` uses
-        /// it to re-anchor only when we actually moved (mirrors
-        /// `ThemedDropdownButton::compose`).
-        last_anchor_rect_window: Option<Rect>,
+        binding: PortalBinding,
     },
 }
 
@@ -79,7 +70,7 @@ enum Hosting {
 pub struct PopoverHost {
     hosting: Hosting,
     open: bool,
-    anchor: PopoverAnchor,
+    anchor: OverlayAnchor,
     theme: Theme,
     /// The trigger's own widget id, captured at construction. Used by
     /// `on_action` to ignore bubbled `ButtonPress` actions that originate
@@ -93,7 +84,7 @@ impl PopoverHost {
     pub fn new(
         trigger: NewWidget<impl Widget + ?Sized>,
         mut content: NewWidget<impl Widget + ?Sized>,
-        anchor: PopoverAnchor,
+        anchor: OverlayAnchor,
         theme: &Theme,
     ) -> Self {
         let trigger = trigger.erased();
@@ -101,7 +92,7 @@ impl PopoverHost {
         content
             .properties
             .insert(Padding::all(Length::px(f64::from(theme.density.pad))));
-        let surface = NewWidget::new(PopoverSurface::new(
+        let surface = NewWidget::new(OverlaySurface::new(
             content.erased(),
             theme,
             SurfaceStyle::Popover,
@@ -125,7 +116,7 @@ impl PopoverHost {
     #[must_use]
     pub(crate) fn new_portal(
         trigger: NewWidget<impl Widget + ?Sized>,
-        anchor: PopoverAnchor,
+        anchor: OverlayAnchor,
         theme: &Theme,
         scope: OverlayScopeHandle,
         key: u64,
@@ -135,9 +126,7 @@ impl PopoverHost {
         Self {
             hosting: Hosting::Portal {
                 trigger: trigger.to_pod(),
-                scope,
-                key,
-                last_anchor_rect_window: None,
+                binding: PortalBinding::new(scope, key, popover_dismiss_hook),
             },
             open: false,
             anchor,
@@ -163,8 +152,8 @@ impl PopoverHost {
                 let mut overlay_host = this.ctx.get_mut(overlay_host);
                 AnchoredOverlay::set_gap(&mut overlay_host, surface_gap(theme));
                 let mut overlay = AnchoredOverlay::overlay_mut(&mut overlay_host);
-                let mut surface = overlay.downcast::<PopoverSurface>();
-                PopoverSurface::set_theme(&mut surface, theme);
+                let mut surface = overlay.downcast::<OverlaySurface>();
+                OverlaySurface::set_theme(&mut surface, theme);
             }
             Hosting::Portal { .. } => Self::refresh_portal(this),
         }
@@ -172,7 +161,7 @@ impl PopoverHost {
 
     /// Change the anchor — forwarded immediately to the live `AnchoredOverlay`
     /// in-tree, re-pushed to the scope's slot (if open) in portal mode.
-    pub fn set_anchor(this: &mut WidgetMut<'_, Self>, anchor: PopoverAnchor) {
+    pub fn set_anchor(this: &mut WidgetMut<'_, Self>, anchor: OverlayAnchor) {
         if this.widget.anchor == anchor {
             return;
         }
@@ -188,46 +177,19 @@ impl PopoverHost {
 
     /// Re-push current open/placement state to the scope's slot (portal mode,
     /// open popovers only). Window rect is recomputed from our current box.
+    /// Uses `PortalBinding::refresh`, not `open` — the re-anchor loop is
+    /// already running (kept alive by `on_anim_frame` while `open`), so
+    /// there's nothing to (re-)arm here.
     fn refresh_portal(this: &mut WidgetMut<'_, Self>) {
         if !this.widget.open {
             return;
         }
-        let Hosting::Portal {
-            scope,
-            key,
-            last_anchor_rect_window,
-            ..
-        } = &mut this.widget.hosting
-        else {
-            return;
-        };
-        let Some(scope_id) = scope.widget_id() else {
-            return;
-        };
-        let key = *key;
-        let owner = Some(this.ctx.widget_id());
         let anchor = this.widget.anchor;
         let gap = surface_gap(&this.widget.theme).get();
-        let rect = Rect::from_origin_size(
-            this.ctx.to_window(Point::ORIGIN),
-            this.ctx.border_box_size(),
-        );
-        *last_anchor_rect_window = Some(rect);
-        this.ctx.mutate_later(scope_id, move |mut w| {
-            let mut scope = w.downcast::<OverlayScope>();
-            OverlayScope::set_portal_visible(
-                &mut scope,
-                key,
-                true,
-                PortalVisibility {
-                    owner,
-                    owner_kind: OwnerKind::Popover,
-                    rect,
-                    anchor,
-                    gap,
-                },
-            );
-        });
+        let Hosting::Portal { binding, .. } = &mut this.widget.hosting else {
+            return;
+        };
+        binding.refresh(&mut this.ctx, anchor, gap);
     }
 
     /// Sync the host's `open` flag after the portal slot dismissed its
@@ -244,7 +206,7 @@ impl PopoverHost {
     /// Mutable access to the `overlay_host` for the view layer's in-tree
     /// paths, which thread both the trigger
     /// (`overlay_host_mut → AnchoredOverlay::primary_mut`) and the content
-    /// (`overlay_host_mut → AnchoredOverlay::overlay_mut → downcast::<PopoverSurface> → content_mut`)
+    /// (`overlay_host_mut → AnchoredOverlay::overlay_mut → downcast::<OverlaySurface> → content_mut`)
     /// through it.
     ///
     /// # Panics
@@ -278,74 +240,39 @@ impl PopoverHost {
     }
 }
 
+/// Dismiss hook registered with the portal slot (see
+/// [`crate::overlay_portal::DismissHook`]): syncs `open` after an
+/// outside-press dismissal via [`PopoverHost::mark_closed`].
+pub(crate) fn popover_dismiss_hook(mut w: WidgetMut<'_, dyn Widget>) {
+    let mut host = w.downcast::<PopoverHost>();
+    PopoverHost::mark_closed(&mut host);
+}
+
 // --- MARK: INTERNAL HELPERS
 
-/// Body of `push_open_state`, shared between the `EventCtx` and `ActionCtx`
-/// flavors below — both context types expose the same `mutate_child_later`,
-/// `mutate_later`, `to_window`, `border_box_size`, `widget_id`, and
-/// `request_compose` methods, but as separate inherent impls rather than a
-/// shared trait, so the body is factored out as a macro instead.
-macro_rules! push_open_state_body {
-    ($self:ident, $ctx:ident, $open:ident) => {
-        match &mut $self.hosting {
+impl PopoverHost {
+    /// Push `open` to whichever host mounts the content. Generic over the
+    /// context (`EventCtx` for click/Escape, `ActionCtx` for keyboard
+    /// activation, `UpdateCtx` for stash-close, `MutateCtx` via
+    /// [`Self::refresh_portal`]) — see [`PortalOpenCtx`].
+    fn push_open_state(&mut self, ctx: &mut impl PortalOpenCtx, open: bool) {
+        let anchor = self.anchor;
+        let gap = surface_gap(&self.theme).get();
+        match &mut self.hosting {
             Hosting::InTree { overlay_host } => {
-                $ctx.mutate_child_later(overlay_host, move |mut w| {
-                    AnchoredOverlay::set_overlay_visible(&mut w, $open);
+                ctx.queue_mutate(overlay_host.id(), move |mut w| {
+                    let mut overlay = w.downcast::<AnchoredOverlay>();
+                    AnchoredOverlay::set_overlay_visible(&mut overlay, open);
                 });
             }
-            Hosting::Portal {
-                scope,
-                key,
-                last_anchor_rect_window,
-                ..
-            } => {
-                // Unreachable in practice: the OnceLock fills at the scope's
-                // `WidgetAdded`, before any descendant event can fire.
-                let Some(scope_id) = scope.widget_id() else {
-                    return;
-                };
-                let key = *key;
-                let owner = Some($ctx.widget_id());
-                let anchor = $self.anchor;
-                let gap = surface_gap(&$self.theme).get();
-                let rect =
-                    Rect::from_origin_size($ctx.to_window(Point::ORIGIN), $ctx.border_box_size());
-                *last_anchor_rect_window = Some(rect);
-                $ctx.mutate_later(scope_id, move |mut w| {
-                    let mut scope = w.downcast::<OverlayScope>();
-                    OverlayScope::set_portal_visible(
-                        &mut scope,
-                        key,
-                        $open,
-                        PortalVisibility {
-                            owner,
-                            owner_kind: OwnerKind::Popover,
-                            rect,
-                            anchor,
-                            gap,
-                        },
-                    );
-                });
-                if $open {
-                    $ctx.request_compose();
-                    $ctx.request_anim_frame();
+            Hosting::Portal { binding, .. } => {
+                if open {
+                    binding.open(ctx, anchor, gap);
+                } else {
+                    binding.close(ctx);
                 }
             }
         }
-    };
-}
-
-impl PopoverHost {
-    /// Push `open` to whichever host mounts the content. `EventCtx` flavor —
-    /// used by click and Escape handling.
-    fn push_open_state(&mut self, ctx: &mut EventCtx<'_>, open: bool) {
-        push_open_state_body!(self, ctx, open);
-    }
-
-    /// `ActionCtx` flavor of [`Self::push_open_state`] — used by the
-    /// trigger's bubbled `ButtonPress` (keyboard activation).
-    fn push_open_state_action(&mut self, ctx: &mut ActionCtx<'_>, open: bool) {
-        push_open_state_body!(self, ctx, open);
     }
 }
 
@@ -421,7 +348,7 @@ impl Widget for PopoverHost {
             ctx.set_handled();
             let open = !self.open;
             self.open = open;
-            self.push_open_state_action(ctx, open);
+            self.push_open_state(ctx, open);
             ctx.request_paint_only();
         }
     }
@@ -460,33 +387,7 @@ impl Widget for PopoverHost {
             // close — for both hosting modes.
             Update::StashedChanged(true) if self.open => {
                 self.open = false;
-                match &mut self.hosting {
-                    Hosting::InTree { overlay_host } => {
-                        ctx.mutate_child_later(overlay_host, |mut w| {
-                            AnchoredOverlay::set_overlay_visible(&mut w, false);
-                        });
-                    }
-                    Hosting::Portal { scope, key, .. } => {
-                        if let Some(scope_id) = scope.widget_id() {
-                            let key = *key;
-                            ctx.mutate_later(scope_id, move |mut w| {
-                                let mut scope = w.downcast::<OverlayScope>();
-                                OverlayScope::set_portal_visible(
-                                    &mut scope,
-                                    key,
-                                    false,
-                                    PortalVisibility {
-                                        owner: None,
-                                        owner_kind: OwnerKind::Popover,
-                                        rect: Rect::ZERO,
-                                        anchor: PopoverAnchor::BottomStart,
-                                        gap: 0.0,
-                                    },
-                                );
-                            });
-                        }
-                    }
-                }
+                self.push_open_state(ctx, false);
                 ctx.request_paint_only();
             }
             _ => {}
@@ -507,44 +408,24 @@ impl Widget for PopoverHost {
     /// is or what's scrolling. Each call here is a single check-and-push: if
     /// the rect is unchanged from what we last pushed, it's a no-op.
     fn compose(&mut self, ctx: &mut ComposeCtx<'_>) {
-        if !self.open {
-            return;
-        }
-        let Hosting::Portal {
-            scope,
-            key,
-            last_anchor_rect_window,
-            ..
-        } = &mut self.hosting
-        else {
-            return;
+        let binding = match &mut self.hosting {
+            Hosting::Portal { binding, .. } => Some(binding),
+            Hosting::InTree { .. } => None,
         };
-        let Some(scope_id) = scope.widget_id() else {
-            return;
-        };
-        let rect = Rect::from_origin_size(ctx.to_window(Point::ZERO), ctx.border_box_size());
-        if *last_anchor_rect_window == Some(rect) {
-            return;
-        }
-        *last_anchor_rect_window = Some(rect);
-        let key = *key;
-        ctx.mutate_later(scope_id, move |mut w| {
-            let mut scope = w.downcast::<OverlayScope>();
-            OverlayScope::set_portal_placement(&mut scope, key, rect);
-        });
+        binding::compose_reanchor(ctx, self.open, binding);
     }
 
     /// Keeps a still-open portal popover's [`Self::compose`] running every
-    /// frame so it re-anchors regardless of pointer position or which
-    /// ancestor scrolled — see that method. Stops re-arming once `open` goes
-    /// `false` (checked on the *next* frame after close, since `push_open_state`
-    /// already requested the frame that observes the close).
+    /// frame — see [`binding::arm_reanchor_on_anim_frame`]. Stops re-arming
+    /// once `open` goes `false` (checked on the *next* frame after close,
+    /// since `push_open_state` already requested the frame that observes
+    /// the close).
     fn on_anim_frame(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, _: u64) {
-        if !self.open || !matches!(self.hosting, Hosting::Portal { .. }) {
-            return;
-        }
-        ctx.request_compose();
-        ctx.request_anim_frame();
+        binding::arm_reanchor_on_anim_frame(
+            ctx,
+            self.open,
+            matches!(self.hosting, Hosting::Portal { .. }),
+        );
     }
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
@@ -625,136 +506,6 @@ impl Widget for PopoverHost {
     }
 }
 
-/// Which corner radius a [`PopoverSurface`] paints, per
-/// [`crate::theme::Radii`]'s documented usage: `small` for "cards, pills,
-/// buttons" (popovers, dropdown menus), `large` for "large surfaces, dialogs".
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SurfaceStyle {
-    Popover,
-    Dialog,
-}
-
-impl SurfaceStyle {
-    fn corner_radius(self, theme: &Theme) -> f64 {
-        match self {
-            Self::Popover => f64::from(theme.radius.small),
-            Self::Dialog => f64::from(theme.radius.large),
-        }
-    }
-}
-
-/// Transparent wrapper that paints rounded background/border chrome around
-/// arbitrary popover content. `AnchoredOverlay` is purely structural — it
-/// doesn't paint chrome — so whatever it hosts must paint its own (mirrors
-/// `MenuContent`, which does the same for dropdown menus).
-pub(crate) struct PopoverSurface {
-    content: WidgetPod<dyn Widget>,
-    bg: Color,
-    border: Color,
-    pad: f32,
-    style: SurfaceStyle,
-    corner_radius: f64,
-}
-
-impl PopoverSurface {
-    pub(crate) fn new(content: NewWidget<dyn Widget>, theme: &Theme, style: SurfaceStyle) -> Self {
-        Self {
-            content: content.to_pod(),
-            bg: theme.palette.surface_hi,
-            border: theme.palette.border_strong,
-            pad: theme.density.pad,
-            style,
-            corner_radius: style.corner_radius(theme),
-        }
-    }
-
-    pub(crate) fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
-        let bg = theme.palette.surface_hi;
-        let border = theme.palette.border_strong;
-        let corner_radius = this.widget.style.corner_radius(theme);
-        if this.widget.bg != bg || this.widget.border != border {
-            this.widget.bg = bg;
-            this.widget.border = border;
-            this.ctx.request_paint_only();
-        }
-        if (this.widget.corner_radius - corner_radius).abs() > f64::EPSILON {
-            this.widget.corner_radius = corner_radius;
-            this.ctx.request_paint_only();
-        }
-        if (this.widget.pad - theme.density.pad).abs() > f32::EPSILON {
-            this.widget.pad = theme.density.pad;
-            let pad = Padding::all(Length::px(f64::from(theme.density.pad)));
-            Self::content_mut(this).insert_prop(pad);
-        }
-    }
-
-    /// Mutable access to the wrapped content for the view layer.
-    pub(crate) fn content_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
-        this.ctx.get_mut(&mut this.widget.content)
-    }
-}
-
-impl Widget for PopoverSurface {
-    type Action = NoAction;
-
-    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.content);
-    }
-
-    fn measure(
-        &mut self,
-        ctx: &mut MeasureCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        axis: Axis,
-        _len_req: LenReq,
-        cross_length: Option<Length>,
-    ) -> Length {
-        ctx.redirect_measurement(&mut self.content, axis, cross_length)
-    }
-
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        ctx.run_layout(&mut self.content, size);
-        ctx.place_child(&mut self.content, Point::ORIGIN);
-        ctx.derive_baselines(&self.content);
-    }
-
-    fn paint(
-        &mut self,
-        ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        painter: &mut Painter<'_>,
-    ) {
-        let rrect =
-            RoundedRect::from_origin_size(Point::ORIGIN, ctx.border_box_size(), self.corner_radius);
-        if self.bg.components[3] > 0.0 {
-            painter.fill(rrect, self.bg).draw();
-        }
-        if self.border.components[3] > 0.0 {
-            painter
-                .stroke(rrect, &Stroke::new(BORDER_WIDTH), self.border)
-                .draw();
-        }
-    }
-
-    fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
-
-    fn accessibility_role(&self) -> Role {
-        Role::GenericContainer
-    }
-
-    fn accessibility(
-        &mut self,
-        _ctx: &mut AccessCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _node: &mut Node,
-    ) {
-    }
-
-    fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.content.id()])
-    }
-}
-
 // --- MARK: TESTS
 
 #[cfg(test)]
@@ -762,6 +513,7 @@ mod tests {
     use masonry::core::TextEvent;
     use masonry::core::keyboard::{Key, NamedKey};
     use masonry::core::{Handled, NewWidget};
+    use masonry::kurbo::Rect;
     use masonry::layout::SizeDef;
     use masonry::testing::TestHarness;
     use masonry::theme::default_property_set;
@@ -770,6 +522,7 @@ mod tests {
 
     use super::*;
     use crate::components::button::widget::ThemedButton;
+    use crate::overlay_scope::OverlayScope;
 
     fn button(label: &str, theme: &Theme) -> NewWidget<dyn Widget> {
         NewWidget::new(ThemedButton::new(
@@ -786,7 +539,7 @@ mod tests {
         let trigger = button("Open", &theme);
         let trigger_id = trigger.id();
         let content = NewWidget::new(Label::new("Content")).erased();
-        let widget = PopoverHost::new(trigger, content, PopoverAnchor::BottomStart, &theme);
+        let widget = PopoverHost::new(trigger, content, OverlayAnchor::BottomStart, &theme);
         let h = TestHarness::create(default_property_set(), NewWidget::new(widget));
         (h, trigger_id)
     }
@@ -840,7 +593,7 @@ mod tests {
         let host = NewWidget::new(PopoverHost::new(
             trigger,
             content,
-            PopoverAnchor::BottomStart,
+            OverlayAnchor::BottomStart,
             &theme,
         ));
 
@@ -910,7 +663,7 @@ mod tests {
         let trigger_id = trigger.id();
         let content = button("Inside", &theme);
         let content_id = content.id();
-        let widget = PopoverHost::new(trigger, content, PopoverAnchor::BottomStart, &theme);
+        let widget = PopoverHost::new(trigger, content, OverlayAnchor::BottomStart, &theme);
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
         h.focus_on(Some(trigger_id));
@@ -939,7 +692,7 @@ mod tests {
         let trigger = masonry::widgets::Label::new("trigger").prepare().erased();
         let host = NewWidget::new(PopoverHost::new_portal(
             trigger,
-            PopoverAnchor::BottomStart,
+            OverlayAnchor::BottomStart,
             &theme,
             handle.clone(),
             key,
@@ -956,7 +709,7 @@ mod tests {
         let popover_body = masonry::widgets::Label::new("popover body")
             .prepare()
             .erased();
-        let surface = NewWidget::new(PopoverSurface::new(
+        let surface = NewWidget::new(OverlaySurface::new(
             popover_body,
             &theme,
             SurfaceStyle::Popover,
@@ -1090,7 +843,7 @@ mod tests {
         let trigger = masonry::widgets::Label::new("trigger").prepare().erased();
         let host = NewWidget::new(PopoverHost::new_portal(
             trigger,
-            PopoverAnchor::BottomStart,
+            OverlayAnchor::BottomStart,
             &theme,
             handle.clone(),
             key,
@@ -1137,7 +890,7 @@ mod tests {
         let popover_body = masonry::widgets::Label::new("popover body")
             .prepare()
             .erased();
-        let surface = NewWidget::new(PopoverSurface::new(
+        let surface = NewWidget::new(OverlaySurface::new(
             popover_body,
             &theme,
             SurfaceStyle::Popover,
