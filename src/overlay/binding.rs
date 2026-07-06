@@ -140,16 +140,13 @@ impl PortalBinding {
         self.scope.widget_id()
     }
 
-    /// Push "visible" with the host's current window-space anchor rect, and
-    /// arm the per-frame re-anchor loop. Anchors without a trigger (see
-    /// [`OverlayAnchor::has_trigger`]; currently just `ViewportQuarter`,
-    /// i.e. dialogs) get [`Rect::ZERO`] instead (ignored by
-    /// `PortalSlot::layout` for that variant, and computing real geometry
-    /// could run pre-layout from `Update::WidgetAdded`) and no loop is armed
-    /// (a centered dialog doesn't track a scrolling trigger).
-    pub(crate) fn open(&mut self, ctx: &mut impl PortalOpenCtx, anchor: OverlayAnchor, gap: f64) {
+    /// Shared body of [`Self::open`] and [`Self::refresh`]: queue the
+    /// "visible" push with the host's current window-space anchor rect.
+    /// Returns whether it was queued (`false` when the scope isn't mounted
+    /// yet), so `open` knows whether to also arm the re-anchor loop.
+    fn push_visible(&mut self, ctx: &mut impl PortalCtx, anchor: OverlayAnchor, gap: f64) -> bool {
         let Some(scope_id) = self.scope.widget_id() else {
-            return;
+            return false;
         };
         let rect = if anchor.has_trigger() {
             ctx.host_anchor_rect_window()
@@ -176,9 +173,29 @@ impl PortalBinding {
                 },
             );
         });
-        if anchor.has_trigger() {
+        true
+    }
+
+    /// Push "visible" with the host's current window-space anchor rect, and
+    /// arm the per-frame re-anchor loop. Anchors without a trigger (see
+    /// [`OverlayAnchor::has_trigger`]; currently just `ViewportQuarter`,
+    /// i.e. dialogs) get [`Rect::ZERO`] instead (ignored by
+    /// `PortalSlot::layout` for that variant, and computing real geometry
+    /// could run pre-layout from `Update::WidgetAdded`) and no loop is armed
+    /// (a centered dialog doesn't track a scrolling trigger).
+    pub(crate) fn open(&mut self, ctx: &mut impl PortalOpenCtx, anchor: OverlayAnchor, gap: f64) {
+        if self.push_visible(ctx, anchor, gap) && anchor.has_trigger() {
             ctx.arm_reanchor_loop();
         }
+    }
+
+    /// Re-push the visibility payload for an already-open child whose
+    /// anchor/gap changed (e.g. a theme swap) — same as `open` but without
+    /// arming the re-anchor loop, since a caller using this is by
+    /// definition already open and already keeping that loop running
+    /// (see popover's `on_anim_frame` self-perpetuation).
+    pub(crate) fn refresh(&mut self, ctx: &mut impl PortalCtx, anchor: OverlayAnchor, gap: f64) {
+        self.push_visible(ctx, anchor, gap);
     }
 
     /// Push "hidden" (the canonical close sentinel — owner cleared, rect

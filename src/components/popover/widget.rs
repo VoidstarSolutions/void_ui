@@ -177,11 +177,19 @@ impl PopoverHost {
 
     /// Re-push current open/placement state to the scope's slot (portal mode,
     /// open popovers only). Window rect is recomputed from our current box.
+    /// Uses `PortalBinding::refresh`, not `open` — the re-anchor loop is
+    /// already running (kept alive by `on_anim_frame` while `open`), so
+    /// there's nothing to (re-)arm here.
     fn refresh_portal(this: &mut WidgetMut<'_, Self>) {
         if !this.widget.open {
             return;
         }
-        this.widget.push_open_state(&mut this.ctx, true);
+        let anchor = this.widget.anchor;
+        let gap = surface_gap(&this.widget.theme).get();
+        let Hosting::Portal { binding, .. } = &mut this.widget.hosting else {
+            return;
+        };
+        binding.refresh(&mut this.ctx, anchor, gap);
     }
 
     /// Sync the host's `open` flag after the portal slot dismissed its
