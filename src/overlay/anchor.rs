@@ -34,6 +34,14 @@ pub enum OverlayAnchor {
 }
 
 impl OverlayAnchor {
+    /// Whether this anchor tracks a trigger widget. `ViewportQuarter` is
+    /// positioned relative to the container instead, so it has no trigger
+    /// rect to compute or re-anchor against.
+    #[must_use]
+    pub(crate) fn has_trigger(self) -> bool {
+        !matches!(self, Self::ViewportQuarter)
+    }
+
     /// Compute the content's local-coordinate origin given the trigger's and
     /// content's measured sizes and this anchor.
     #[must_use]

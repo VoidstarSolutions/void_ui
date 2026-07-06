@@ -141,8 +141,9 @@ impl PortalBinding {
     }
 
     /// Push "visible" with the host's current window-space anchor rect, and
-    /// arm the per-frame re-anchor loop. [`OverlayAnchor::ViewportQuarter`]
-    /// (dialogs) has no trigger: the rect is [`Rect::ZERO`] (ignored by
+    /// arm the per-frame re-anchor loop. Anchors without a trigger (see
+    /// [`OverlayAnchor::has_trigger`]; currently just `ViewportQuarter`,
+    /// i.e. dialogs) get [`Rect::ZERO`] instead (ignored by
     /// `PortalSlot::layout` for that variant, and computing real geometry
     /// could run pre-layout from `Update::WidgetAdded`) and no loop is armed
     /// (a centered dialog doesn't track a scrolling trigger).
@@ -150,10 +151,10 @@ impl PortalBinding {
         let Some(scope_id) = self.scope.widget_id() else {
             return;
         };
-        let rect = if anchor == OverlayAnchor::ViewportQuarter {
-            Rect::ZERO
-        } else {
+        let rect = if anchor.has_trigger() {
             ctx.host_anchor_rect_window()
+        } else {
+            Rect::ZERO
         };
         self.last_anchor_rect_window = Some(rect);
         let key = self.key;
@@ -175,7 +176,7 @@ impl PortalBinding {
                 },
             );
         });
-        if anchor != OverlayAnchor::ViewportQuarter {
+        if anchor.has_trigger() {
             ctx.arm_reanchor_loop();
         }
     }
