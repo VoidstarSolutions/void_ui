@@ -98,14 +98,17 @@ macro_rules! impl_portal_open_ctx {
 impl_portal_open_ctx!(EventCtx<'_>, ActionCtx<'_>, UpdateCtx<'_>, MutateCtx<'_>);
 
 /// One component's live connection to its portal-mounted content: the scope
-/// handle, the portal key, the dismiss hook to register on open, and the
-/// last pushed window-space anchor rect (so `reanchor` is a cheap no-op
-/// while nothing moved).
+/// handle, the portal key, the dismiss hook to register on open, the last
+/// pushed window-space anchor rect (so `reanchor` is a cheap no-op while
+/// nothing moved), and the last pushed anchor/gap (so `close` re-pushes the
+/// real values instead of inventing a default — see [`Self::close`]).
 pub(crate) struct PortalBinding {
     scope: OverlayScopeHandle,
     key: u64,
     on_dismiss: DismissHook,
     last_anchor_rect_window: Option<Rect>,
+    last_anchor: OverlayAnchor,
+    last_gap: f64,
 }
 
 impl PortalBinding {
@@ -116,6 +119,8 @@ impl PortalBinding {
             key,
             on_dismiss,
             last_anchor_rect_window: None,
+            last_anchor: OverlayAnchor::default(),
+            last_gap: 0.0,
         }
     }
 
@@ -154,6 +159,8 @@ impl PortalBinding {
             Rect::ZERO
         };
         self.last_anchor_rect_window = Some(rect);
+        self.last_anchor = anchor;
+        self.last_gap = gap;
         let key = self.key;
         let owner = PortalOwner {
             id: ctx.host_widget_id(),
@@ -200,13 +207,19 @@ impl PortalBinding {
 
     /// Push "hidden" (the canonical close sentinel — owner cleared, rect
     /// zeroed; those fields are unread while hidden and every `open`
-    /// re-pushes them).
+    /// re-pushes them). Anchor/gap carry the last real values pushed by
+    /// `open`/`refresh` rather than an invented default — today nothing
+    /// reads them while hidden, but a hardcoded `BottomStart` would be
+    /// silently wrong for dialogs (`ViewportQuarter`) the moment that
+    /// changes.
     pub(crate) fn close(&mut self, ctx: &mut impl PortalCtx) {
         let Some(scope_id) = self.scope.widget_id() else {
             return;
         };
         self.last_anchor_rect_window = None;
         let key = self.key;
+        let anchor = self.last_anchor;
+        let gap = self.last_gap;
         ctx.queue_mutate(scope_id, move |mut w| {
             let mut scope = w.downcast::<OverlayScope>();
             OverlayScope::set_portal_visible(
@@ -216,8 +229,8 @@ impl PortalBinding {
                 PortalVisibility {
                     owner: None,
                     rect: Rect::ZERO,
-                    anchor: OverlayAnchor::BottomStart,
-                    gap: 0.0,
+                    anchor,
+                    gap,
                 },
             );
         });
