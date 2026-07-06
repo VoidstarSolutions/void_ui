@@ -327,7 +327,9 @@ pub struct PortalOwner {
 impl PartialEq for PortalOwner {
     /// Owners are keyed by widget identity alone: a given owner widget
     /// always registers the same hook, and comparing `fn` pointers is
-    /// unreliable (`unpredictable_function_pointer_comparisons`).
+    /// unreliable (`unpredictable_function_pointer_comparisons`). This
+    /// assumes a live `WidgetId` is never reused for a different widget —
+    /// a masonry arena invariant, not something enforced here.
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
