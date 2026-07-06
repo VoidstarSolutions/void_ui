@@ -36,7 +36,7 @@ use crate::components::item_list;
 use crate::components::scroll_container::widget::{ContentClip, ScrollView};
 use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 use crate::overlay::OverlayAnchor;
-use crate::overlay::binding::PortalBinding;
+use crate::overlay::binding::{self, PortalBinding};
 use crate::overlay_portal::PortalSlot;
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
@@ -1929,32 +1929,21 @@ impl Widget for AutocompleteWidget {
     /// Re-anchors a still-open portal-mode suggestion list as we move in
     /// window space (e.g. scrolling). No-op in-tree.
     fn compose(&mut self, ctx: &mut ComposeCtx<'_>) {
-        if !self.open {
-            return;
-        }
-        if let Hosting::Portal { binding, .. } = &mut self.hosting {
-            binding.reanchor(ctx);
-        }
+        let binding = match &mut self.hosting {
+            Hosting::Portal { binding, .. } => Some(binding),
+            Hosting::InTree { .. } => None,
+        };
+        binding::compose_reanchor(ctx, self.open, binding);
     }
 
-    /// Keeps compose running every frame while portal-mode is open, so the
-    /// list re-anchors regardless of pointer position or which ancestor scrolled.
-    ///
-    /// This is a deliberate busy-poll, not an oversight: masonry's compose
-    /// pass only calls a widget's `compose()` if that widget already
-    /// requested it, and there's no `Update` variant or timer API in the
-    /// pinned masonry version that notifies an arbitrary descendant when an
-    /// unrelated ancestor scrolls. Without that upstream hook, per-frame
-    /// polling while open is the only way to catch "some ancestor scrolled"
-    /// regardless of which one. Revisit this once masonry exposes a
-    /// scroll-changed notification or a timer primitive that isn't tied to
-    /// the display's refresh rate.
+    /// Keeps compose running every frame while portal-mode is open — see
+    /// [`binding::arm_reanchor_on_anim_frame`].
     fn on_anim_frame(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, _: u64) {
-        if !self.open || !matches!(self.hosting, Hosting::Portal { .. }) {
-            return;
-        }
-        ctx.request_compose();
-        ctx.request_anim_frame();
+        binding::arm_reanchor_on_anim_frame(
+            ctx,
+            self.open,
+            matches!(self.hosting, Hosting::Portal { .. }),
+        );
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {

@@ -6,6 +6,13 @@
 //! `OverlayScope::set_portal_visible` → (on open) arm the per-frame
 //! `compose` loop that tracks ancestor scrolling.
 //!
+//! [`compose_reanchor`] and [`arm_reanchor_on_anim_frame`] consolidate the
+//! `Widget::compose`/`on_anim_frame` bodies that drive that loop — every
+//! portal-capable widget's `compose`/`on_anim_frame` is a one-line call into
+//! these; only the `Hosting` match to extract `Option<&mut PortalBinding>`
+//! stays per-component, since each widget's `Hosting` enum carries different
+//! non-portal fields.
+//!
 //! Masonry's context types (`EventCtx`, `ActionCtx`, `UpdateCtx`,
 //! `MutateCtx`, `ComposeCtx`) expose the needed methods as *separate
 //! inherent impls*, not a shared trait — which is why each component grew a
@@ -254,4 +261,38 @@ impl PortalBinding {
             OverlayScope::set_portal_placement(&mut scope, key, rect);
         });
     }
+}
+
+/// Shared `Widget::compose` body for portal-capable widgets (`popover`,
+/// `dropdown_button`, `autocomplete`): re-anchor a still-open portal child.
+/// `binding` is `Some` only when the widget is in portal-hosting mode; each
+/// caller extracts it from its own `Hosting` enum (which also carries
+/// component-specific fields `PortalBinding` doesn't know about).
+pub(crate) fn compose_reanchor(ctx: &mut ComposeCtx<'_>, open: bool, binding: Option<&mut PortalBinding>) {
+    if !open {
+        return;
+    }
+    if let Some(binding) = binding {
+        binding.reanchor(ctx);
+    }
+}
+
+/// Shared `Widget::on_anim_frame` body for portal-capable widgets: keeps
+/// `compose` running every frame while a portal child is open, so it
+/// re-anchors regardless of pointer position or which ancestor scrolled.
+///
+/// This is a deliberate busy-poll, not an oversight: masonry's compose pass
+/// only calls a widget's `compose` if that widget already requested it, and
+/// there's no `Update` variant or timer API in the pinned masonry version
+/// that notifies an arbitrary descendant when an unrelated ancestor
+/// scrolls. Without that upstream hook, per-frame polling while open is the
+/// only way to catch "some ancestor scrolled" regardless of which one.
+/// Revisit this once masonry exposes a scroll-changed notification or a
+/// timer primitive that isn't tied to the display's refresh rate.
+pub(crate) fn arm_reanchor_on_anim_frame(ctx: &mut UpdateCtx<'_>, open: bool, is_portal: bool) {
+    if !open || !is_portal {
+        return;
+    }
+    ctx.request_compose();
+    ctx.request_anim_frame();
 }

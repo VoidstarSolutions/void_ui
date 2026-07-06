@@ -39,7 +39,7 @@ use masonry::widgets::ButtonPress;
 use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
 use crate::components::click::{self, ClickPhase};
-use crate::overlay::binding::{PortalBinding, PortalOpenCtx};
+use crate::overlay::binding::{self, PortalBinding, PortalOpenCtx};
 use crate::overlay::{OverlayAnchor, OverlaySurface, SurfaceStyle};
 use crate::overlay_scope::OverlayScopeHandle;
 
@@ -408,25 +408,24 @@ impl Widget for PopoverHost {
     /// is or what's scrolling. Each call here is a single check-and-push: if
     /// the rect is unchanged from what we last pushed, it's a no-op.
     fn compose(&mut self, ctx: &mut ComposeCtx<'_>) {
-        if !self.open {
-            return;
-        }
-        if let Hosting::Portal { binding, .. } = &mut self.hosting {
-            binding.reanchor(ctx);
-        }
+        let binding = match &mut self.hosting {
+            Hosting::Portal { binding, .. } => Some(binding),
+            Hosting::InTree { .. } => None,
+        };
+        binding::compose_reanchor(ctx, self.open, binding);
     }
 
     /// Keeps a still-open portal popover's [`Self::compose`] running every
-    /// frame so it re-anchors regardless of pointer position or which
-    /// ancestor scrolled — see that method. Stops re-arming once `open` goes
-    /// `false` (checked on the *next* frame after close, since `push_open_state`
-    /// already requested the frame that observes the close).
+    /// frame — see [`binding::arm_reanchor_on_anim_frame`]. Stops re-arming
+    /// once `open` goes `false` (checked on the *next* frame after close,
+    /// since `push_open_state` already requested the frame that observes
+    /// the close).
     fn on_anim_frame(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, _: u64) {
-        if !self.open || !matches!(self.hosting, Hosting::Portal { .. }) {
-            return;
-        }
-        ctx.request_compose();
-        ctx.request_anim_frame();
+        binding::arm_reanchor_on_anim_frame(
+            ctx,
+            self.open,
+            matches!(self.hosting, Hosting::Portal { .. }),
+        );
     }
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}

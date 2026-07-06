@@ -41,7 +41,7 @@ use crate::components::button::ButtonVariant;
 use crate::components::button::widget::ThemedButton;
 use crate::components::icon::IconName;
 use crate::overlay::OverlayAnchor;
-use crate::overlay::binding::{PortalBinding, PortalCtx, PortalOpenCtx};
+use crate::overlay::binding::{self, PortalBinding, PortalCtx, PortalOpenCtx};
 use crate::overlay_portal::PortalSlot;
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
@@ -665,23 +665,21 @@ impl Widget for ThemedDropdownButton {
     /// descendant — nothing re-places it automatically. Mirrors
     /// `PopoverHost::compose`; no-op in-tree.
     fn compose(&mut self, ctx: &mut ComposeCtx<'_>) {
-        if !self.open {
-            return;
-        }
-        if let Hosting::Portal { binding, .. } = &mut self.hosting {
-            binding.reanchor(ctx);
-        }
+        let binding = match &mut self.hosting {
+            Hosting::Portal { binding, .. } => Some(binding),
+            Hosting::InTree { .. } => None,
+        };
+        binding::compose_reanchor(ctx, self.open, binding);
     }
 
     /// Keeps a still-open portal-mode menu's [`Self::compose`] running every
-    /// frame so it re-anchors regardless of pointer position or which
-    /// ancestor scrolled. Mirrors `PopoverHost::on_anim_frame`; no-op in-tree.
+    /// frame — see [`binding::arm_reanchor_on_anim_frame`].
     fn on_anim_frame(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, _: u64) {
-        if !self.open || !matches!(self.hosting, Hosting::Portal { .. }) {
-            return;
-        }
-        ctx.request_compose();
-        ctx.request_anim_frame();
+        binding::arm_reanchor_on_anim_frame(
+            ctx,
+            self.open,
+            matches!(self.hosting, Hosting::Portal { .. }),
+        );
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
