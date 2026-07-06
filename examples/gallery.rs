@@ -174,6 +174,7 @@ fn main_pane(focused: ComponentKind, theme: &Theme) -> Box<AnyWidgetView<State>>
             Box::new(void_ui::components::autocomplete::demo::panel(theme))
         }
         ComponentKind::Badge => Box::new(void_ui::components::badge::demo::panel(theme)),
+        ComponentKind::Breadcrumb => Box::new(void_ui::components::breadcrumb::demo::panel(theme)),
         ComponentKind::Button => Box::new(void_ui::components::button::demo::panel(theme)),
         ComponentKind::ButtonGroup => {
             Box::new(void_ui::components::button_group::demo::panel(theme))
