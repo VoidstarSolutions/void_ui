@@ -22,6 +22,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use masonry::properties::Padding;
 use xilem::WidgetView;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::layout::Length;
@@ -292,6 +293,13 @@ pub struct DataGrid<State, R, Action = ()> {
 fn default_row_height(density: &Density) -> f64 {
     f64::from(density.row_height)
 }
+
+/// Border width of the header + filter chrome boxes. The border insets those
+/// strips by this much on each side, so the body is padded by the same
+/// amount horizontally (see the note in `build_grid_view`) to keep every
+/// strip's columns at the same x — otherwise a filled column drifts ~2 px
+/// against the header.
+const CHROME_BORDER_PX: f64 = 1.0;
 
 impl<State, R, Action> DataGrid<State, R, Action>
 where
@@ -733,7 +741,11 @@ where
         theme: &theme,
     });
 
-    let body = build_body(BodyParams {
+    // Inset the body horizontally by the header/filter border width so its
+    // columns share the same left origin and width as those strips (whose
+    // border insets them). Without this a filled column drifts ~2 px against
+    // the header. Horizontal only — vertical padding would gap the rows.
+    let body = sized_box(build_body(BodyParams {
         row_count,
         row_height,
         theme,
@@ -743,7 +755,8 @@ where
         row_id: row_id.clone(),
         scroll,
         expandable,
-    });
+    }))
+    .padding(Padding::horizontal(Length::px(CHROME_BORDER_PX)));
 
     // Filter-input row: only when filtering is configured and at least one
     // column is filterable.
@@ -1199,7 +1212,7 @@ where
     }
     sized_box(header_strip)
         .background_color(theme.palette.surface_2)
-        .border(theme.palette.border, Length::px(1.0))
+        .border(theme.palette.border, Length::px(CHROME_BORDER_PX))
 }
 
 // --- MARK: BODY --------------------------------------------------------
@@ -1518,7 +1531,7 @@ where
             .flex_weights(flex.to_vec()),
     )
     .background_color(theme.palette.surface)
-    .border(theme.palette.border, Length::px(1.0))
+    .border(theme.palette.border, Length::px(CHROME_BORDER_PX))
 }
 
 /// Height of the filter-input row: one density row plus a `pad_v` of
