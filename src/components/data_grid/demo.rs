@@ -251,6 +251,9 @@ impl Demo {
     /// Resets the column layout to every column in natural order.
     pub fn reset_columns(&mut self) {
         self.column_order = None;
+        // Also clear width overrides, so a resized (and thus pinned) flex
+        // column like `Exchange` un-pins and resumes filling.
+        self.column_widths.clear_all();
     }
 
     /// Recomputes [`Self::visible`] as the host-ordered view: filter

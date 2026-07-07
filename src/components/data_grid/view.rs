@@ -633,7 +633,16 @@ fn decompose_columns<R, State>(
         filterable.push(col.filter.is_some());
         render_slots.push(ColumnRender {
             width: widths.effective(&id, col.width),
-            flex: col.flex,
+            // A width override pins the column to a fixed width: it wins over
+            // the flex weight (which is dropped). Dragging a flex column's
+            // resize handle writes an override, so a resize automatically
+            // pins it (AG-Grid's behavior); clearing the override — e.g. a
+            // "reset columns" action — restores its flex.
+            flex: if widths.get(&id).is_some() {
+                0.0
+            } else {
+                col.flex
+            },
             title: col.title,
             align: col.align,
             render: col.render,
@@ -1682,6 +1691,31 @@ mod tests {
                 |_s: &mut (), _id: u64| {},
             )
             .render(&Theme::default());
+    }
+
+    /// A width override pins a flex column to fixed: its effective flex is
+    /// dropped to `0.0` (so it stops filling) while unresized flex columns
+    /// keep their weight. This is what makes dragging a flex column's resize
+    /// handle pin it (the drag writes the override).
+    #[test]
+    fn width_override_pins_a_flex_column_to_fixed() {
+        use super::super::column::ColumnId;
+
+        let cols = vec![
+            text_column::<u64, (), _>("A", 100.0, CellAlign::Start, |r: &u64| r.to_string())
+                .flex(1.0),
+            text_column::<u64, (), _>("B", 100.0, CellAlign::Start, |r: &u64| r.to_string())
+                .flex(2.0),
+        ];
+        let mut widths = ColumnWidths::new();
+        widths.set(ColumnId::from("A"), 200.0); // resize/pin column A
+        let decomposed = decompose_columns(cols, &widths);
+
+        // A is pinned by its override: flex dropped, width is the override.
+        assert!(decomposed.render_slots[0].flex.abs() < f64::EPSILON);
+        assert!((decomposed.render_slots[0].width - 200.0).abs() < 1e-9);
+        // B is untouched: still flexes with weight 2.
+        assert!((decomposed.render_slots[1].flex - 2.0).abs() < f64::EPSILON);
     }
 
     /// A [`RawProxy`] that drops every message — tests build the view
