@@ -1475,9 +1475,30 @@ where
     }
     let widths: Vec<f64> = render_slots.iter().map(|s| s.width).collect();
     let ids: Vec<ColumnId> = render_slots.iter().map(|s| s.id.clone()).collect();
-    Some(build_filter_row(
-        &widths, flex, &ids, filterable, filter, on_change, theme,
-    ))
+    Some(build_filter_row(FilterRowParams {
+        widths,
+        ids,
+        flex,
+        filterable,
+        filter,
+        on_change,
+        theme,
+    }))
+}
+
+/// Inputs for [`build_filter_row`], grouped into a struct to keep the call
+/// short (and under the argument-count lint) — the same treatment as
+/// [`HeaderParams`] / [`BodyParams`].
+struct FilterRowParams<'a, State, Action> {
+    /// Owned (moved in) — the caller builds these fresh per rebuild, and the
+    /// strip takes the width list by value anyway.
+    widths: Vec<f64>,
+    ids: Vec<ColumnId>,
+    flex: &'a [f64],
+    filterable: &'a [bool],
+    filter: &'a FilterState,
+    on_change: &'a FilterChange<State, Action>,
+    theme: &'a Theme,
 }
 
 /// Builds the per-column filter-input row shown beneath the header.
@@ -1488,18 +1509,21 @@ where
 /// Non-filterable columns render a blank slot of the same width so the
 /// inputs line up under their columns.
 fn build_filter_row<State, Action>(
-    widths: &[f64],
-    flex: &[f64],
-    ids: &[ColumnId],
-    filterable: &[bool],
-    filter: &FilterState,
-    on_change: &FilterChange<State, Action>,
-    theme: &Theme,
+    params: FilterRowParams<'_, State, Action>,
 ) -> impl WidgetView<State, Action> + use<State, Action>
 where
     State: 'static,
     Action: 'static,
 {
+    let FilterRowParams {
+        widths,
+        ids,
+        flex,
+        filterable,
+        filter,
+        on_change,
+        theme,
+    } = params;
     let cells: Vec<Box<AnyWidgetView<State, Action>>> = (0..widths.len())
         .map(|idx| -> Box<AnyWidgetView<State, Action>> {
             if filterable[idx] {
@@ -1527,8 +1551,7 @@ where
     // adds pad_v of headroom on top of row_height so the text_input isn't
     // clipped. ColumnStrip enforces both per-column width and row height.
     sized_box(
-        column_strip(widths.to_vec(), filter_row_height(&theme.density), cells)
-            .flex_weights(flex.to_vec()),
+        column_strip(widths, filter_row_height(&theme.density), cells).flex_weights(flex.to_vec()),
     )
     .background_color(theme.palette.surface)
     .border(theme.palette.border, Length::px(CHROME_BORDER_PX))
