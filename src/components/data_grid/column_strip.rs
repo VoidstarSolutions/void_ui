@@ -104,6 +104,22 @@ pub struct ColumnStrip {
     /// Column boundary currently hovered (within [`GRAB_ZONE`]); drives
     /// separator highlight + repaint. `None` when not near a boundary.
     hovered_boundary: Option<usize>,
+    /// Per-column flex weight, parallel to [`widths`](Self::widths). `0.0` =
+    /// a fixed column; `> 0.0` = grows to absorb surplus width in proportion
+    /// to its weight (see [`ColumnDef::flex`](super::column::ColumnDef::flex)).
+    /// When every weight is `0.0` the strip never fills — it lays out at its
+    /// exact `widths` (and overflows → horizontal scroll).
+    flex: Vec<f64>,
+    /// Surplus width to distribute across the flex columns: the allocated
+    /// width minus the columns' natural total, floored at `0.0` (the portal's
+    /// `content_must_fill` hands over the viewport width when the columns are
+    /// narrower; otherwise they overflow → scroll). Recomputed each layout.
+    /// All geometry — layout, separator paint, boundary hit-test — reads it
+    /// through [`Self::col_width`] so they agree.
+    fill_surplus: f64,
+    /// Cached `sum(flex)`, recomputed each layout so [`Self::col_width`] can
+    /// weight the surplus in O(1) instead of re-summing per column.
+    flex_total: f64,
 }
 
 // --- MARK: BUILDERS
@@ -118,7 +134,20 @@ impl ColumnStrip {
             separators: None,
             drag: None,
             hovered_boundary: None,
+            flex: Vec::new(),
+            fill_surplus: 0.0,
+            flex_total: 0.0,
         }
+    }
+
+    /// Sets the per-column flex weights (parallel to the widths). Extra
+    /// entries are ignored and missing ones default to `0.0`, so a strip is
+    /// always safe to lay out even if the weights lag the width list by a
+    /// frame during a rebuild.
+    #[must_use]
+    pub fn with_flex(mut self, flex: Vec<f64>) -> Self {
+        self.flex = flex;
+        self
     }
 
     /// Makes the strip resizable: draws a separator with the given style
@@ -128,6 +157,22 @@ impl ColumnStrip {
     pub fn resizable(mut self, style: SeparatorStyle) -> Self {
         self.separators = Some(style);
         self
+    }
+
+    /// Effective on-screen width of column `i`: its base width plus its
+    /// weighted share of the [`fill_surplus`](Self::fill_surplus). Layout,
+    /// separator paint, and boundary hit-test all read through this so a
+    /// filled strip's column pitch + trailing edges stay consistent. A
+    /// fixed column (weight `0.0`) never grows; when nothing flexes the
+    /// surplus is `0.0` so every column is its exact base width.
+    fn col_width(&self, i: usize) -> f64 {
+        let base = self.widths[i];
+        let weight = self.flex.get(i).copied().unwrap_or(0.0);
+        if self.fill_surplus > 0.0 && self.flex_total > 0.0 && weight > 0.0 {
+            base + self.fill_surplus * weight / self.flex_total
+        } else {
+            base
+        }
     }
 
     /// Returns the column index whose trailing boundary is within
@@ -140,8 +185,8 @@ impl ColumnStrip {
             return None;
         }
         let mut acc = 0.0;
-        for (i, &w) in self.widths.iter().enumerate() {
-            acc += w;
+        for i in 0..n {
+            acc += self.col_width(i);
             if (x - acc).abs() <= GRAB_ZONE {
                 return Some(i);
             }
@@ -149,11 +194,13 @@ impl ColumnStrip {
         None
     }
 
-    /// Appends a cell at the given column width.
+    /// Appends a cell at the given column width (flex weight defaults to
+    /// `0.0`; set the whole weight list with [`Self::with_flex`]).
     #[must_use]
     pub fn with(mut self, width: f64, child: NewWidget<impl Widget + ?Sized>) -> Self {
         self.children.push(child.erased().to_pod());
         self.widths.push(width);
+        self.flex.push(0.0);
         self
     }
 }
@@ -186,6 +233,18 @@ impl ColumnStrip {
             this.ctx.request_layout();
         }
     }
+
+    /// Sets column `idx`'s flex weight, requesting layout on change. Indices
+    /// outside the current range are ignored.
+    pub fn set_flex(this: &mut WidgetMut<'_, Self>, idx: usize, flex: f64) {
+        if let Some(f) = this.widget.flex.get_mut(idx) {
+            #[expect(clippy::float_cmp, reason = "skip layout unless the value changed")]
+            if *f != flex {
+                *f = flex;
+                this.ctx.request_layout();
+            }
+        }
+    }
 }
 
 // --- MARK: COLLECTIONWIDGET
@@ -209,9 +268,11 @@ impl CollectionWidget<()> for ColumnStrip {
         _params: impl Into<()>,
     ) {
         this.widget.children.push(child.erased().to_pod());
-        // Width is supplied separately by the view (via set_width); a new
-        // cell defaults to zero until the view pushes its width.
+        // Width + flex are supplied separately by the view (via set_width /
+        // set_flex); a new cell defaults to zero for both until the view
+        // pushes them.
         this.widget.widths.push(0.0);
+        this.widget.flex.push(0.0);
         this.ctx.children_changed();
     }
 
@@ -223,6 +284,7 @@ impl CollectionWidget<()> for ColumnStrip {
     ) {
         this.widget.children.insert(idx, child.erased().to_pod());
         this.widget.widths.insert(idx, 0.0);
+        this.widget.flex.insert(idx, 0.0);
         this.ctx.children_changed();
     }
 
@@ -248,17 +310,20 @@ impl CollectionWidget<()> for ColumnStrip {
     fn swap(this: &mut WidgetMut<'_, Self>, a: usize, b: usize) {
         this.widget.children.swap(a, b);
         this.widget.widths.swap(a, b);
+        this.widget.flex.swap(a, b);
         this.ctx.children_changed();
     }
 
     fn remove(this: &mut WidgetMut<'_, Self>, idx: usize) {
         let pod = this.widget.children.remove(idx);
         this.widget.widths.remove(idx);
+        this.widget.flex.remove(idx);
         this.ctx.remove_child(pod);
     }
 
     fn clear(this: &mut WidgetMut<'_, Self>) {
         this.widget.widths.clear();
+        this.widget.flex.clear();
         for pod in this.widget.children.drain(..) {
             this.ctx.remove_child(pod);
         }
@@ -386,7 +451,23 @@ impl Widget for ColumnStrip {
         // every strip with the same widths reports the same total width,
         // regardless of cell content.
         match axis {
-            Axis::Horizontal => Length::px(self.widths.iter().sum()),
+            Axis::Horizontal => {
+                let base_total: f64 = self.widths.iter().sum();
+                match len_req {
+                    // Intrinsic width is the columns' natural total — this is
+                    // what drives the portal's content size and horizontal
+                    // scroll extent, so it must NOT include any fill.
+                    LenReq::MinContent | LenReq::MaxContent => Length::px(base_total),
+                    // Fill to the allocated space when it's wider than the
+                    // natural total. The body's `VirtualScroll` measures each
+                    // row with `FitContent(viewport)`, so without this a body
+                    // row would report `base_total` and refuse to fill while
+                    // the header (allocated the width directly) does — the two
+                    // would then misalign. Narrower space ⇒ natural total
+                    // (overflow → scroll).
+                    LenReq::FitContent(space) => Length::px(space.get().max(base_total)),
+                }
+            }
             Axis::Vertical => match len_req {
                 LenReq::FitContent(_) | LenReq::MaxContent | LenReq::MinContent => {
                     Length::px(self.row_height)
@@ -395,7 +476,7 @@ impl Widget for ColumnStrip {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, _size: Size) {
+    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         // Authoritative placement: force each child to exactly its size
         // and place it at the cumulative x. The parent chooses the child
         // size outright (per `run_layout` semantics), so cell content can
@@ -411,12 +492,27 @@ impl Widget for ColumnStrip {
         // masonry's `Split` keeps its bar clear. Applying the same inset
         // to non-resizable strips keeps End-aligned header/body/filter
         // content at identical x-positions. Column *pitch* is unchanged.
+        //
+        // #111 fill: distribute any surplus (allocated width beyond the
+        // columns' natural total, handed over by the portal's
+        // `content_must_fill` when the viewport is wider) across the flex
+        // columns by weight — see `col_width`. When no column flexes the
+        // surplus goes unused and every column is its exact base width, so
+        // the strip overflows and scrolls exactly as before. Alignment across
+        // header/body/filter holds because every strip gets the same
+        // allocated width and the same weights, so all compute the same
+        // distribution.
+        let base_total: f64 = self.widths.iter().sum();
+        self.fill_surplus = (size.width - base_total).max(0.0);
+        self.flex_total = self.flex.iter().sum();
         let mut x = 0.0;
         let height = self.row_height;
-        for (child, &width) in self.children.iter_mut().zip(self.widths.iter()) {
-            ctx.run_layout(child, Size::new(cell_layout_width(width), height));
+        for i in 0..self.children.len() {
+            let w = self.col_width(i);
+            let child = &mut self.children[i];
+            ctx.run_layout(child, Size::new(cell_layout_width(w), height));
             ctx.place_child(child, Point::new(x, 0.0));
-            x += width;
+            x += w;
         }
         ctx.clear_baselines();
     }
@@ -435,10 +531,11 @@ impl Widget for ColumnStrip {
         let height = ctx.border_box_size().height;
         let active = self.drag.map(|d| d.col).or(self.hovered_boundary);
         // Running accumulator (like `layout`) so painting n separators is
-        // O(n), not O(n²) via a fresh prefix-sum per boundary.
+        // O(n), not O(n²) via a fresh prefix-sum per boundary. Reads
+        // `col_width` so the last column's separator tracks the fill surplus.
         let mut x = 0.0;
-        for (i, &w) in self.widths.iter().enumerate() {
-            x += w;
+        for i in 0..self.widths.len() {
+            x += self.col_width(i);
             let color = if active == Some(i) {
                 style.active
             } else {
@@ -503,6 +600,10 @@ pub struct ColumnStripView<Seq, State, Action = ()> {
     /// same width list to every visible row as a refcount bump instead
     /// of a fresh `Vec` allocation per row per rebuild.
     widths: Arc<Vec<f64>>,
+    /// Per-column flex weights, parallel to `widths`. Empty ⇒ every column
+    /// is fixed (no fill). Shared via `Arc` so the body hands the same list
+    /// to every visible row as a refcount bump, like `widths`.
+    flex: Arc<Vec<f64>>,
     row_height: f64,
     cells: Seq,
     /// Resize config: separator style + on-resize callback. `None` ⇒ a
@@ -527,6 +628,7 @@ where
 {
     ColumnStripView {
         widths: widths.into(),
+        flex: Arc::new(Vec::new()),
         row_height,
         cells,
         resize: None,
@@ -535,6 +637,17 @@ where
 }
 
 impl<Seq, State, Action> ColumnStripView<Seq, State, Action> {
+    /// Supplies per-column flex weights (parallel to the width list) for
+    /// viewport-fill sizing. A column with weight `> 0.0` grows to absorb
+    /// surplus width in proportion to its weight; the default (no weights, or
+    /// all `0.0`) is fixed columns with horizontal scroll. Pass the *same*
+    /// `Arc` to the header, filter, and body strips so they distribute
+    /// identically and stay aligned.
+    pub fn flex_weights(mut self, flex: impl Into<Arc<Vec<f64>>>) -> Self {
+        self.flex = flex.into();
+        self
+    }
+
     /// Makes the strip resizable: it draws a separator (with `style`) at
     /// each column's trailing edge and calls `on_resize(state, col,
     /// new_width)` while a boundary is dragged. The strip owns the grab
@@ -588,6 +701,16 @@ where
         for (width, element) in self.widths.iter().copied().zip(elements.drain()) {
             w = w.with(width, element.child.new_widget);
         }
+        // Apply flex weights, matched to the width-list length (fixed = all
+        // zero when unset or mismatched) so the widget is always safe to lay
+        // out even if the weights lag the widths by a frame.
+        let n = self.widths.len();
+        let flex_vec = if self.flex.len() == n {
+            self.flex.as_ref().clone()
+        } else {
+            vec![0.0; n]
+        };
+        w = w.with_flex(flex_vec);
         // Register as an action source when resizable so the widget's
         // `ColumnResize` actions route to this view's `message`.
         let pod = if self.resize.is_some() {
@@ -636,6 +759,11 @@ where
         // cheap when nothing moved.
         for (idx, &w) in self.widths.iter().enumerate() {
             ColumnStrip::set_width(&mut element, idx, w);
+        }
+        // Sync flex weights against the settled child set (same rationale as
+        // widths above). No-op when unset, so non-flex strips are untouched.
+        for (idx, &f) in self.flex.iter().enumerate() {
+            ColumnStrip::set_flex(&mut element, idx, f);
         }
     }
 
@@ -853,6 +981,9 @@ mod tests {
             separators: None,
             drag: None,
             hovered_boundary: None,
+            flex: Vec::new(),
+            fill_surplus: 0.0,
+            flex_total: 0.0,
         }
     }
 
@@ -870,6 +1001,35 @@ mod tests {
         // MIN_COLUMN_WIDTH well above this, so only direct strip users
         // can get here.
         assert!(approx(cell_layout_width(GRAB_ZONE / 2.0), 0.0));
+    }
+
+    #[test]
+    fn col_width_distributes_surplus_by_flex_weight() {
+        // Two flex columns (weights 1 and 3) share 80px of surplus 1:3; the
+        // fixed column (weight 0) is unchanged. Layout caches `flex_total`, so
+        // set it to match the weights.
+        let mut strip = strip_with_widths(vec![100.0, 100.0, 100.0]);
+        strip.flex = vec![0.0, 1.0, 3.0];
+        strip.flex_total = 4.0;
+        strip.fill_surplus = 80.0;
+        assert!(approx(strip.col_width(0), 100.0), "fixed column unchanged");
+        assert!(approx(strip.col_width(1), 100.0 + 20.0), "weight 1 → +20");
+        assert!(approx(strip.col_width(2), 100.0 + 60.0), "weight 3 → +60");
+        // The distributed surplus exactly fills the allocation.
+        let total: f64 = (0..3).map(|i| strip.col_width(i)).sum();
+        assert!(approx(total, 300.0 + 80.0));
+    }
+
+    #[test]
+    fn col_width_is_base_when_nothing_flexes() {
+        // Surplus present but no flex weight → it goes unused and every column
+        // stays its base width (the grid overflows and scrolls instead).
+        let mut strip = strip_with_widths(vec![100.0, 120.0]);
+        strip.flex = vec![0.0, 0.0];
+        strip.flex_total = 0.0;
+        strip.fill_surplus = 50.0;
+        assert!(approx(strip.col_width(0), 100.0));
+        assert!(approx(strip.col_width(1), 120.0));
     }
 
     #[test]

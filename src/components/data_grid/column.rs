@@ -146,6 +146,15 @@ pub struct ColumnDef<R, State> {
     pub(crate) width: f64,
     /// In-cell text alignment.
     pub(crate) align: CellAlign,
+    /// Flex weight for viewport-fill sizing (CSS `flex-grow` / AG-Grid
+    /// `flex`). `0.0` (the default) = a fixed column at [`width`](Self::width).
+    /// `> 0.0` = the column grows to absorb surplus width when the grid is
+    /// wider than its columns' natural total, sharing that surplus with the
+    /// other flex columns in proportion to this weight. `width` acts as the
+    /// flex-basis (the natural width before any surplus). When *no* column
+    /// has a flex weight the grid keeps its exact current behavior: natural
+    /// widths, horizontal scroll when too wide, no fill.
+    pub(crate) flex: f64,
     /// Builds a cell view for the supplied row at the supplied theme.
     pub(crate) render: CellRenderer<R, State>,
     /// Optional text-only projector used for clipboard copy. The
@@ -186,6 +195,7 @@ impl<R, State> ColumnDef<R, State> {
             title: title.into(),
             width,
             align,
+            flex: 0.0,
             render: Box::new(render),
             text: None,
             comparator: None,
@@ -199,6 +209,25 @@ impl<R, State> ColumnDef<R, State> {
     /// filter, and width state, so it must be unique within the grid.
     pub fn id(mut self, id: impl Into<ColumnId>) -> Self {
         self.id = Some(id.into());
+        self
+    }
+
+    /// Sets the column's flex weight for viewport-fill sizing (see
+    /// [`flex`](Self::flex)). `0.0` (default) keeps the column fixed at its
+    /// width; a positive weight lets it grow to share surplus width when the
+    /// grid is wider than its columns' natural total. A non-finite or
+    /// negative value is ignored (treated as `0.0`).
+    ///
+    /// ```ignore
+    /// // "Name" absorbs all the surplus; the metric columns stay fixed.
+    /// text_column("Name", 200.0, CellAlign::Start, |r| r.name.clone()).flex(1.0)
+    /// ```
+    pub fn flex(mut self, flex: f64) -> Self {
+        self.flex = if flex.is_finite() && flex > 0.0 {
+            flex
+        } else {
+            0.0
+        };
         self
     }
 
@@ -423,6 +452,22 @@ mod tests {
         // which is what the state-map keying relies on.
         assert_eq!(ColumnId::from("vwap"), ColumnId::from(String::from("vwap")));
         assert_ne!(ColumnId::from("bid"), ColumnId::from("ask"));
+    }
+
+    #[test]
+    fn flex_defaults_to_zero_and_rejects_nonpositive() {
+        fn col() -> ColumnDef<Row, ()> {
+            text_column("N", 10.0, CellAlign::End, |r: &Row| r.n.to_string())
+        }
+        // Fixed by default.
+        assert!((col().flex - 0.0).abs() < f64::EPSILON);
+        // A positive weight sticks.
+        assert!((col().flex(2.5).flex - 2.5).abs() < f64::EPSILON);
+        // Negative / non-finite are ignored (treated as fixed) so a stray
+        // value can't make a column shrink or NaN the distribution.
+        assert!((col().flex(-1.0).flex - 0.0).abs() < f64::EPSILON);
+        assert!((col().flex(f64::NAN).flex - 0.0).abs() < f64::EPSILON);
+        assert!((col().flex(f64::INFINITY).flex - 0.0).abs() < f64::EPSILON);
     }
 
     #[test]

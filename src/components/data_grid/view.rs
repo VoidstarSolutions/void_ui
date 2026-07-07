@@ -48,7 +48,7 @@ use crate::collection::{
     SelectionLens, collection_body,
 };
 use crate::components::icon::disclosure_chevron;
-use crate::components::scroll_container::scroll_container;
+use crate::components::scroll_container::{ScrollBarVisibility, scroll_container};
 use crate::theme::Density;
 
 /// Boxed row-data accessor, shared via `Arc` across the body and clipboard
@@ -222,6 +222,10 @@ struct ColumnRender<R, State> {
     id: ColumnId,
     title: String,
     width: f64,
+    /// Flex weight for viewport-fill sizing (`0.0` = fixed). Carried
+    /// alongside the width so header, body, and filter strips all derive the
+    /// same weight list and distribute surplus identically.
+    flex: f64,
     align: CellAlign,
     render: CellRenderer<R, State>,
 }
@@ -629,6 +633,7 @@ fn decompose_columns<R, State>(
         filterable.push(col.filter.is_some());
         render_slots.push(ColumnRender {
             width: widths.effective(&id, col.width),
+            flex: col.flex,
             title: col.title,
             align: col.align,
             render: col.render,
@@ -701,54 +706,23 @@ where
         filterable,
     } = decompose_columns(columns, &column_widths);
 
-    // --- Header row. Sortable columns get a clickable header that
-    //     emits the clicked column to the host (which cycles the sort and
-    //     re-derives its order), plus an arrow on the active column;
-    //     columns with an active filter get a persistent accent + marker.
-    //     When resize is enabled the header ColumnStrip itself owns the
-    //     column-boundary grab zones + separators (like masonry's Split
-    //     owns its bar) — no overlay, so cell hover/sort are untouched.
-    let header_ctx = HeaderCtx {
+    // #111 fill: one shared flex-weight list for header/body/filter (so they
+    // distribute surplus identically + stay aligned); `has_flex` gates the
+    // portal fill below — no flex column ⇒ exact current layout.
+    let flex_weights: Arc<Vec<f64>> = Arc::new(render_slots.iter().map(|s| s.flex).collect());
+    let has_flex = flex_weights.iter().any(|&f| f > 0.0);
+
+    let header = build_header(HeaderParams {
+        render_slots: &render_slots,
+        sortable: &sortable,
+        filter: &filter,
         sort,
-        sort_change: sort_change.as_ref(),
+        sort_change,
+        width_change,
+        flex_weights: Arc::clone(&flex_weights),
+        row_height,
         theme: &theme,
-    };
-    let header_widths: Vec<f64> = render_slots.iter().map(|s| s.width).collect();
-    let header_cells: Vec<Box<AnyWidgetView<State, Action>>> = render_slots
-        .iter()
-        .enumerate()
-        .map(|(idx, slot)| {
-            let filtered = filter.get(&slot.id).is_some();
-            header_cell(slot, sortable[idx], filtered, &header_ctx)
-        })
-        .collect();
-    // ColumnStrip places each cell at an authoritative x (= cumulative
-    // width), so the header lines up with the body/filter strips by
-    // construction. Made resizable when a resize callback is supplied.
-    let mut header_strip = column_strip(header_widths, row_height, header_cells);
-    // Move (don't clone) the resize callback: this is its only use, so a
-    // clone would bump the `Arc` refcount only to drop the original.
-    if let Some(width_change) = width_change {
-        let style = SeparatorStyle {
-            line: theme.palette.border,
-            active: theme.palette.accent,
-        };
-        // The strip reports a *positional* resize index (it's a layout
-        // widget — it knows columns by slot, not identity). Translate it
-        // to the column's stable id here so the host's width override
-        // stays attached across reorder/hide.
-        let resize_ids: Vec<ColumnId> = render_slots.iter().map(|s| s.id.clone()).collect();
-        header_strip = header_strip.resizable(style, move |state: &mut State, col, new_width| {
-            if let Some(id) = resize_ids.get(col) {
-                width_change(state, id.clone(), new_width)
-            } else {
-                Action::default()
-            }
-        });
-    }
-    let header = sized_box(header_strip)
-        .background_color(theme.palette.surface_2)
-        .border(theme.palette.border, Length::px(1.0));
+    });
 
     let body = build_body(BodyParams {
         row_count,
@@ -762,15 +736,16 @@ where
         expandable,
     });
 
-    // Build the filter-input row only when filtering is configured and
-    // at least one column is filterable.
-    let filter_row = filter_change.as_ref().and_then(|on_change| {
-        filterable.iter().any(|&f| f).then(|| {
-            let widths: Vec<f64> = render_slots.iter().map(|s| s.width).collect();
-            let ids: Vec<ColumnId> = render_slots.iter().map(|s| s.id.clone()).collect();
-            build_filter_row(&widths, &ids, &filterable, &filter, on_change, &theme)
-        })
-    });
+    // Filter-input row: only when filtering is configured and at least one
+    // column is filterable.
+    let filter_row = optional_filter_row(
+        filter_change.as_ref(),
+        &filterable,
+        &render_slots,
+        &flex_weights,
+        &filter,
+        &theme,
+    );
     let stack = assemble_grid_stack(header, filter_row, body);
 
     // --- Horizontal scroll: wrap the whole header+filter+body stack in
@@ -779,8 +754,21 @@ where
     //     subtree, they share the horizontal offset automatically — no
     //     manual sync. Vertical virtualization stays inside the body
     //     (`constrain_vertical` leaves the vertical axis to it).
+    //
+    //     #111 fill: enable the portal's fill only when a column actually
+    //     flexes (`has_flex`). It then allocates the content
+    //     `max(intrinsic, viewport)` width (masonry `content_must_fill`), so
+    //     when the columns are narrower than the viewport the strips receive
+    //     the extra width to distribute across the flex columns (and still
+    //     overflow → scroll when wider). With no flex column the fill is off,
+    //     so a plain grid keeps its exact current layout.
+    // Auto-hide the horizontal scrollbar (`OnActivity`) — the app-wide
+    // convention every scroll surface uses. The `scroll_container` default is
+    // `AlwaysVisible`, which would leave a heavy always-on bar under the grid.
     let inner = scroll_container(stack.boxed())
         .constrain_vertical(true)
+        .fill(has_flex)
+        .scroll_bar_visibility(ScrollBarVisibility::OnActivity)
         .render(&theme);
 
     // --- Wrap in CopyOnShortcut so Ctrl/Cmd+C dumps the
@@ -1125,6 +1113,86 @@ where
     }
 }
 
+/// Inputs for [`build_header`], grouped to keep the call short (and under
+/// the argument-count lint).
+struct HeaderParams<'a, State, R, Action> {
+    render_slots: &'a [ColumnRender<R, State>],
+    sortable: &'a [bool],
+    filter: &'a FilterState,
+    sort: SortState,
+    sort_change: Option<SortChange<State, Action>>,
+    width_change: Option<WidthChange<State, Action>>,
+    flex_weights: Arc<Vec<f64>>,
+    row_height: f64,
+    theme: &'a Theme,
+}
+
+/// Builds the sticky header row: a [`column_strip`] of per-column header
+/// cells (sortable columns clickable, filtered columns marked), carrying the
+/// shared flex weights and — when a resize callback is supplied — the
+/// column-boundary grab zones. Extracted from `build_grid_view` to keep that
+/// function readable.
+fn build_header<State, R, Action>(
+    params: HeaderParams<'_, State, R, Action>,
+) -> impl WidgetView<State, Action> + use<State, R, Action>
+where
+    State: 'static,
+    R: 'static,
+    Action: Default + 'static,
+{
+    let HeaderParams {
+        render_slots,
+        sortable,
+        filter,
+        sort,
+        sort_change,
+        width_change,
+        flex_weights,
+        row_height,
+        theme,
+    } = params;
+    let header_ctx = HeaderCtx {
+        sort,
+        sort_change: sort_change.as_ref(),
+        theme,
+    };
+    let header_widths: Vec<f64> = render_slots.iter().map(|s| s.width).collect();
+    let header_cells: Vec<Box<AnyWidgetView<State, Action>>> = render_slots
+        .iter()
+        .enumerate()
+        .map(|(idx, slot)| {
+            let filtered = filter.get(&slot.id).is_some();
+            header_cell(slot, sortable[idx], filtered, &header_ctx)
+        })
+        .collect();
+    // ColumnStrip places each cell at an authoritative x (= cumulative
+    // width), so the header lines up with the body/filter strips by
+    // construction. Made resizable when a resize callback is supplied.
+    let mut header_strip = column_strip(header_widths, row_height, header_cells)
+        .flex_weights(Arc::clone(&flex_weights));
+    // Move (don't clone) the resize callback: this is its only use.
+    if let Some(width_change) = width_change {
+        let style = SeparatorStyle {
+            line: theme.palette.border,
+            active: theme.palette.accent,
+        };
+        // The strip reports a *positional* resize index (it knows columns by
+        // slot, not identity). Translate it to the column's stable id here so
+        // the host's width override stays attached across reorder/hide.
+        let resize_ids: Vec<ColumnId> = render_slots.iter().map(|s| s.id.clone()).collect();
+        header_strip = header_strip.resizable(style, move |state: &mut State, col, new_width| {
+            if let Some(id) = resize_ids.get(col) {
+                width_change(state, id.clone(), new_width)
+            } else {
+                Action::default()
+            }
+        });
+    }
+    sized_box(header_strip)
+        .background_color(theme.palette.surface_2)
+        .border(theme.palette.border, Length::px(1.0))
+}
+
 // --- MARK: BODY --------------------------------------------------------
 
 /// Inputs for [`build_body`], grouped into a struct to keep the call
@@ -1175,6 +1243,10 @@ where
     // every visible row; `column_strip` takes the `Arc` directly, so each
     // row costs a refcount bump, not a `Vec` allocation.
     let widths: Arc<Vec<f64>> = Arc::new(render_slots.iter().map(|s| s.width).collect());
+    // Flex weights, shared into every row like `widths` (a refcount bump per
+    // row, not a `Vec` alloc). Same list the header/filter strips get, so all
+    // three distribute surplus identically and stay aligned.
+    let flex: Arc<Vec<f64>> = Arc::new(render_slots.iter().map(|s| s.flex).collect());
 
     // Expandable rows reserve a leading defer-to-chevron zone so a click on
     // the chevron toggles the row instead of selecting it (see
@@ -1209,6 +1281,7 @@ where
         let render_slots = Arc::clone(&render_slots);
         let widths = Arc::clone(&widths);
         let row_id = row_id.clone();
+        let flex = Arc::clone(&flex);
         Arc::new(
             move |row: &R, _selected: bool, theme: &Theme| -> Box<AnyWidgetView<State>> {
                 let cells: Vec<Box<AnyWidgetView<State>>> = render_slots
@@ -1230,7 +1303,10 @@ where
                         aligned_cell(content, slot.width, slot.align)
                     })
                     .collect();
-                Box::new(column_strip(Arc::clone(&widths), row_height, cells))
+                Box::new(
+                    column_strip(Arc::clone(&widths), row_height, cells)
+                        .flex_weights(Arc::clone(&flex)),
+                )
             },
         )
     };
@@ -1344,10 +1420,43 @@ where
         children.push(flex_item(filter_row, 0.0).into());
     }
     children.push(flex_item(body, 1.0).into());
-    flex_col(children).cross_axis_alignment(CrossAxisAlignment::Start)
+    // #111 fill: Stretch (was Start) on the cross (horizontal) axis so the
+    // header/filter/body strips fill the width the portal allocates. Harmless
+    // when the grid doesn't fill — the portal then allocates exactly the
+    // intrinsic width, so Stretch is a no-op; when a column flexes and the
+    // viewport is wider, the strips receive the surplus to distribute.
+    flex_col(children).cross_axis_alignment(CrossAxisAlignment::Stretch)
 }
 
 // --- MARK: FILTER ROW --------------------------------------------------
+
+/// The filter-input row, present only when filtering is wired
+/// (`filter_change` is set) and at least one column is filterable.
+/// `None` leaves the header sitting directly on the body. Keeps
+/// `build_grid_view` short by owning the widths/ids derivation.
+fn optional_filter_row<State, R, Action>(
+    filter_change: Option<&FilterChange<State, Action>>,
+    filterable: &[bool],
+    render_slots: &[ColumnRender<R, State>],
+    flex: &[f64],
+    filter: &FilterState,
+    theme: &Theme,
+) -> Option<impl WidgetView<State, Action> + use<State, R, Action>>
+where
+    State: 'static,
+    R: 'static,
+    Action: 'static,
+{
+    let on_change = filter_change?;
+    if !filterable.iter().any(|&f| f) {
+        return None;
+    }
+    let widths: Vec<f64> = render_slots.iter().map(|s| s.width).collect();
+    let ids: Vec<ColumnId> = render_slots.iter().map(|s| s.id.clone()).collect();
+    Some(build_filter_row(
+        &widths, flex, &ids, filterable, filter, on_change, theme,
+    ))
+}
 
 /// Builds the per-column filter-input row shown beneath the header.
 ///
@@ -1358,6 +1467,7 @@ where
 /// inputs line up under their columns.
 fn build_filter_row<State, Action>(
     widths: &[f64],
+    flex: &[f64],
     ids: &[ColumnId],
     filterable: &[bool],
     filter: &FilterState,
@@ -1394,11 +1504,10 @@ where
     // Filter row is deliberately taller than data rows: filter_row_height()
     // adds pad_v of headroom on top of row_height so the text_input isn't
     // clipped. ColumnStrip enforces both per-column width and row height.
-    sized_box(column_strip(
-        widths.to_vec(),
-        filter_row_height(&theme.density),
-        cells,
-    ))
+    sized_box(
+        column_strip(widths.to_vec(), filter_row_height(&theme.density), cells)
+            .flex_weights(flex.to_vec()),
+    )
     .background_color(theme.palette.surface)
     .border(theme.palette.border, Length::px(1.0))
 }
