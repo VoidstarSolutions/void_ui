@@ -1251,7 +1251,8 @@ fn tree_cell<State: 'static, R>(
 ) -> Box<AnyWidgetView<State>> {
     let expanded = (cfg.is_expanded)(row);
     let has_children = (cfg.has_children)(row);
-    let indent = f64::from((cfg.depth)(row)) * tree_indent_step(&theme.density);
+    let depth = (cfg.depth)(row);
+    let indent = f64::from(depth) * tree_indent_step(&theme.density);
     let hit_w = disclosure_hit_width(&theme.density);
 
     let indent_spacer: Box<AnyWidgetView<State>> = Box::new(fixed_spacer(indent));
@@ -1262,6 +1263,8 @@ fn tree_cell<State: 'static, R>(
         // under the position fallback, which we already warn about.
         let id = row_id.id_of(0, row);
         let on_toggle = Arc::clone(&cfg.on_toggle);
+        // `aria-level` is 1-based, so a depth-0 root row is level 1.
+        let level = usize::from(depth) + 1;
         // Center the chevron glyph inside its fixed hit box.
         let centered = flex_row((flex_item(
             disclosure_chevron::<State, ()>(expanded, theme),
@@ -1269,9 +1272,15 @@ fn tree_cell<State: 'static, R>(
         ),))
         .main_axis_alignment(MainAxisAlignment::Center)
         .cross_axis_alignment(CrossAxisAlignment::Center);
-        let toggle = disclosure_toggle(centered, expanded, move |state: &mut State| {
-            on_toggle(state, id);
-        });
+        let toggle = disclosure_toggle(
+            centered,
+            expanded,
+            level,
+            theme,
+            move |state: &mut State| {
+                on_toggle(state, id);
+            },
+        );
         Box::new(sized_box(toggle).fixed_width(Length::px(hit_w)))
     } else {
         Box::new(fixed_spacer(hit_w))

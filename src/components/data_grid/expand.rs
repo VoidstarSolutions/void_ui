@@ -136,11 +136,14 @@ use masonry::core::{
     WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Size};
+use masonry::kurbo::{Axis, Point, Rect, Size};
 use masonry::layout::{LenReq, Length};
 
+use crate::Theme;
 use crate::collection::single_child;
 use crate::components::click::{self, ClickPhase};
+use crate::components::interaction::{is_access_click, keyboard_activate};
+use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 
 /// Action emitted by [`DisclosureToggle`] on a primary-button click — the
 /// user asked to expand/collapse this row. It carries no payload: the
@@ -157,22 +160,36 @@ pub struct DisclosureToggleRequested;
 /// defer-to-child zone (see
 /// [`ClickableRow::leading_hit_width`](crate::collection::row_click::ClickableRow::leading_hit_width)),
 /// so a press here toggles the row instead of selecting it. Modeled on
-/// [`HeaderClickable`](super::header_click::HeaderClickable): pointer-only,
-/// no keyboard/focus yet (that a11y pass is deferred).
+/// [`HeaderClickable`](super::header_click::HeaderClickable) for the pointer
+/// path and on `RowClickable` for the keyboard/focus a11y: a
+/// [`Role::Button`] disclosure control that reports `aria-expanded` +
+/// `aria-level`, is reachable by Tab, activates on Enter/Space and on an
+/// assistive-tech click, and paints a focus ring while focused.
 pub struct DisclosureToggle {
     child: WidgetPod<dyn Widget>,
-    /// Reported to assistive tech via `aria-expanded`. Kept in sync so a
-    /// future keyboard/focus a11y pass has the state to announce.
+    /// Reported to assistive tech via `aria-expanded`.
     expanded: bool,
+    /// 1-based tree depth, reported via `aria-level` so a screen reader can
+    /// announce how deep the row sits.
+    level: usize,
+    /// Colors the focus ring painted while the toggle has keyboard focus.
+    theme: Theme,
 }
 
 // --- MARK: BUILDERS
 impl DisclosureToggle {
     #[must_use]
-    pub fn new(child: NewWidget<impl Widget + ?Sized>, expanded: bool) -> Self {
+    pub fn new(
+        child: NewWidget<impl Widget + ?Sized>,
+        expanded: bool,
+        level: usize,
+        theme: &Theme,
+    ) -> Self {
         Self {
             child: child.erased().to_pod(),
             expanded,
+            level,
+            theme: *theme,
         }
     }
 }
@@ -190,6 +207,23 @@ impl DisclosureToggle {
         if this.widget.expanded != expanded {
             this.widget.expanded = expanded;
             this.ctx.request_accessibility_update();
+        }
+    }
+
+    /// Updates the reported `aria-level` (1-based tree depth).
+    pub fn set_level(this: &mut WidgetMut<'_, Self>, level: usize) {
+        if this.widget.level != level {
+            this.widget.level = level;
+            this.ctx.request_accessibility_update();
+        }
+    }
+
+    /// Replaces the theme used to color the focus ring (e.g. on a theme
+    /// swap). Repaints only when the value changes.
+    pub fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
+        if this.widget.theme != *theme {
+            this.widget.theme = *theme;
+            this.ctx.request_paint_only();
         }
     }
 }
@@ -217,26 +251,38 @@ impl Widget for DisclosureToggle {
 
     fn on_text_event(
         &mut self,
-        _ctx: &mut EventCtx<'_>,
+        ctx: &mut EventCtx<'_>,
         _props: &mut PropertiesMut<'_>,
-        _event: &TextEvent,
+        event: &TextEvent,
     ) {
+        // Enter/Space on the focused toggle activates it (keyboard parity
+        // with a pointer click). Tab is deliberately not handled so masonry's
+        // built-in focus traversal keeps moving between controls.
+        if ctx.is_focus_target() && keyboard_activate(event, true) {
+            ctx.submit_action::<Self::Action>(DisclosureToggleRequested);
+            ctx.set_handled();
+        }
     }
 
     fn on_access_event(
         &mut self,
-        _ctx: &mut EventCtx<'_>,
+        ctx: &mut EventCtx<'_>,
         _props: &mut PropertiesMut<'_>,
-        _event: &AccessEvent,
+        event: &AccessEvent,
     ) {
+        // An assistive-tech "click" (e.g. a screen-reader activation) toggles
+        // the row, same as a pointer or keyboard activation.
+        if is_access_click(event) {
+            ctx.submit_action::<Self::Action>(DisclosureToggleRequested);
+        }
     }
 
-    fn update(
-        &mut self,
-        _ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &Update,
-    ) {
+    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        // The focus ring drawn in `paint` depends on `is_focus_target`;
+        // without this, gaining/losing focus wouldn't repaint the ring.
+        if let Update::FocusChanged(_) = event {
+            ctx.request_paint_only();
+        }
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
@@ -262,12 +308,24 @@ impl Widget for DisclosureToggle {
 
     fn paint(
         &mut self,
-        _ctx: &mut PaintCtx<'_>,
+        ctx: &mut PaintCtx<'_>,
         _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
+        painter: &mut Painter<'_>,
     ) {
-        // Nothing of its own: the chevron child paints the glyph. A focus
-        // ring / hover cue arrives with the deferred keyboard-a11y pass.
+        // The chevron child paints the glyph; the toggle adds a focus ring
+        // while focused, inset like every other focusable control.
+        if ctx.is_focus_target() {
+            let size = ctx.border_box_size();
+            let inset = FOCUS_RING_INSET;
+            let rect = Rect::from_origin_size(
+                Point::new(inset, inset),
+                Size::new(
+                    (size.width - 2.0 * inset).max(0.0),
+                    (size.height - 2.0 * inset).max(0.0),
+                ),
+            );
+            paint_focus_ring(painter, rect, &self.theme);
+        }
     }
 
     fn accessibility_role(&self) -> Role {
@@ -281,6 +339,10 @@ impl Widget for DisclosureToggle {
         node: &mut Node,
     ) {
         node.set_expanded(self.expanded);
+        node.set_level(self.level);
+        // Advertise that this button handles activation, so assistive tech
+        // exposes it as clickable and routes a `Click` action here.
+        node.add_action(masonry::accesskit::Action::Click);
     }
 
     fn children_ids(&self) -> ChildrenIds {
@@ -288,7 +350,7 @@ impl Widget for DisclosureToggle {
     }
 
     fn accepts_focus(&self) -> bool {
-        false
+        true
     }
 
     fn accepts_text_input(&self) -> bool {
@@ -316,15 +378,21 @@ use xilem::{Pod, ViewCtx, WidgetView};
 pub struct DisclosureToggleView<V, State, Action, F> {
     child: V,
     expanded: bool,
+    level: usize,
+    theme: Theme,
     on_toggle: F,
     phantom: PhantomData<fn() -> (State, Action)>,
 }
 
 /// Constructor for [`DisclosureToggleView`]. `expanded` drives the chevron
-/// direction (reported via `aria-expanded`); `on_toggle` runs on click.
+/// direction (reported via `aria-expanded`); `level` is the 1-based tree
+/// depth (`aria-level`); `theme` colors the focus ring; `on_toggle` runs on
+/// activation (click / Enter / Space / assistive-tech click).
 pub fn disclosure_toggle<V, State, Action, F>(
     child: V,
     expanded: bool,
+    level: usize,
+    theme: &Theme,
     on_toggle: F,
 ) -> DisclosureToggleView<V, State, Action, F>
 where
@@ -336,6 +404,8 @@ where
     DisclosureToggleView {
         child,
         expanded,
+        level,
+        theme: *theme,
         on_toggle,
         phantom: PhantomData,
     }
@@ -355,7 +425,8 @@ where
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let (child_pod, child_state) = self.child.build(ctx, app_state);
-        let widget = DisclosureToggle::new(child_pod.new_widget, self.expanded);
+        let widget =
+            DisclosureToggle::new(child_pod.new_widget, self.expanded, self.level, &self.theme);
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, child_state)
     }
@@ -370,6 +441,12 @@ where
     ) {
         if self.expanded != prev.expanded {
             DisclosureToggle::set_expanded(&mut element, self.expanded);
+        }
+        if self.level != prev.level {
+            DisclosureToggle::set_level(&mut element, self.level);
+        }
+        if self.theme != prev.theme {
+            DisclosureToggle::set_theme(&mut element, &self.theme);
         }
         let mut child = DisclosureToggle::child_mut(&mut element);
         self.child
@@ -411,13 +488,34 @@ where
 
 #[cfg(test)]
 mod tests {
-    use masonry::core::{NewWidget, PointerButton};
+    use masonry::accesskit::{Action, ActionRequest, TreeId};
+    use masonry::core::keyboard::{Key, KeyState, KeyboardEvent, Modifiers, NamedKey};
+    use masonry::core::{NewWidget, PointerButton, TextEvent};
     use masonry::kurbo::Point;
     use masonry::testing::TestHarness;
     use masonry::theme::default_property_set;
     use masonry::widgets::Label;
 
     use super::{DisclosureToggle, DisclosureToggleRequested, ExpansionState};
+    use crate::Theme;
+
+    fn key_down(key: Key) -> TextEvent {
+        TextEvent::Keyboard(KeyboardEvent {
+            state: KeyState::Down,
+            key,
+            modifiers: Modifiers::empty(),
+            ..Default::default()
+        })
+    }
+
+    fn key_up(key: Key) -> TextEvent {
+        TextEvent::Keyboard(KeyboardEvent {
+            state: KeyState::Up,
+            key,
+            modifiers: Modifiers::empty(),
+            ..Default::default()
+        })
+    }
 
     #[test]
     fn toggle_flips_membership_and_reports_new_state() {
@@ -460,7 +558,7 @@ mod tests {
 
     fn toggle_harness() -> TestHarness<DisclosureToggle> {
         let chevron = NewWidget::new(Label::new(">"));
-        let widget = DisclosureToggle::new(chevron, false);
+        let widget = DisclosureToggle::new(chevron, false, 1, &Theme::default());
         TestHarness::create_with_size(default_property_set(), NewWidget::new(widget), (20, 24))
     }
 
@@ -473,6 +571,57 @@ mod tests {
         assert!(
             harness.pop_action::<DisclosureToggleRequested>().is_some(),
             "a primary click on the chevron must request a toggle",
+        );
+    }
+
+    /// Enter and Space activate the focused toggle — keyboard parity with a
+    /// click, so the chevron is operable without a pointer. Activation fires
+    /// on key-up (matching every other press widget).
+    #[test]
+    fn enter_and_space_activate_the_focused_toggle() {
+        for key in [Key::Named(NamedKey::Enter), Key::Character(" ".into())] {
+            let mut harness = toggle_harness();
+            let root = harness.root_widget().id();
+            harness.focus_on(Some(root));
+
+            harness.process_text_event(key_down(key.clone()));
+            // Key-down doesn't activate; only the key-up does.
+            assert!(harness.pop_action::<DisclosureToggleRequested>().is_none());
+
+            let handled = harness.process_text_event(key_up(key));
+            assert!(handled.is_handled());
+            assert!(
+                harness.pop_action::<DisclosureToggleRequested>().is_some(),
+                "Enter/Space key-up must toggle the focused chevron",
+            );
+        }
+    }
+
+    /// A key press on an unfocused toggle does nothing (keyboard activation
+    /// is gated on focus), so it doesn't hijack keys meant for elsewhere.
+    #[test]
+    fn keys_do_nothing_without_focus() {
+        let mut harness = toggle_harness();
+        harness.process_text_event(key_up(Key::Character(" ".into())));
+        assert!(harness.pop_action::<DisclosureToggleRequested>().is_none());
+    }
+
+    /// An assistive-tech Click activates the toggle (screen-reader parity).
+    #[test]
+    fn access_click_emits_a_toggle_request() {
+        let mut harness = toggle_harness();
+        let root = harness.root_widget().id();
+        // `process_access_event` (unlike `accessibility_click_on`) runs the
+        // rewrite passes afterward, so the submitted action reaches the queue.
+        harness.process_access_event(ActionRequest {
+            action: Action::Click,
+            target_tree: TreeId::ROOT,
+            target_node: root.to_raw().into(),
+            data: None,
+        });
+        assert!(
+            harness.pop_action::<DisclosureToggleRequested>().is_some(),
+            "an assistive-tech click must request a toggle",
         );
     }
 }
