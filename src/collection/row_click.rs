@@ -455,10 +455,14 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use masonry::core::keyboard::{Key, KeyState, KeyboardEvent, Modifiers, NamedKey};
-    use masonry::core::{NewWidget, PointerButton, TextEvent};
-    use masonry::kurbo::Point;
-    use masonry::testing::TestHarness;
+    use masonry::core::{NewWidget, PointerButton, PointerEvent, TextEvent};
+    use masonry::kurbo::{Axis, Point};
+    use masonry::layout::Length;
+    use masonry::testing::{ModularWidget, TestHarness};
     use masonry::theme::default_property_set;
     use masonry::widgets::Label;
 
@@ -597,6 +601,51 @@ mod tests {
         assert!(
             click_at_x(&mut harness, 20.0),
             "boundary belongs to the row"
+        );
+    }
+
+    /// `propagates_pointer_interaction() == true`, so a control nested in row
+    /// content receives pointer events — with it `false` (the pre-defer state)
+    /// the row was opaque and children never did, which is what let the
+    /// disclosure chevron become reachable. Regression guard: a nested
+    /// interactive child still sees the press, and (with no leading zone
+    /// reserved) the press bubbles up so the row also selects.
+    #[test]
+    fn nested_interactive_child_receives_the_press() {
+        let child_downs = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&child_downs);
+        // A minimal interactive child that counts pointer-downs but doesn't
+        // capture, so the press still bubbles to the row.
+        let child = ModularWidget::new(())
+            .accepts_pointer_interaction(true)
+            .measure_fn(|(), _ctx, _props, axis, _len_req, _cross| match axis {
+                Axis::Horizontal => Length::px(120.0),
+                Axis::Vertical => Length::px(24.0),
+            })
+            .pointer_event_fn(move |(), _ctx, _props, event| {
+                if matches!(event, PointerEvent::Down(_)) {
+                    counter.fetch_add(1, Ordering::Relaxed);
+                }
+            });
+        let widget = RowClickable::new(NewWidget::new(child), false, &Theme::default(), 0.0);
+        let mut harness = TestHarness::create_with_size(
+            default_property_set(),
+            NewWidget::new(widget),
+            (120, 24),
+        );
+
+        harness.mouse_move(Point::new(60.0, 12.0));
+        harness.mouse_button_press(Some(PointerButton::Primary));
+        harness.mouse_button_release(Some(PointerButton::Primary));
+
+        assert_eq!(
+            child_downs.load(Ordering::Relaxed),
+            1,
+            "the nested child must receive the press (pointer propagation is on)",
+        );
+        assert!(
+            harness.pop_action::<RowClickAction>().is_some(),
+            "the row still selects — the press bubbles past the non-capturing child",
         );
     }
 }

@@ -27,8 +27,8 @@ use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::layout::Length;
 use xilem::style::Style as _;
 use xilem::view::{
-    AnyFlexChild, CrossAxisAlignment, MainAxisAlignment, flex_col, flex_item, flex_row, label,
-    sized_box, text_input,
+    AnyFlexChild, CrossAxisAlignment, FlexSpacer, MainAxisAlignment, flex_col, flex_item, flex_row,
+    label, sized_box, text_input,
 };
 use xilem::{AnyWidgetView, Pod, ViewCtx};
 
@@ -102,22 +102,36 @@ fn warn_id_footguns(has_row_id: bool, selection_reorders: bool, has_expandable: 
         warn_missing_row_id();
     }
     if has_expandable {
+        // Unlike selection (which degrades to positional keying — correct for
+        // a static grid), expansion is simply *broken* without a stable id:
+        // the tree cell can't know a row's position, so every chevron toggles
+        // the same entry. Fail loudly in debug so misuse can't ship silently;
+        // asserting on `has_row_id` (a runtime value that is `false` here)
+        // rather than a literal avoids clippy's constant-assertion lint.
+        debug_assert!(
+            has_row_id,
+            "data_grid: `.expandable(...)` requires `.row_id(...)`; without it \
+             every chevron toggles the same expansion entry (id 0)."
+        );
         warn_expandable_without_row_id();
     }
 }
 
-/// One-shot warning that [`DataGrid::expandable`] was configured without a
-/// stable [`row_id`](DataGrid::row_id). The expand/collapse toggle keys by
-/// row id; with the slice-position fallback a toggle flips whatever row now
-/// sits at that position after a re-flatten. Emitted at most once.
+/// One-shot (release-build) warning that [`DataGrid::expandable`] was
+/// configured without a stable [`row_id`](DataGrid::row_id). The tree cell
+/// resolves each row's toggle id from `&R` alone — it has no slice position
+/// — so under the position fallback the id is always `0` and **every chevron
+/// toggles the same expansion entry**: expansion is non-functional, not
+/// merely wrong after a re-flatten. Debug builds hard-fail (see
+/// [`warn_id_footguns`]); release builds warn once. Emitted at most once.
 fn warn_expandable_without_row_id() {
     static WARNED: AtomicBool = AtomicBool::new(false);
     if !WARNED.swap(true, Ordering::Relaxed) {
         tracing::warn!(
-            "data_grid: `.expandable(...)` is set without `.row_id(...)` — \
-             the expand/collapse toggle keys by stable row id, but selection \
-             falls back to slice position, so a toggle will flip the wrong \
-             row after the host re-flattens. Supply a stable, unique row id."
+            "data_grid: `.expandable(...)` is set without `.row_id(...)` — the \
+             tree cell can't resolve a row's position, so every chevron toggles \
+             the same expansion entry (id 0). Expansion is non-functional until \
+             you supply a stable, unique row id."
         );
     }
 }
@@ -1255,12 +1269,12 @@ fn tree_cell<State: 'static, R>(
     let indent = f64::from(depth) * tree_indent_step(&theme.density);
     let hit_w = disclosure_hit_width(&theme.density);
 
-    let indent_spacer: Box<AnyWidgetView<State>> = Box::new(fixed_spacer(indent));
-
-    let chevron_slot: Box<AnyWidgetView<State>> = if has_children {
+    // The chevron slot: an interactive toggle for a parent, or a fixed-width
+    // gap for a leaf so its content still lines up under a parent's.
+    let chevron: AnyFlexChild<State, ()> = if has_children {
         // `id_of` ignores the position under an explicit `row_id` (the
         // required config for expansion); the `0` placeholder only matters
-        // under the position fallback, which we already warn about.
+        // under the position fallback, which we already assert/warn about.
         let id = row_id.id_of(0, row);
         let on_toggle = Arc::clone(&cfg.on_toggle);
         // `aria-level` is 1-based, so a depth-0 root row is level 1.
@@ -1281,28 +1295,23 @@ fn tree_cell<State: 'static, R>(
                 on_toggle(state, id);
             },
         );
-        Box::new(sized_box(toggle).fixed_width(Length::px(hit_w)))
+        let toggle: Box<AnyWidgetView<State>> =
+            Box::new(sized_box(toggle).fixed_width(Length::px(hit_w)));
+        flex_item(toggle, 0.0).into()
     } else {
-        Box::new(fixed_spacer(hit_w))
+        AnyFlexChild::Spacer(FlexSpacer::Fixed(Length::px(hit_w)))
     };
 
-    // [indent][chevron | spacer][content], vertically centered.
-    let tree_row = flex_row((
-        flex_item(indent_spacer, 0.0),
-        flex_item(chevron_slot, 0.0),
-        flex_item(content, 0.0),
-    ))
+    // [indent][chevron | spacer][content], vertically centered. The indent
+    // and leaf placeholder are fixed-width gaps (`FlexSpacer::Fixed`).
+    let tree_row = flex_row(vec![
+        AnyFlexChild::Spacer(FlexSpacer::Fixed(Length::px(indent))),
+        chevron,
+        flex_item(content, 0.0).into(),
+    ])
     .cross_axis_alignment(CrossAxisAlignment::Center);
 
     aligned_cell(Box::new(tree_row), slot.width, slot.align)
-}
-
-/// A fixed-width, empty view used to pad the tree column — the depth indent
-/// and the leaf-row chevron placeholder.
-fn fixed_spacer<State: 'static, Action: 'static>(
-    width: f64,
-) -> impl WidgetView<State, Action> + use<State, Action> {
-    sized_box(label("")).fixed_width(Length::px(width))
 }
 
 // --- MARK: STACK ASSEMBLY ----------------------------------------------
@@ -1538,6 +1547,30 @@ mod tests {
             text_column::<u64, (), _>("Price", 80.0, CellAlign::End, |r: &u64| r.to_string()),
         ];
         let _ = decompose_columns(cols, &ColumnWidths::new());
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "every chevron toggles the same")]
+    fn expandable_without_row_id_debug_asserts() {
+        // `.expandable(...)` without `.row_id(...)` is non-functional (every
+        // chevron resolves to id 0), so a debug build must fail loudly when
+        // the grid materializes — release builds warn once instead.
+        let cols = vec![text_column::<u64, (), _>(
+            "N",
+            80.0,
+            CellAlign::Start,
+            |r: &u64| r.to_string(),
+        )];
+        let _ = data_grid::<(), u64, ()>(cols)
+            .rows(|_state: &()| &[][..])
+            .expandable(
+                |_r: &u64| false,
+                |_r: &u64| false,
+                |_r: &u64| 0,
+                |_s: &mut (), _id: u64| {},
+            )
+            .render(&Theme::default());
     }
 
     /// A [`RawProxy`] that drops every message — tests build the view
