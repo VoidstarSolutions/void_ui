@@ -42,7 +42,8 @@ pub struct Density {
     pub control: f32,
     /// Baseline data-row height: the data grid's default row height; the
     /// list's default item height is `row_height * 4 / 3` (rounded) and the
-    /// grid's filter row is `row_height + pad_v`, in px.
+    /// grid's filter row and list's loading footer are both
+    /// `row_height + pad_v`, in px.
     pub row_height: f32,
 }
 
@@ -146,16 +147,16 @@ mod tests {
         assert_token_eq("airy gap_lg", Density::airy().gap_lg, 19.0);
     }
 
-    /// The list footer spinner used to be `row (17) + pad (12)` = 29 px at
-    /// balanced. It now derives from `row_height`; this pins the balanced
-    /// value so the pixel-identity invariant is checked, not assumed.
+    /// The list footer spinner derives its height from `row_height + pad_v`
+    /// — the same formula the grid's filter row uses — so it scales with
+    /// density instead of carrying a fixed offset.
     #[test]
     fn footer_arithmetic_preserves_balanced_pixels() {
         let d = Density::balanced();
-        let height = f64::from(d.row_height) + 5.0;
+        let height = f64::from(d.row_height) + f64::from(d.pad_v);
         assert!(
-            (height - 29.0).abs() < f64::EPSILON,
-            "expected 29.0, got {height}"
+            (height - 30.0).abs() < f64::EPSILON,
+            "expected 30.0, got {height}"
         );
     }
 

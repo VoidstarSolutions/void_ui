@@ -384,13 +384,12 @@ fn centered_spinner<State: 'static, Action: 'static>(
 
 /// A fixed-height "loading more" footer row, shown beneath the items when
 /// [`List::loading`] is set and `item_count > 0`. Height derives from the
-/// theme's density (data-row baseline + fixed 5 px allowance).
+/// theme's density (data-row baseline + `pad_v` headroom — the same formula
+/// `DataGrid`'s filter row uses).
 fn footer_spinner<State: 'static, Action: 'static>(
     theme: &Theme,
 ) -> impl WidgetView<State, Action> + use<State, Action> {
-    // `row_height + 5` reproduces the pre-token 29 px (chart `row` 17 +
-    // `pad` 12) at balanced density while still scaling with the step.
-    let height = f64::from(theme.density.row_height) + 5.0;
+    let height = f64::from(theme.density.row_height) + f64::from(theme.density.pad_v);
     sized_box(
         flex_row((spinner().render::<State, Action>(theme),))
             .main_axis_alignment(MainAxisAlignment::Center)
