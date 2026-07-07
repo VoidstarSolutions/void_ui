@@ -650,7 +650,7 @@ mod density_tests {
     fn header_height_at(density: Density) -> f64 {
         let child = NewWidget::new(SizedBox::empty());
         let theme = Theme::default().with_density(density);
-        CollapsibleWidget::new("title".into(), child, &theme, true).header_height()
+        CollapsibleWidget::new("title".into(), child, &theme, true, false).header_height()
     }
 
     #[test]
