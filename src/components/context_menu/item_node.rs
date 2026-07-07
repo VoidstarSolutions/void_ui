@@ -26,6 +26,7 @@ use masonry::widgets::Label;
 use super::widget::{MenuAction, MenuPanel, MenuRowSpec};
 use crate::Theme;
 use crate::components::icon::{IconName, icon};
+use crate::components::item_list;
 
 /// Gap between a submenu item's right edge and its fly-out panel — 1px
 /// overlap tuning, not a density-scaled spacing token.
@@ -310,8 +311,7 @@ impl MenuItemNode {
     }
 
     fn action_height(&self) -> f64 {
-        f64::from(self.theme.density.ui_font_size)
-            + 2.0 * f64::from(self.theme.density.button_pad_v)
+        item_list::item_height(&self.theme.density)
     }
 
     /// This row's full height, including a sub-title's extra line.
