@@ -51,6 +51,49 @@ pub fn icon(name: impl Into<Icon>) -> Icon {
     name.into()
 }
 
+/// The chevron glyph for a disclosure/expansion state: a downward chevron
+/// when `open` (expanded), a rightward chevron when closed (collapsed).
+///
+/// The single source of truth for the open → glyph mapping shared by every
+/// disclosure affordance — [`collapsible`](crate::collapsible) headers,
+/// expandable [`data_grid`](crate::data_grid) rows, tree nodes — so the
+/// convention can't drift between the view layer ([`disclosure_chevron`])
+/// and widgets that build the chevron directly via
+/// [`Icon::build_widget`](crate::Icon::build_widget).
+#[must_use]
+pub fn disclosure_icon(open: bool) -> IconName {
+    if open {
+        IconName::ChevronDown
+    } else {
+        IconName::ChevronRight
+    }
+}
+
+/// A themed disclosure chevron view: a rotating [`icon`] that points down
+/// when `open` (expanded) and right when closed (collapsed), drawn in
+/// `palette.text_muted`.
+///
+/// Marked [`Icon::decorative`] because a disclosure chevron carries no
+/// standalone semantic content of its own: the expanded/collapsed state is
+/// exposed to assistive technology by the interactive control that *owns*
+/// the chevron (a collapsible header, an expandable row) via
+/// `aria-expanded`, not by the glyph — whose raw Lucide codepoint has no
+/// meaningful pronunciation.
+#[must_use = "View values do nothing unless provided to Xilem."]
+pub fn disclosure_chevron<State, Action>(
+    open: bool,
+    theme: &Theme,
+) -> impl WidgetView<State, Action> + use<State, Action>
+where
+    State: 'static,
+    Action: 'static,
+{
+    icon(disclosure_icon(open))
+        .color(theme.palette.text_muted)
+        .decorative()
+        .render(theme)
+}
+
 impl Icon {
     /// Override the icon color. Defaults to `palette.text`.
     pub fn color(mut self, color: Color) -> Self {
@@ -102,5 +145,41 @@ impl Icon {
         } else {
             Box::new(glyph) as Box<AnyWidgetView<State, Action>>
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use xilem::WidgetView;
+
+    use super::{IconName, disclosure_chevron, disclosure_icon};
+    use crate::Theme;
+
+    /// The disclosure mapping is the single source of truth shared by the
+    /// collapsible header (widget layer) and expandable data-grid rows (view
+    /// layer): open ⇒ downward chevron, closed ⇒ rightward chevron.
+    #[test]
+    fn disclosure_icon_points_down_when_open_right_when_closed() {
+        // `IconName` (lucide's `Icon`) isn't `PartialEq`; its glyph char is
+        // its observable identity, so compare those.
+        assert_eq!(
+            char::from(disclosure_icon(true)),
+            char::from(IconName::ChevronDown)
+        );
+        assert_eq!(
+            char::from(disclosure_icon(false)),
+            char::from(IconName::ChevronRight)
+        );
+    }
+
+    /// Smoke-test that the view helper materializes a `WidgetView` for both
+    /// states without panicking (exercises the `icon(..).decorative().render`
+    /// wiring the tree-column cell relies on).
+    #[test]
+    fn disclosure_chevron_builds_a_view() {
+        fn assert_widget_view<V: WidgetView<(), ()>>(_: &V) {}
+        let theme = Theme::default();
+        assert_widget_view(&disclosure_chevron::<(), ()>(true, &theme));
+        assert_widget_view(&disclosure_chevron::<(), ()>(false, &theme));
     }
 }

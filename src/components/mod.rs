@@ -78,7 +78,7 @@ pub use data_grid::{
 pub use dialog::{Dialog, DialogView, dialog};
 pub use dropdown_button::{DropdownButton, DropdownButtonView, dropdown_button};
 pub use group_box::{GroupBox, NoTitle, TitleState, WithTitle, group_box};
-pub use icon::{Icon, IconName, icon};
+pub use icon::{Icon, IconName, disclosure_chevron, disclosure_icon, icon};
 pub use input::{
     CurrencyFormat, CurrencyInput, Input, MaskedInput, NumberInput, currency_input,
     format_currency, format_mask, input, masked_input, number_input,

@@ -85,13 +85,13 @@ pub use components::{
     Tabs, TabsVariant, TabsView, TitleState, Toggle, ToggleView, TokenKind, TokenSpan, Tooltip,
     TooltipView, WithTitle, alert, autocomplete, badge, breadcrumb, button, button_group, card,
     checkbox, clickable_row, clipboard, collapsible, colored_text_column, context_menu_area,
-    currency_input, data_grid, dialog, dropdown_button, filtered_indices, format_currency,
-    format_mask, group_box, h_resizable, h_resizable_panels, icon, input, label, list,
-    masked_input, menu, notification, notification_layer, notification_overlay, notification_stack,
-    number_input, optional_text_column, pill, popover, radio, range_slider, read_only_text,
-    scroll_container, segment, separator, sidebar_item, sidebar_nav, sidebar_panel, slider,
-    spinner, status_dot, submenu, tabs, text_column, toggle, toggle_button_group, tooltip,
-    v_resizable, v_resizable_panels,
+    currency_input, data_grid, dialog, disclosure_chevron, disclosure_icon, dropdown_button,
+    filtered_indices, format_currency, format_mask, group_box, h_resizable, h_resizable_panels,
+    icon, input, label, list, masked_input, menu, notification, notification_layer,
+    notification_overlay, notification_stack, number_input, optional_text_column, pill, popover,
+    radio, range_slider, read_only_text, scroll_container, segment, separator, sidebar_item,
+    sidebar_nav, sidebar_panel, slider, spinner, status_dot, submenu, tabs, text_column, toggle,
+    toggle_button_group, tooltip, v_resizable, v_resizable_panels,
 };
 
 /// `components::context_menu::item`, renamed at the root so a glob import of
@@ -138,14 +138,14 @@ mod root_export_tests {
             TabsVariant, TabsView, TitleState, Toggle, ToggleView, TokenKind, TokenSpan, Tooltip,
             TooltipView, WithTitle, alert, autocomplete, badge, breadcrumb, button, button_group,
             card, checkbox, clickable_row, clipboard, collapsible, colored_text_column,
-            context_menu_area, currency_input, data_grid, dialog, dropdown_button,
-            filtered_indices, format_currency, format_mask, group_box, h_resizable,
-            h_resizable_panels, icon, input, label, list, masked_input, menu, menu_item,
-            notification, notification_layer, notification_overlay, notification_stack,
-            number_input, optional_text_column, pill, popover, radio, range_slider, read_only_text,
-            scroll_container, segment, separator, sidebar_item, sidebar_nav, sidebar_panel, slider,
-            spinner, status_dot, submenu, tabs, text_column, toggle, toggle_button_group, tooltip,
-            v_resizable, v_resizable_panels,
+            context_menu_area, currency_input, data_grid, dialog, disclosure_chevron,
+            disclosure_icon, dropdown_button, filtered_indices, format_currency, format_mask,
+            group_box, h_resizable, h_resizable_panels, icon, input, label, list, masked_input,
+            menu, menu_item, notification, notification_layer, notification_overlay,
+            notification_stack, number_input, optional_text_column, pill, popover, radio,
+            range_slider, read_only_text, scroll_container, segment, separator, sidebar_item,
+            sidebar_nav, sidebar_panel, slider, spinner, status_dot, submenu, tabs, text_column,
+            toggle, toggle_button_group, tooltip, v_resizable, v_resizable_panels,
         };
 
         // Exercise a sample of builder fns so a root name that resolves to

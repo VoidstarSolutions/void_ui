@@ -24,4 +24,4 @@ mod view;
 pub mod widget;
 
 pub use lucide_icons::Icon as IconName;
-pub use view::{Icon, icon};
+pub use view::{Icon, disclosure_chevron, disclosure_icon, icon};
