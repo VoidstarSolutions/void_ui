@@ -261,29 +261,36 @@ use xilem::{Pod, ViewCtx, WidgetView};
 /// xilem's message-handling pass. Use it to apply the right
 /// [`SelectionState`](super::SelectionState) op based on the
 /// [`RowClickAction`] modifier flags.
+///
+/// Row *content* stays at `Action = ()`; this wrapper is the boundary that
+/// lifts internal intents into the host's `Action` type via
+/// `Action::default()` (an action reaching the root re-runs the host's app
+/// logic — `RequestRebuild` would only re-evaluate the existing, now-stale
+/// view values).
 #[must_use = "View values do nothing unless provided to Xilem."]
-pub struct ClickableRow<V, State, F> {
+pub struct ClickableRow<V, State, Action, F> {
     child: V,
     selected: bool,
     theme: Theme,
     on_click: F,
-    phantom: PhantomData<fn() -> State>,
+    phantom: PhantomData<fn() -> (State, Action)>,
 }
 
 /// Constructor for [`ClickableRow`]. `selected` is reported to assistive
 /// technology via accesskit's `Selected` property — pass the row's current
 /// [`SelectionState`](super::SelectionState) membership. `theme` colors the
 /// focus ring drawn when the row has keyboard focus.
-pub fn clickable_row<V, State, F>(
+pub fn clickable_row<V, State, Action, F>(
     child: V,
     selected: bool,
     theme: &Theme,
     on_click: F,
-) -> ClickableRow<V, State, F>
+) -> ClickableRow<V, State, Action, F>
 where
     V: WidgetView<State, ()>,
     F: Fn(&mut State, RowClickAction) + Send + Sync + 'static,
     State: 'static,
+    Action: Default + 'static,
 {
     ClickableRow {
         child,
@@ -294,13 +301,14 @@ where
     }
 }
 
-impl<V, State, F> ViewMarker for ClickableRow<V, State, F> {}
+impl<V, State, Action, F> ViewMarker for ClickableRow<V, State, Action, F> {}
 
-impl<V, State, F> View<State, (), ViewCtx> for ClickableRow<V, State, F>
+impl<V, State, Action, F> View<State, Action, ViewCtx> for ClickableRow<V, State, Action, F>
 where
     V: WidgetView<State, ()>,
     F: Fn(&mut State, RowClickAction) + Send + Sync + 'static,
     State: 'static,
+    Action: Default + 'static,
 {
     type Element = Pod<RowClickable>;
     type ViewState = V::ViewState;
@@ -350,14 +358,23 @@ where
         message: &mut MessageCtx,
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
-    ) -> MessageResult<()> {
+    ) -> MessageResult<Action> {
         if let Some(action) = message.take_message::<RowClickAction>() {
             (self.on_click)(app_state, *action);
-            MessageResult::Action(())
+            MessageResult::Action(Action::default())
         } else {
             let mut child = RowClickable::child_mut(&mut element);
-            self.child
+            match self
+                .child
                 .message(view_state, message, child.downcast(), app_state)
+            {
+                // Lift the ()-typed row content's action into the host's
+                // Action so it still re-runs the host's app logic.
+                MessageResult::Action(()) => MessageResult::Action(Action::default()),
+                MessageResult::RequestRebuild => MessageResult::RequestRebuild,
+                MessageResult::Nop => MessageResult::Nop,
+                MessageResult::Stale => MessageResult::Stale,
+            }
         }
     }
 }

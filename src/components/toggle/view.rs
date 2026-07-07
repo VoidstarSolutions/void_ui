@@ -2,7 +2,7 @@
 //!
 //! ```ignore
 //! use void_ui::components::toggle;
-//! toggle(state.on, |s: &mut State| s.on = !s.on)
+//! toggle(state.on, |s: &mut State, on: bool| s.on = on)
 //!     .label("Enable feature")
 //!     .render(&theme)
 //! ```
@@ -33,8 +33,9 @@ pub struct Toggle<F> {
 /// Create a new toggle switch with the given checked state and toggle callback.
 ///
 /// The callback is invoked on primary-pointer release inside the widget and on
-/// Space / Enter while the widget is focused. The host is responsible for
-/// toggling its own state in the callback.
+/// Space / Enter while the widget is focused. The callback receives the
+/// **new** checked value (`!checked` at the time of the press); the host
+/// stores it in its own state.
 pub fn toggle<F>(checked: bool, callback: F) -> Toggle<F> {
     Toggle {
         checked,
@@ -62,7 +63,7 @@ impl<F> Toggle<F> {
     where
         State: 'static,
         Action: 'static,
-        F: Fn(&mut State) -> Action + Send + Sync + 'static,
+        F: Fn(&mut State, bool) -> Action + Send + Sync + 'static,
     {
         ToggleView {
             checked: self.checked,
@@ -94,7 +95,7 @@ impl<F, State, Action> View<State, Action, ViewCtx> for ToggleView<F, State, Act
 where
     State: 'static,
     Action: 'static,
-    F: Fn(&mut State) -> Action + Send + Sync + 'static,
+    F: Fn(&mut State, bool) -> Action + Send + Sync + 'static,
 {
     type Element = Pod<ToggleWidget>;
     type ViewState = ();
@@ -205,8 +206,28 @@ where
         app_state: &mut State,
     ) -> MessageResult<Action> {
         match message.take_message::<TogglePress>() {
-            Some(_) => MessageResult::Action((self.callback)(app_state)),
+            // `checked` is the host-controlled prop this view was rendered
+            // with; the widget never self-toggles, so the new value is its
+            // negation by construction.
+            Some(_) => MessageResult::Action((self.callback)(app_state, !self.checked)),
             None => MessageResult::Stale,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::toggle;
+    use crate::Theme;
+
+    /// Compile-level contract: the callback receives the NEW checked value.
+    #[test]
+    fn callback_takes_the_new_checked_value() {
+        let theme = Theme::default();
+        let _ = toggle(false, |s: &mut bool, checked: bool| {
+            *s = checked;
+        })
+        .label("check")
+        .render::<bool, ()>(&theme);
     }
 }

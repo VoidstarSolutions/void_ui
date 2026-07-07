@@ -70,12 +70,18 @@ fn build_inner(theme: &Theme, state: &CheckboxDemo) -> impl WidgetView<CheckboxD
     // Box-only rows (no label)
     let bare = with_source!(theme, {
         flex_row((
-            checkbox(bare_a, |s: &mut CheckboxDemo| s.bare[0] = !s.bare[0]).render(theme),
-            checkbox(bare_b, |s: &mut CheckboxDemo| s.bare[1] = !s.bare[1]).render(theme),
-            checkbox(false, |_: &mut CheckboxDemo| {})
+            checkbox(bare_a, |s: &mut CheckboxDemo, checked: bool| {
+                s.bare[0] = checked;
+            })
+            .render(theme),
+            checkbox(bare_b, |s: &mut CheckboxDemo, checked: bool| {
+                s.bare[1] = checked;
+            })
+            .render(theme),
+            checkbox(false, |_: &mut CheckboxDemo, _| {})
                 .disabled(true)
                 .render(theme),
-            checkbox(true, |_: &mut CheckboxDemo| {})
+            checkbox(true, |_: &mut CheckboxDemo, _| {})
                 .disabled(true)
                 .render(theme),
         ))
@@ -85,21 +91,21 @@ fn build_inner(theme: &Theme, state: &CheckboxDemo) -> impl WidgetView<CheckboxD
     // Rows with labels
     let labeled = with_source!(theme, {
         flex_row((
-            checkbox(labeled_a, |s: &mut CheckboxDemo| {
-                s.labeled[0] = !s.labeled[0];
+            checkbox(labeled_a, |s: &mut CheckboxDemo, checked: bool| {
+                s.labeled[0] = checked;
             })
             .label("Unchecked")
             .render(theme),
-            checkbox(labeled_b, |s: &mut CheckboxDemo| {
-                s.labeled[1] = !s.labeled[1];
+            checkbox(labeled_b, |s: &mut CheckboxDemo, checked: bool| {
+                s.labeled[1] = checked;
             })
             .label("Checked")
             .render(theme),
-            checkbox(false, |_: &mut CheckboxDemo| {})
+            checkbox(false, |_: &mut CheckboxDemo, _| {})
                 .label("Disabled off")
                 .disabled(true)
                 .render(theme),
-            checkbox(true, |_: &mut CheckboxDemo| {})
+            checkbox(true, |_: &mut CheckboxDemo, _| {})
                 .label("Disabled on")
                 .disabled(true)
                 .render(theme),

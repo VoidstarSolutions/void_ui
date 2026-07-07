@@ -50,6 +50,9 @@ use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 pub enum DropdownButtonAction {
     /// Menu item at `index` was selected.
     ItemSelected(usize),
+    /// The menu's open state changed (uncontrolled), or the user requested a
+    /// change (controlled — the widget does not self-toggle then).
+    OpenChanged(bool),
 }
 
 widget_id_handle!(
@@ -124,6 +127,9 @@ pub struct ThemedDropdownButton {
     disabled: bool,
     theme: Theme,
     pub(super) open: bool,
+    /// When true, `open` mirrors a host prop and internal toggles only
+    /// submit [`DropdownButtonAction::OpenChanged`] instead of self-mutating.
+    controlled: bool,
     /// Keyboard-highlighted item index for roving-tab-stop navigation.
     /// `None` means no keyboard highlight; updated on arrow keys and cleared
     /// when the menu closes or an item is selected.
@@ -196,6 +202,7 @@ impl ThemedDropdownButton {
             disabled,
             theme: *theme,
             open: false,
+            controlled: false,
             highlighted: None,
         }
     }
@@ -233,8 +240,17 @@ impl ThemedDropdownButton {
             disabled,
             theme,
             open: false,
+            controlled: false,
             highlighted: None,
         }
+    }
+
+    /// Set the initial open state and whether it is host-controlled.
+    #[must_use]
+    pub fn with_open_state(mut self, open: bool, controlled: bool) -> Self {
+        self.open = open;
+        self.controlled = controlled;
+        self
     }
 
     fn text_color_for(theme: &Theme, variant: ButtonVariant, disabled: bool) -> Color {
@@ -337,6 +353,10 @@ impl ThemedDropdownButton {
                 this.widget.open = false;
                 this.widget.highlighted = None;
                 this.widget.close_menu(&mut this.ctx);
+                this.ctx
+                    .submit_action::<DropdownButtonAction>(DropdownButtonAction::OpenChanged(
+                        false,
+                    ));
             }
 
             let theme = this.widget.theme;
@@ -407,20 +427,75 @@ impl ThemedDropdownButton {
         });
     }
 
-    /// Sync `open`/`highlighted` after the menu closed without going through
-    /// our own event handlers — either the portal slot dismissed it (outside
-    /// press; `PortalSlot::dismiss_outside`) or a portal-mounted
-    /// `MenuContentView` handled an item selection directly (see
-    /// `super::view::MenuContentView::message`). Both call this via
-    /// `mutate_later(handle)`. Also pushes the closed state to the slot —
-    /// idempotent if it's already hidden.
+    /// Sync `open`/`highlighted` after the portal slot dismissed the menu
+    /// without going through our own event handlers (outside press;
+    /// `PortalSlot::dismiss_outside`), called via `mutate_later(handle)` from
+    /// [`dropdown_dismiss_hook`]. The slot has *already hidden* the content,
+    /// so the mirror must go `false` in both modes — a genuine safety close,
+    /// like `Update::StashedChanged(true)`. Controlled hosts observe
+    /// [`DropdownButtonAction::OpenChanged`] and re-apply `true` via
+    /// [`Self::set_open`] if they disagree. Also pushes the closed state to
+    /// the slot — idempotent since it's already hidden.
     pub(crate) fn mark_closed(this: &mut WidgetMut<'_, Self>) {
         if this.widget.open {
             this.widget.open = false;
             this.widget.highlighted = None;
             this.widget.close_menu(&mut this.ctx);
+            this.ctx
+                .submit_action::<DropdownButtonAction>(DropdownButtonAction::OpenChanged(false));
             this.ctx.request_paint_only();
         }
+    }
+
+    /// Close after a portal-mounted `MenuContentView` handled an ordinary
+    /// item selection (see `super::view::MenuContentView::message`, which
+    /// calls this via `mutate_later(handle)`). Unlike [`Self::mark_closed`],
+    /// nothing has pre-hidden the slot content here — this *is* the close —
+    /// so it must honor controlled mode exactly like the in-tree
+    /// `MenuItemSelected` branch of `on_action`: gate the mutation behind
+    /// `!controlled`, always report the `OpenChanged(false)` desire.
+    pub(crate) fn close_for_selection(this: &mut WidgetMut<'_, Self>) {
+        if !this.widget.open {
+            return;
+        }
+        if !this.widget.controlled {
+            this.widget.open = false;
+            this.widget.highlighted = None;
+            this.widget.close_menu(&mut this.ctx);
+        }
+        this.ctx
+            .submit_action::<DropdownButtonAction>(DropdownButtonAction::OpenChanged(false));
+        this.ctx.request_paint_only();
+    }
+
+    /// Apply a host-driven open state (the rebuild path for `.open(bool)`).
+    /// No-op when the value is already current, so it is safe to call on
+    /// every rebuild.
+    pub fn set_open(this: &mut WidgetMut<'_, Self>, open: bool) {
+        if this.widget.open == open {
+            return;
+        }
+        // A disabled dropdown must never open, even via the controlled prop —
+        // otherwise a host that keeps `open=true` set across rebuilds could
+        // re-open a dropdown that was just disabled. The disabled force-close
+        // path lives in `set_disabled` and still runs regardless.
+        if open && this.widget.disabled {
+            return;
+        }
+        this.widget.open = open;
+        if open {
+            this.widget.open_menu(&mut this.ctx);
+        } else {
+            this.widget.highlighted = None;
+            this.widget.close_menu(&mut this.ctx);
+        }
+        this.ctx.request_paint_only();
+    }
+
+    /// Switch between controlled and uncontrolled mode (the rebuild path for
+    /// a view that gains/loses its `.open(bool)` prop across rebuilds).
+    pub fn set_controlled(this: &mut WidgetMut<'_, Self>, controlled: bool) {
+        this.widget.controlled = controlled;
     }
 }
 
@@ -543,32 +618,42 @@ impl Widget for ThemedDropdownButton {
                     && press.button.is_none()
                     && let Some(index) = self.highlighted
                 {
-                    self.open = false;
-                    self.highlighted = None;
-                    self.close_menu(ctx);
+                    if !self.controlled {
+                        self.open = false;
+                        self.highlighted = None;
+                        self.close_menu(ctx);
+                    }
                     ctx.submit_action::<Self::Action>(DropdownButtonAction::ItemSelected(index));
+                    ctx.submit_action::<Self::Action>(DropdownButtonAction::OpenChanged(false));
                     ctx.set_handled();
                     ctx.request_paint_only();
                     return;
                 }
-                if self.open {
-                    self.open = false;
-                    self.highlighted = None;
-                    self.close_menu(ctx);
-                } else {
-                    self.open = true;
-                    self.open_menu(ctx);
+                let desired = !self.open;
+                if !self.controlled {
+                    if desired {
+                        self.open = true;
+                        self.open_menu(ctx);
+                    } else {
+                        self.open = false;
+                        self.highlighted = None;
+                        self.close_menu(ctx);
+                    }
                 }
+                ctx.submit_action::<Self::Action>(DropdownButtonAction::OpenChanged(desired));
             }
             ctx.set_handled();
             ctx.request_paint_only();
             return;
         }
         if let Some(&MenuItemSelected(index)) = action.downcast_ref::<MenuItemSelected>() {
-            self.open = false;
-            self.highlighted = None;
-            self.close_menu(ctx);
+            if !self.controlled {
+                self.open = false;
+                self.highlighted = None;
+                self.close_menu(ctx);
+            }
             ctx.submit_action::<Self::Action>(DropdownButtonAction::ItemSelected(index));
+            ctx.submit_action::<Self::Action>(DropdownButtonAction::OpenChanged(false));
             ctx.set_handled();
             ctx.request_paint_only();
         }
@@ -609,9 +694,12 @@ impl Widget for ThemedDropdownButton {
             Key::Named(NamedKey::Escape) => {
                 // Close without selecting; returns focus to the trigger button
                 // naturally (it was always focused).
-                self.open = false;
-                self.highlighted = None;
-                self.close_menu(ctx);
+                if !self.controlled {
+                    self.open = false;
+                    self.highlighted = None;
+                    self.close_menu(ctx);
+                }
+                ctx.submit_action::<Self::Action>(DropdownButtonAction::OpenChanged(false));
                 ctx.set_handled();
                 ctx.request_paint_only();
             }
@@ -624,6 +712,9 @@ impl Widget for ThemedDropdownButton {
             Update::WidgetAdded => {
                 ctx.set_disabled(self.disabled);
                 self.handle.set(ctx.widget_id());
+                if self.open {
+                    self.open_menu(ctx);
+                }
             }
             // The wrapped `ThemedButton` is the actual focus target now, so we
             // react to `ChildFocusChanged` — masonry's "focus entered/left my
@@ -637,9 +728,12 @@ impl Widget for ThemedDropdownButton {
             Update::ChildFocusChanged(false)
                 if self.open && matches!(self.hosting, Hosting::InTree { .. }) =>
             {
-                self.open = false;
-                self.highlighted = None;
-                self.close_menu(ctx);
+                if !self.controlled {
+                    self.open = false;
+                    self.highlighted = None;
+                    self.close_menu(ctx);
+                }
+                ctx.submit_action::<Self::Action>(DropdownButtonAction::OpenChanged(false));
                 ctx.request_paint_only();
             }
             // A trigger stashed mid-open (e.g. a tab/panel container hiding us
@@ -652,6 +746,7 @@ impl Widget for ThemedDropdownButton {
                 self.open = false;
                 self.highlighted = None;
                 self.close_menu(ctx);
+                ctx.submit_action::<Self::Action>(DropdownButtonAction::OpenChanged(false));
                 ctx.request_paint_only();
             }
             _ => {}
@@ -820,6 +915,154 @@ mod tests {
         assert_eq!(
             ThemedDropdownButton::icon_color_for(&theme, true),
             theme.palette.text_faint
+        );
+    }
+
+    #[test]
+    fn controlled_mode_reports_open_changed_without_self_toggling() {
+        use masonry::core::NewWidget;
+        use masonry::kurbo::Point;
+        use masonry::testing::TestHarness;
+        use masonry::theme::default_property_set;
+        use xilem::view::PointerButton;
+
+        let theme = Theme::default();
+        let widget = ThemedDropdownButton::new(
+            "Menu".into(),
+            None,
+            vec!["A".into(), "B".into()],
+            ButtonVariant::Default,
+            false,
+            &theme,
+        )
+        .with_open_state(false, true);
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+
+        h.mouse_move(Point::new(10.0, 10.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+
+        assert!(
+            !h.edit_root_widget(|wm| wm.widget.open),
+            "controlled dropdown must not self-open"
+        );
+        let open_changed = std::iter::from_fn(|| h.pop_action::<DropdownButtonAction>()).find_map(
+            |(a, _)| match a {
+                DropdownButtonAction::OpenChanged(v) => Some(v),
+                DropdownButtonAction::ItemSelected(_) => None,
+            },
+        );
+        assert_eq!(open_changed, Some(true));
+
+        h.edit_root_widget(|mut wm| ThemedDropdownButton::set_open(&mut wm, true));
+        assert!(h.edit_root_widget(|wm| wm.widget.open));
+    }
+
+    /// Portal-mode item selection routes through
+    /// `MenuContentView::message` → `mutate_later` →
+    /// [`ThemedDropdownButton::close_for_selection`] — nothing pre-hides the
+    /// slot content on that path, so in controlled mode it must NOT
+    /// self-close (unlike [`ThemedDropdownButton::mark_closed`]'s genuine
+    /// externally-dismissed case); it only reports the `OpenChanged(false)`
+    /// desire and leaves the menu visible until the host applies the prop.
+    #[test]
+    fn portal_selection_close_respects_controlled_mode() {
+        use masonry::core::NewWidget;
+        use masonry::layout::AsUnit;
+        use masonry::testing::TestHarness;
+        use masonry::theme::default_property_set;
+
+        // Navigate scope content → Align → SizedBox → dropdown and run `f`.
+        fn with_dropdown<R>(
+            h: &mut TestHarness<OverlayScope>,
+            f: impl FnOnce(&mut WidgetMut<'_, ThemedDropdownButton>) -> R,
+        ) -> R {
+            h.edit_root_widget(|mut wm| {
+                let mut content = OverlayScope::content_mut(&mut wm);
+                let mut align = content.downcast::<masonry::widgets::Align>();
+                let mut sized = masonry::widgets::Align::child_mut(&mut align);
+                let mut sized = sized.downcast::<masonry::widgets::SizedBox>();
+                let mut dropdown = masonry::widgets::SizedBox::child_mut(&mut sized)
+                    .expect("sized box has the dropdown child");
+                let mut dropdown = dropdown.downcast::<ThemedDropdownButton>();
+                f(&mut dropdown)
+            })
+        }
+
+        let theme = Theme::default();
+        let scope_handle = OverlayScopeHandle::new();
+        let key = 7;
+
+        let dropdown = ThemedDropdownButton::new_portal(
+            DropdownButtonConfig {
+                label_text: "Menu".into(),
+                icon: None,
+                items: vec!["A".into(), "B".into()],
+                variant: ButtonVariant::Default,
+                disabled: false,
+                theme,
+            },
+            DropdownButtonHandle::new(),
+            scope_handle.clone(),
+            key,
+        )
+        .with_open_state(false, true);
+        let sized = masonry::widgets::SizedBox::new(NewWidget::new(dropdown).erased())
+            .width(100.0.px())
+            .height(40.0.px())
+            .prepare();
+        let content =
+            masonry::widgets::Align::new(masonry::layout::UnitPoint::TOP_LEFT, sized.erased())
+                .prepare()
+                .erased();
+        let menu = NewWidget::new(MenuContent::new(vec!["A".into(), "B".into()], &theme)).erased();
+        let scope = OverlayScope::new(
+            scope_handle,
+            content,
+            vec![(
+                key,
+                menu,
+                crate::overlay_portal::PortalPlacement::BareTrigger,
+            )],
+        );
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(scope));
+
+        // The host applies `.open(true)` (controlled): menu becomes visible.
+        with_dropdown(&mut h, |d| ThemedDropdownButton::set_open(d, true));
+        h.edit_root_widget(|mut wm| {
+            let slot = OverlayScope::portal_slot_mut(&mut wm);
+            assert!(
+                slot.widget.placed_rect(key).is_some(),
+                "slot child must be visible after the host applies open"
+            );
+        });
+
+        // An ordinary portal item selection lands here via `mutate_later`.
+        with_dropdown(&mut h, |d| {
+            ThemedDropdownButton::close_for_selection(d);
+        });
+
+        assert!(
+            with_dropdown(&mut h, |d| d.widget.open),
+            "controlled dropdown must not self-close on portal item selection"
+        );
+        h.edit_root_widget(|mut wm| {
+            let slot = OverlayScope::portal_slot_mut(&mut wm);
+            assert!(
+                slot.widget.placed_rect(key).is_some(),
+                "slot child must stay visible while the host keeps open=true"
+            );
+        });
+        let open_changed = std::iter::from_fn(|| h.pop_action::<DropdownButtonAction>())
+            .filter_map(|(a, _)| match a {
+                DropdownButtonAction::OpenChanged(v) => Some(v),
+                DropdownButtonAction::ItemSelected(_) => None,
+            })
+            .last();
+        assert_eq!(
+            open_changed,
+            Some(false),
+            "selection must still report the OpenChanged(false) desire"
         );
     }
 }

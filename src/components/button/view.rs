@@ -6,7 +6,8 @@
 //!
 //! ```ignore
 //! use void_ui::components::button;
-//! button("Reset view", |s: &mut State| s.reset())
+//! button(|s: &mut State| s.reset())
+//!     .label("Reset view")
 //!     .active(false)
 //!     .render(&theme)
 //! ```
@@ -96,7 +97,7 @@ impl<F> Button<F> {
 
     /// Set or replace the text label.
     ///
-    /// Useful when constructing via [`icon_button`] and a label is also desired.
+    /// Useful when constructing an icon-only button via [`Self::icon`] and a label is also desired.
     pub fn label(mut self, text: impl Into<ArcStr>) -> Self {
         self.label = Some(text.into());
         self

@@ -112,8 +112,8 @@ fn alignment_section(theme: &Theme) -> impl WidgetView<LabelDemoState> + use<> {
 }
 
 fn build_inner(theme: &Theme, state: &LabelDemoState) -> impl WidgetView<LabelDemoState> + use<> {
-    let mask_toggle = checkbox(state.masked, |s: &mut LabelDemoState| {
-        s.masked = !s.masked;
+    let mask_toggle = checkbox(state.masked, |s: &mut LabelDemoState, checked: bool| {
+        s.masked = checked;
     })
     .label("Mask values")
     .render(theme);

@@ -85,18 +85,18 @@ fn default_section(theme: &Theme, state: &GroupBoxDemo) -> Box<AnyWidgetView<Gro
     let [sub_all, sub_news, sub_activity] = state.subscriptions;
     group_box(
         flex_col((
-            checkbox(sub_all, |s: &mut GroupBoxDemo| {
-                s.subscriptions[0] = !s.subscriptions[0];
+            checkbox(sub_all, |s: &mut GroupBoxDemo, checked: bool| {
+                s.subscriptions[0] = checked;
             })
             .label("All")
             .render(theme),
-            checkbox(sub_news, |s: &mut GroupBoxDemo| {
-                s.subscriptions[1] = !s.subscriptions[1];
+            checkbox(sub_news, |s: &mut GroupBoxDemo, checked: bool| {
+                s.subscriptions[1] = checked;
             })
             .label("Newsletter")
             .render(theme),
-            checkbox(sub_activity, |s: &mut GroupBoxDemo| {
-                s.subscriptions[2] = !s.subscriptions[2];
+            checkbox(sub_activity, |s: &mut GroupBoxDemo, checked: bool| {
+                s.subscriptions[2] = checked;
             })
             .label("Account Activity")
             .render(theme),
@@ -117,9 +117,12 @@ fn fill_section(theme: &Theme, state: &GroupBoxDemo) -> Box<AnyWidgetView<GroupB
         flex_col((
             labeled_row(
                 "Make profile private and hide activity",
-                toggle(state.private_profile, |s: &mut GroupBoxDemo| {
-                    s.private_profile = !s.private_profile;
-                })
+                toggle(
+                    state.private_profile,
+                    |s: &mut GroupBoxDemo, checked: bool| {
+                        s.private_profile = checked;
+                    },
+                )
                 .render(theme),
                 theme,
             ),
@@ -127,8 +130,8 @@ fn fill_section(theme: &Theme, state: &GroupBoxDemo) -> Box<AnyWidgetView<GroupB
                 "Include private contributions on my profile",
                 toggle(
                     state.include_private_contributions,
-                    |s: &mut GroupBoxDemo| {
-                        s.include_private_contributions = !s.include_private_contributions;
+                    |s: &mut GroupBoxDemo, checked: bool| {
+                        s.include_private_contributions = checked;
                     },
                 )
                 .render(theme),
@@ -151,13 +154,13 @@ fn outline_section(theme: &Theme, state: &GroupBoxDemo) -> Box<AnyWidgetView<Gro
     group_box(
         flex_col((
             radio("Light", |s: &mut GroupBoxDemo| s.appearance = Some(0))
-                .active(state.appearance == Some(0))
+                .selected(state.appearance == Some(0))
                 .render(theme),
             radio("Dark", |s: &mut GroupBoxDemo| s.appearance = Some(1))
-                .active(state.appearance == Some(1))
+                .selected(state.appearance == Some(1))
                 .render(theme),
             radio("System", |s: &mut GroupBoxDemo| s.appearance = Some(2))
-                .active(state.appearance == Some(2))
+                .selected(state.appearance == Some(2))
                 .render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
@@ -172,9 +175,12 @@ fn outline_section(theme: &Theme, state: &GroupBoxDemo) -> Box<AnyWidgetView<Gro
 fn untitled_section(theme: &Theme, state: &GroupBoxDemo) -> Box<AnyWidgetView<GroupBoxDemo>> {
     group_box(labeled_row(
         "Make profile private and hide activity",
-        toggle(state.hide_activity, |s: &mut GroupBoxDemo| {
-            s.hide_activity = !s.hide_activity;
-        })
+        toggle(
+            state.hide_activity,
+            |s: &mut GroupBoxDemo, checked: bool| {
+                s.hide_activity = checked;
+            },
+        )
         .render(theme),
         theme,
     ))

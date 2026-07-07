@@ -493,7 +493,7 @@ use xilem::{Pod, ViewCtx};
 /// All cells are placed at authoritative x-positions, so multiple strips
 /// sharing a width list are pixel-aligned. Construct via [`column_strip`].
 /// Boxed resize callback: `(state, column, new_width)`.
-type ResizeCb<State> = Box<dyn Fn(&mut State, usize, f64) + Send + Sync>;
+type ResizeCb<State, Action> = Box<dyn Fn(&mut State, usize, f64) -> Action + Send + Sync>;
 
 #[must_use = "View values do nothing unless provided to Xilem."]
 pub struct ColumnStripView<Seq, State, Action = ()> {
@@ -505,7 +505,7 @@ pub struct ColumnStripView<Seq, State, Action = ()> {
     cells: Seq,
     /// Resize config: separator style + on-resize callback. `None` ⇒ a
     /// plain, non-resizable strip.
-    resize: Option<(SeparatorStyle, ResizeCb<State>)>,
+    resize: Option<(SeparatorStyle, ResizeCb<State, Action>)>,
     phantom: PhantomData<fn() -> (State, Action)>,
 }
 
@@ -540,7 +540,7 @@ impl<Seq, State, Action> ColumnStripView<Seq, State, Action> {
     /// clicks.
     pub fn resizable<F>(mut self, style: SeparatorStyle, on_resize: F) -> Self
     where
-        F: Fn(&mut State, usize, f64) + Send + Sync + 'static,
+        F: Fn(&mut State, usize, f64) -> Action + Send + Sync + 'static,
     {
         self.resize = Some((style, Box::new(on_resize)));
         self
@@ -570,10 +570,7 @@ impl<Seq, State, Action> ViewMarker for ColumnStripView<Seq, State, Action> {}
 impl<State, Action, Seq> View<State, Action, ViewCtx> for ColumnStripView<Seq, State, Action>
 where
     State: 'static,
-    // `Default` lets a resize emit `MessageResult::Action(Action::default())`,
-    // which re-runs the host's app_logic so the new column widths flow
-    // back in. (`()` — the grid's action type — implements `Default`.)
-    Action: 'static + Default,
+    Action: 'static,
     Seq: ColumnStripSequence<State, Action>,
 {
     type Element = Pod<ColumnStrip>;
@@ -671,15 +668,10 @@ where
             if let Some((_, on_resize)) = &self.resize
                 && let Some(resize) = message.take_message::<ColumnResize>()
             {
-                on_resize(app_state, resize.col, resize.new_width);
-                // Return `Action` (not `Nop`/`RequestRebuild`) so the
-                // host's app_logic re-runs and the updated column widths
-                // flow back into every strip. `RequestRebuild` only
-                // re-evaluates the *existing* view values against
-                // themselves (widths unchanged there) → "tree didn't
-                // change"; an Action propagating to the root is what
-                // actually re-renders, exactly like Slider/Button.
-                return MessageResult::Action(Action::default());
+                // Return the callback's Action (not `Nop`/`RequestRebuild`)
+                // so the host's app_logic re-runs and the updated column
+                // widths flow back into every strip.
+                return MessageResult::Action(on_resize(app_state, resize.col, resize.new_width));
             }
             return MessageResult::Nop;
         }

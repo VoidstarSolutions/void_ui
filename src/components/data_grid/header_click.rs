@@ -200,24 +200,25 @@ use xilem::{Pod, ViewCtx, WidgetView};
 /// Use it to cycle the grid's
 /// [`SortState`](super::sort::SortState) for the clicked column.
 #[must_use = "View values do nothing unless provided to Xilem."]
-pub struct ClickableHeader<V, State, F> {
+pub struct ClickableHeader<V, State, Action, F> {
     child: V,
     hover_bg: Color,
     on_click: F,
-    phantom: PhantomData<fn() -> State>,
+    phantom: PhantomData<fn() -> (State, Action)>,
 }
 
 /// Constructor for [`ClickableHeader`]. `hover_bg` is the tint painted
 /// while the header is hovered (theme-driven).
-pub fn clickable_header<V, State, F>(
+pub fn clickable_header<V, State, Action, F>(
     child: V,
     hover_bg: Color,
     on_click: F,
-) -> ClickableHeader<V, State, F>
+) -> ClickableHeader<V, State, Action, F>
 where
-    V: WidgetView<State, ()>,
-    F: Fn(&mut State, bool) + Send + Sync + 'static,
+    V: WidgetView<State, Action>,
+    F: Fn(&mut State, bool) -> Action + Send + Sync + 'static,
     State: 'static,
+    Action: 'static,
 {
     ClickableHeader {
         child,
@@ -227,13 +228,14 @@ where
     }
 }
 
-impl<V, State, F> ViewMarker for ClickableHeader<V, State, F> {}
+impl<V, State, Action, F> ViewMarker for ClickableHeader<V, State, Action, F> {}
 
-impl<V, State, F> View<State, (), ViewCtx> for ClickableHeader<V, State, F>
+impl<V, State, Action, F> View<State, Action, ViewCtx> for ClickableHeader<V, State, Action, F>
 where
-    V: WidgetView<State, ()>,
-    F: Fn(&mut State, bool) + Send + Sync + 'static,
+    V: WidgetView<State, Action>,
+    F: Fn(&mut State, bool) -> Action + Send + Sync + 'static,
     State: 'static,
+    Action: 'static,
 {
     type Element = Pod<HeaderClickable>;
     type ViewState = V::ViewState;
@@ -280,10 +282,9 @@ where
         message: &mut MessageCtx,
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
-    ) -> MessageResult<()> {
+    ) -> MessageResult<Action> {
         if let Some(action) = message.take_message::<HeaderClicked>() {
-            (self.on_click)(app_state, action.multi);
-            MessageResult::Action(())
+            MessageResult::Action((self.on_click)(app_state, action.multi))
         } else {
             let mut child = HeaderClickable::child_mut(&mut element);
             self.child

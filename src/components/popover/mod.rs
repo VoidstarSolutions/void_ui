@@ -3,7 +3,7 @@
 //! ```ignore
 //! use void_ui::components::popover;
 //! popover(
-//!     button("Show info").render(&theme),
+//!     button(|_| {}).label("Show info").render(&theme),
 //!     label("Here is some info.").render(&theme),
 //! )
 //! .anchor(PopoverAnchor::BottomStart)
@@ -16,7 +16,7 @@ mod view;
 pub mod widget;
 
 pub use view::{Popover, PopoverView, popover};
-pub use widget::PopoverHost;
+pub use widget::{PopoverHost, PopoverOpenChanged};
 
 /// Compatibility alias for the pre-consolidation name of
 /// [`crate::overlay::OverlayAnchor`]. Prefer `OverlayAnchor` in new code.

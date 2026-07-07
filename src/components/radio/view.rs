@@ -1,16 +1,16 @@
 //! Themed radio button — interactive, host-managed selection state.
 //!
 //! Wraps [`super::widget::ThemedRadio`] in a xilem [`View`]. Pointer state
-//! (hover, press) is tracked by the masonry widget; the `active` flag is the
+//! (hover, press) is tracked by the masonry widget; the `selected` flag is the
 //! host-controlled selected state.
 //!
 //! Group mutual-exclusion is host-managed: render each option with
-//! `active(selected == this_value)` and in the callback update `selected`.
+//! `.selected(selected == this_value)` and in the callback update `selected`.
 //!
 //! ```ignore
 //! use void_ui::components::radio;
 //! radio("Option A", |s: &mut State| s.selected = Choice::A)
-//!     .active(s.selected == Choice::A)
+//!     .selected(s.selected == Choice::A)
 //!     .render(&theme)
 //! ```
 
@@ -31,7 +31,7 @@ use crate::Theme;
 #[must_use = "Radio does nothing until rendered with .render(&theme)"]
 pub struct Radio<F> {
     label: ArcStr,
-    active: bool,
+    selected: bool,
     disabled: bool,
     callback: F,
 }
@@ -40,11 +40,11 @@ pub struct Radio<F> {
 ///
 /// The callback is invoked on primary-pointer release inside the widget and on
 /// Space while the widget is focused. The host should update the selected value
-/// in app state so this radio gets `active(true)` and siblings get `active(false)`.
+/// in app state so this radio gets `.selected(true)` and siblings get `.selected(false)`.
 pub fn radio<F>(label: impl Into<ArcStr>, callback: F) -> Radio<F> {
     Radio {
         label: label.into(),
-        active: false,
+        selected: false,
         disabled: false,
         callback,
     }
@@ -52,9 +52,18 @@ pub fn radio<F>(label: impl Into<ArcStr>, callback: F) -> Radio<F> {
 
 impl<F> Radio<F> {
     /// Mark this radio as the currently-selected option.
-    pub fn active(mut self, on: bool) -> Self {
-        self.active = on;
+    pub fn selected(mut self, on: bool) -> Self {
+        self.selected = on;
         self
+    }
+
+    /// Deprecated alias of [`Self::selected`].
+    #[deprecated(
+        since = "0.1.0",
+        note = "renamed to `selected` to match tabs/button_group vocabulary"
+    )]
+    pub fn active(self, on: bool) -> Self {
+        self.selected(on)
     }
 
     /// Suppress all interaction and mute the visual appearance.
@@ -72,7 +81,7 @@ impl<F> Radio<F> {
     {
         RadioView {
             label: self.label,
-            active: self.active,
+            selected: self.selected,
             disabled: self.disabled,
             theme: *theme,
             callback: self.callback,
@@ -87,7 +96,7 @@ impl<F> Radio<F> {
 #[must_use = "View values do nothing unless provided to Xilem."]
 pub struct RadioView<F, State, Action> {
     label: ArcStr,
-    active: bool,
+    selected: bool,
     disabled: bool,
     theme: Theme,
     callback: F,
@@ -116,7 +125,7 @@ where
             .prepare();
         label.properties.insert(ContentColor::new(text_color));
         let widget = ThemedRadio::new(label, &self.theme)
-            .with_active(self.active)
+            .with_selected(self.selected)
             .with_disabled(self.disabled);
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, ())
@@ -145,8 +154,8 @@ where
                 StyleProperty::FontSize(self.theme.density.ui_font_size),
             );
         }
-        if self.active != prev.active {
-            ThemedRadio::set_active(&mut element, self.active);
+        if self.selected != prev.selected {
+            ThemedRadio::set_selected(&mut element, self.selected);
         }
         if self.disabled != prev.disabled {
             ThemedRadio::set_disabled(&mut element, self.disabled);
@@ -181,5 +190,32 @@ where
             Some(_press) => MessageResult::Action((self.callback)(app_state)),
             None => MessageResult::Stale,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::radio;
+    use crate::Theme;
+
+    #[test]
+    fn selected_is_the_canonical_builder_name() {
+        let theme = Theme::default();
+        let _ = radio("Option A", |_: &mut u8| {})
+            .selected(true)
+            .render::<u8, ()>(&theme);
+    }
+
+    /// The deprecated `.active` shim must still compile and delegate to
+    /// `.selected` — a host mid-migration off the old name must see identical
+    /// behavior.
+    #[test]
+    #[allow(deprecated)]
+    fn deprecated_active_delegates_to_selected() {
+        let theme = Theme::default();
+        let view = radio("Option A", |_: &mut u8| {})
+            .active(true)
+            .render::<u8, ()>(&theme);
+        assert!(view.selected);
     }
 }

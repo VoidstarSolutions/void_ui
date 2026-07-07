@@ -43,7 +43,7 @@ use crate::Theme;
 use crate::collection::ScrollState;
 use crate::collection::SelectionState;
 use crate::collection::{
-    CollectionBodyParams, IdSource, ItemsFn, RenderRow, SelectionLens, collection_body,
+    CollectionBodyParams, IdSource, ItemsFn, Lazy, RenderRow, SelectionLens, collection_body,
 };
 use crate::components::scroll_container::scroll_container;
 
@@ -62,7 +62,7 @@ type RowIdFn<R> = Arc<dyn Fn(&R) -> u64 + Send + Sync>;
 /// *and* re-derives its ordered view. The grid never reorders data itself
 /// (the same host-side shape as [`FilterChange`]). Keyed by id so an
 /// active sort stays attached across reorder/hide.
-type SortChange<State> = Arc<dyn Fn(&mut State, ColumnId, bool) + Send + Sync>;
+type SortChange<State, Action> = Arc<dyn Fn(&mut State, ColumnId, bool) -> Action + Send + Sync>;
 
 /// One-shot warning that the grid is configured with selection + a
 /// reorder source but no stable `row_id`. Emitted at most once per
@@ -103,14 +103,15 @@ fn warn_duplicate_column_id() {
 /// applies the filter to data itself. Keyed by id (the view translates
 /// the filter-row's positional index to a [`ColumnId`]) so a query stays
 /// attached to its column across reorder/hide.
-type FilterChange<State> = Arc<dyn Fn(&mut State, ColumnId, String) + Send + Sync>;
+type FilterChange<State, Action> =
+    Arc<dyn Fn(&mut State, ColumnId, String) -> Action + Send + Sync>;
 /// Boxed column-resize callback (`Fn(&mut State, ColumnId, new_width)`).
 /// A header resize handle emits the resized column's stable id + proposed
 /// absolute width through this so the host can update its
 /// [`ColumnWidths`](super::width::ColumnWidths) (which clamps). The view
 /// translates the strip's positional resize index to the column's id, so
 /// the override stays attached across reorder/hide.
-type WidthChange<State> = Arc<dyn Fn(&mut State, ColumnId, f64) + Send + Sync>;
+type WidthChange<State, Action> = Arc<dyn Fn(&mut State, ColumnId, f64) -> Action + Send + Sync>;
 
 /// One column's rendering + layout slot — the half of [`ColumnDef`]
 /// that's needed at row-build time. Shared (via `Arc`) between the
@@ -167,7 +168,7 @@ const fn align_to_main(align: CellAlign) -> MainAxisAlignment {
 ///   projector contribute empty cells so spreadsheet paste keeps the
 ///   column layout.
 #[must_use = "DataGrid does nothing until rendered with .render(&theme)"]
-pub struct DataGrid<State, R> {
+pub struct DataGrid<State, R, Action = ()> {
     columns: Vec<ColumnDef<R, State>>,
     row_count: u64,
     row_height: f64,
@@ -175,21 +176,22 @@ pub struct DataGrid<State, R> {
     selection_lens: Option<SelectionLens<State>>,
     row_id: Option<RowIdFn<R>>,
     sort: SortState,
-    sort_change: Option<SortChange<State>>,
+    sort_change: Option<SortChange<State, Action>>,
     filter: FilterState,
-    filter_change: Option<FilterChange<State>>,
+    filter_change: Option<FilterChange<State, Action>>,
     column_widths: ColumnWidths,
-    width_change: Option<WidthChange<State>>,
+    width_change: Option<WidthChange<State, Action>>,
     scroll: ScrollState,
 }
 
 /// Default fixed row height when [`DataGrid::row_height`] is unset.
 const DEFAULT_ROW_HEIGHT: f64 = 24.0;
 
-impl<State, R> DataGrid<State, R>
+impl<State, R, Action> DataGrid<State, R, Action>
 where
     State: 'static,
     R: 'static,
+    Action: Default + 'static,
 {
     /// Starts a grid from its column descriptors. Attach data with
     /// [`Self::rows`] + [`Self::row_count`] before rendering.
@@ -298,7 +300,7 @@ where
     /// [`ColumnDef::sortable_by_key`]). Omit for an unsorted grid.
     pub fn sort<F>(mut self, state: SortState, on_sort: F) -> Self
     where
-        F: Fn(&mut State, ColumnId, bool) + Send + Sync + 'static,
+        F: Fn(&mut State, ColumnId, bool) -> Action + Send + Sync + 'static,
     {
         self.sort = state;
         self.sort_change = Some(Arc::new(on_sort));
@@ -321,9 +323,9 @@ where
     /// mistaken for the full data set.
     pub fn filter<F>(mut self, filter: FilterState, on_change: F) -> Self
     where
-        F: Fn(&mut State, ColumnId, String) + Send + Sync + 'static,
+        F: Fn(&mut State, ColumnId, String) -> Action + Send + Sync + 'static,
     {
-        let on_change: FilterChange<State> = Arc::new(on_change);
+        let on_change: FilterChange<State, Action> = Arc::new(on_change);
         self.filter = filter;
         self.filter_change = Some(on_change);
         self
@@ -350,7 +352,7 @@ where
     /// leave columns non-resizable.
     pub fn on_column_resize<F>(mut self, on_resize: F) -> Self
     where
-        F: Fn(&mut State, ColumnId, f64) + Send + Sync + 'static,
+        F: Fn(&mut State, ColumnId, f64) -> Action + Send + Sync + 'static,
     {
         self.width_change = Some(Arc::new(on_resize));
         self
@@ -382,7 +384,7 @@ where
 
     /// Materializes the xilem view at the supplied theme.
     #[must_use]
-    pub fn render(self, theme: &Theme) -> impl WidgetView<State, ()> + use<State, R> {
+    pub fn render(self, theme: &Theme) -> impl WidgetView<State, Action> + use<State, R, Action> {
         build_grid_view(self, theme)
     }
 }
@@ -398,10 +400,11 @@ where
 ///     .row_count(n)
 ///     .render(&theme)
 /// ```
-pub fn data_grid<State, R>(columns: Vec<ColumnDef<R, State>>) -> DataGrid<State, R>
+pub fn data_grid<State, R, Action>(columns: Vec<ColumnDef<R, State>>) -> DataGrid<State, R, Action>
 where
     State: 'static,
     R: 'static,
+    Action: Default + 'static,
 {
     DataGrid::new(columns)
 }
@@ -484,13 +487,14 @@ fn decompose_columns<R, State>(
 
 /// Turns a finished [`DataGrid`] builder into the view tree. Kept as a
 /// free function so the body stays flat and `render` is a thin call.
-fn build_grid_view<State, R>(
-    grid: DataGrid<State, R>,
+fn build_grid_view<State, R, Action>(
+    grid: DataGrid<State, R, Action>,
     theme: &Theme,
-) -> impl WidgetView<State, ()> + use<State, R>
+) -> impl WidgetView<State, Action> + use<State, R, Action>
 where
     State: 'static,
     R: 'static,
+    Action: Default + 'static,
 {
     let theme = *theme;
     let DataGrid {
@@ -557,7 +561,7 @@ where
         theme: &theme,
     };
     let header_widths: Vec<f64> = render_slots.iter().map(|s| s.width).collect();
-    let header_cells: Vec<Box<AnyWidgetView<State>>> = render_slots
+    let header_cells: Vec<Box<AnyWidgetView<State, Action>>> = render_slots
         .iter()
         .enumerate()
         .map(|(idx, slot)| {
@@ -583,7 +587,9 @@ where
         let resize_ids: Vec<ColumnId> = render_slots.iter().map(|s| s.id.clone()).collect();
         header_strip = header_strip.resizable(style, move |state: &mut State, col, new_width| {
             if let Some(id) = resize_ids.get(col) {
-                width_change(state, id.clone(), new_width);
+                width_change(state, id.clone(), new_width)
+            } else {
+                Action::default()
             }
         });
     }
@@ -730,22 +736,23 @@ fn project_tsv<R>(
 /// accessor, text projectors, and selection lens so it can project the
 /// clipboard TSV from the current selection — **lazily**, only when the
 /// widget emits [`CopyRequested`] (an actual Ctrl/Cmd+C), never per rebuild.
-struct CopyOnShortcutView<V, R, State> {
+struct CopyOnShortcutView<V, R, State, Action> {
     child: V,
     text_projectors: Arc<Vec<Option<TextProjector<R>>>>,
     rows: RowsFn<State, R>,
     selection_lens: Option<SelectionLens<State>>,
     row_id: IdSource<R>,
-    phantom: PhantomData<fn() -> State>,
+    phantom: PhantomData<fn() -> (State, Action)>,
 }
 
-impl<V, R, State> ViewMarker for CopyOnShortcutView<V, R, State> {}
+impl<V, R, State, Action> ViewMarker for CopyOnShortcutView<V, R, State, Action> {}
 
-impl<V, R, State> View<State, (), ViewCtx> for CopyOnShortcutView<V, R, State>
+impl<V, R, State, Action> View<State, Action, ViewCtx> for CopyOnShortcutView<V, R, State, Action>
 where
-    V: WidgetView<State, ()>,
+    V: WidgetView<State, Action>,
     R: 'static,
     State: 'static,
+    Action: Default + 'static,
 {
     type Element = Pod<CopyOnShortcut>;
     type ViewState = V::ViewState;
@@ -794,7 +801,7 @@ where
         message: &mut MessageCtx,
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
-    ) -> MessageResult<()> {
+    ) -> MessageResult<Action> {
         // `CopyRequested` is addressed to *this* wrapper's widget, so it
         // arrives fully routed (empty remaining path). Every other message —
         // header clicks, filter edits, row clicks, `VirtualScrollAction` —
@@ -812,7 +819,7 @@ where
             {
                 CopyOnShortcut::write_clipboard(&mut element, payload);
             }
-            return MessageResult::Action(());
+            return MessageResult::Action(Action::default());
         }
         let mut child = CopyOnShortcut::child_mut(&mut element);
         self.child
@@ -820,7 +827,7 @@ where
     }
 }
 
-impl<V, R, State> CopyOnShortcutView<V, R, State>
+impl<V, R, State, Action> CopyOnShortcutView<V, R, State, Action>
 where
     R: 'static,
     State: 'static,
@@ -860,11 +867,11 @@ where
 /// Returning a boxed `AnyWidgetView` keeps the concrete type out of
 /// the call sites in the header / body builders (which already
 /// erase further).
-fn aligned_cell<State: 'static>(
-    inner: Box<AnyWidgetView<State>>,
+fn aligned_cell<State: 'static, Action: 'static>(
+    inner: Box<AnyWidgetView<State, Action>>,
     width: f64,
     align: CellAlign,
-) -> Box<AnyWidgetView<State>> {
+) -> Box<AnyWidgetView<State, Action>> {
     let aligned = flex_row((flex_item(inner, 0.0),))
         .main_axis_alignment(align_to_main(align))
         .cross_axis_alignment(CrossAxisAlignment::Center);
@@ -875,9 +882,9 @@ fn aligned_cell<State: 'static>(
 
 /// Shared (non-per-column) inputs for [`header_cell`], grouped to keep
 /// the call short and under the argument-count lint.
-struct HeaderCtx<'a, State> {
+struct HeaderCtx<'a, State, Action> {
     sort: SortState,
-    sort_change: Option<&'a SortChange<State>>,
+    sort_change: Option<&'a SortChange<State, Action>>,
     theme: &'a Theme,
 }
 
@@ -894,15 +901,16 @@ struct HeaderCtx<'a, State> {
 /// hit-tests a grab zone at each column boundary — not by the cell, so
 /// `header_cell` stays resize-agnostic.) Non-sortable columns render an
 /// inert label.
-fn header_cell<State, R>(
+fn header_cell<State, R, Action>(
     slot: &ColumnRender<R, State>,
     sortable: bool,
     filtered: bool,
-    ctx: &HeaderCtx<'_, State>,
-) -> Box<AnyWidgetView<State>>
+    ctx: &HeaderCtx<'_, State, Action>,
+) -> Box<AnyWidgetView<State, Action>>
 where
     State: 'static,
     R: 'static,
+    Action: Default + 'static,
 {
     let theme = ctx.theme;
     let mut title = match ctx.sort.direction_for(&slot.id) {
@@ -956,9 +964,7 @@ where
             Box::new(clickable_header(
                 cell,
                 theme.palette.border_strong,
-                move |state: &mut State, multi: bool| {
-                    on_sort(state, id.clone(), multi);
-                },
+                move |state: &mut State, multi: bool| on_sort(state, id.clone(), multi),
             ))
         }
         _ => cell,
@@ -987,10 +993,13 @@ struct BodyParams<State, R> {
 /// id (via [`IdSource`]) drives selection and click routing — now handled
 /// by the collection substrate's `collection_body` — so a selection follows
 /// its rows across host reordering.
-fn build_body<State, R>(params: BodyParams<State, R>) -> impl WidgetView<State, ()> + use<State, R>
+fn build_body<State, R, Action>(
+    params: BodyParams<State, R>,
+) -> impl WidgetView<State, Action> + use<State, R, Action>
 where
     State: 'static,
     R: 'static,
+    Action: Default + 'static,
 {
     let BodyParams {
         row_count,
@@ -1041,7 +1050,7 @@ where
         id_source: row_id,
         selection_lens,
         scroll,
-        lazy: None,
+        lazy: None::<Lazy<State, Action>>,
         render_row,
         theme,
     })
@@ -1057,18 +1066,19 @@ where
 /// callers place it in a bounded-height slot — e.g.
 /// `sized_box(grid).flex(1.0)`; an unbounded parent falls back to the
 /// body's intrinsic size.
-fn assemble_grid_stack<State, H, F, B>(
+fn assemble_grid_stack<State, Action, H, F, B>(
     header: H,
     filter_row: Option<F>,
     body: B,
-) -> impl WidgetView<State, ()> + use<State, H, F, B>
+) -> impl WidgetView<State, Action> + use<State, Action, H, F, B>
 where
     State: 'static,
-    H: WidgetView<State, ()>,
-    F: WidgetView<State, ()>,
-    B: WidgetView<State, ()>,
+    Action: 'static,
+    H: WidgetView<State, Action>,
+    F: WidgetView<State, Action>,
+    B: WidgetView<State, Action>,
 {
-    let mut children: Vec<AnyFlexChild<State, ()>> = Vec::with_capacity(3);
+    let mut children: Vec<AnyFlexChild<State, Action>> = Vec::with_capacity(3);
     children.push(flex_item(header, 0.0).into());
     if let Some(filter_row) = filter_row {
         children.push(flex_item(filter_row, 0.0).into());
@@ -1086,19 +1096,20 @@ where
 /// host updates its [`FilterState`] and re-derives the filtered view.
 /// Non-filterable columns render a blank slot of the same width so the
 /// inputs line up under their columns.
-fn build_filter_row<State>(
+fn build_filter_row<State, Action>(
     widths: &[f64],
     ids: &[ColumnId],
     filterable: &[bool],
     filter: &FilterState,
-    on_change: &FilterChange<State>,
+    on_change: &FilterChange<State, Action>,
     theme: &Theme,
-) -> impl WidgetView<State, ()> + use<State>
+) -> impl WidgetView<State, Action> + use<State, Action>
 where
     State: 'static,
+    Action: 'static,
 {
-    let cells: Vec<Box<AnyWidgetView<State>>> = (0..widths.len())
-        .map(|idx| -> Box<AnyWidgetView<State>> {
+    let cells: Vec<Box<AnyWidgetView<State, Action>>> = (0..widths.len())
+        .map(|idx| -> Box<AnyWidgetView<State, Action>> {
             if filterable[idx] {
                 let id = ids[idx].clone();
                 let current = filter.get(&id).unwrap_or_default().to_string();
@@ -1110,7 +1121,7 @@ where
                 // column width, so the input can't overflow its column —
                 // this is what finally fixed the filter-alignment bug.
                 let input = text_input(current, move |state: &mut State, text: String| {
-                    (*on_change)(state, id.clone(), text);
+                    (*on_change)(state, id.clone(), text)
                 })
                 .text_color(theme.palette.text)
                 .placeholder("Filter");
@@ -1310,7 +1321,7 @@ mod tests {
             CellAlign::End,
             |r: &u64| r.to_string(),
         )];
-        let view = data_grid::<State, u64>(columns)
+        let view = data_grid::<State, u64, ()>(columns)
             .rows(|s: &State| &s.rows[..])
             .row_count(3)
             .render(&Theme::default());
@@ -1332,5 +1343,37 @@ mod tests {
             find_collection_body(harness.root_widget().as_dyn()).is_some(),
             "data_grid's body should be a CollectionBodyWidget (grants arrow-key nav)",
         );
+    }
+
+    /// sort/filter/resize callbacks return the host's Action type, which the
+    /// rendered grid view is generic over.
+    #[test]
+    fn data_grid_callbacks_return_the_host_action() {
+        use xilem::WidgetView;
+
+        use crate::components::data_grid::filter::FilterState;
+        use crate::components::data_grid::sort::SortState;
+
+        #[derive(Default, Debug)]
+        struct Reorder;
+        struct State {
+            rows: Vec<u64>,
+        }
+        fn assert_widget_view<V: WidgetView<State, Reorder>>(_: &V) {}
+
+        let columns = vec![text_column::<u64, State, _>(
+            "Value",
+            80.0,
+            CellAlign::End,
+            |r: &u64| r.to_string(),
+        )];
+        let view = data_grid::<State, u64, Reorder>(columns)
+            .rows(|s: &State| &s.rows[..])
+            .row_count(3)
+            .sort(SortState::new(), |_s, _col, _multi| Reorder)
+            .filter(FilterState::new(), |_s, _col, _q| Reorder)
+            .on_column_resize(|_s, _col, _w| Reorder)
+            .render(&Theme::default());
+        assert_widget_view(&view);
     }
 }

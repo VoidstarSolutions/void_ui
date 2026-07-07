@@ -8,8 +8,8 @@
 //! collapsible(
 //!     "Advanced options",
 //!     flex_col((
-//!         checkbox("Enable debug mode", |s: &mut State| s.debug = !s.debug)
-//!             .checked(s.debug)
+//!         checkbox(state.debug, |s: &mut State, checked: bool| s.debug = checked)
+//!             .label("Enable debug mode")
 //!             .render(&theme),
 //!     )),
 //!     |s: &mut State| s.advanced_open = !s.advanced_open,
@@ -37,6 +37,7 @@ pub struct Collapsible<V, F> {
     title: ArcStr,
     child: V,
     open: bool,
+    disabled: bool,
     on_toggle: F,
 }
 
@@ -49,6 +50,7 @@ pub fn collapsible<V, F>(title: impl Into<ArcStr>, child: V, on_toggle: F) -> Co
         title: title.into(),
         child,
         open: true,
+        disabled: false,
         on_toggle,
     }
 }
@@ -57,6 +59,13 @@ impl<V, F> Collapsible<V, F> {
     /// Set whether the section is expanded. Defaults to `true` (open).
     pub fn open(mut self, open: bool) -> Self {
         self.open = open;
+        self
+    }
+
+    /// Suppress header interaction (click/keyboard toggle) and mute the
+    /// header's visual appearance. The body keeps its current open state.
+    pub fn disabled(mut self, on: bool) -> Self {
+        self.disabled = on;
         self
     }
 
@@ -72,6 +81,7 @@ impl<V, F> Collapsible<V, F> {
             title: self.title,
             child: self.child,
             open: self.open,
+            disabled: self.disabled,
             on_toggle: self.on_toggle,
             theme: *theme,
             phantom: PhantomData,
@@ -87,6 +97,7 @@ pub struct CollapsibleView<V, F, State, Action> {
     title: ArcStr,
     child: V,
     open: bool,
+    disabled: bool,
     on_toggle: F,
     theme: Theme,
     phantom: PhantomData<fn(State) -> Action>,
@@ -113,6 +124,7 @@ where
             child_pod.new_widget,
             &self.theme,
             self.open,
+            self.disabled,
         );
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, child_state)
@@ -134,6 +146,9 @@ where
         }
         if self.open != prev.open {
             CollapsibleWidget::set_open(&mut element, self.open);
+        }
+        if self.disabled != prev.disabled {
+            CollapsibleWidget::set_disabled(&mut element, self.disabled);
         }
         ctx.with_id(ViewId::new(0), |ctx| {
             let mut body = CollapsibleWidget::body_mut(&mut element);

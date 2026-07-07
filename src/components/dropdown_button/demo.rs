@@ -19,6 +19,7 @@ use crate::{Theme, separator};
 #[derive(Debug, Default)]
 struct DropdownDemo {
     last_action: String,
+    menu_open: bool,
 }
 
 type InnerView = Box<AnyWidgetView<DropdownDemo>>;
@@ -100,6 +101,25 @@ fn disabled_row(theme: &Theme) -> impl WidgetView<DropdownDemo> + use<> {
     })
 }
 
+fn controlled_row(theme: &Theme, open: bool) -> impl WidgetView<DropdownDemo> + use<> {
+    with_source!(theme, {
+        flex_row((
+            dropdown_button("Controlled")
+                .item("Option A", |s: &mut DropdownDemo| {
+                    s.last_action = "Controlled A".into();
+                })
+                .open(open)
+                .on_open_change(|s: &mut DropdownDemo, open| s.menu_open = open)
+                .render(theme),
+            label(if open { "Menu: open" } else { "Menu: closed" })
+                .color(theme.palette.text_muted)
+                .render(theme),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .gap(Length::px(8.0))
+    })
+}
+
 fn build_inner(theme: &Theme, state: &DropdownDemo) -> impl WidgetView<DropdownDemo> + use<> {
     let header = |text: &'static str| {
         label(text)
@@ -135,6 +155,8 @@ fn build_inner(theme: &Theme, state: &DropdownDemo) -> impl WidgetView<DropdownD
             status,
             header("Variants"),
             variants_row(theme),
+            header("Controlled"),
+            controlled_row(theme, state.menu_open),
             header("Disabled"),
             disabled_row(theme),
         ))

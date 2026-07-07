@@ -30,6 +30,7 @@ use crate::Theme;
 pub struct SidebarItem<F> {
     label: ArcStr,
     active: bool,
+    disabled: bool,
     callback: F,
 }
 
@@ -42,6 +43,7 @@ pub fn sidebar_item<F>(label: impl Into<ArcStr>, callback: F) -> SidebarItem<F> 
     SidebarItem {
         label: label.into(),
         active: false,
+        disabled: false,
         callback,
     }
 }
@@ -50,6 +52,12 @@ impl<F> SidebarItem<F> {
     /// Mark this item as the currently-selected nav entry.
     pub fn active(mut self, on: bool) -> Self {
         self.active = on;
+        self
+    }
+
+    /// Suppress all interaction and mute the visual appearance.
+    pub fn disabled(mut self, on: bool) -> Self {
+        self.disabled = on;
         self
     }
 
@@ -63,6 +71,7 @@ impl<F> SidebarItem<F> {
         SidebarItemView {
             label: self.label,
             active: self.active,
+            disabled: self.disabled,
             theme: *theme,
             callback: self.callback,
             phantom: PhantomData,
@@ -78,6 +87,7 @@ impl<F> SidebarItem<F> {
 pub struct SidebarItemView<F, State, Action> {
     label: ArcStr,
     active: bool,
+    disabled: bool,
     theme: Theme,
     callback: F,
     phantom: PhantomData<fn(State) -> Action>,
@@ -95,7 +105,9 @@ where
     type ViewState = ();
 
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
-        let text_color = if self.active {
+        let text_color = if self.disabled {
+            self.theme.palette.text_faint
+        } else if self.active {
             self.theme.palette.text
         } else {
             self.theme.palette.text_muted
@@ -104,7 +116,9 @@ where
             .with_style(StyleProperty::FontSize(self.theme.density.ui_font_size))
             .prepare();
         label.properties.insert(ContentColor::new(text_color));
-        let widget = ThemedSidebarItem::new(label, &self.theme).with_active(self.active);
+        let widget = ThemedSidebarItem::new(label, &self.theme)
+            .with_active(self.active)
+            .with_disabled(self.disabled);
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, ())
     }
@@ -119,7 +133,9 @@ where
     ) {
         if self.theme != prev.theme {
             ThemedSidebarItem::set_theme(&mut element, &self.theme);
-            let text_color = if self.active {
+            let text_color = if self.disabled {
+                self.theme.palette.text_faint
+            } else if self.active {
                 self.theme.palette.text
             } else {
                 self.theme.palette.text_muted
@@ -134,7 +150,21 @@ where
         }
         if self.active != prev.active {
             ThemedSidebarItem::set_active(&mut element, self.active);
-            let text_color = if self.active {
+            let text_color = if self.disabled {
+                self.theme.palette.text_faint
+            } else if self.active {
+                self.theme.palette.text
+            } else {
+                self.theme.palette.text_muted
+            };
+            let mut child = ThemedSidebarItem::child_mut(&mut element);
+            child.insert_prop(ContentColor::new(text_color));
+        }
+        if self.disabled != prev.disabled {
+            ThemedSidebarItem::set_disabled(&mut element, self.disabled);
+            let text_color = if self.disabled {
+                self.theme.palette.text_faint
+            } else if self.active {
                 self.theme.palette.text
             } else {
                 self.theme.palette.text_muted

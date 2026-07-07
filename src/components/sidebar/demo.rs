@@ -68,6 +68,9 @@ fn build_inner(theme: &Theme, state: &SidebarDemo) -> impl WidgetView<SidebarDem
                 .render(theme),
             sidebar_item("Data Grid", |_: &mut SidebarDemo| {}).render(theme),
             sidebar_item("Sidebar", |_: &mut SidebarDemo| {}).render(theme),
+            sidebar_item("Disabled entry", |_: &mut SidebarDemo| {})
+                .disabled(true)
+                .render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .gap(Length::px(2.0))

@@ -1,7 +1,7 @@
 //! Masonry widget for the themed radio button.
 //!
 //! Paints a circle ring with an inner dot when selected. Layout is
-//! `[circle] [gap] [label]` — the host controls the `active` flag to indicate
+//! `[circle] [gap] [label]` — the host controls the `selected` flag to indicate
 //! which option in a group is currently selected.
 //!
 //! Emits [`ButtonPress`] on primary-pointer release and on Space while focused.
@@ -30,21 +30,21 @@ const RADIO_DIAMETER: f64 = 14.0;
 const RADIO_GAP: f64 = 6.0;
 /// Circle border stroke width.
 const BORDER_WIDTH: f64 = 1.5;
-/// Radius of the inner selection dot (drawn when `active`).
+/// Radius of the inner selection dot (drawn when `selected`).
 const DOT_RADIUS: f64 = 3.5;
 
 /// Themed radio button widget.
 ///
-/// Owns its label child and a [`Theme`]. The host drives `active` to indicate
+/// Owns its label child and a [`Theme`]. The host drives `selected` to indicate
 /// the selected option; pointer and focus state are read from the widget context.
 /// Group mutual-exclusion is host-managed: each radio in a group gets
-/// `active(selected_value == my_value)` and fires a callback that updates the
+/// `.selected(selected_value == my_value)` and fires a callback that updates the
 /// selection in app state.
 pub struct ThemedRadio {
     child: WidgetPod<dyn Widget>,
     theme: Theme,
     /// Host-controlled selected state.
-    active: bool,
+    selected: bool,
     /// When true, all interaction is suppressed and colors are muted.
     disabled: bool,
     /// True for the span between a Space key-down and its matching key-up
@@ -64,7 +64,7 @@ impl ThemedRadio {
         Self {
             child: child.erased().to_pod(),
             theme: *theme,
-            active: false,
+            selected: false,
             disabled: false,
             keyboard_pressed: false,
         }
@@ -72,8 +72,8 @@ impl ThemedRadio {
 
     /// Marks this radio as the currently-selected option.
     #[must_use]
-    pub fn with_active(mut self, active: bool) -> Self {
-        self.active = active;
+    pub fn with_selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
         self
     }
 
@@ -96,10 +96,10 @@ impl ThemedRadio {
         }
     }
 
-    /// Toggles the host-driven `active` flag. Requests a repaint on change.
-    pub fn set_active(this: &mut WidgetMut<'_, Self>, active: bool) {
-        if this.widget.active != active {
-            this.widget.active = active;
+    /// Toggles the host-driven `selected` flag. Requests a repaint on change.
+    pub fn set_selected(this: &mut WidgetMut<'_, Self>, selected: bool) {
+        if this.widget.selected != selected {
+            this.widget.selected = selected;
             this.ctx.request_paint_only();
         }
     }
@@ -124,14 +124,14 @@ impl ThemedRadio {
 impl ThemedRadio {
     /// Resolves `(ring_color, dot_color)` for the current interaction state.
     ///
-    /// `dot_color` is only meaningful when `active == true`; callers should
+    /// `dot_color` is only meaningful when `selected == true`; callers should
     /// skip painting the dot otherwise.
     fn resolve_colors(&self, hovered: bool, pressed: bool) -> (Color, Color) {
         let p = &self.theme.palette;
         if self.disabled {
             return (p.text_faint, p.text_faint);
         }
-        let ring = if self.active || pressed {
+        let ring = if self.selected || pressed {
             p.accent
         } else if hovered {
             p.border_strong
@@ -314,7 +314,7 @@ impl Widget for ThemedRadio {
             )
             .draw();
 
-        if self.active {
+        if self.selected {
             painter
                 .fill(Circle::new(center, DOT_RADIUS), dot_color)
                 .draw();
@@ -339,7 +339,7 @@ impl Widget for ThemedRadio {
         if !self.disabled {
             node.add_action(accesskit::Action::Click);
         }
-        node.set_toggled(if self.active {
+        node.set_toggled(if self.selected {
             Toggled::True
         } else {
             Toggled::False

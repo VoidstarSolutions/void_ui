@@ -263,17 +263,15 @@ pub fn overlay<S: NotificationDemoHost>(
         .iter()
         .map(|toast| -> Box<AnyWidgetView<S, ()>> {
             let id = toast.id;
-            let mut n = notification(toast.message.clone())
+            let n = notification(toast.message.clone())
                 .variant(toast.variant)
-                .created_at(toast.created_at);
-            n = match toast.timeout {
+                .created_at(toast.created_at)
+                .on_close(move |s: &mut S| s.as_mut().toasts.retain(|t| t.id != id));
+            let n = match toast.timeout {
                 Some(timeout) => n.with_timeout(timeout),
                 None => n.no_timeout(),
             };
-            Box::new(
-                n.on_close(move |s: &mut S| s.as_mut().toasts.retain(|t| t.id != id))
-                    .render(theme),
-            )
+            Box::new(n.render(theme))
         })
         .collect();
 

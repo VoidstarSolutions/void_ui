@@ -127,16 +127,18 @@ fn controls_row(
     state: &ButtonDemoState,
 ) -> impl WidgetView<ButtonDemoState> + use<> {
     let disabled_toggle = flex_row(
-        checkbox(state.disabled, |s: &mut ButtonDemoState| {
-            s.disabled = !s.disabled;
+        checkbox(state.disabled, |s: &mut ButtonDemoState, checked: bool| {
+            s.disabled = checked;
         })
         .label("disabled_bool")
         .render(theme),
     );
     let active_toggle = flex_row(
-        checkbox(state.active, |s: &mut ButtonDemoState| s.active = !s.active)
-            .label("active_bool")
-            .render(theme),
+        checkbox(state.active, |s: &mut ButtonDemoState, checked: bool| {
+            s.active = checked;
+        })
+        .label("active_bool")
+        .render(theme),
     );
     flex_row((disabled_toggle, active_toggle))
         .cross_axis_alignment(CrossAxisAlignment::Center)
