@@ -27,6 +27,13 @@ use crate::Theme;
 pub(crate) type RenderRow<State, Item> =
     Arc<dyn Fn(&Item, bool, &Theme) -> Box<AnyWidgetView<State>> + Send + Sync>;
 
+/// Per-item leading defer-to-child hit width (`item -> local px`). Returns
+/// the width of a leading zone the row hands off to an interactive child
+/// sitting there (a disclosure chevron on an expandable row) instead of
+/// selecting; `0.0` reserves nothing. See
+/// [`ClickableRow::leading_hit_width`](super::row_click::ClickableRow::leading_hit_width).
+pub(crate) type LeadingHitWidthFn<Item> = Arc<dyn Fn(&Item) -> f64 + Send + Sync>;
+
 /// Lazy-load config: fire `callback` when the active range comes within
 /// `threshold` items of the end.
 pub(crate) struct Lazy<State, Action> {
@@ -43,6 +50,11 @@ pub(crate) struct CollectionBodyParams<State, Item, Action> {
     pub(crate) scroll: ScrollState,
     pub(crate) lazy: Option<Lazy<State, Action>>,
     pub(crate) render_row: RenderRow<State, Item>,
+    /// Optional per-row leading defer-to-child hit width. `None` (the
+    /// common case) reserves nothing — every row selects across its whole
+    /// width. `data_grid`'s expandable rows supply one so the leading
+    /// chevron zone defers to the disclosure toggle.
+    pub(crate) leading_hit_width: Option<LeadingHitWidthFn<Item>>,
     pub(crate) theme: Theme,
 }
 
@@ -65,6 +77,7 @@ where
         scroll,
         lazy,
         render_row,
+        leading_hit_width,
         theme,
     } = params;
     let valid_range_end = scroll_range_end(item_count);
@@ -74,6 +87,7 @@ where
         let id_source = id_source.clone();
         let selection_lens = selection_lens.clone();
         let render_row = Arc::clone(&render_row);
+        let leading_hit_width = leading_hit_width.clone();
         move |state: &mut State, idx: i64| {
             let pos = scroll_idx_to_slice(idx);
 
@@ -86,11 +100,17 @@ where
 
             // Re-borrow: `is_selected` took `&mut State` via the lens.
             let data = (*items)(state);
-            let content: Box<AnyWidgetView<State>> = match data.get(pos) {
-                Some(item) => render_row(item, is_selected, &theme),
+            // Compute the per-row leading defer-to-child hit width alongside
+            // the content, from the same item borrow. An empty (past-end)
+            // row reserves nothing.
+            let (content, leading): (Box<AnyWidgetView<State>>, f64) = match data.get(pos) {
+                Some(item) => (
+                    render_row(item, is_selected, &theme),
+                    leading_hit_width.as_ref().map_or(0.0, |f| f(item)),
+                ),
                 // pos past the end (a row scrolled past a shrinking dataset) —
                 // render an inert empty row.
-                None => Box::new(label("")),
+                None => (Box::new(label("")), 0.0),
             };
 
             let row_bg = if is_selected {
@@ -118,6 +138,7 @@ where
                     );
                 },
             )
+            .leading_hit_width(leading)
         }
     });
 
@@ -545,6 +566,7 @@ mod tests {
                 callback: Arc::new(|_state: &mut S| {}),
             }),
             render_row,
+            leading_hit_width: None,
             theme: Theme::default(),
         });
 
@@ -585,6 +607,7 @@ mod tests {
                 callback: Arc::new(|_state: &mut S| Marker),
             }),
             render_row,
+            leading_hit_width: None,
             theme: Theme::default(),
         });
         assert_widget_view(&view);

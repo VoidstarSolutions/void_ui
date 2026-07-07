@@ -158,6 +158,7 @@ pub mod column_strip;
 pub mod copy_shortcut;
 #[cfg(feature = "gallery")]
 pub mod demo;
+pub mod expand;
 pub mod filter;
 pub mod header_click;
 pub mod sort;
@@ -173,6 +174,7 @@ pub use column::{
 };
 pub use column_strip::{ColumnResize, ColumnStrip, SeparatorStyle};
 pub use copy_shortcut::CopyOnShortcut;
+pub use expand::ExpansionState;
 pub use filter::{FilterState, filtered_indices};
 pub use header_click::{HeaderClickable, HeaderClicked};
 pub use sort::{SortDirection, SortState, sort_indices};

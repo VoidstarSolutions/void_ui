@@ -35,6 +35,7 @@ use xilem::{AnyWidgetView, Pod, ViewCtx};
 use super::column::{CellAlign, CellRenderer, ColumnDef, ColumnId, TextProjector};
 use super::column_strip::{SeparatorStyle, column_strip};
 use super::copy_shortcut::{CopyOnShortcut, CopyRequested};
+use super::expand::{disclosure_hit_width, disclosure_toggle, tree_indent_step};
 use super::filter::FilterState;
 use super::header_click::clickable_header;
 use super::sort::{SortDirection, SortState};
@@ -43,8 +44,10 @@ use crate::Theme;
 use crate::collection::ScrollState;
 use crate::collection::SelectionState;
 use crate::collection::{
-    CollectionBodyParams, IdSource, ItemsFn, Lazy, RenderRow, SelectionLens, collection_body,
+    CollectionBodyParams, IdSource, ItemsFn, Lazy, LeadingHitWidthFn, RenderRow, SelectionLens,
+    collection_body,
 };
+use crate::components::icon::disclosure_chevron;
 use crate::components::scroll_container::scroll_container;
 use crate::theme::Density;
 
@@ -81,6 +84,44 @@ fn warn_missing_row_id() {
     }
 }
 
+/// Emits the stable-`row_id` footgun warnings (each at most once) for a
+/// grid that reorders or re-flattens rows without a stable id. Both cases
+/// key state (selection / expansion) by row id, so the slice-position
+/// fallback points at the wrong row after the host reorders.
+///
+/// - selection + a reorder source (sort/filter) but no id → wrong row
+///   selected after a reorder.
+/// - expansion but no id → wrong row toggled after a re-flatten.
+fn warn_id_footguns(has_row_id: bool, selection_reorders: bool, has_expandable: bool) {
+    // A stable id makes both keying schemes correct across reorders, so
+    // there's nothing to warn about.
+    if has_row_id {
+        return;
+    }
+    if selection_reorders {
+        warn_missing_row_id();
+    }
+    if has_expandable {
+        warn_expandable_without_row_id();
+    }
+}
+
+/// One-shot warning that [`DataGrid::expandable`] was configured without a
+/// stable [`row_id`](DataGrid::row_id). The expand/collapse toggle keys by
+/// row id; with the slice-position fallback a toggle flips whatever row now
+/// sits at that position after a re-flatten. Emitted at most once.
+fn warn_expandable_without_row_id() {
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if !WARNED.swap(true, Ordering::Relaxed) {
+        tracing::warn!(
+            "data_grid: `.expandable(...)` is set without `.row_id(...)` — \
+             the expand/collapse toggle keys by stable row id, but selection \
+             falls back to slice position, so a toggle will flip the wrong \
+             row after the host re-flattens. Supply a stable, unique row id."
+        );
+    }
+}
+
 /// One-shot warning that two columns resolved to the same [`ColumnId`]
 /// (commonly: two columns with the same title and no explicit
 /// [`ColumnDef::id`](super::column::ColumnDef::id)). The later column is
@@ -113,6 +154,48 @@ type FilterChange<State, Action> =
 /// translates the strip's positional resize index to the column's id, so
 /// the override stays attached across reorder/hide.
 type WidthChange<State, Action> = Arc<dyn Fn(&mut State, ColumnId, f64) -> Action + Send + Sync>;
+
+/// Boxed per-row "is this row expanded?" predicate — the host answers from
+/// its [`ExpansionState`](super::expand::ExpansionState); drives the chevron
+/// direction.
+type IsExpandedFn<R> = Arc<dyn Fn(&R) -> bool + Send + Sync>;
+/// Boxed per-row "does this row have children?" predicate — decides whether
+/// the tree cell shows a chevron or an inert (alignment) spacer.
+type HasChildrenFn<R> = Arc<dyn Fn(&R) -> bool + Send + Sync>;
+/// Boxed per-row depth accessor (`0` = root); drives the tree-column indent.
+type DepthFn<R> = Arc<dyn Fn(&R) -> u16 + Send + Sync>;
+/// Boxed expand/collapse callback (`Fn(&mut State, row_id)`). A chevron
+/// click invokes it with the row's stable id so the host flips its
+/// [`ExpansionState`](super::expand::ExpansionState) and re-derives its
+/// flattened slice. This mirrors selection's per-row click callback — a
+/// body-row interaction mutates host state and yields `Action::default()`,
+/// unlike the Action-returning *header* callbacks (sort/filter/resize) —
+/// because the collection body is `()`-typed (a control in row content
+/// can't return a propagating host `Action`).
+type ToggleFn<State> = Arc<dyn Fn(&mut State, u64) + Send + Sync>;
+
+/// The four host-supplied closures that turn the grid's **first column**
+/// into a tree column with expand/collapse chevrons. Stored together on the
+/// builder; see [`DataGrid::expandable`].
+struct ExpandableConfig<State, R> {
+    is_expanded: IsExpandedFn<R>,
+    has_children: HasChildrenFn<R>,
+    depth: DepthFn<R>,
+    on_toggle: ToggleFn<State>,
+}
+
+// Hand-written (not derived) so cloning doesn't demand `State: Clone` /
+// `R: Clone` — every field is an `Arc`, so a clone is just a refcount bump.
+impl<State, R> Clone for ExpandableConfig<State, R> {
+    fn clone(&self) -> Self {
+        Self {
+            is_expanded: Arc::clone(&self.is_expanded),
+            has_children: Arc::clone(&self.has_children),
+            depth: Arc::clone(&self.depth),
+            on_toggle: Arc::clone(&self.on_toggle),
+        }
+    }
+}
 
 /// One column's rendering + layout slot — the half of [`ColumnDef`]
 /// that's needed at row-build time. Shared (via `Arc`) between the
@@ -183,6 +266,7 @@ pub struct DataGrid<State, R, Action = ()> {
     column_widths: ColumnWidths,
     width_change: Option<WidthChange<State, Action>>,
     scroll: ScrollState,
+    expandable: Option<ExpandableConfig<State, R>>,
 }
 
 /// Default row height when [`DataGrid::row_height`] is unset: the theme's
@@ -214,6 +298,7 @@ where
             column_widths: ColumnWidths::new(),
             width_change: None,
             scroll: ScrollState::new(),
+            expandable: None,
         }
     }
 
@@ -386,6 +471,61 @@ where
         self
     }
 
+    /// Turns the grid's **first column** into a tree column with
+    /// expand/collapse chevrons, for master-detail / accordion / tree-table
+    /// layouts.
+    ///
+    /// Per the grid's host-owns-the-data model (the same shape as sorting
+    /// and filtering), the grid does **not** grow or hide child rows. The
+    /// host keeps an [`ExpansionState`](super::expand::ExpansionState) and,
+    /// when it changes, splices the now-visible descendants into the flat
+    /// `&[R]` slice it serves and bumps [`row_count`](Self::row_count).
+    /// Children become ordinary flat rows, so they inherit virtualization,
+    /// the fixed row height, scroll, and selection for free.
+    ///
+    /// The four closures answer per-row questions and report the toggle:
+    /// - `is_expanded` — is this row currently expanded? (chevron points
+    ///   down when `true`, right when `false`)
+    /// - `has_children` — does it have children? (a chevron is shown only
+    ///   when `true`; leaf rows get an aligned spacer instead)
+    /// - `depth` — its depth (`0` = root), which sets the tree-column indent
+    /// - `on_toggle` — invoked as `(state, row_id)` when the chevron is
+    ///   clicked; flip the host's `ExpansionState` for that id and re-derive
+    ///   the flattened slice. Like selection, this mutates host state and
+    ///   re-runs the app logic; it does not return a host `Action`.
+    ///
+    /// The toggle keys by the **stable row id** from [`Self::row_id`], so an
+    /// expanded row stays expanded across host-side sort/filter reordering —
+    /// pair `.expandable(..)` with `.row_id(..)` (a one-shot warning fires
+    /// otherwise, the same footgun guard selection uses).
+    ///
+    /// The chevron renders in the first column's cell (indented by depth),
+    /// so make that column wide enough to hold the indent + chevron + its
+    /// own content. A click on the chevron toggles rather than selects (the
+    /// row defers that leading zone to the chevron control); a click
+    /// anywhere else on the row still selects as usual.
+    pub fn expandable<IsExp, Kids, D, Tog>(
+        mut self,
+        is_expanded: IsExp,
+        has_children: Kids,
+        depth: D,
+        on_toggle: Tog,
+    ) -> Self
+    where
+        IsExp: Fn(&R) -> bool + Send + Sync + 'static,
+        Kids: Fn(&R) -> bool + Send + Sync + 'static,
+        D: Fn(&R) -> u16 + Send + Sync + 'static,
+        Tog: Fn(&mut State, u64) + Send + Sync + 'static,
+    {
+        self.expandable = Some(ExpandableConfig {
+            is_expanded: Arc::new(is_expanded),
+            has_children: Arc::new(has_children),
+            depth: Arc::new(depth),
+            on_toggle: Arc::new(on_toggle),
+        });
+        self
+    }
+
     /// Materializes the xilem view at the supplied theme.
     #[must_use]
     pub fn render(self, theme: &Theme) -> impl WidgetView<State, Action> + use<State, R, Action> {
@@ -515,6 +655,7 @@ where
         column_widths,
         width_change,
         scroll,
+        expandable,
     } = grid;
     let row_height = row_height.unwrap_or_else(|| default_row_height(&theme.density));
 
@@ -524,18 +665,11 @@ where
         empty
     });
 
-    // Footgun guard: selection + a reorder source (sort/filter) but no
-    // stable `row_id` means selection is keyed by slice position, which
-    // points at the wrong row once the host reorders — the exact
-    // index-keying bug `row_id` exists to prevent. Warn once (not per
-    // rebuild) so it's visible without spamming. Static grids that never
-    // reorder are fine and don't trip this.
-    if selection_lens.is_some()
-        && row_id.is_none()
-        && (sort_change.is_some() || filter_change.is_some())
-    {
-        warn_missing_row_id();
-    }
+    warn_id_footguns(
+        row_id.is_some(),
+        selection_lens.is_some() && (sort_change.is_some() || filter_change.is_some()),
+        expandable.is_some(),
+    );
 
     // Default the row-id projector to each row's slice position when the
     // host doesn't supply one. Correct only for a static (unsorted,
@@ -611,6 +745,7 @@ where
         selection_lens: selection_lens.clone(),
         row_id: row_id.clone(),
         scroll,
+        expandable,
     });
 
     // Build the filter-input row only when filtering is configured and
@@ -990,6 +1125,9 @@ struct BodyParams<State, R> {
     row_id: IdSource<R>,
     /// Pending programmatic-scroll request snapshot (see [`ScrollState`]).
     scroll: ScrollState,
+    /// Tree-column config when [`DataGrid::expandable`] is set; `None`
+    /// leaves the body a flat grid.
+    expandable: Option<ExpandableConfig<State, R>>,
 }
 
 /// Builds the virtualized body. The host supplies rows **already in
@@ -1015,6 +1153,7 @@ where
         selection_lens,
         row_id,
         scroll,
+        expandable,
     } = params;
     // Column widths are identical for every row and don't change between
     // rebuilds of this body, so compute them once and share the `Arc` into
@@ -1023,25 +1162,56 @@ where
     // row costs a refcount bump, not a `Vec` allocation.
     let widths: Arc<Vec<f64>> = Arc::new(render_slots.iter().map(|s| s.width).collect());
 
+    // Expandable rows reserve a leading defer-to-chevron zone so a click on
+    // the chevron toggles the row instead of selecting it (see
+    // `ClickableRow::leading_hit_width`). Its width is the depth indent plus
+    // the chevron hit width for a parent row; a leaf reserves nothing, so
+    // its whole width selects.
+    let leading_hit_width: Option<LeadingHitWidthFn<R>> = expandable.as_ref().map(|cfg| {
+        let has_children = Arc::clone(&cfg.has_children);
+        let depth = Arc::clone(&cfg.depth);
+        let density = theme.density;
+        let f: LeadingHitWidthFn<R> = Arc::new(move |row: &R| {
+            if has_children(row) {
+                f64::from(depth(row)) * tree_indent_step(&density) + disclosure_hit_width(&density)
+            } else {
+                0.0
+            }
+        });
+        f
+    });
+
     // Per-row CONTENT only: the cell strip. `collection_body` wraps this
     // with the selection background (`surface_2` when selected) and the
     // `clickable_row` selection routing, so this closure neither styles
     // selection nor handles clicks. ColumnStrip gives every body row the
     // same authoritative column x-positions as the header/filter strips;
     // the shared width list is handed over as an `Arc` clone — a refcount
-    // bump, not a per-row `Vec` allocation.
+    // bump, not a per-row `Vec` allocation. When expansion is configured the
+    // first cell becomes the tree cell (indent + chevron).
     let render_row: RenderRow<State, R> = {
         let render_slots = Arc::clone(&render_slots);
         let widths = Arc::clone(&widths);
+        let row_id = row_id.clone();
         Arc::new(
             move |row: &R, _selected: bool, theme: &Theme| -> Box<AnyWidgetView<State>> {
                 let cells: Vec<Box<AnyWidgetView<State>>> = render_slots
                     .iter()
-                    .map(|slot| {
-                        // Cell content only; ColumnStrip owns the width.
-                        // Keep the per-cell alignment wrapper so Start/
-                        // Center/End still position text within the cell.
-                        aligned_cell((slot.render)(row, theme), slot.width, slot.align)
+                    .enumerate()
+                    .map(|(idx, slot)| {
+                        let content = (slot.render)(row, theme);
+                        // The first column is the tree column when expansion
+                        // is configured: prepend a depth indent + chevron (or
+                        // an aligned spacer for a leaf) to its content.
+                        if idx == 0
+                            && let Some(cfg) = expandable.as_ref()
+                        {
+                            return tree_cell(content, row, slot, cfg, &row_id, theme);
+                        }
+                        // Cell content only; ColumnStrip owns the width. Keep
+                        // the per-cell alignment wrapper so Start/Center/End
+                        // still position text within the cell.
+                        aligned_cell(content, slot.width, slot.align)
                     })
                     .collect();
                 Box::new(column_strip(Arc::clone(&widths), row_height, cells))
@@ -1057,8 +1227,73 @@ where
         scroll,
         lazy: None::<Lazy<State, Action>>,
         render_row,
+        leading_hit_width,
         theme,
     })
+}
+
+/// Builds the tree-column cell for an expandable row: a depth indent, then
+/// either an interactive disclosure chevron (parent) or an aligned spacer
+/// (leaf), then the column's own rendered content — all inside the column's
+/// fixed-width slot.
+///
+/// The chevron sits in a fixed `disclosure_hit_width` box that the row
+/// reserves as its leading defer-to-child zone, so clicking it toggles
+/// (via `on_toggle`) rather than selects. A leaf reserves the same width as
+/// an inert spacer so its content lines up under a parent's content.
+fn tree_cell<State: 'static, R>(
+    content: Box<AnyWidgetView<State>>,
+    row: &R,
+    slot: &ColumnRender<R, State>,
+    cfg: &ExpandableConfig<State, R>,
+    row_id: &IdSource<R>,
+    theme: &Theme,
+) -> Box<AnyWidgetView<State>> {
+    let expanded = (cfg.is_expanded)(row);
+    let has_children = (cfg.has_children)(row);
+    let indent = f64::from((cfg.depth)(row)) * tree_indent_step(&theme.density);
+    let hit_w = disclosure_hit_width(&theme.density);
+
+    let indent_spacer: Box<AnyWidgetView<State>> = Box::new(fixed_spacer(indent));
+
+    let chevron_slot: Box<AnyWidgetView<State>> = if has_children {
+        // `id_of` ignores the position under an explicit `row_id` (the
+        // required config for expansion); the `0` placeholder only matters
+        // under the position fallback, which we already warn about.
+        let id = row_id.id_of(0, row);
+        let on_toggle = Arc::clone(&cfg.on_toggle);
+        // Center the chevron glyph inside its fixed hit box.
+        let centered = flex_row((flex_item(
+            disclosure_chevron::<State, ()>(expanded, theme),
+            0.0,
+        ),))
+        .main_axis_alignment(MainAxisAlignment::Center)
+        .cross_axis_alignment(CrossAxisAlignment::Center);
+        let toggle = disclosure_toggle(centered, expanded, move |state: &mut State| {
+            on_toggle(state, id);
+        });
+        Box::new(sized_box(toggle).fixed_width(Length::px(hit_w)))
+    } else {
+        Box::new(fixed_spacer(hit_w))
+    };
+
+    // [indent][chevron | spacer][content], vertically centered.
+    let tree_row = flex_row((
+        flex_item(indent_spacer, 0.0),
+        flex_item(chevron_slot, 0.0),
+        flex_item(content, 0.0),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Center);
+
+    aligned_cell(Box::new(tree_row), slot.width, slot.align)
+}
+
+/// A fixed-width, empty view used to pad the tree column — the depth indent
+/// and the leaf-row chevron placeholder.
+fn fixed_spacer<State: 'static, Action: 'static>(
+    width: f64,
+) -> impl WidgetView<State, Action> + use<State, Action> {
+    sized_box(label("")).fixed_width(Length::px(width))
 }
 
 // --- MARK: STACK ASSEMBLY ----------------------------------------------

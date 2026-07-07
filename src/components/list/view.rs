@@ -344,6 +344,7 @@ where
             scroll,
             lazy,
             render_row,
+            leading_hit_width: None,
             theme,
         });
         if loading && item_count > 0 {

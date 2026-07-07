@@ -25,7 +25,9 @@ pub(crate) mod single_child;
 // widget itself is constructed internally by `collection_body`.
 #[cfg(test)]
 pub(crate) use body::CollectionBodyWidget;
-pub(crate) use body_view::{CollectionBodyParams, Lazy, RenderRow, collection_body};
+pub(crate) use body_view::{
+    CollectionBodyParams, Lazy, LeadingHitWidthFn, RenderRow, collection_body,
+};
 pub(crate) use click::{ItemsFn, SelectionLens, apply_row_click};
 pub(crate) use ids::{
     IdSource, nearing_end, scroll_idx_to_slice, scroll_range_end, visual_range_ids,

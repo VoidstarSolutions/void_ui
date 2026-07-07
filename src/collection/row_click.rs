@@ -425,22 +425,30 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        if let Some(action) = message.take_message::<RowClickAction>() {
-            (self.on_click)(app_state, *action);
-            MessageResult::Action(Action::default())
-        } else {
-            let mut child = RowClickable::child_mut(&mut element);
-            match self
-                .child
-                .message(view_state, message, child.downcast(), app_state)
-            {
-                // Lift the ()-typed row content's action into the host's
-                // Action so it still re-runs the host's app logic.
-                MessageResult::Action(()) => MessageResult::Action(Action::default()),
-                MessageResult::RequestRebuild => MessageResult::RequestRebuild,
-                MessageResult::Nop => MessageResult::Nop,
-                MessageResult::Stale => MessageResult::Stale,
+        // A message addressed to *this* wrapper's `RowClickable` arrives
+        // fully routed (empty remaining path) — that's our own row click.
+        // A message with a non-empty path is bound for an interactive
+        // descendant inside the row content (a disclosure chevron, a leading
+        // row-action) and must be forwarded untouched: probing it with
+        // `take_message` would panic ("message has not reached its target").
+        // Same guard as `CopyOnShortcutView` / `CollectionBodyView`.
+        if message.remaining_path().is_empty() {
+            if let Some(action) = message.take_message::<RowClickAction>() {
+                (self.on_click)(app_state, *action);
             }
+            return MessageResult::Action(Action::default());
+        }
+        let mut child = RowClickable::child_mut(&mut element);
+        match self
+            .child
+            .message(view_state, message, child.downcast(), app_state)
+        {
+            // Lift the ()-typed row content's action into the host's Action
+            // so it still re-runs the host's app logic.
+            MessageResult::Action(()) => MessageResult::Action(Action::default()),
+            MessageResult::RequestRebuild => MessageResult::RequestRebuild,
+            MessageResult::Nop => MessageResult::Nop,
+            MessageResult::Stale => MessageResult::Stale,
         }
     }
 }
