@@ -63,6 +63,50 @@ pub(crate) fn gutter_glyph_width(theme: &Theme) -> f64 {
     f64::from(theme.density.ui_font_size) + f64::from(theme.density.pad_h)
 }
 
+/// Minimum gap between a row's label/subtitle column and its trailing
+/// shortcut text — 3 × `pad_h` = the pre-token 24 px minimum at balanced.
+#[must_use]
+pub(crate) fn shortcut_gap(theme: &Theme) -> f64 {
+    3.0 * f64::from(theme.density.pad_h)
+}
+
+#[cfg(test)]
+mod density_tests {
+    use super::*;
+    use crate::theme::Density;
+
+    fn theme_at(density: Density) -> Theme {
+        Theme::default().with_density(density)
+    }
+
+    #[test]
+    fn gutter_glyph_width_scales_with_density_and_preserves_balanced() {
+        // Balanced: ui_font_size 12 + pad_h 8 = the pre-token 20 px.
+        assert!((gutter_glyph_width(&theme_at(Density::balanced())) - 20.0).abs() < 1e-6);
+        assert!(
+            gutter_glyph_width(&theme_at(Density::compact()))
+                < gutter_glyph_width(&theme_at(Density::balanced()))
+        );
+        assert!(
+            gutter_glyph_width(&theme_at(Density::balanced()))
+                < gutter_glyph_width(&theme_at(Density::airy()))
+        );
+    }
+
+    #[test]
+    fn shortcut_gap_scales_with_density_and_preserves_balanced() {
+        // Balanced: 3 × pad_h(8) = the pre-token 24 px.
+        assert!((shortcut_gap(&theme_at(Density::balanced())) - 24.0).abs() < 1e-6);
+        assert!(
+            shortcut_gap(&theme_at(Density::compact()))
+                < shortcut_gap(&theme_at(Density::balanced()))
+        );
+        assert!(
+            shortcut_gap(&theme_at(Density::balanced())) < shortcut_gap(&theme_at(Density::airy()))
+        );
+    }
+}
+
 /// Whether a spec reserves the gutter (checkable or icon-bearing).
 pub(crate) fn reserves_gutter(spec: &MenuRowSpec) -> bool {
     matches!(
@@ -414,8 +458,6 @@ impl Widget for MenuItemNode {
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        // 3 × pad_h = the pre-token 24 px minimum label↔shortcut gap at balanced.
-        let shortcut_gap = 3.0 * f64::from(self.theme.density.pad_h);
         match axis {
             Axis::Vertical => Length::px(self.row_height()),
             Axis::Horizontal => {
@@ -437,7 +479,7 @@ impl Widget for MenuItemNode {
                     max_label = max_label.max(measure(subtitle));
                 }
                 let shortcut_col = if let Some(shortcut) = &mut self.shortcut {
-                    shortcut_gap + measure(shortcut)
+                    shortcut_gap(&self.theme) + measure(shortcut)
                 } else {
                     0.0
                 };
