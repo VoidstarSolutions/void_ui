@@ -26,12 +26,12 @@ use crate::components::click::{self, ClickPhase};
 use crate::components::interaction::{self, InteractionState};
 use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 
-/// Gap between the thumb edge and the track edge, in logical pixels.
+/// Gap between the thumb edge and the track edge, in logical pixels — a 2px
+/// thumb-to-track inset that reads as hairline-scale chrome; the track/thumb
+/// themselves already scale via `ui_font_size`, so this doesn't scale with density.
 const THUMB_INSET: f64 = 2.0;
-/// Gap between the track edge and the focus ring.
-/// Gap between the track and an optional text label.
-const LABEL_GAP: f64 = 6.0;
-/// Uniform padding around the widget — provides clearance for the focus ring.
+/// Uniform padding around the widget — provides clearance for the exempt
+/// focus ring, so it doesn't scale with density either.
 const PAD: f64 = 2.0;
 
 /// Interactive toggle switch widget.
@@ -83,6 +83,10 @@ impl ToggleWidget {
 
     fn thumb_radius(&self) -> f64 {
         (self.track_height() / 2.0 - THUMB_INSET).max(1.0)
+    }
+
+    fn label_gap(&self) -> f64 {
+        f64::from(self.theme.density.gap)
     }
 }
 
@@ -281,6 +285,7 @@ impl Widget for ToggleWidget {
     ) -> Length {
         let track_h = self.track_height();
         let track_w = self.track_width();
+        let label_gap = self.label_gap();
 
         match axis {
             Axis::Horizontal => {
@@ -289,7 +294,7 @@ impl Widget for ToggleWidget {
                         cross_length.map(|c| Length::px((c.get() - 2.0 * PAD).max(0.0)));
                     let context = LayoutSize::maybe(Axis::Vertical, inner_cross);
                     let w = ctx.compute_length(label, len_req.into(), context, axis, inner_cross);
-                    LABEL_GAP + w.get()
+                    label_gap + w.get()
                 } else {
                     0.0
                 };
@@ -298,7 +303,7 @@ impl Widget for ToggleWidget {
             Axis::Vertical => {
                 let label_h = if let Some(label) = &mut self.label {
                     let avail_w = cross_length
-                        .map(|c| Length::px((c.get() - 2.0 * PAD - track_w - LABEL_GAP).max(0.0)));
+                        .map(|c| Length::px((c.get() - 2.0 * PAD - track_w - label_gap).max(0.0)));
                     let context = LayoutSize::maybe(Axis::Horizontal, avail_w);
                     let h = ctx.compute_length(label, len_req.into(), context, axis, avail_w);
                     h.get()
@@ -312,16 +317,17 @@ impl Widget for ToggleWidget {
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         let track_w = self.track_width();
+        let label_gap = self.label_gap();
         let content_h = (size.height - 2.0 * PAD).max(0.0);
 
         if let Some(label) = &mut self.label {
             let avail = Size::new(
-                (size.width - 2.0 * PAD - track_w - LABEL_GAP).max(0.0),
+                (size.width - 2.0 * PAD - track_w - label_gap).max(0.0),
                 content_h,
             );
             let label_size = ctx.compute_size(label, SizeDef::fit(avail), avail.into());
             ctx.run_layout(label, label_size);
-            let label_x = PAD + track_w + LABEL_GAP;
+            let label_x = PAD + track_w + label_gap;
             let label_y = PAD + ((content_h - label_size.height) * 0.5).max(0.0);
             ctx.place_child(label, Point::new(label_x, label_y));
         }
@@ -480,6 +486,14 @@ mod tests {
             let w = widget(&Theme::dark().with_density(density), false, false);
             assert!(w.thumb_radius() > 0.0);
         }
+    }
+
+    #[test]
+    fn label_gap_scales_with_density() {
+        let gap = |d: Density| widget(&Theme::dark().with_density(d), false, false).label_gap();
+        assert!((gap(Density::balanced()) - 6.0).abs() < 1e-6); // pre-token LABEL_GAP
+        assert!(gap(Density::compact()) < gap(Density::balanced()));
+        assert!(gap(Density::balanced()) < gap(Density::airy()));
     }
 
     // --- track fill ---

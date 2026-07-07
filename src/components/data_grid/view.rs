@@ -46,6 +46,7 @@ use crate::collection::{
     CollectionBodyParams, IdSource, ItemsFn, Lazy, RenderRow, SelectionLens, collection_body,
 };
 use crate::components::scroll_container::scroll_container;
+use crate::theme::Density;
 
 /// Boxed row-data accessor, shared via `Arc` across the body and clipboard
 /// closures. Aliases the substrate's [`ItemsFn`] — same `Fn(&State) -> &[R]`
@@ -171,7 +172,7 @@ const fn align_to_main(align: CellAlign) -> MainAxisAlignment {
 pub struct DataGrid<State, R, Action = ()> {
     columns: Vec<ColumnDef<R, State>>,
     row_count: u64,
-    row_height: f64,
+    row_height: Option<f64>,
     rows: Option<RowsFn<State, R>>,
     selection_lens: Option<SelectionLens<State>>,
     row_id: Option<RowIdFn<R>>,
@@ -184,8 +185,11 @@ pub struct DataGrid<State, R, Action = ()> {
     scroll: ScrollState,
 }
 
-/// Default fixed row height when [`DataGrid::row_height`] is unset.
-const DEFAULT_ROW_HEIGHT: f64 = 24.0;
+/// Default row height when [`DataGrid::row_height`] is unset: the theme's
+/// density row baseline (24 px at balanced — the pre-token default).
+fn default_row_height(density: &Density) -> f64 {
+    f64::from(density.row_height)
+}
 
 impl<State, R, Action> DataGrid<State, R, Action>
 where
@@ -199,7 +203,7 @@ where
         Self {
             columns,
             row_count: 0,
-            row_height: DEFAULT_ROW_HEIGHT,
+            row_height: None,
             rows: None,
             selection_lens: None,
             row_id: None,
@@ -231,9 +235,9 @@ where
         self
     }
 
-    /// Fixed pixel row height (defaults to [`DEFAULT_ROW_HEIGHT`]).
+    /// Fixed pixel row height (defaults to the theme's density row baseline).
     pub fn row_height(mut self, row_height: f64) -> Self {
-        self.row_height = row_height;
+        self.row_height = Some(row_height);
         self
     }
 
@@ -512,6 +516,7 @@ where
         width_change,
         scroll,
     } = grid;
+    let row_height = row_height.unwrap_or_else(|| default_row_height(&theme.density));
 
     // Default the data accessor to an empty slice when unset.
     let rows: RowsFn<State, R> = rows.unwrap_or_else(|| {
@@ -1131,16 +1136,24 @@ where
             }
         })
         .collect();
-    // Filter row uses the body's fixed row height (matches data rows);
-    // ColumnStrip enforces both per-column width and row height.
-    sized_box(column_strip(widths.to_vec(), FILTER_ROW_HEIGHT, cells))
-        .background_color(theme.palette.surface)
-        .border(theme.palette.border, Length::px(1.0))
+    // Filter row is deliberately taller than data rows: filter_row_height()
+    // adds pad_v of headroom on top of row_height so the text_input isn't
+    // clipped. ColumnStrip enforces both per-column width and row height.
+    sized_box(column_strip(
+        widths.to_vec(),
+        filter_row_height(&theme.density),
+        cells,
+    ))
+    .background_color(theme.palette.surface)
+    .border(theme.palette.border, Length::px(1.0))
 }
 
-/// Fixed height for the filter-input row. Slightly taller than a data
-/// row so the `text_input` (font + its internal padding) isn't clipped.
-const FILTER_ROW_HEIGHT: f64 = 30.0;
+/// Height of the filter-input row: one density row plus a `pad_v` of
+/// headroom so the `text_input` (font + its internal padding) isn't
+/// clipped (24 + 6 = the pre-token 30 px at balanced).
+fn filter_row_height(density: &Density) -> f64 {
+    f64::from(density.row_height) + f64::from(density.pad_v)
+}
 
 #[cfg(test)]
 mod tests {
@@ -1168,6 +1181,19 @@ mod tests {
     /// A single text projector that stringifies the `u64` row.
     fn value_projectors() -> Vec<Option<TextProjector<u64>>> {
         vec![Some(Box::new(|r: &u64| r.to_string()))]
+    }
+
+    #[test]
+    fn default_row_height_follows_density() {
+        use crate::theme::Density;
+
+        use super::{default_row_height, filter_row_height};
+
+        // Balanced reproduces the pre-token constants exactly.
+        assert!((default_row_height(&Density::balanced()) - 24.0).abs() < 1e-6); // was DEFAULT_ROW_HEIGHT
+        assert!((filter_row_height(&Density::balanced()) - 30.0).abs() < 1e-6); // was FILTER_ROW_HEIGHT
+        assert!(default_row_height(&Density::compact()) < default_row_height(&Density::balanced()));
+        assert!(filter_row_height(&Density::compact()) < filter_row_height(&Density::balanced()));
     }
 
     /// EVIDENCE (not a correctness check): the clipboard TSV projection scans

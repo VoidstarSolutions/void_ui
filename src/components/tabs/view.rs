@@ -128,7 +128,7 @@ fn item_content<State: 'static, Action: 'static>(
     Box::new(
         flex_row(children)
             .cross_axis_alignment(CrossAxisAlignment::Center)
-            .gap(Length::px(f64::from(theme.density.col) / 2.0)),
+            .gap(Length::px(f64::from(theme.density.gap_lg) / 2.0)),
     )
 }
 

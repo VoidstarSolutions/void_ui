@@ -27,12 +27,10 @@ use crate::components::icon::{IconName, icon};
 use crate::components::interaction::{self, InteractionState};
 use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 
-/// Stroke width of the box border.
+/// Stroke width of the box border — hairline chrome, not density-scaled.
 const BOX_BORDER: f64 = 1.0;
-/// Gap between the box edge and the focus ring.
-/// Gap between the box and an optional text label.
-const LABEL_GAP: f64 = 6.0;
-/// Uniform padding around the widget — provides clearance for the focus ring.
+/// Uniform padding around the widget — provides clearance for the exempt
+/// focus ring, so it doesn't scale with density either.
 const PAD: f64 = 2.0;
 
 /// Interactive checkbox widget.
@@ -180,6 +178,10 @@ impl CheckboxWidget {
         f64::from(self.theme.density.ui_font_size)
     }
 
+    fn label_gap(&self) -> f64 {
+        f64::from(self.theme.density.gap)
+    }
+
     /// Resolves `(background, border)` for the checkbox box in the current state.
     fn resolve_box_colors(&self, hovered: bool, pressed: bool) -> (Color, Color) {
         let p = &self.theme.palette;
@@ -299,6 +301,7 @@ impl Widget for CheckboxWidget {
         cross_length: Option<Length>,
     ) -> Length {
         let box_sz = self.box_size();
+        let label_gap = self.label_gap();
 
         // Measure check icon at box size (inside the box, doesn't affect widget measurement).
         let check_sz = Length::px(box_sz);
@@ -318,7 +321,7 @@ impl Widget for CheckboxWidget {
                         cross_length.map(|c| Length::px((c.get() - 2.0 * PAD).max(0.0)));
                     let context = LayoutSize::maybe(Axis::Vertical, inner_cross);
                     let w = ctx.compute_length(label, len_req.into(), context, axis, inner_cross);
-                    LABEL_GAP + w.get()
+                    label_gap + w.get()
                 } else {
                     0.0
                 };
@@ -327,7 +330,7 @@ impl Widget for CheckboxWidget {
             Axis::Vertical => {
                 let label_h = if let Some(label) = &mut self.label {
                     let avail_w = cross_length
-                        .map(|c| Length::px((c.get() - 2.0 * PAD - box_sz - LABEL_GAP).max(0.0)));
+                        .map(|c| Length::px((c.get() - 2.0 * PAD - box_sz - label_gap).max(0.0)));
                     let context = LayoutSize::maybe(Axis::Horizontal, avail_w);
                     let h = ctx.compute_length(label, len_req.into(), context, axis, avail_w);
                     h.get()
@@ -341,6 +344,7 @@ impl Widget for CheckboxWidget {
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         let box_sz = self.box_size();
+        let label_gap = self.label_gap();
         let content_h = (size.height - 2.0 * PAD).max(0.0);
         let box_y = PAD + ((content_h - box_sz) * 0.5).max(0.0);
 
@@ -350,12 +354,12 @@ impl Widget for CheckboxWidget {
 
         if let Some(label) = &mut self.label {
             let avail = Size::new(
-                (size.width - 2.0 * PAD - box_sz - LABEL_GAP).max(0.0),
+                (size.width - 2.0 * PAD - box_sz - label_gap).max(0.0),
                 content_h,
             );
             let label_size = ctx.compute_size(label, SizeDef::fit(avail), avail.into());
             ctx.run_layout(label, label_size);
-            let label_x = PAD + box_sz + LABEL_GAP;
+            let label_x = PAD + box_sz + label_gap;
             let label_y = PAD + ((content_h - label_size.height) * 0.5).max(0.0);
             ctx.place_child(label, Point::new(label_x, label_y));
         }
@@ -532,5 +536,21 @@ mod tests {
 
         h.focus_on(None);
         assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+    }
+}
+
+#[cfg(test)]
+mod density_tests {
+    use super::*;
+    use crate::theme::Density;
+
+    #[test]
+    fn label_gap_scales_with_density() {
+        let gap = |d: Density| {
+            CheckboxWidget::new(&Theme::dark().with_density(d), false, false).label_gap()
+        };
+        assert!((gap(Density::balanced()) - 6.0).abs() < 1e-6); // pre-token LABEL_GAP
+        assert!(gap(Density::compact()) < gap(Density::balanced()));
+        assert!(gap(Density::balanced()) < gap(Density::airy()));
     }
 }

@@ -143,7 +143,7 @@ impl Label {
                 Box::new(
                     flex_row((main, secondary))
                         .cross_axis_alignment(CrossAxisAlignment::Center)
-                        .gap(Length::px(f64::from(theme.density.col))),
+                        .gap(Length::px(f64::from(theme.density.gap_lg))),
                 )
             }
         };

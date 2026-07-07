@@ -22,6 +22,14 @@ pub(crate) fn pad_h(density: &Density) -> f64 {
     f64::from(density.button_pad_h)
 }
 
+/// Vertical inset above the first and below the last row of a floating menu
+/// surface (autocomplete suggestion list, dropdown menu, context menu):
+/// two-thirds of the small gap token. Multiply-then-divide keeps the
+/// balanced value exact (6 × 2 / 3 = the pre-token 4.0).
+pub(crate) fn menu_pad_v(density: &Density) -> f64 {
+    f64::from(density.gap) * 2.0 / 3.0
+}
+
 /// Index of the first rect in `item_rects` that contains `local`, if any.
 pub(crate) fn hit_item(item_rects: &[Rect], local: Point) -> Option<usize> {
     item_rects.iter().position(|r| r.contains(local))
@@ -90,5 +98,19 @@ pub(crate) fn item_rect_or_estimate(
             geometry.cross_offset + geometry.cross_extent,
             main_pos + geometry.main_extent,
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::menu_pad_v;
+    use crate::theme::Density;
+
+    #[test]
+    fn menu_pad_v_scales_with_density_and_preserves_balanced() {
+        // 6 × 2 / 3 = the pre-token LIST_PAD_V / MENU_PAD_V of 4.0.
+        assert!((menu_pad_v(&Density::balanced()) - 4.0).abs() < 1e-6);
+        assert!(menu_pad_v(&Density::compact()) < menu_pad_v(&Density::balanced()));
+        assert!(menu_pad_v(&Density::balanced()) < menu_pad_v(&Density::airy()));
     }
 }

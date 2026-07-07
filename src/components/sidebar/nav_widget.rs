@@ -28,16 +28,13 @@ use crate::Theme;
 use crate::components::item_list;
 use crate::focus_ring::{FOCUS_RING_OUTSET, paint_focus_ring};
 
-/// Width of the active-state left accent bar.
+/// Width of the active-state left accent bar — accent-bar chrome (stroke-like),
+/// not density-scaled.
 const ACCENT_WIDTH: f64 = 3.0;
-/// Corner radius of the accent bar.
+/// Corner radius of the accent bar — accent-bar chrome, not density-scaled.
 const ACCENT_RADIUS: f64 = 1.5;
-/// Horizontal gap between the accent area and the label (and right edge).
-const PAD_H: f64 = 8.0;
-/// Vertical padding above and below each item's label.
-const PAD_V: f64 = 6.0;
-/// Inset of the focus ring from an item's placed rect.
-/// Gap between adjacent items.
+/// Gap between adjacent nav rows — a 2px hairline separation; no token equals
+/// it and scaling a hairline is visual noise, so it doesn't scale with density.
 const GAP: f64 = 2.0;
 
 /// Action emitted when the user picks a different nav item, by pointer click
@@ -212,6 +209,14 @@ pub struct ThemedSidebarNav {
 
 // --- MARK: HELPERS
 impl ThemedSidebarNav {
+    fn pad_h(&self) -> f64 {
+        f64::from(self.theme.density.pad_h)
+    }
+
+    fn pad_v(&self) -> f64 {
+        f64::from(self.theme.density.pad_v)
+    }
+
     /// Item rect for `index`, falling back to an estimate when `placed` is
     /// empty (cleared by `set_items`, not yet rebuilt by layout). Items are
     /// vertical; `y` is estimated from `last_avg_item_height` (the real
@@ -223,7 +228,7 @@ impl ThemedSidebarNav {
     fn item_rect_or_estimate(&self, index: usize) -> Rect {
         let item_h = self
             .last_avg_item_height
-            .unwrap_or(f64::from(self.theme.density.ui_font_size) + 2.0 * PAD_V);
+            .unwrap_or(f64::from(self.theme.density.ui_font_size) + 2.0 * self.pad_v());
         item_list::item_rect_or_estimate(
             &self.placed,
             index,
@@ -494,6 +499,8 @@ impl Widget for ThemedSidebarNav {
     ) -> Length {
         let auto_length = len_req.into();
         let n = self.items.len();
+        let pad_h = self.pad_h();
+        let pad_v = self.pad_v();
         match axis {
             Axis::Vertical => {
                 #[allow(clippy::cast_precision_loss)]
@@ -508,7 +515,7 @@ impl Widget for ThemedSidebarNav {
                             cross_length,
                         )
                         .get();
-                    total += content_h + 2.0 * PAD_V;
+                    total += content_h + 2.0 * pad_v;
                 }
                 Length::px(total)
             }
@@ -524,7 +531,7 @@ impl Widget for ThemedSidebarNav {
                             cross_length,
                         )
                         .get();
-                    max_w = max_w.max(content_w + ACCENT_WIDTH + 2.0 * PAD_H);
+                    max_w = max_w.max(content_w + ACCENT_WIDTH + 2.0 * pad_h);
                 }
                 Length::px(max_w)
             }
@@ -532,7 +539,9 @@ impl Widget for ThemedSidebarNav {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let inner_width = (size.width - ACCENT_WIDTH - 2.0 * PAD_H).max(0.0);
+        let pad_h = self.pad_h();
+        let pad_v = self.pad_v();
+        let inner_width = (size.width - ACCENT_WIDTH - 2.0 * pad_h).max(0.0);
 
         self.placed.clear();
         let mut y = 0.0;
@@ -543,7 +552,7 @@ impl Widget for ThemedSidebarNav {
                 SizeDef::fit(Size::new(inner_width, 0.0)),
                 Size::new(inner_width, 0.0).into(),
             );
-            let item_height = content_size.height + 2.0 * PAD_V;
+            let item_height = content_size.height + 2.0 * pad_v;
             self.placed.push(Rect::from_origin_size(
                 Point::new(0.0, y),
                 Size::new(size.width, item_height),
@@ -551,8 +560,8 @@ impl Widget for ThemedSidebarNav {
 
             let cs = Size::new(inner_width, content_size.height);
             ctx.run_layout(item, cs);
-            let cx = ACCENT_WIDTH + PAD_H;
-            let cy = y + PAD_V;
+            let cx = ACCENT_WIDTH + pad_h;
+            let cy = y + pad_v;
             ctx.place_child(item, Point::new(cx, cy));
 
             y += item_height + GAP;
@@ -632,6 +641,7 @@ mod tests {
     use masonry::widgets::SizedBox;
 
     use super::*;
+    use crate::theme::Density;
 
     fn item(width: f64, height: f64) -> NewWidget<dyn Widget> {
         NewWidget::new(SizedBox::empty().size(Length::px(width), Length::px(height))).erased()
@@ -691,12 +701,32 @@ mod tests {
     }
 
     #[test]
+    fn item_padding_scales_with_density() {
+        let placed_height = |density: Density| {
+            let items = vec![item(40.0, 20.0)];
+            let widget = ThemedSidebarNav::new(
+                items,
+                vec![None],
+                0,
+                &Theme::default().with_density(density),
+            );
+            let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+            h.edit_root_widget(|wm| wm.widget.placed[0].height())
+        };
+        // Balanced must keep the pre-token geometry: content 20 + 2 × PAD_V(6).
+        assert!((placed_height(Density::balanced()) - (20.0 + 2.0 * 6.0)).abs() < 1e-6);
+        assert!(placed_height(Density::compact()) < placed_height(Density::balanced()));
+        assert!(placed_height(Density::balanced()) < placed_height(Density::airy()));
+    }
+
+    #[test]
     fn item_rect_or_estimate_uses_real_average_height_not_uniform_guess() {
         // Wide spread so the fixed theme-metric guess can't coincidentally
         // match the real average.
         let mut h = harness(vec![item(100.0, 10.0), item(100.0, 200.0)], 0);
         let (real_avg_height, uniform_guess) = h.edit_root_widget(|wm| {
-            let uniform_guess = f64::from(wm.widget.theme.density.ui_font_size) + 2.0 * PAD_V;
+            let uniform_guess = f64::from(wm.widget.theme.density.ui_font_size)
+                + 2.0 * f64::from(wm.widget.theme.density.pad_v);
             let real_avg = wm
                 .widget
                 .last_avg_item_height

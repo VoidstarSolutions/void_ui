@@ -26,17 +26,18 @@ use masonry::widgets::Label;
 use super::widget::{MenuAction, MenuPanel, MenuRowSpec};
 use crate::Theme;
 use crate::components::icon::{IconName, icon};
+use crate::components::item_list;
 
-/// Gap between a submenu item's right edge and its fly-out panel.
+/// Gap between a submenu item's right edge and its fly-out panel — 1px
+/// overlap tuning, not a density-scaled spacing token.
 const SUBMENU_GAP: f64 = 1.0;
 
-/// Total height of a separator row (line centered within it).
+/// Total height of a separator row (line centered within it) — hairline
+/// chrome plus fixed breathing room; no token composition matches it, and
+/// non-separator rows already scale via `item_list::item_height`.
 pub(crate) const SEPARATOR_ROW_HEIGHT: f64 = 9.0;
-/// Gap between the leading-glyph gutter and the label.
-const ICON_GAP: f64 = 8.0;
-/// Minimum gap between the label column and the trailing shortcut column.
-const SHORTCUT_GAP: f64 = 24.0;
-/// Vertical gap between an item's label and its sub-title line.
+/// Vertical gap between an item's label and its sub-title line — hairline
+/// separation, not density-scaled.
 const SUBTITLE_GAP: f64 = 2.0;
 
 /// What kind of row a [`MenuItemNode`] represents — drives selectability (in
@@ -59,7 +60,51 @@ pub(crate) struct NodeActivated(pub(crate) usize);
 /// a menu has an icon or is checkable.
 #[must_use]
 pub(crate) fn gutter_glyph_width(theme: &Theme) -> f64 {
-    f64::from(theme.density.ui_font_size) + ICON_GAP
+    f64::from(theme.density.ui_font_size) + f64::from(theme.density.pad_h)
+}
+
+/// Minimum gap between a row's label/subtitle column and its trailing
+/// shortcut text — 3 × `pad_h` = the pre-token 24 px minimum at balanced.
+#[must_use]
+pub(crate) fn shortcut_gap(theme: &Theme) -> f64 {
+    3.0 * f64::from(theme.density.pad_h)
+}
+
+#[cfg(test)]
+mod density_tests {
+    use super::*;
+    use crate::theme::Density;
+
+    fn theme_at(density: Density) -> Theme {
+        Theme::default().with_density(density)
+    }
+
+    #[test]
+    fn gutter_glyph_width_scales_with_density_and_preserves_balanced() {
+        // Balanced: ui_font_size 12 + pad_h 8 = the pre-token 20 px.
+        assert!((gutter_glyph_width(&theme_at(Density::balanced())) - 20.0).abs() < 1e-6);
+        assert!(
+            gutter_glyph_width(&theme_at(Density::compact()))
+                < gutter_glyph_width(&theme_at(Density::balanced()))
+        );
+        assert!(
+            gutter_glyph_width(&theme_at(Density::balanced()))
+                < gutter_glyph_width(&theme_at(Density::airy()))
+        );
+    }
+
+    #[test]
+    fn shortcut_gap_scales_with_density_and_preserves_balanced() {
+        // Balanced: 3 × pad_h(8) = the pre-token 24 px.
+        assert!((shortcut_gap(&theme_at(Density::balanced())) - 24.0).abs() < 1e-6);
+        assert!(
+            shortcut_gap(&theme_at(Density::compact()))
+                < shortcut_gap(&theme_at(Density::balanced()))
+        );
+        assert!(
+            shortcut_gap(&theme_at(Density::balanced())) < shortcut_gap(&theme_at(Density::airy()))
+        );
+    }
 }
 
 /// Whether a spec reserves the gutter (checkable or icon-bearing).
@@ -249,6 +294,11 @@ impl MenuItemNode {
     /// Restyle this row's children for a new theme.
     pub(crate) fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
         this.widget.theme = *theme;
+        // Shared gutter width is density-derived; re-derive it for rows that
+        // reserve one (a stale 0 stays 0 — no row in this panel has a gutter).
+        if this.widget.gutter_width > 0.0 {
+            this.widget.gutter_width = gutter_glyph_width(theme);
+        }
         let disabled = this.widget.disabled;
         let is_section = matches!(this.widget.kind, RowKind::Section);
         let label_fg = if is_section {
@@ -305,8 +355,7 @@ impl MenuItemNode {
     }
 
     fn action_height(&self) -> f64 {
-        f64::from(self.theme.density.ui_font_size)
-            + 2.0 * f64::from(self.theme.density.button_pad_v)
+        item_list::item_height(&self.theme.density)
     }
 
     /// This row's full height, including a sub-title's extra line.
@@ -430,7 +479,7 @@ impl Widget for MenuItemNode {
                     max_label = max_label.max(measure(subtitle));
                 }
                 let shortcut_col = if let Some(shortcut) = &mut self.shortcut {
-                    SHORTCUT_GAP + measure(shortcut)
+                    shortcut_gap(&self.theme) + measure(shortcut)
                 } else {
                     0.0
                 };

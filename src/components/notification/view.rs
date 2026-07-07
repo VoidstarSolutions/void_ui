@@ -67,6 +67,8 @@ where
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Default fixed width for a [`notification_overlay`]'s toast stack, in px.
+/// Overall surface width is a layout decision, not a density step; this is
+/// also a documented public default consumers may override.
 pub const DEFAULT_NOTIFICATION_WIDTH: f64 = 280.0;
 
 /// Builder for a notification (toast) card.

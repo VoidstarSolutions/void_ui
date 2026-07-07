@@ -56,7 +56,9 @@ macro_rules! affixed_row {
         use ::xilem::view::FlexExt as _;
         ::xilem::view::flex_row(($prefix, $core.flex(1.0), $suffix))
             .cross_axis_alignment(::xilem::view::CrossAxisAlignment::FirstBaseline)
-            .gap(::masonry::layout::Length::px(f64::from($theme.density.col)))
+            .gap(::masonry::layout::Length::px(f64::from(
+                $theme.density.gap_lg,
+            )))
     }};
 }
 pub(crate) use affixed_row;

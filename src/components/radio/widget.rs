@@ -24,14 +24,8 @@ use crate::components::click::{self, ClickPhase};
 use crate::components::interaction::{self, InteractionState};
 use crate::focus_ring::{FOCUS_RING_OUTSET, paint_focus_ring};
 
-/// Diameter of the radio circle in logical pixels.
-const RADIO_DIAMETER: f64 = 14.0;
-/// Gap between the circle and the label.
-const RADIO_GAP: f64 = 6.0;
-/// Circle border stroke width.
+/// Circle border stroke width — ring chrome, not density-scaled.
 const BORDER_WIDTH: f64 = 1.5;
-/// Radius of the inner selection dot (drawn when `selected`).
-const DOT_RADIUS: f64 = 3.5;
 
 /// Themed radio button widget.
 ///
@@ -141,6 +135,22 @@ impl ThemedRadio {
         let dot = p.accent;
         (ring, dot)
     }
+
+    /// Diameter of the radio circle, from the density's control glyph size.
+    fn diameter(&self) -> f64 {
+        f64::from(self.theme.density.control)
+    }
+
+    /// Gap between the circle and the label.
+    fn gap(&self) -> f64 {
+        f64::from(self.theme.density.gap)
+    }
+
+    /// Radius of the inner selection dot — a quarter of the diameter
+    /// (14 / 4 = the pre-token 3.5 at balanced).
+    fn dot_radius(&self) -> f64 {
+        self.diameter() / 4.0
+    }
 }
 
 // --- MARK: IMPL WIDGET
@@ -237,10 +247,12 @@ impl Widget for ThemedRadio {
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        // The circle occupies [RADIO_DIAMETER + RADIO_GAP] of horizontal space.
+        // The circle occupies [diameter + gap] of horizontal space.
         // On the vertical axis it doesn't stack, so contributes 0 length but
         // reduces the horizontal cross-space available to the label.
-        let circle_h = Length::px(RADIO_DIAMETER + RADIO_GAP);
+        let diameter = self.diameter();
+        let gap = self.gap();
+        let circle_h = Length::px(diameter + gap);
         let circle_v = Length::px(0.0);
 
         let extra_main = match axis {
@@ -266,12 +278,12 @@ impl Widget for ThemedRadio {
 
         match axis {
             Axis::Horizontal => Length::px(label_len.get() + circle_h.get()),
-            Axis::Vertical => Length::px(label_len.get().max(RADIO_DIAMETER) + circle_v.get()),
+            Axis::Vertical => Length::px(label_len.get().max(diameter) + circle_v.get()),
         }
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let label_x = RADIO_DIAMETER + RADIO_GAP;
+        let label_x = self.diameter() + self.gap();
         let label_space = Size::new((size.width - label_x).max(0.0), size.height);
         let label_size = ctx.compute_size(
             &mut self.child,
@@ -301,11 +313,12 @@ impl Widget for ThemedRadio {
 
         let (ring_color, dot_color) = self.resolve_colors(hovered, pressed);
 
-        let cx = RADIO_DIAMETER * 0.5;
+        let diameter = self.diameter();
+        let cx = diameter * 0.5;
         let cy = size.height * 0.5;
         let center = Point::new(cx, cy);
 
-        let ring_radius = (RADIO_DIAMETER - BORDER_WIDTH) * 0.5;
+        let ring_radius = (diameter - BORDER_WIDTH) * 0.5;
         painter
             .stroke(
                 Circle::new(center, ring_radius),
@@ -316,12 +329,12 @@ impl Widget for ThemedRadio {
 
         if self.selected {
             painter
-                .fill(Circle::new(center, DOT_RADIUS), dot_color)
+                .fill(Circle::new(center, self.dot_radius()), dot_color)
                 .draw();
         }
 
         if focused && !self.disabled {
-            let focus_radius = (RADIO_DIAMETER * 0.5) + FOCUS_RING_OUTSET;
+            let focus_radius = (diameter * 0.5) + FOCUS_RING_OUTSET;
             paint_focus_ring(painter, Circle::new(center, focus_radius), &self.theme);
         }
     }
@@ -434,5 +447,29 @@ mod tests {
 
         h.focus_on(None);
         assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
+    }
+}
+
+#[cfg(test)]
+mod density_tests {
+    use masonry::widgets::SizedBox;
+
+    use super::*;
+    use crate::theme::Density;
+
+    fn radio_at(density: Density) -> ThemedRadio {
+        let child = NewWidget::new(SizedBox::empty()).erased();
+        ThemedRadio::new(child, &Theme::dark().with_density(density))
+    }
+
+    #[test]
+    fn circle_geometry_scales_with_density() {
+        let balanced = radio_at(Density::balanced());
+        // Pre-token constants: RADIO_DIAMETER 14, RADIO_GAP 6, DOT_RADIUS 3.5.
+        assert!((balanced.diameter() - 14.0).abs() < 1e-6);
+        assert!((balanced.gap() - 6.0).abs() < 1e-6);
+        assert!((balanced.dot_radius() - 3.5).abs() < 1e-6);
+        assert!(radio_at(Density::compact()).diameter() < balanced.diameter());
+        assert!(balanced.diameter() < radio_at(Density::airy()).diameter());
     }
 }
