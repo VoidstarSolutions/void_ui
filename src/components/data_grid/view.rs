@@ -1136,8 +1136,9 @@ where
             }
         })
         .collect();
-    // Filter row uses the body's fixed row height (matches data rows);
-    // ColumnStrip enforces both per-column width and row height.
+    // Filter row is deliberately taller than data rows: filter_row_height()
+    // adds pad_v of headroom on top of row_height so the text_input isn't
+    // clipped. ColumnStrip enforces both per-column width and row height.
     sized_box(column_strip(
         widths.to_vec(),
         filter_row_height(&theme.density),
