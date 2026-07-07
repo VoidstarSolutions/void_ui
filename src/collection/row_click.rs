@@ -71,16 +71,35 @@ pub struct RowClickable {
     /// Used to color the focus ring drawn in [`Self::paint`] when this row
     /// has keyboard focus.
     theme: Theme,
+    /// Width (local px, from the leading edge) of a hit zone the row
+    /// **defers** to an interactive child sitting there — a disclosure
+    /// chevron on an expandable row, a leading row-action control (#97).
+    /// A primary press with `local x < leading_hit_width` neither captures
+    /// the pointer nor selects the row, so the press bubbles to the child
+    /// control instead (the same defer-to-child split the collapsible header
+    /// makes by `y`, here by `x`). `0.0` (the default) reserves nothing, so
+    /// the whole row selects — the behavior for a plain, non-expandable row.
+    ///
+    /// Leading-edge (LTR) only, matching the chevron's fixed left placement;
+    /// callers should reserve a zone only where an interactive control
+    /// actually sits, or that strip becomes a dead zone for selection.
+    leading_hit_width: f64,
 }
 
 // --- MARK: BUILDERS
 impl RowClickable {
     #[must_use]
-    pub fn new(child: NewWidget<impl Widget + ?Sized>, selected: bool, theme: &Theme) -> Self {
+    pub fn new(
+        child: NewWidget<impl Widget + ?Sized>,
+        selected: bool,
+        theme: &Theme,
+        leading_hit_width: f64,
+    ) -> Self {
         Self {
             child: child.erased().to_pod(),
             selected,
             theme: *theme,
+            leading_hit_width,
         }
     }
 }
@@ -108,6 +127,13 @@ impl RowClickable {
             this.ctx.request_paint_only();
         }
     }
+
+    /// Updates the leading defer-to-child hit width (see the field docs).
+    /// Cheap: it only affects the next press's capture guard, so no repaint
+    /// or relayout is requested.
+    pub fn set_leading_hit_width(this: &mut WidgetMut<'_, Self>, width: f64) {
+        this.widget.leading_hit_width = width;
+    }
 }
 
 // --- MARK: IMPL WIDGET
@@ -120,8 +146,15 @@ impl Widget for RowClickable {
         _props: &mut PropertiesMut<'_>,
         event: &PointerEvent,
     ) {
-        // Shared Down→capture / Up-iff-active-and-hovered recognizer.
-        match click::primary_click(ctx, event) {
+        // Shared Down→capture / Up-iff-active-and-hovered recognizer, with a
+        // positional capture guard that defers a leading hit zone to an
+        // interactive child (chevron / row action). Outside that zone the row
+        // captures and behaves exactly as before; a press inside it is not
+        // captured (guard returns false ⇒ no `Down`, so the child handles it).
+        let leading = self.leading_hit_width;
+        match click::primary_click_when(ctx, event, |ctx, state| {
+            ctx.local_position(state.position).x >= leading
+        }) {
             // Rows take keyboard focus so a subsequent Ctrl/Cmd+C lands
             // inside the grid (see the module docs).
             Some(ClickPhase::Down(_)) => ctx.request_focus(),
@@ -243,7 +276,12 @@ impl Widget for RowClickable {
     }
 
     fn propagates_pointer_interaction(&self) -> bool {
-        false
+        // Let an interactive leading child (a disclosure chevron, a leading
+        // row-action) receive pointer hover/press independently. A press over
+        // a non-interactive cell still bubbles up here, so row selection is
+        // unchanged; the positional guard in `on_pointer_event` is what keeps
+        // a press over the leading control from also selecting the row.
+        true
     }
 }
 
@@ -273,6 +311,10 @@ pub struct ClickableRow<V, State, Action, F> {
     selected: bool,
     theme: Theme,
     on_click: F,
+    /// See [`RowClickable::leading_hit_width`]. `0.0` by default (whole row
+    /// selects); set via [`Self::leading_hit_width`] on an expandable row so
+    /// the leading chevron zone defers to the chevron control.
+    leading_hit_width: f64,
     phantom: PhantomData<fn() -> (State, Action)>,
 }
 
@@ -297,7 +339,23 @@ where
         selected,
         theme: *theme,
         on_click,
+        leading_hit_width: 0.0,
         phantom: PhantomData,
+    }
+}
+
+impl<V, State, Action, F> ClickableRow<V, State, Action, F> {
+    /// Reserves a leading hit zone of `width` local px (from the row's
+    /// leading edge) that defers to an interactive child sitting there — an
+    /// expandable row's disclosure chevron, a leading row-action control.
+    ///
+    /// A primary press inside the zone doesn't select the row; it bubbles to
+    /// the child control instead. Presses outside it select as usual. Pass
+    /// the chevron/control's rendered width (plus any depth indent that sits
+    /// before it); `0.0` (the default) reserves nothing.
+    pub fn leading_hit_width(mut self, width: f64) -> Self {
+        self.leading_hit_width = width;
+        self
     }
 }
 
@@ -315,7 +373,12 @@ where
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let (child_pod, child_state) = self.child.build(ctx, app_state);
-        let widget = RowClickable::new(child_pod.new_widget, self.selected, &self.theme);
+        let widget = RowClickable::new(
+            child_pod.new_widget,
+            self.selected,
+            &self.theme,
+            self.leading_hit_width,
+        );
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, child_state)
     }
@@ -333,6 +396,9 @@ where
         }
         if self.theme != prev.theme {
             RowClickable::set_theme(&mut element, &self.theme);
+        }
+        if (self.leading_hit_width - prev.leading_hit_width).abs() > f64::EPSILON {
+            RowClickable::set_leading_hit_width(&mut element, self.leading_hit_width);
         }
         let mut child = RowClickable::child_mut(&mut element);
         self.child
@@ -382,7 +448,8 @@ where
 #[cfg(test)]
 mod tests {
     use masonry::core::keyboard::{Key, KeyState, KeyboardEvent, Modifiers, NamedKey};
-    use masonry::core::{NewWidget, TextEvent};
+    use masonry::core::{NewWidget, PointerButton, TextEvent};
+    use masonry::kurbo::Point;
     use masonry::testing::TestHarness;
     use masonry::theme::default_property_set;
     use masonry::widgets::Label;
@@ -399,10 +466,24 @@ mod tests {
         })
     }
 
-    fn harness() -> TestHarness<RowClickable> {
+    fn harness_with_leading(leading_hit_width: f64) -> TestHarness<RowClickable> {
         let child = NewWidget::new(Label::new("row"));
-        let widget = RowClickable::new(child, false, &Theme::default());
+        let widget = RowClickable::new(child, false, &Theme::default(), leading_hit_width);
         TestHarness::create_with_size(default_property_set(), NewWidget::new(widget), (120, 24))
+    }
+
+    fn harness() -> TestHarness<RowClickable> {
+        harness_with_leading(0.0)
+    }
+
+    /// Presses the primary button at `x` (row is 24 px tall, so `y = 12` is
+    /// mid-row), then releases at the same point, and returns whether the row
+    /// emitted a [`RowClickAction`] (i.e. selected).
+    fn click_at_x(harness: &mut TestHarness<RowClickable>, x: f64) -> bool {
+        harness.mouse_move(Point::new(x, 12.0));
+        harness.mouse_button_press(Some(PointerButton::Primary));
+        harness.mouse_button_release(Some(PointerButton::Primary));
+        harness.pop_action::<RowClickAction>().is_some()
     }
 
     /// Space activates the focused row (keyboard parity with a click), so a
@@ -463,5 +544,51 @@ mod tests {
 
         harness.process_text_event(key_down(Key::Character("x".into()), Modifiers::empty()));
         assert!(harness.pop_action::<RowClickAction>().is_none());
+    }
+
+    /// Default (no leading zone reserved): a primary click anywhere on the
+    /// row selects it — the plain, non-expandable-row behavior, unchanged by
+    /// the defer-to-child machinery.
+    #[test]
+    fn default_row_selects_on_click_anywhere() {
+        let mut harness = harness();
+        assert!(click_at_x(&mut harness, 5.0), "near the leading edge");
+        assert!(click_at_x(&mut harness, 60.0), "mid-row");
+    }
+
+    /// A press inside a reserved leading zone does NOT select the row: the
+    /// capture guard rejects it so the press bubbles to the interactive
+    /// leading child (the disclosure chevron) instead.
+    #[test]
+    fn press_in_leading_zone_does_not_select() {
+        let mut harness = harness_with_leading(20.0);
+        assert!(
+            !click_at_x(&mut harness, 10.0),
+            "a press at x=10 (< 20 px leading zone) must defer, not select",
+        );
+    }
+
+    /// A press outside the reserved leading zone still selects the row, so a
+    /// click on the row's content behaves exactly as it would without a
+    /// leading control.
+    #[test]
+    fn press_outside_leading_zone_still_selects() {
+        let mut harness = harness_with_leading(20.0);
+        assert!(
+            click_at_x(&mut harness, 50.0),
+            "a press at x=50 (> 20 px leading zone) must select",
+        );
+    }
+
+    /// The zone boundary is inclusive of the row side: a press exactly at
+    /// `x == leading_hit_width` selects (the guard is `x >= leading`), so the
+    /// reserved zone is the half-open `[0, leading)` interval.
+    #[test]
+    fn press_at_zone_boundary_selects() {
+        let mut harness = harness_with_leading(20.0);
+        assert!(
+            click_at_x(&mut harness, 20.0),
+            "boundary belongs to the row"
+        );
     }
 }
