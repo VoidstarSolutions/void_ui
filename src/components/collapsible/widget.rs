@@ -244,7 +244,8 @@ impl<W: Widget + ?Sized> CollapsibleWidget<W> {
             return Color::TRANSPARENT;
         }
         let p = &self.theme.palette;
-        if (self.header_state.pressed && self.header_state.hovered) || self.header_keyboard_pressed {
+        if (self.header_state.pressed && self.header_state.hovered) || self.header_keyboard_pressed
+        {
             p.surface_hi
         } else if self.header_state.hovered {
             p.surface_2
@@ -531,8 +532,13 @@ mod tests {
 
     fn harness(disabled: bool) -> TestHarness<CollapsibleWidget<dyn Widget>> {
         let body = NewWidget::new(Label::new("body")).erased();
-        let widget =
-            CollapsibleWidget::new(ArcStr::from("Section"), body, &Theme::dark(), true, disabled);
+        let widget = CollapsibleWidget::new(
+            ArcStr::from("Section"),
+            body,
+            &Theme::dark(),
+            true,
+            disabled,
+        );
         TestHarness::create_with_size(default_property_set(), NewWidget::new(widget), (200, 120))
     }
 
