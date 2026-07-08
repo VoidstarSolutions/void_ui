@@ -1181,6 +1181,15 @@ where
     // `ClickableRow::leading_hit_width`). Its width is the depth indent plus
     // the chevron hit width for a parent row; a leaf reserves nothing, so
     // its whole width selects.
+    //
+    // Intended tradeoff: the reserved zone is `[0, width)` from the left
+    // edge, but the chevron sits *after* the indent — so covering the chevron
+    // necessarily covers the blank indent gutter to its left too. A nested
+    // parent's indent gutter therefore neither selects (it's deferred) nor
+    // toggles (no chevron there); a leaf's indent (reserves 0) does select.
+    // We accept the slight sibling inconsistency: reserving only the chevron
+    // box would need a start-offset range the `[0, width)` model can't
+    // express, and an inert tree gutter is conventional anyway.
     let leading_hit_width: Option<LeadingHitWidthFn<R>> = expandable.as_ref().map(|cfg| {
         let has_children = Arc::clone(&cfg.has_children);
         let depth = Arc::clone(&cfg.depth);
