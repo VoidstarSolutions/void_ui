@@ -1345,6 +1345,7 @@ where
         lazy: None::<Lazy<State, Action>>,
         render_row,
         leading_hit_zone,
+        on_activate: None,
         theme,
     })
 }

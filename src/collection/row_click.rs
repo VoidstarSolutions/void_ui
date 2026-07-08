@@ -1,16 +1,25 @@
-//! Single-child wrapper widget that detects primary-button clicks
-//! with modifier state and emits a [`RowClickAction`].
+//! Single-child wrapper widget that detects primary-button clicks and
+//! keyboard activation with modifier state and emits a [`RowInteraction`].
 //!
 //! Modeled on [`crate::components::data_grid::copy_shortcut::CopyOnShortcut`]
 //! but for pointer events instead of keyboard events. The widget itself stays
-//! dumb — it reports "primary click (or Enter/Space) happened at these
-//! modifiers" — the collection view layer translates that into the right
-//! [`SelectionState`](super::SelectionState) update for the affected row.
+//! dumb — it reports "a select or activate happened at these modifiers" — the
+//! collection view layer translates that into the right
+//! [`SelectionState`](super::SelectionState) update or activation call for the
+//! affected row.
 //!
 //! Keyboard support makes rows operable without a pointer: the row takes
-//! focus, Tab moves between rows (masonry's built-in traversal), Enter/Space
-//! activates the focused row, and a focus ring is painted while focused. The
-//! selected state is reported to assistive technology via accesskit's
+//! focus, Tab moves between rows (masonry's built-in traversal), and a focus
+//! ring is painted while focused. The keyboard splits two intents:
+//!
+//! - **Space** (and a pointer click) *selects* the focused row — the
+//!   selection-background / `SelectionState` path.
+//! - **Enter** *activates* ("opens") it — a distinct intent routed to the
+//!   host's activation handler. When no handler is wired, Enter falls back
+//!   to selection so keyboard operation never regresses. Double-click
+//!   activation is deferred (the pointer path has no click-count yet).
+//!
+//! The selected state is reported to assistive technology via accesskit's
 //! `Selected` property.
 //!
 //! `accepts_focus = true` so subsequent Ctrl/Cmd+C on the parent
@@ -33,10 +42,10 @@ use crate::Theme;
 use crate::components::click::{self, ClickPhase};
 use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 
-/// Action emitted by `RowClickable` on primary-button release (or
-/// Enter/Space activation). The receiver inspects the modifiers to decide
-/// whether this is a plain click (`replace`), a multi-select toggle
-/// (`action_mod`), or a shift-extend (`shift`).
+/// Modifiers carried by a row *selection* intent (a primary-button release
+/// or Space). The receiver inspects them to decide whether this is a plain
+/// click (`replace`), a multi-select toggle (`action_mod`), or a
+/// shift-extend (`shift`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RowClickAction {
     /// Shift modifier was held.
@@ -44,6 +53,19 @@ pub struct RowClickAction {
     /// Platform "action modifier" was held — Cmd on macOS, Ctrl
     /// elsewhere. Matches masonry's `TextArea` convention.
     pub action_mod: bool,
+}
+
+/// What a focused/clicked [`RowClickable`] reports to the view layer. The two
+/// intents are deliberately distinct (see the module docs): a pointer click
+/// or **Space** is a *selection* intent, while **Enter** is an *activation*
+/// ("open the row") intent that the host handles separately from selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowInteraction {
+    /// Primary-button click, or Space on the focused row — *select*.
+    Select(RowClickAction),
+    /// Enter on the focused row — *activate* ("open"). Carries the event
+    /// modifiers for symmetry, though activation is modifier-agnostic today.
+    Activate(RowClickAction),
 }
 
 /// Builds a [`RowClickAction`] from a pointer or keyboard event's
@@ -89,8 +111,8 @@ impl LeadingHitZone {
     }
 }
 
-/// Single-child wrapper that emits a [`RowClickAction`] on primary-button
-/// release (or Enter/Space) inside its bounds.
+/// Single-child wrapper that emits a [`RowInteraction`] on primary-button
+/// release, Space (select), or Enter (activate) inside its bounds.
 pub struct RowClickable {
     child: WidgetPod<dyn Widget>,
     /// Reported via accesskit's `Selected` property — lets screen readers
@@ -182,7 +204,7 @@ impl RowClickable {
 
 // --- MARK: IMPL WIDGET
 impl Widget for RowClickable {
-    type Action = RowClickAction;
+    type Action = RowInteraction;
 
     fn on_pointer_event(
         &mut self,
@@ -195,6 +217,7 @@ impl Widget for RowClickable {
         // interactive child (chevron / row action). Outside that zone the row
         // captures and behaves exactly as before; a press inside it is not
         // captured (guard returns false ⇒ no `Down`, so the child handles it).
+        // A pointer click is always a *selection* intent.
         let zone = self.leading_hit;
         match click::primary_click_when(ctx, event, |ctx, state| {
             // Capture (→ select) unless the press lands in the deferred
@@ -210,7 +233,9 @@ impl Widget for RowClickable {
                 state,
                 completed: true,
             }) => {
-                ctx.submit_action::<Self::Action>(row_click_action(state.modifiers));
+                ctx.submit_action::<Self::Action>(RowInteraction::Select(row_click_action(
+                    state.modifiers,
+                )));
             }
             _ => {}
         }
@@ -222,21 +247,25 @@ impl Widget for RowClickable {
         _props: &mut PropertiesMut<'_>,
         event: &TextEvent,
     ) {
-        // Enter or Space activates the focused row, with the same modifier
-        // semantics as a click. Tab is deliberately not handled, so masonry's
-        // built-in focus traversal moves between rows.
+        // Space *selects* (pointer-click parity); Enter *activates* ("open").
+        // Both carry the event modifiers. Tab is deliberately not handled, so
+        // masonry's built-in focus traversal moves between rows.
         let TextEvent::Keyboard(key) = event else {
             return;
         };
-        let is_activate = match &key.key {
-            Key::Named(NamedKey::Enter) => true,
-            Key::Character(s) => s == " ",
-            Key::Named(_) => false,
-        };
-        if key.state != KeyState::Down || !is_activate {
+        if key.state != KeyState::Down {
             return;
         }
-        ctx.submit_action::<Self::Action>(row_click_action(key.modifiers));
+        let interaction = match &key.key {
+            Key::Named(NamedKey::Enter) => {
+                RowInteraction::Activate(row_click_action(key.modifiers))
+            }
+            Key::Character(s) if s == " " => {
+                RowInteraction::Select(row_click_action(key.modifiers))
+            }
+            _ => return,
+        };
+        ctx.submit_action::<Self::Action>(interaction);
         ctx.set_handled();
     }
 
@@ -339,17 +368,26 @@ impl Widget for RowClickable {
 // --- MARK: XILEM VIEW WRAPPER
 
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
-/// Wraps a child view in `RowClickable` and routes pointer release (or
-/// Enter/Space) + modifiers through the supplied `on_click` callback.
+/// Boxed row-activation handler. The row id is baked in by the caller, so
+/// this only needs `&mut State`. `None` on a [`ClickableRow`] means the row
+/// has no activation handler, so Enter falls back to selection.
+type RowActivate<State> = Arc<dyn Fn(&mut State) + Send + Sync>;
+
+/// Wraps a child view in `RowClickable` and routes its [`RowInteraction`]
+/// through the supplied callbacks: a pointer click or Space runs `on_click`
+/// (selection); Enter runs the optional `on_activate` (activation), or falls
+/// back to `on_click` when none is set.
 ///
-/// `on_click` runs synchronously against the host's app state during
-/// xilem's message-handling pass. Use it to apply the right
+/// Both callbacks run synchronously against the host's app state during
+/// xilem's message-handling pass. Use `on_click` to apply the right
 /// [`SelectionState`](super::SelectionState) op based on the
-/// [`RowClickAction`] modifier flags.
+/// [`RowClickAction`] modifier flags; use [`Self::on_activate`] to "open" the
+/// row.
 ///
 /// Row *content* stays at `Action = ()`; this wrapper is the boundary that
 /// lifts internal intents into the host's `Action` type via
@@ -371,13 +409,15 @@ pub struct ClickableRow<V, State, Action, F> {
     /// [`Self::propagate_pointer_to_children`] when it hosts an interactive row
     /// child. Collection-level, not per-row (see [`RowClickable::new`]).
     propagates_pointer: bool,
+    on_activate: Option<RowActivate<State>>,
     phantom: PhantomData<fn() -> (State, Action)>,
 }
 
 /// Constructor for [`ClickableRow`]. `selected` is reported to assistive
 /// technology via accesskit's `Selected` property — pass the row's current
 /// [`SelectionState`](super::SelectionState) membership. `theme` colors the
-/// focus ring drawn when the row has keyboard focus.
+/// focus ring drawn when the row has keyboard focus. The row has no
+/// activation handler by default; add one with [`ClickableRow::on_activate`].
 pub fn clickable_row<V, State, Action, F>(
     child: V,
     selected: bool,
@@ -397,6 +437,7 @@ where
         on_click,
         leading_hit: None,
         propagates_pointer: false,
+        on_activate: None,
         phantom: PhantomData,
     }
 }
@@ -425,6 +466,18 @@ impl<V, State, Action, F> ClickableRow<V, State, Action, F> {
     /// [`RowClickable::new`].
     pub fn propagate_pointer_to_children(mut self, propagate: bool) -> Self {
         self.propagates_pointer = propagate;
+        self
+    }
+
+    /// Sets the row's *activation* handler, run when Enter is pressed on the
+    /// focused row (a distinct intent from selection — see the module docs).
+    /// Without one, Enter falls back to `on_click` (selection). The row id is
+    /// the caller's responsibility to bake into `on_activate`.
+    pub fn on_activate(mut self, on_activate: impl Fn(&mut State) + Send + Sync + 'static) -> Self
+    where
+        State: 'static,
+    {
+        self.on_activate = Some(Arc::new(on_activate));
         self
     }
 }
@@ -497,15 +550,23 @@ where
         app_state: &mut State,
     ) -> MessageResult<Action> {
         // A message addressed to *this* wrapper's `RowClickable` arrives
-        // fully routed (empty remaining path) — that's our own row click.
-        // A message with a non-empty path is bound for an interactive
-        // descendant inside the row content (a disclosure chevron, a leading
-        // row-action) and must be forwarded untouched: probing it with
-        // `take_message` would panic ("message has not reached its target").
-        // Same guard as `CopyOnShortcutView` / `CollectionBodyView`.
+        // fully routed (empty remaining path) — that's our own row
+        // interaction. A message with a non-empty path is bound for an
+        // interactive descendant inside the row content (a disclosure chevron,
+        // a leading row-action) and must be forwarded untouched: probing it
+        // with `take_message` would panic ("message has not reached its
+        // target"). Same guard as `CopyOnShortcutView` / `CollectionBodyView`.
         if message.remaining_path().is_empty() {
-            if let Some(action) = message.take_message::<RowClickAction>() {
-                (self.on_click)(app_state, *action);
+            if let Some(interaction) = message.take_message::<RowInteraction>() {
+                match *interaction {
+                    RowInteraction::Select(action) => (self.on_click)(app_state, action),
+                    RowInteraction::Activate(action) => match self.on_activate.as_ref() {
+                        Some(on_activate) => on_activate(app_state),
+                        // No activation handler wired: Enter falls back to
+                        // selection so keyboard operation never regresses.
+                        None => (self.on_click)(app_state, action),
+                    },
+                }
             }
             return MessageResult::Action(Action::default());
         }
@@ -537,7 +598,7 @@ mod tests {
     use masonry::theme::default_property_set;
     use masonry::widgets::Label;
 
-    use super::{LeadingHitZone, RowClickAction, RowClickable};
+    use super::{LeadingHitZone, RowClickAction, RowClickable, RowInteraction};
     use crate::Theme;
 
     fn key_down(key: Key, modifiers: Modifiers) -> TextEvent {
@@ -569,18 +630,22 @@ mod tests {
 
     /// Presses the primary button at `x` (row is 24 px tall, so `y = 12` is
     /// mid-row), then releases at the same point, and returns whether the row
-    /// emitted a [`RowClickAction`] (i.e. selected).
+    /// emitted a *selection* intent (`RowInteraction::Select`) — a pointer
+    /// click is always a select, never an activate.
     fn click_at_x(harness: &mut TestHarness<RowClickable>, x: f64) -> bool {
         harness.mouse_move(Point::new(x, 12.0));
         harness.mouse_button_press(Some(PointerButton::Primary));
         harness.mouse_button_release(Some(PointerButton::Primary));
-        harness.pop_action::<RowClickAction>().is_some()
+        matches!(
+            harness.pop_action::<RowInteraction>().map(|(a, _)| a),
+            Some(RowInteraction::Select(_)),
+        )
     }
 
-    /// Space activates the focused row (keyboard parity with a click), so a
+    /// Space *selects* the focused row (keyboard parity with a click), so a
     /// pointer is not required to select.
     #[test]
-    fn space_activates_the_focused_row() {
+    fn space_selects_the_focused_row() {
         let mut harness = harness();
         let root = harness.root_widget().id();
         harness.focus_on(Some(root));
@@ -589,12 +654,13 @@ mod tests {
             harness.process_text_event(key_down(Key::Character(" ".into()), Modifiers::empty()));
         assert!(handled.is_handled());
         assert_eq!(
-            harness.pop_action::<RowClickAction>().map(|(a, _)| a),
-            Some(RowClickAction::default()),
+            harness.pop_action::<RowInteraction>().map(|(a, _)| a),
+            Some(RowInteraction::Select(RowClickAction::default())),
         );
     }
 
-    /// Enter likewise activates the focused row.
+    /// Enter *activates* the focused row — a distinct intent from Space's
+    /// selection (the whole point of #108).
     #[test]
     fn enter_activates_the_focused_row() {
         let mut harness = harness();
@@ -604,10 +670,13 @@ mod tests {
         let handled =
             harness.process_text_event(key_down(Key::Named(NamedKey::Enter), Modifiers::empty()));
         assert!(handled.is_handled());
-        assert!(harness.pop_action::<RowClickAction>().is_some());
+        assert_eq!(
+            harness.pop_action::<RowInteraction>().map(|(a, _)| a),
+            Some(RowInteraction::Activate(RowClickAction::default())),
+        );
     }
 
-    /// Shift held during activation carries through as a range-extend.
+    /// Shift held during a Space selection carries through as a range-extend.
     #[test]
     fn shift_space_carries_the_shift_modifier() {
         let mut harness = harness();
@@ -615,26 +684,26 @@ mod tests {
         harness.focus_on(Some(root));
 
         harness.process_text_event(key_down(Key::Character(" ".into()), Modifiers::SHIFT));
-        let action = harness.pop_action::<RowClickAction>().map(|(a, _)| a);
+        let action = harness.pop_action::<RowInteraction>().map(|(a, _)| a);
         assert_eq!(
             action,
-            Some(RowClickAction {
+            Some(RowInteraction::Select(RowClickAction {
                 shift: true,
                 action_mod: false
-            })
+            }))
         );
     }
 
     /// A non-activating key (a printable character other than space) leaves
     /// the row alone, so type-ahead / other handlers still see it.
     #[test]
-    fn other_keys_do_not_activate() {
+    fn other_keys_do_nothing() {
         let mut harness = harness();
         let root = harness.root_widget().id();
         harness.focus_on(Some(root));
 
         harness.process_text_event(key_down(Key::Character("x".into()), Modifiers::empty()));
-        assert!(harness.pop_action::<RowClickAction>().is_none());
+        assert!(harness.pop_action::<RowInteraction>().is_none());
     }
 
     /// Default (no leading zone reserved): a primary click anywhere on the
@@ -752,7 +821,10 @@ mod tests {
 
         (
             child_downs.load(Ordering::Relaxed),
-            harness.pop_action::<RowClickAction>().is_some(),
+            matches!(
+                harness.pop_action::<RowInteraction>().map(|(a, _)| a),
+                Some(RowInteraction::Select(_)),
+            ),
         )
     }
 

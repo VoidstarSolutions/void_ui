@@ -34,6 +34,11 @@ pub(crate) type RenderRow<State, Item> =
 /// [`ClickableRow::leading_hit`](super::row_click::ClickableRow::leading_hit).
 pub(crate) type LeadingHitZoneFn<Item> = Arc<dyn Fn(&Item) -> Option<LeadingHitZone> + Send + Sync>;
 
+/// Host row-activation callback: `(state, row_id)`, run when Enter is pressed
+/// on the focused row. The substrate resolves the row's stable id and hands
+/// it in; see [`ClickableRow::on_activate`](super::row_click::ClickableRow).
+pub(crate) type OnActivate<State> = Arc<dyn Fn(&mut State, u64) + Send + Sync>;
+
 /// Lazy-load config: fire `callback` when the active range comes within
 /// `threshold` items of the end.
 pub(crate) struct Lazy<State, Action> {
@@ -55,6 +60,9 @@ pub(crate) struct CollectionBodyParams<State, Item, Action> {
     /// `data_grid`'s expandable rows supply one so the chevron's box defers
     /// to the disclosure toggle.
     pub(crate) leading_hit_zone: Option<LeadingHitZoneFn<Item>>,
+    /// Optional row-activation handler (Enter on the focused row). `None`
+    /// leaves Enter falling back to selection.
+    pub(crate) on_activate: Option<OnActivate<State>>,
     pub(crate) theme: Theme,
 }
 
@@ -78,6 +86,7 @@ where
         lazy,
         render_row,
         leading_hit_zone,
+        on_activate,
         theme,
     } = params;
     let valid_range_end = scroll_range_end(item_count);
@@ -95,6 +104,7 @@ where
         let selection_lens = selection_lens.clone();
         let render_row = Arc::clone(&render_row);
         let leading_hit_zone = leading_hit_zone.clone();
+        let on_activate = on_activate.clone();
         move |state: &mut State, idx: i64| {
             let pos = scroll_idx_to_slice(idx);
 
@@ -128,13 +138,10 @@ where
             };
             let row_view = sized_box(content).background_color(row_bg);
 
-            let items = Arc::clone(&items);
-            let id_source = id_source.clone();
-            let selection_lens = selection_lens.clone();
-            clickable_row(
-                row_view,
-                is_selected,
-                &theme,
+            let row = clickable_row(row_view, is_selected, &theme, {
+                let items = Arc::clone(&items);
+                let id_source = id_source.clone();
+                let selection_lens = selection_lens.clone();
                 move |state: &mut State, action: RowClickAction| {
                     apply_row_click(
                         state,
@@ -144,10 +151,29 @@ where
                         selection_lens.as_ref(),
                         &id_source,
                     );
-                },
-            )
+                }
+            })
             .leading_hit(leading)
-            .propagate_pointer_to_children(defers_to_children)
+            .propagate_pointer_to_children(defers_to_children);
+            // Enter-activation, only when the host wired a handler: resolve the
+            // row's stable id at activate time (mirroring `apply_row_click`) and
+            // hand it to the host callback.
+            match on_activate.clone() {
+                Some(host_on_activate) => {
+                    let items = Arc::clone(&items);
+                    let id_source = id_source.clone();
+                    row.on_activate(move |state: &mut State| {
+                        let id = {
+                            let data = (*items)(state);
+                            data.get(pos).map(|item| id_source.id_of(pos, item))
+                        };
+                        if let Some(id) = id {
+                            host_on_activate(state, id);
+                        }
+                    })
+                }
+                None => row,
+            }
         }
     });
 
@@ -576,6 +602,7 @@ mod tests {
             }),
             render_row,
             leading_hit_zone: None,
+            on_activate: Some(Arc::new(|_state: &mut S, _id: u64| {})),
             theme: Theme::default(),
         });
 
@@ -617,6 +644,7 @@ mod tests {
             }),
             render_row,
             leading_hit_zone: None,
+            on_activate: None,
             theme: Theme::default(),
         });
         assert_widget_view(&view);
