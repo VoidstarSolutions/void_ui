@@ -71,9 +71,9 @@ pub use context_menu::{
 };
 pub use data_grid::{
     CellAlign, ClickableRow, ColumnDef, ColumnId, ColumnWidths, DataGrid, ExpansionState,
-    FilterState, MIN_COLUMN_WIDTH, RowClickAction, ScrollState, SelectionState, SortDirection,
-    SortState, clickable_row, colored_text_column, data_grid, filtered_indices,
-    optional_text_column, text_column,
+    FilterState, MIN_COLUMN_WIDTH, RowClickAction, RowComparator, RowFilter, ScrollState,
+    SelectionState, SortDirection, SortState, clickable_row, colored_text_column, data_grid,
+    filtered_indices, optional_text_column, sort_indices, text_column,
 };
 pub use dialog::{Dialog, DialogView, dialog};
 pub use dropdown_button::{DropdownButton, DropdownButtonView, dropdown_button};
