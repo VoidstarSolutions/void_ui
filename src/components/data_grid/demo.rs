@@ -596,6 +596,10 @@ pub struct StockDemo {
     pub visible: Vec<StockQuote>,
     /// Visible columns in display order (show/hide + reorder).
     column_order: Option<Vec<ColumnId>>,
+    /// Symbol of the row most recently **activated** (Enter on the focused
+    /// row) — demonstrates the grid's `on_activate` "open the row" hook, which
+    /// is distinct from selection. `None` until the first activation.
+    pub last_activated: Option<&'static str>,
 }
 
 impl StockDemo {
@@ -610,7 +614,20 @@ impl StockDemo {
             column_widths: ColumnWidths::new(),
             visible: Vec::new(),
             column_order: None,
+            last_activated: None,
         }
+    }
+
+    /// Records the row **activated** by the grid's `on_activate` hook (Enter
+    /// on the focused row), resolving the stable `row_id` back to its symbol
+    /// for display. Activation is the "open the row" intent — separate from
+    /// selection; a host would open a detail view here instead.
+    pub fn activate_row(&mut self, row_id: u64) {
+        self.last_activated = self
+            .quotes
+            .iter()
+            .find(|q| stock_row_id(q) == row_id)
+            .map(|q| q.symbol);
     }
 
     /// Whether the displayed view is a materialized reorder of `quotes`
@@ -1118,10 +1135,22 @@ fn build_stock_inner(theme: &Theme, demo: &StockDemo) -> impl WidgetView<StockDe
     let beta_shown = column_layout.contains(&beta_id);
     let theme_copy = *theme;
 
+    // Activation feedback: shows the last row opened via Enter, proving the
+    // `on_activate` hook fires independently of selection.
+    let activated_label = match demo.last_activated {
+        Some(symbol) => format!("Opened: {symbol}  (Enter on a focused row)"),
+        None => "Click or arrow to a row, then Enter to open it".to_string(),
+    };
+
     let toolbar = flex_row((
         crate::label("NASDAQ symbols — static snapshot")
             .text_size(theme.typography.size_caption)
             .color(theme.palette.text_muted)
+            .render(theme),
+        FlexSpacer::Flex(1.0),
+        crate::label(activated_label)
+            .text_size(theme.typography.size_caption)
+            .color(theme.palette.accent)
             .render(theme),
         FlexSpacer::Flex(1.0),
         crate::components::button::button(move |s: &mut StockDemo| {
@@ -1159,6 +1188,9 @@ fn build_stock_inner(theme: &Theme, demo: &StockDemo) -> impl WidgetView<StockDe
         .row_count(row_count)
         .row_id(stock_row_id)
         .selection(|s: &mut StockDemo| &mut s.selection)
+        .on_activate(|s: &mut StockDemo, id: u64| {
+            s.activate_row(id);
+        })
         .sort(sort, |s: &mut StockDemo, col: ColumnId, multi: bool| {
             s.cycle_sort(col, multi);
         })
@@ -2091,6 +2123,33 @@ mod tests {
             demo.visible.iter().all(|q| q.sector == "Technology"),
             "only Technology rows survive the sector filter"
         );
+    }
+
+    /// The `on_activate` hook resolves the stable `row_id` it's handed back to
+    /// the activated row's symbol — the "open the row" path, independent of
+    /// selection (the selection set is untouched here).
+    #[test]
+    fn stock_demo_activate_resolves_row_id_to_symbol() {
+        let mut demo = StockDemo::new();
+        assert_eq!(demo.last_activated, None, "nothing activated yet");
+
+        let quote = demo.quotes[3];
+        let id = super::stock_row_id(&quote);
+        demo.activate_row(id);
+
+        assert_eq!(
+            demo.last_activated,
+            Some(quote.symbol),
+            "activation resolves the row_id to its symbol"
+        );
+        assert!(
+            demo.selection.is_empty(),
+            "activation is distinct from selection — it must not select"
+        );
+
+        // An unknown id leaves the previous value cleared to None.
+        demo.activate_row(u64::MAX);
+        assert_eq!(demo.last_activated, None, "unknown id resolves to nothing");
     }
 
     #[test]
