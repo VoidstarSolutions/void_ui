@@ -44,8 +44,8 @@ use crate::Theme;
 use crate::collection::ScrollState;
 use crate::collection::SelectionState;
 use crate::collection::{
-    CollectionBodyParams, IdSource, ItemsFn, Lazy, LeadingHitWidthFn, RenderRow, SelectionLens,
-    collection_body,
+    CollectionBodyParams, IdSource, ItemsFn, Lazy, LeadingHitZone, LeadingHitZoneFn, RenderRow,
+    SelectionLens, collection_body,
 };
 use crate::components::icon::disclosure_chevron;
 use crate::components::scroll_container::scroll_container;
@@ -1178,28 +1178,21 @@ where
 
     // Expandable rows reserve a leading defer-to-chevron zone so a click on
     // the chevron toggles the row instead of selecting it (see
-    // `ClickableRow::leading_hit_width`). Its width is the depth indent plus
-    // the chevron hit width for a parent row; a leaf reserves nothing, so
-    // its whole width selects.
-    //
-    // Intended tradeoff: the reserved zone is `[0, width)` from the left
-    // edge, but the chevron sits *after* the indent — so covering the chevron
-    // necessarily covers the blank indent gutter to its left too. A nested
-    // parent's indent gutter therefore neither selects (it's deferred) nor
-    // toggles (no chevron there); a leaf's indent (reserves 0) does select.
-    // We accept the slight sibling inconsistency: reserving only the chevron
-    // box would need a start-offset range the `[0, width)` model can't
-    // express, and an inert tree gutter is conventional anyway.
-    let leading_hit_width: Option<LeadingHitWidthFn<R>> = expandable.as_ref().map(|cfg| {
+    // `ClickableRow::leading_hit`). A parent reserves *only* the chevron's
+    // box — offset by the depth indent, `disclosure_hit_width` wide — so the
+    // blank indent gutter to its left still selects, exactly like a leaf's
+    // indent (leaves reserve nothing). This keeps selection consistent between
+    // a nested parent and a leaf sibling; a zone anchored at the left edge
+    // would instead make the gutter a dead zone that grows with tree depth.
+    let leading_hit_zone: Option<LeadingHitZoneFn<R>> = expandable.as_ref().map(|cfg| {
         let has_children = Arc::clone(&cfg.has_children);
         let depth = Arc::clone(&cfg.depth);
         let density = theme.density;
-        let f: LeadingHitWidthFn<R> = Arc::new(move |row: &R| {
-            if has_children(row) {
-                f64::from(depth(row)) * tree_indent_step(&density) + disclosure_hit_width(&density)
-            } else {
-                0.0
-            }
+        let f: LeadingHitZoneFn<R> = Arc::new(move |row: &R| {
+            has_children(row).then(|| LeadingHitZone {
+                offset: f64::from(depth(row)) * tree_indent_step(&density),
+                width: disclosure_hit_width(&density),
+            })
         });
         f
     });
@@ -1250,7 +1243,7 @@ where
         scroll,
         lazy: None::<Lazy<State, Action>>,
         render_row,
-        leading_hit_width,
+        leading_hit_zone,
         theme,
     })
 }

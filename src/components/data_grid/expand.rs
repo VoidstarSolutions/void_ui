@@ -158,7 +158,7 @@ pub struct DisclosureToggleRequested;
 ///
 /// The expandable row reserves this control's width as a leading
 /// defer-to-child zone (see
-/// [`ClickableRow::leading_hit_width`](crate::collection::row_click::ClickableRow::leading_hit_width)),
+/// [`ClickableRow::leading_hit`](crate::collection::row_click::ClickableRow::leading_hit)),
 /// so a press here toggles the row instead of selecting it. Modeled on
 /// [`HeaderClickable`](super::header_click::HeaderClickable) for the pointer
 /// path and on `RowClickable` for the keyboard/focus a11y: a
