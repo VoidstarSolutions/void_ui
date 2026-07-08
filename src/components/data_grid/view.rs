@@ -45,8 +45,8 @@ use crate::Theme;
 use crate::collection::ScrollState;
 use crate::collection::SelectionState;
 use crate::collection::{
-    CollectionBodyParams, IdSource, ItemsFn, Lazy, LeadingHitZone, LeadingHitZoneFn, RenderRow,
-    SelectionLens, collection_body,
+    CollectionBodyParams, IdSource, ItemsFn, Lazy, LeadingHitZone, LeadingHitZoneFn, OnActivate,
+    RenderRow, SelectionLens, collection_body,
 };
 use crate::components::icon::disclosure_chevron;
 use crate::components::scroll_container::{ScrollBarVisibility, scroll_container};
@@ -278,6 +278,7 @@ pub struct DataGrid<State, R, Action = ()> {
     rows: Option<RowsFn<State, R>>,
     selection_lens: Option<SelectionLens<State>>,
     row_id: Option<RowIdFn<R>>,
+    on_activate: Option<OnActivate<State>>,
     sort: SortState,
     sort_change: Option<SortChange<State, Action>>,
     filter: FilterState,
@@ -317,6 +318,7 @@ where
             rows: None,
             selection_lens: None,
             row_id: None,
+            on_activate: None,
             sort: SortState::new(),
             sort_change: None,
             filter: FilterState::new(),
@@ -394,6 +396,27 @@ where
         F: Fn(&R) -> u64 + Send + Sync + 'static,
     {
         self.row_id = Some(Arc::new(id));
+        self
+    }
+
+    /// Sets a row **activation** handler, run as `(state, row_id)` when the
+    /// user presses **Enter** on the focused row (and, in a downstream chunk,
+    /// double-clicks it). Activation is the "open the row" intent — distinct
+    /// from selection: arrow keys move focus, Space/click select, Enter
+    /// activates. Use it to open a detail view, drill into a group, etc.
+    ///
+    /// The `row_id` handed in is the same **stable id** as [`Self::row_id`]
+    /// (falling back to slice position when no id projector is set), so it
+    /// survives host-side sort/filter reordering. Pair activation with
+    /// [`Self::row_id`] for the id to be meaningful under reordering.
+    ///
+    /// Omit for a grid whose rows don't "open" — Enter then falls back to
+    /// selecting the focused row, so keyboard operation is unaffected.
+    pub fn on_activate<F>(mut self, on_activate: F) -> Self
+    where
+        F: Fn(&mut State, u64) + Send + Sync + 'static,
+    {
+        self.on_activate = Some(Arc::new(on_activate));
         self
     }
 
@@ -684,6 +707,7 @@ where
         rows,
         selection_lens,
         row_id,
+        on_activate,
         sort,
         sort_change,
         filter,
@@ -753,6 +777,7 @@ where
         rows: rows.clone(),
         selection_lens: selection_lens.clone(),
         row_id: row_id.clone(),
+        on_activate,
         scroll,
         expandable,
     }))
@@ -1230,6 +1255,7 @@ struct BodyParams<State, R> {
     rows: RowsFn<State, R>,
     selection_lens: Option<SelectionLens<State>>,
     row_id: IdSource<R>,
+    on_activate: Option<OnActivate<State>>,
     /// Pending programmatic-scroll request snapshot (see [`ScrollState`]).
     scroll: ScrollState,
     /// Tree-column config when [`DataGrid::expandable`] is set; `None`
@@ -1259,6 +1285,7 @@ where
         rows,
         selection_lens,
         row_id,
+        on_activate,
         scroll,
         expandable,
     } = params;
@@ -1345,7 +1372,7 @@ where
         lazy: None::<Lazy<State, Action>>,
         render_row,
         leading_hit_zone,
-        on_activate: None,
+        on_activate,
         theme,
     })
 }
