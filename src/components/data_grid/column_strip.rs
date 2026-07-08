@@ -1052,11 +1052,15 @@ mod tests {
         // scroll extent. Fill here would break scrolling on a narrow viewport.
         let strip = strip_with_widths(vec![80.0, 100.0, 60.0]);
         assert!(approx(
-            strip.measured_length(Axis::Horizontal, LenReq::MinContent).get(),
+            strip
+                .measured_length(Axis::Horizontal, LenReq::MinContent)
+                .get(),
             240.0,
         ));
         assert!(approx(
-            strip.measured_length(Axis::Horizontal, LenReq::MaxContent).get(),
+            strip
+                .measured_length(Axis::Horizontal, LenReq::MaxContent)
+                .get(),
             240.0,
         ));
     }
