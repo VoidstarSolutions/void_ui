@@ -708,7 +708,10 @@ mod tests {
             "content past the chevron selects as usual",
         );
         // Half-open `[30, 50)`: the near edge defers, the far edge selects.
-        assert!(!click_at_x(&mut harness, 30.0), "zone start (offset) defers");
+        assert!(
+            !click_at_x(&mut harness, 30.0),
+            "zone start (offset) defers"
+        );
         assert!(click_at_x(&mut harness, 50.0), "zone end selects");
     }
 
@@ -730,7 +733,13 @@ mod tests {
                     counter.fetch_add(1, Ordering::Relaxed);
                 }
             });
-        let widget = RowClickable::new(NewWidget::new(child), false, &Theme::default(), None, propagates);
+        let widget = RowClickable::new(
+            NewWidget::new(child),
+            false,
+            &Theme::default(),
+            None,
+            propagates,
+        );
         let mut harness = TestHarness::create_with_size(
             default_property_set(),
             NewWidget::new(widget),

@@ -28,11 +28,11 @@ pub(crate) use body::CollectionBodyWidget;
 pub(crate) use body_view::{
     CollectionBodyParams, Lazy, LeadingHitZoneFn, RenderRow, collection_body,
 };
-pub(crate) use row_click::LeadingHitZone;
 pub(crate) use click::{ItemsFn, SelectionLens, apply_row_click};
 pub(crate) use ids::{
     IdSource, nearing_end, scroll_idx_to_slice, scroll_range_end, visual_range_ids,
 };
+pub(crate) use row_click::LeadingHitZone;
 pub use scroll::ScrollState;
 pub(crate) use scroll::clamp_scroll_index;
 pub use selection::SelectionState;
