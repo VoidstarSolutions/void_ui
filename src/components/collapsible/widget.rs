@@ -25,7 +25,7 @@ use masonry::widgets::Label;
 use crate::Theme;
 use crate::animated_clip::AnimatedClip;
 use crate::components::click::{self, ClickPhase};
-use crate::components::icon::{IconName, icon};
+use crate::components::icon::{disclosure_icon, icon};
 use crate::components::interaction;
 use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 
@@ -54,11 +54,7 @@ struct HeaderPointerState {
 // --- MARK: WIDGET HELPERS
 
 fn make_chevron(open: bool, theme: &Theme, disabled: bool) -> NewWidget<Label> {
-    let name = if open {
-        IconName::ChevronDown
-    } else {
-        IconName::ChevronRight
-    };
+    let name = disclosure_icon(open);
     let color = if disabled {
         theme.palette.text_faint
     } else {
@@ -217,12 +213,7 @@ impl<W: Widget + ?Sized> CollapsibleWidget<W> {
         if this.widget.open != open {
             this.widget.open = open;
             this.ctx.request_paint_only();
-            let new_icon = if open {
-                IconName::ChevronDown
-            } else {
-                IconName::ChevronRight
-            };
-            let new_char = ArcStr::from(String::from(char::from(new_icon)));
+            let new_char = ArcStr::from(String::from(char::from(disclosure_icon(open))));
             {
                 let mut chevron = this.ctx.get_mut(&mut this.widget.chevron);
                 Label::set_text(&mut chevron, new_char);

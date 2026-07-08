@@ -70,15 +70,15 @@ pub use context_menu::{
     context_menu_area, item, menu, submenu,
 };
 pub use data_grid::{
-    CellAlign, ClickableRow, ColumnDef, ColumnId, ColumnWidths, DataGrid, FilterState,
-    MIN_COLUMN_WIDTH, RowClickAction, ScrollState, SelectionState, SortDirection, SortState,
-    clickable_row, colored_text_column, data_grid, filtered_indices, optional_text_column,
-    text_column,
+    CellAlign, ClickableRow, ColumnDef, ColumnId, ColumnWidths, DataGrid, ExpansionState,
+    FilterState, MIN_COLUMN_WIDTH, RowClickAction, ScrollState, SelectionState, SortDirection,
+    SortState, clickable_row, colored_text_column, data_grid, filtered_indices,
+    optional_text_column, text_column,
 };
 pub use dialog::{Dialog, DialogView, dialog};
 pub use dropdown_button::{DropdownButton, DropdownButtonView, dropdown_button};
 pub use group_box::{GroupBox, NoTitle, TitleState, WithTitle, group_box};
-pub use icon::{Icon, IconName, icon};
+pub use icon::{Icon, IconName, disclosure_chevron, disclosure_icon, icon};
 pub use input::{
     CurrencyFormat, CurrencyInput, Input, MaskedInput, NumberInput, currency_input,
     format_currency, format_mask, input, masked_input, number_input,
@@ -151,6 +151,7 @@ pub enum ComponentKind {
     Spinner,
     StatusDot,
     StockQuotes,
+    TreeGrid,
     Tabs,
     Toggle,
     Tooltip,
@@ -192,6 +193,7 @@ impl ComponentKind {
             Self::Spinner => "Spinner",
             Self::StatusDot => "Status Dot",
             Self::StockQuotes => "Stock Quotes",
+            Self::TreeGrid => "Tree Grid",
             Self::Tabs => "Tabs",
             Self::Toggle => "Toggle",
             Self::Tooltip => "Tooltip",
@@ -233,6 +235,7 @@ impl ComponentKind {
             Self::Spinner,
             Self::StatusDot,
             Self::StockQuotes,
+            Self::TreeGrid,
             Self::Tabs,
             Self::Toggle,
             Self::Tooltip,

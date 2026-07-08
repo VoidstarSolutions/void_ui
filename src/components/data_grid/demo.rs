@@ -27,6 +27,7 @@ use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 use super::column::{
     CellAlign, ColumnDef, ColumnId, colored_text_column, optional_text_column, text_column,
 };
+use super::expand::ExpansionState;
 use super::filter::{FilterState, filtered_indices};
 use super::sort::{SortState, sort_indices};
 use super::width::ColumnWidths;
@@ -1284,11 +1285,338 @@ impl<S: 'static> View<S, (), ViewCtx> for DataGridDemoPanel {
     }
 }
 
+// ===========================================================================
+// MARK: Tree-grid (expandable rows) gallery panel
+// ===========================================================================
+
+/// One node of the demo's static tree. The host owns the whole tree and
+/// derives a flat, virtualization-ready slice from it on every expansion
+/// change (see [`TreeDemo::rederive`]).
+struct TreeNode {
+    id: u64,
+    name: String,
+    value: String,
+    children: Vec<TreeNode>,
+}
+
+impl TreeNode {
+    fn leaf(id: u64, name: &str, value: &str) -> Self {
+        Self {
+            id,
+            name: name.to_string(),
+            value: value.to_string(),
+            children: Vec::new(),
+        }
+    }
+    fn branch(id: u64, name: &str, value: &str, children: Vec<TreeNode>) -> Self {
+        Self {
+            id,
+            name: name.to_string(),
+            value: value.to_string(),
+            children,
+        }
+    }
+}
+
+/// One **flattened** visible row, the row type the grid actually renders.
+///
+/// The host bakes the tree structure into each row when it flattens: its
+/// [`depth`](Self::depth), whether it [`has_children`](Self::has_children),
+/// and whether it is currently [`expanded`](Self::expanded). The grid's
+/// `.expandable(..)` closures just read these fields — the chevron never
+/// needs the host's [`ExpansionState`] directly.
+#[derive(Clone)]
+pub struct TreeRow {
+    pub id: u64,
+    pub depth: u16,
+    pub has_children: bool,
+    pub expanded: bool,
+    pub name: String,
+    pub value: String,
+}
+
+/// A small portfolio tree: sectors → holdings → tax lots (depth 0/1/2).
+fn sample_tree() -> Vec<TreeNode> {
+    vec![
+        TreeNode::branch(
+            1,
+            "Technology",
+            "$4.10M",
+            vec![
+                TreeNode::branch(
+                    10,
+                    "AAPL — Apple Inc.",
+                    "$2.40M",
+                    vec![
+                        TreeNode::leaf(100, "Lot #1 · 2023-04", "$1.10M"),
+                        TreeNode::leaf(101, "Lot #2 · 2024-01", "$1.30M"),
+                    ],
+                ),
+                TreeNode::leaf(11, "MSFT — Microsoft", "$1.70M"),
+            ],
+        ),
+        TreeNode::branch(
+            2,
+            "Financials",
+            "$2.05M",
+            vec![
+                TreeNode::leaf(20, "JPM — JPMorgan Chase", "$1.20M"),
+                TreeNode::leaf(21, "GS — Goldman Sachs", "$0.85M"),
+            ],
+        ),
+        TreeNode::leaf(3, "Cash", "$0.50M"),
+    ]
+}
+
+/// State for the expandable-rows demo panel: the static tree, the host-owned
+/// [`ExpansionState`], the derived flat slice the grid renders, and the row
+/// selection.
+pub struct TreeDemo {
+    tree: Vec<TreeNode>,
+    expansion: ExpansionState,
+    visible: Vec<TreeRow>,
+    selection: SelectionState,
+}
+
+impl Default for TreeDemo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TreeDemo {
+    /// Builds the demo with the two top-level sectors expanded, so the tree
+    /// shows some depth immediately.
+    #[must_use]
+    pub fn new() -> Self {
+        let mut demo = Self {
+            tree: sample_tree(),
+            expansion: ExpansionState::new(),
+            visible: Vec::new(),
+            selection: SelectionState::new(),
+        };
+        demo.expansion.expand(1);
+        demo.expansion.expand(2);
+        demo.rederive();
+        demo
+    }
+
+    /// Flips a row's expansion and re-derives the flat slice — the whole
+    /// response to a chevron toggle. Mirrors how a host recomputes its
+    /// filtered/sorted view on those changes.
+    pub fn toggle(&mut self, id: u64) {
+        self.expansion.toggle(id);
+        self.rederive();
+    }
+
+    /// Expands every node that has children.
+    pub fn expand_all(&mut self) {
+        fn walk(nodes: &[TreeNode], exp: &mut ExpansionState) {
+            for n in nodes {
+                if !n.children.is_empty() {
+                    exp.expand(n.id);
+                    walk(&n.children, exp);
+                }
+            }
+        }
+        walk(&self.tree, &mut self.expansion);
+        self.rederive();
+    }
+
+    /// Collapses every node.
+    pub fn collapse_all(&mut self) {
+        self.expansion.clear();
+        self.rederive();
+    }
+
+    /// Re-derives the visible flat slice from the tree + current expansion,
+    /// baking each row's depth / has-children / expanded flags.
+    fn rederive(&mut self) {
+        let mut out = Vec::new();
+        flatten_tree(&self.tree, 0, &self.expansion, &mut out);
+        self.visible = out;
+    }
+}
+
+/// Walks the tree in pre-order, emitting a [`TreeRow`] per node and
+/// descending into a node's children only when it is expanded — the
+/// host-side flatten that turns "tree + expansion" into the flat `&[R]`
+/// slice the grid virtualizes.
+fn flatten_tree(nodes: &[TreeNode], depth: u16, exp: &ExpansionState, out: &mut Vec<TreeRow>) {
+    for n in nodes {
+        let has_children = !n.children.is_empty();
+        let expanded = has_children && exp.is_expanded(n.id);
+        out.push(TreeRow {
+            id: n.id,
+            depth,
+            has_children,
+            expanded,
+            name: n.name.clone(),
+            value: n.value.clone(),
+        });
+        if expanded {
+            flatten_tree(&n.children, depth + 1, exp, out);
+        }
+    }
+}
+
+type TreeInnerView = Box<AnyWidgetView<TreeDemo>>;
+type TreeInnerViewState = <TreeInnerView as View<TreeDemo, (), ViewCtx>>::ViewState;
+
+/// Opaque state owned by the tree-grid demo panel.
+pub struct TreeGridDemoPanelState {
+    demo: TreeDemo,
+    inner_view: TreeInnerView,
+    inner_state: TreeInnerViewState,
+}
+
+/// The expandable-rows ("tree grid") gallery panel, returned by
+/// [`tree_grid_panel`].
+pub struct TreeGridDemoPanel {
+    theme: Theme,
+}
+
+/// Renders the expandable-rows demo panel.
+///
+/// The panel owns a [`TreeDemo`] (a small static portfolio tree). Click a
+/// chevron to expand/collapse a row; click anywhere else on a row to select
+/// it. "Expand all" / "Collapse all" drive the host-owned
+/// [`ExpansionState`]; each change re-flattens the tree into the slice the
+/// grid virtualizes.
+#[must_use]
+pub fn tree_grid_panel(theme: &Theme) -> TreeGridDemoPanel {
+    TreeGridDemoPanel { theme: *theme }
+}
+
+fn build_tree_inner(theme: &Theme, demo: &TreeDemo) -> impl WidgetView<TreeDemo> + use<> {
+    let row_count = u64::try_from(demo.visible.len()).unwrap_or(u64::MAX);
+    let theme_copy = *theme;
+
+    let toolbar = flex_row((
+        crate::label("Portfolio tree — click a chevron to expand/collapse")
+            .text_size(theme.typography.size_caption)
+            .color(theme.palette.text_muted)
+            .render(theme),
+        FlexSpacer::Flex(1.0),
+        crate::components::button::button(|s: &mut TreeDemo| {
+            s.expand_all();
+        })
+        .label("Expand all")
+        .render(theme),
+        crate::components::button::button(|s: &mut TreeDemo| {
+            s.collapse_all();
+        })
+        .label("Collapse all")
+        .render(theme),
+        FlexSpacer::Flex(1.0),
+        crate::label(format!("{row_count} rows"))
+            .text_size(theme.typography.size_caption)
+            .color(theme.palette.text_muted)
+            .render(theme),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Center)
+    .gap(Length::px(8.0));
+
+    // The first column is the tree column: wide enough to hold the depth
+    // indent + chevron + name.
+    let columns = vec![
+        text_column::<TreeRow, TreeDemo, _>("Name", 300.0, CellAlign::Start, |r: &TreeRow| {
+            r.name.clone()
+        }),
+        text_column::<TreeRow, TreeDemo, _>(
+            "Market Value",
+            140.0,
+            CellAlign::End,
+            |r: &TreeRow| r.value.clone(),
+        ),
+    ];
+
+    let grid = super::view::data_grid(columns)
+        .rows(|s: &TreeDemo| &s.visible[..])
+        .row_count(row_count)
+        .row_id(|r: &TreeRow| r.id)
+        .selection(|s: &mut TreeDemo| &mut s.selection)
+        .expandable(
+            |r: &TreeRow| r.expanded,
+            |r: &TreeRow| r.has_children,
+            |r: &TreeRow| r.depth,
+            |s: &mut TreeDemo, id: u64| {
+                s.toggle(id);
+            },
+        )
+        .row_height(24.0)
+        .render(&theme_copy);
+
+    flex_col((toolbar, sized_box(grid).flex(1.0)))
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .gap(Length::px(12.0))
+}
+
+impl ViewMarker for TreeGridDemoPanel {}
+
+impl<S: 'static> View<S, (), ViewCtx> for TreeGridDemoPanel {
+    type ViewState = TreeGridDemoPanelState;
+    type Element = Pod<Passthrough>;
+
+    fn build(&self, ctx: &mut ViewCtx, _: &mut S) -> (Self::Element, Self::ViewState) {
+        let mut demo = TreeDemo::new();
+        let inner_view: TreeInnerView = Box::new(build_tree_inner(&self.theme, &demo));
+        let (element, inner_state) = inner_view.build(ctx, &mut demo);
+        (
+            element,
+            TreeGridDemoPanelState {
+                demo,
+                inner_view,
+                inner_state,
+            },
+        )
+    }
+
+    fn rebuild(
+        &self,
+        _prev: &Self,
+        vs: &mut TreeGridDemoPanelState,
+        ctx: &mut ViewCtx,
+        element: Mut<'_, Pod<Passthrough>>,
+        _: &mut S,
+    ) {
+        let new_inner: TreeInnerView = Box::new(build_tree_inner(&self.theme, &vs.demo));
+        new_inner.rebuild(
+            &vs.inner_view,
+            &mut vs.inner_state,
+            ctx,
+            element,
+            &mut vs.demo,
+        );
+        vs.inner_view = new_inner;
+    }
+
+    fn teardown(
+        &self,
+        vs: &mut TreeGridDemoPanelState,
+        ctx: &mut ViewCtx,
+        element: Mut<'_, Pod<Passthrough>>,
+    ) {
+        vs.inner_view.teardown(&mut vs.inner_state, ctx, element);
+    }
+
+    fn message(
+        &self,
+        vs: &mut TreeGridDemoPanelState,
+        message: &mut MessageCtx,
+        element: Mut<'_, Pod<Passthrough>>,
+        _: &mut S,
+    ) -> MessageResult<()> {
+        vs.inner_view
+            .message(&mut vs.inner_state, message, element, &mut vs.demo)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        ColumnId, Demo, DemoSide, DemoTick, StockDemo, arrange_columns, arrange_stock_columns,
-        side_color, stock_columns,
+        ColumnId, Demo, DemoSide, DemoTick, StockDemo, TreeDemo, arrange_columns,
+        arrange_stock_columns, side_color, stock_columns,
     };
     use crate::Theme;
 
@@ -1770,5 +2098,65 @@ mod tests {
                 .iter()
                 .any(|c| c.effective_id() == ColumnId::from("Beta"))
         );
+    }
+
+    /// The tree demo starts with the two sectors expanded, so the flattened
+    /// slice includes the sectors + their direct holdings, and each row
+    /// carries the depth/has-children/expanded flags the grid reads.
+    #[test]
+    fn tree_demo_starts_with_sectors_expanded() {
+        let demo = TreeDemo::new();
+        let names: Vec<&str> = demo.visible.iter().map(|r| r.name.as_str()).collect();
+        // Technology + its two holdings, Financials + its two holdings, Cash.
+        assert!(names.contains(&"Technology"));
+        assert!(names.contains(&"AAPL — Apple Inc."));
+        assert!(names.contains(&"Financials"));
+        assert!(names.contains(&"Cash"));
+        // AAPL is collapsed at start, so its lots are hidden.
+        assert!(!demo.visible.iter().any(|r| r.name.starts_with("Lot #")));
+
+        // Depth + flags are baked per row.
+        let tech = demo
+            .visible
+            .iter()
+            .find(|r| r.name == "Technology")
+            .unwrap();
+        assert_eq!(tech.depth, 0);
+        assert!(tech.has_children && tech.expanded);
+        let cash = demo.visible.iter().find(|r| r.name == "Cash").unwrap();
+        assert!(!cash.has_children);
+    }
+
+    /// Toggling a parent id splices its children in/out of the flat slice —
+    /// the host-side re-flatten that expansion drives.
+    #[test]
+    fn tree_demo_toggle_splices_children() {
+        let mut demo = TreeDemo::new();
+        let before = demo.visible.len();
+        // AAPL (id 10) is expandable but starts collapsed; expand it.
+        demo.toggle(10);
+        assert_eq!(demo.visible.len(), before + 2, "two lots appear");
+        assert!(demo.visible.iter().any(|r| r.name == "Lot #1 · 2023-04"));
+        let lot = demo
+            .visible
+            .iter()
+            .find(|r| r.name == "Lot #1 · 2023-04")
+            .unwrap();
+        assert_eq!(lot.depth, 2, "lots are two levels deep");
+        // Collapse again → children gone, slice back to its prior length.
+        demo.toggle(10);
+        assert_eq!(demo.visible.len(), before);
+    }
+
+    /// Expand-all reveals every node; collapse-all hides all descendants,
+    /// leaving only the top-level rows.
+    #[test]
+    fn tree_demo_expand_all_then_collapse_all() {
+        let mut demo = TreeDemo::new();
+        demo.expand_all();
+        assert!(demo.visible.iter().any(|r| r.name.starts_with("Lot #")));
+        demo.collapse_all();
+        let names: Vec<&str> = demo.visible.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["Technology", "Financials", "Cash"]);
     }
 }
