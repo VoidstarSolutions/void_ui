@@ -82,6 +82,13 @@ where
     } = params;
     let valid_range_end = scroll_range_end(item_count);
 
+    // Collection-level: only propagate pointer interaction to row children when
+    // this collection can actually defer to one (an expandable grid supplies a
+    // `leading_hit_zone`). A plain grid/list keeps opaque, whole-row-selects
+    // behavior. Must be decided here, not per row — `RowClickable` caches it at
+    // creation and virtualization recycles a row widget across positions.
+    let defers_to_children = leading_hit_zone.is_some();
+
     let child = virtual_scroll(0..valid_range_end, {
         let items = Arc::clone(&items);
         let id_source = id_source.clone();
@@ -140,6 +147,7 @@ where
                 },
             )
             .leading_hit(leading)
+            .propagate_pointer_to_children(defers_to_children)
         }
     });
 

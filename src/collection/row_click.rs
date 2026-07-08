@@ -111,22 +111,39 @@ pub struct RowClickable {
     /// child's box even when it's inset (a chevron after the depth indent),
     /// so the gutter to its left stays selectable. LTR only.
     leading_hit: Option<LeadingHitZone>,
+    /// Backs [`propagates_pointer_interaction`](Widget::propagates_pointer_interaction)
+    /// — whether pointer hover/press reaches the row's children. `false` (the
+    /// default) makes the row an opaque selection target, the original
+    /// behavior; a collection sets it `true` only when it hosts an interactive
+    /// row child (an expandable grid's disclosure chevron). It's a
+    /// **collection-level** constant, not per-row: masonry caches this at
+    /// widget creation and virtualization recycles a row widget across
+    /// positions (a leaf slot may later render a parent), so every row in a
+    /// collection that *can* defer must propagate — see [`Self::new`].
+    propagates_pointer: bool,
 }
 
 // --- MARK: BUILDERS
 impl RowClickable {
+    /// `propagates_pointer` must be a **collection-level** decision (`true`
+    /// iff the collection ever defers to a row child), not derived per row:
+    /// masonry caches it at creation and can't change it, while virtualization
+    /// recycles a row widget across positions, so a leaf slot that later holds
+    /// a parent must already propagate.
     #[must_use]
     pub fn new(
         child: NewWidget<impl Widget + ?Sized>,
         selected: bool,
         theme: &Theme,
         leading_hit: Option<LeadingHitZone>,
+        propagates_pointer: bool,
     ) -> Self {
         Self {
             child: child.erased().to_pod(),
             selected,
             theme: *theme,
             leading_hit,
+            propagates_pointer,
         }
     }
 }
@@ -307,12 +324,15 @@ impl Widget for RowClickable {
     }
 
     fn propagates_pointer_interaction(&self) -> bool {
-        // Let an interactive leading child (a disclosure chevron, a leading
-        // row-action) receive pointer hover/press independently. A press over
-        // a non-interactive cell still bubbles up here, so row selection is
-        // unchanged; the positional guard in `on_pointer_event` is what keeps
-        // a press over the leading control from also selecting the row.
-        true
+        // Collection-gated (see the `propagates_pointer` field): a plain
+        // grid/list keeps `false` — an opaque selection target, the original
+        // behavior — while a collection with an interactive row child (an
+        // expandable grid's disclosure chevron) sets `true` so that child
+        // receives hover/press. A press over a non-interactive cell still
+        // bubbles up here, so row selection is unchanged; the positional guard
+        // in `on_pointer_event` keeps a press over the leading control from
+        // also selecting the row.
+        self.propagates_pointer
     }
 }
 
@@ -346,6 +366,11 @@ pub struct ClickableRow<V, State, Action, F> {
     /// selects); set via [`Self::leading_hit`] on an expandable row so the
     /// chevron's box defers to the chevron control.
     leading_hit: Option<LeadingHitZone>,
+    /// See [`RowClickable::propagates_pointer_interaction`]. `false` by default
+    /// (opaque selection-target row); a collection sets it `true` via
+    /// [`Self::propagate_pointer_to_children`] when it hosts an interactive row
+    /// child. Collection-level, not per-row (see [`RowClickable::new`]).
+    propagates_pointer: bool,
     phantom: PhantomData<fn() -> (State, Action)>,
 }
 
@@ -371,6 +396,7 @@ where
         theme: *theme,
         on_click,
         leading_hit: None,
+        propagates_pointer: false,
         phantom: PhantomData,
     }
 }
@@ -386,6 +412,19 @@ impl<V, State, Action, F> ClickableRow<V, State, Action, F> {
     /// default) reserves nothing.
     pub fn leading_hit(mut self, zone: Option<LeadingHitZone>) -> Self {
         self.leading_hit = zone;
+        self
+    }
+
+    /// Lets pointer hover/press reach the row's children (so an interactive
+    /// row child — a disclosure chevron — can receive them). `false` (the
+    /// default) keeps the row an opaque selection target.
+    ///
+    /// Pass a **collection-level** value (`true` iff the collection ever
+    /// defers to a row child), not a per-row one: it's cached at widget
+    /// creation and virtualization recycles a row across positions — see
+    /// [`RowClickable::new`].
+    pub fn propagate_pointer_to_children(mut self, propagate: bool) -> Self {
+        self.propagates_pointer = propagate;
         self
     }
 }
@@ -409,6 +448,7 @@ where
             self.selected,
             &self.theme,
             self.leading_hit,
+            self.propagates_pointer,
         );
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, child_state)
@@ -511,7 +551,9 @@ mod tests {
 
     fn harness_with_zone(zone: Option<LeadingHitZone>) -> TestHarness<RowClickable> {
         let child = NewWidget::new(Label::new("row"));
-        let widget = RowClickable::new(child, false, &Theme::default(), zone);
+        // Pointer propagation is orthogonal to these selection-guard tests
+        // (the child is an inert label); `true` mirrors an expandable row.
+        let widget = RowClickable::new(child, false, &Theme::default(), zone, true);
         TestHarness::create_with_size(default_property_set(), NewWidget::new(widget), (120, 24))
     }
 
@@ -670,18 +712,13 @@ mod tests {
         assert!(click_at_x(&mut harness, 50.0), "zone end selects");
     }
 
-    /// `propagates_pointer_interaction() == true`, so a control nested in row
-    /// content receives pointer events — with it `false` (the pre-defer state)
-    /// the row was opaque and children never did, which is what let the
-    /// disclosure chevron become reachable. Regression guard: a nested
-    /// interactive child still sees the press, and (with no leading zone
-    /// reserved) the press bubbles up so the row also selects.
-    #[test]
-    fn nested_interactive_child_receives_the_press() {
+    /// Presses mid-row and reports `(child_pointer_downs, row_selected)` for a
+    /// row built with the given `propagates_pointer`. The child is a minimal
+    /// interactive widget that counts pointer-downs but doesn't capture, so the
+    /// press still bubbles to the row.
+    fn press_with_propagation(propagates: bool) -> (usize, bool) {
         let child_downs = Arc::new(AtomicUsize::new(0));
         let counter = Arc::clone(&child_downs);
-        // A minimal interactive child that counts pointer-downs but doesn't
-        // capture, so the press still bubbles to the row.
         let child = ModularWidget::new(())
             .accepts_pointer_interaction(true)
             .measure_fn(|(), _ctx, _props, axis, _len_req, _cross| match axis {
@@ -693,7 +730,7 @@ mod tests {
                     counter.fetch_add(1, Ordering::Relaxed);
                 }
             });
-        let widget = RowClickable::new(NewWidget::new(child), false, &Theme::default(), None);
+        let widget = RowClickable::new(NewWidget::new(child), false, &Theme::default(), None, propagates);
         let mut harness = TestHarness::create_with_size(
             default_property_set(),
             NewWidget::new(widget),
@@ -704,14 +741,41 @@ mod tests {
         harness.mouse_button_press(Some(PointerButton::Primary));
         harness.mouse_button_release(Some(PointerButton::Primary));
 
-        assert_eq!(
+        (
             child_downs.load(Ordering::Relaxed),
-            1,
+            harness.pop_action::<RowClickAction>().is_some(),
+        )
+    }
+
+    /// With propagation on (an expandable collection), a control nested in row
+    /// content receives pointer events — this is what lets the disclosure
+    /// chevron become reachable. The press also bubbles up so the row still
+    /// selects (no leading zone reserved here).
+    #[test]
+    fn nested_interactive_child_receives_the_press_when_propagating() {
+        let (child_downs, selected) = press_with_propagation(true);
+        assert_eq!(
+            child_downs, 1,
             "the nested child must receive the press (pointer propagation is on)",
         );
         assert!(
-            harness.pop_action::<RowClickAction>().is_some(),
+            selected,
             "the row still selects — the press bubbles past the non-capturing child",
         );
+    }
+
+    /// With propagation off (a plain grid/list — the collection-level default),
+    /// the row is opaque: children never see the pointer, exactly as before the
+    /// expandable feature. Row selection is unaffected either way. This locks
+    /// the collection-level gate so the flip to `true` can't silently reach
+    /// non-expandable collections.
+    #[test]
+    fn opaque_row_withholds_the_press_from_children() {
+        let (child_downs, selected) = press_with_propagation(false);
+        assert_eq!(
+            child_downs, 0,
+            "an opaque row must not forward the press to its children",
+        );
+        assert!(selected, "the row itself still selects");
     }
 }
