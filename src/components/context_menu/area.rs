@@ -21,7 +21,7 @@
 //! stays inside the area's box.
 
 use masonry::accesskit::{Action, HasPopup, Node, Role};
-use masonry::core::keyboard::KeyState;
+use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
     AccessCtx, AccessEvent, ActionCtx, ChildrenIds, ErasedAction, EventCtx, LayoutCtx, MeasureCtx,
     NewWidget, PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut,
@@ -164,6 +164,15 @@ impl Widget for ContextMenuArea {
             return;
         };
         if key.state != KeyState::Down {
+            return;
+        }
+        // Tab dismisses (closes) the menu and is left unhandled so focus moves
+        // on in tab order (WAI-ARIA menu pattern). The child's Dismissed action
+        // bubbles to `on_action`, which clears `open`.
+        if matches!(key.key, Key::Named(NamedKey::Tab)) {
+            ctx.mutate_child_later(&mut self.menu, |mut w| {
+                MenuPanel::dismiss(&mut w);
+            });
             return;
         }
         if let Some(menu_key) = menu_key_from(&key.key) {
@@ -452,6 +461,123 @@ mod tests {
             h.focused_widget_id(),
             Some(root_id),
             "the area must take focus so it can forward navigation keys"
+        );
+    }
+
+    /// WAI-ARIA menu pattern: Tab dismisses (closes) the open menu, and the
+    /// key is left unhandled so focus continues in document tab order.
+    #[test]
+    fn tab_dismisses_and_closes_the_area() {
+        use masonry::core::keyboard::{Key, NamedKey};
+        use masonry::core::{NewWidget, TextEvent, Widget as _};
+        use masonry::layout::AsUnit;
+        use masonry::testing::TestHarness;
+        use masonry::theme::default_property_set;
+        use masonry::widgets::{Label, SizedBox};
+        use xilem::view::PointerButton;
+
+        use crate::Theme;
+        use crate::components::context_menu::widget::{MenuPanel, MenuRowSpec};
+
+        let theme = Theme::default();
+        let row = |id: usize, label: &str| MenuRowSpec::Action {
+            id,
+            label: label.into(),
+            subtitle: None,
+            icon: None,
+            shortcut: None,
+            checked: None,
+            disabled: false,
+        };
+        let content = SizedBox::new(Label::new("area").prepare().erased())
+            .width(200.0.px())
+            .height(120.0.px())
+            .prepare()
+            .erased();
+        let menu = MenuPanel::new(vec![row(0, "Copy"), row(1, "Paste")], &theme).hosted();
+        let area = ContextMenuArea::new(content, NewWidget::new(menu));
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(area));
+
+        h.mouse_move(Point::new(40.0, 30.0));
+        h.mouse_button_press(Some(PointerButton::Secondary));
+        h.mouse_button_release(Some(PointerButton::Secondary));
+        assert!(
+            h.edit_root_widget(|wm| wm.widget.open),
+            "right-click must open the menu"
+        );
+
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
+        assert!(
+            !h.edit_root_widget(|wm| wm.widget.open),
+            "Tab must dismiss (close) the menu"
+        );
+    }
+
+    /// The right-click area advertises `aria-haspopup=menu` so assistive tech
+    /// knows it opens a menu, and reflects its open/closed state via
+    /// `aria-expanded`. (The behavior shipped with #41; this pins it against
+    /// regression, closing the a11y test gap called out in #78.)
+    #[test]
+    fn area_advertises_has_popup_menu_and_expanded_state() {
+        use masonry::accesskit::HasPopup;
+        use masonry::core::{NewWidget, Widget as _};
+        use masonry::layout::AsUnit;
+        use masonry::testing::TestHarness;
+        use masonry::theme::default_property_set;
+        use masonry::widgets::{Label, SizedBox};
+        use xilem::view::PointerButton;
+
+        use crate::Theme;
+        use crate::components::context_menu::widget::{MenuPanel, MenuRowSpec};
+
+        let theme = Theme::default();
+        let content = SizedBox::new(Label::new("area").prepare().erased())
+            .width(200.0.px())
+            .height(120.0.px())
+            .prepare()
+            .erased();
+        let menu = MenuPanel::new(
+            vec![MenuRowSpec::Action {
+                id: 0,
+                label: "Copy".into(),
+                subtitle: None,
+                icon: None,
+                shortcut: None,
+                checked: None,
+                disabled: false,
+            }],
+            &theme,
+        )
+        .hosted();
+        let area = ContextMenuArea::new(content, NewWidget::new(menu));
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(area));
+        let root = h.root_id();
+        h.redraw();
+
+        let node = h
+            .access_node(root)
+            .expect("area exposes an accessibility node");
+        assert_eq!(
+            node.data().has_popup(),
+            Some(HasPopup::Menu),
+            "the area must advertise that it opens a menu"
+        );
+        assert_eq!(
+            node.data().is_expanded(),
+            Some(false),
+            "closed by default → not expanded"
+        );
+
+        // Opening the menu flips aria-expanded to true.
+        h.mouse_move(Point::new(40.0, 30.0));
+        h.mouse_button_press(Some(PointerButton::Secondary));
+        h.mouse_button_release(Some(PointerButton::Secondary));
+        h.redraw();
+        let node = h.access_node(root).expect("area node after open");
+        assert_eq!(
+            node.data().is_expanded(),
+            Some(true),
+            "aria-expanded reflects the open menu"
         );
     }
 }
