@@ -175,6 +175,43 @@ impl ColumnStrip {
         }
     }
 
+    /// The strip's footprint along `axis` for a given [`LenReq`], the pure
+    /// core of the [`measure`](Widget::measure) hook (which just forwards to
+    /// it). Footprint is dictated entirely by the column widths (main axis)
+    /// and the fixed row height (cross axis) — never the children or the
+    /// layout ctx — so every strip with the same widths reports the same
+    /// total width regardless of cell content, and this is unit-testable on
+    /// its own.
+    ///
+    /// The `MinContent`/`MaxContent` vs `FitContent` split on the main axis
+    /// is what keeps the header, body, and filter strips aligned:
+    ///
+    /// - Intrinsic width (`MinContent`/`MaxContent`) is the columns' natural
+    ///   total. It drives the portal's content size and horizontal scroll
+    ///   extent, so it must NOT include any fill.
+    /// - `FitContent` fills to the allocated space when it's wider than the
+    ///   natural total. The body's `VirtualScroll` measures each row with
+    ///   `FitContent(viewport)`, so without this a body row would report
+    ///   `base_total` and refuse to fill while the header (allocated the
+    ///   width directly) does — the two would then misalign. Narrower space ⇒
+    ///   natural total (overflow → scroll).
+    fn measured_length(&self, axis: Axis, len_req: LenReq) -> Length {
+        match axis {
+            Axis::Horizontal => {
+                let base_total: f64 = self.widths.iter().sum();
+                match len_req {
+                    LenReq::MinContent | LenReq::MaxContent => Length::px(base_total),
+                    LenReq::FitContent(space) => Length::px(space.get().max(base_total)),
+                }
+            }
+            Axis::Vertical => match len_req {
+                LenReq::FitContent(_) | LenReq::MaxContent | LenReq::MinContent => {
+                    Length::px(self.row_height)
+                }
+            },
+        }
+    }
+
     /// Returns the column index whose trailing boundary is within
     /// [`GRAB_ZONE`] of `x`. Every column's trailing boundary is a drag
     /// target — including the last one (the strip's outer right edge),
@@ -446,34 +483,10 @@ impl Widget for ColumnStrip {
         len_req: LenReq,
         _cross_length: Option<Length>,
     ) -> Length {
-        // Footprint is dictated entirely by the column widths (main axis)
-        // and the fixed row height (cross axis) — never the children. So
-        // every strip with the same widths reports the same total width,
-        // regardless of cell content.
-        match axis {
-            Axis::Horizontal => {
-                let base_total: f64 = self.widths.iter().sum();
-                match len_req {
-                    // Intrinsic width is the columns' natural total — this is
-                    // what drives the portal's content size and horizontal
-                    // scroll extent, so it must NOT include any fill.
-                    LenReq::MinContent | LenReq::MaxContent => Length::px(base_total),
-                    // Fill to the allocated space when it's wider than the
-                    // natural total. The body's `VirtualScroll` measures each
-                    // row with `FitContent(viewport)`, so without this a body
-                    // row would report `base_total` and refuse to fill while
-                    // the header (allocated the width directly) does — the two
-                    // would then misalign. Narrower space ⇒ natural total
-                    // (overflow → scroll).
-                    LenReq::FitContent(space) => Length::px(space.get().max(base_total)),
-                }
-            }
-            Axis::Vertical => match len_req {
-                LenReq::FitContent(_) | LenReq::MaxContent | LenReq::MinContent => {
-                    Length::px(self.row_height)
-                }
-            },
-        }
+        // The footprint depends only on the strip's own widths/row height and
+        // the request — never on a child or the ctx — so the logic lives in a
+        // pure helper that can be unit-tested without a `MeasureCtx`.
+        self.measured_length(axis, len_req)
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
@@ -965,7 +978,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{ColumnStrip, GRAB_ZONE, cell_layout_width};
+    use super::{Axis, ColumnStrip, GRAB_ZONE, LenReq, Length, cell_layout_width};
 
     fn approx(a: f64, b: f64) -> bool {
         (a - b).abs() < 1e-9
@@ -1030,6 +1043,66 @@ mod tests {
         strip.fill_surplus = 50.0;
         assert!(approx(strip.col_width(0), 100.0));
         assert!(approx(strip.col_width(1), 120.0));
+    }
+
+    #[test]
+    fn measured_width_intrinsic_is_the_columns_natural_total() {
+        // MinContent/MaxContent must report the columns' natural total and
+        // never any fill — this is the portal's content size + horizontal
+        // scroll extent. Fill here would break scrolling on a narrow viewport.
+        let strip = strip_with_widths(vec![80.0, 100.0, 60.0]);
+        assert!(approx(
+            strip.measured_length(Axis::Horizontal, LenReq::MinContent).get(),
+            240.0,
+        ));
+        assert!(approx(
+            strip.measured_length(Axis::Horizontal, LenReq::MaxContent).get(),
+            240.0,
+        ));
+    }
+
+    #[test]
+    fn measured_width_fits_content_fills_wider_allocation() {
+        // FitContent wider than the natural total fills to the allocation, so
+        // a body row (measured `FitContent(viewport)`) lines up with the
+        // header (allocated the width directly) instead of stopping short.
+        let strip = strip_with_widths(vec![80.0, 100.0, 60.0]);
+        assert!(approx(
+            strip
+                .measured_length(Axis::Horizontal, LenReq::FitContent(Length::px(400.0)))
+                .get(),
+            400.0,
+        ));
+    }
+
+    #[test]
+    fn measured_width_fits_content_floors_at_the_natural_total() {
+        // A narrower allocation ⇒ natural total, so the strip overflows and
+        // scrolls rather than crushing the columns below their widths.
+        let strip = strip_with_widths(vec![80.0, 100.0, 60.0]);
+        assert!(approx(
+            strip
+                .measured_length(Axis::Horizontal, LenReq::FitContent(Length::px(120.0)))
+                .get(),
+            240.0,
+        ));
+    }
+
+    #[test]
+    fn measured_height_is_the_fixed_row_height_for_every_request() {
+        // The cross axis is the fixed row height regardless of the request —
+        // cell content can never grow (or shrink) a strip's row.
+        let strip = strip_with_widths(vec![80.0, 100.0]);
+        for len_req in [
+            LenReq::MinContent,
+            LenReq::MaxContent,
+            LenReq::FitContent(Length::px(500.0)),
+        ] {
+            assert!(approx(
+                strip.measured_length(Axis::Vertical, len_req).get(),
+                20.0,
+            ));
+        }
     }
 
     #[test]
