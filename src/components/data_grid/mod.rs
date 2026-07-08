@@ -136,6 +136,30 @@
 //! it's dragged; the host stores it in `ColumnWidths` (clamped to
 //! [`width::MIN_COLUMN_WIDTH`]) and passes the snapshot back.
 //!
+//! ### Viewport fill (flex columns)
+//!
+//! By default columns are fixed-width and the grid scrolls horizontally
+//! when their total exceeds the viewport. Give a column a **flex weight**
+//! ([`ColumnDef::flex`](column::ColumnDef::flex)) — the CSS `flex-grow` /
+//! AG-Grid `flex` numeric convention — and it grows to absorb surplus width
+//! when the grid is *wider* than the columns' natural total, sharing that
+//! surplus with the other flex columns in proportion to their weights
+//! (`ColumnDef` width acts as the flex-basis). When the viewport is
+//! narrower than the natural total the grid falls back to scrolling, so
+//! `.flex(..)` means "fill the extra space, don't waste it" without giving
+//! up horizontal scroll on small screens. Fill is **opt-in**: with no flex
+//! column the *layout* is exactly as above (fixed widths + scroll).
+//!
+//! One thing is **not** gated on flex: the horizontal scrollbar auto-hides
+//! (`OnActivity`) on every grid — flex or not. That's a deliberate chrome
+//! choice (the app-wide scroll convention), independent of fill and applied
+//! uniformly; it changes when the bar is *drawn*, never the column geometry.
+//!
+//! Flex and resize compose: **a width override pins a column to fixed**
+//! (its flex weight is dropped), and since a drag writes an override,
+//! resizing a flex column pins it (AG-Grid's behavior). Clearing the
+//! override — e.g. a "reset columns" action — restores its flex.
+//!
 //! ## Known limitations (v1)
 //!
 //! - **Shift-extend across not-yet-loaded rows.** Shift-extend now
@@ -149,9 +173,10 @@
 //! - **Column pin / freeze** (a frozen identifier column while metric
 //!   columns scroll) is not implemented — deliberately deferred.
 //! - Columns start at their `ColumnDef` width and can be drag-resized
-//!   (see [`width::ColumnWidths`]); the grid scrolls horizontally when
-//!   the total exceeds the viewport. Width auto-fit (double-click to fit
-//!   content) is not implemented yet.
+//!   (see [`width::ColumnWidths`]) or flex to fill the viewport (see
+//!   *Viewport fill* above); the grid scrolls horizontally when the natural
+//!   total exceeds the viewport. Width auto-fit (double-click to size a
+//!   column to its content) is not implemented yet.
 
 pub mod column;
 pub mod column_strip;

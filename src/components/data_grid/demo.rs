@@ -34,6 +34,7 @@ use super::width::ColumnWidths;
 use crate::Theme;
 use crate::collection::ScrollState;
 use crate::collection::SelectionState;
+use crate::layout::flex_wrap;
 
 const START_PRICE_UNITS: i64 = 100_000_000_000; // $100.00 in 1e-9 units.
 const TICK_INTERVAL_NS: i64 = 100_000_000; // 100 ms between synthetic trades.
@@ -250,6 +251,9 @@ impl Demo {
     /// Resets the column layout to every column in natural order.
     pub fn reset_columns(&mut self) {
         self.column_order = None;
+        // Also clear width overrides, so a resized (and thus pinned) flex
+        // column like `Exchange` un-pins and resumes filling.
+        self.column_widths.clear_all();
     }
 
     /// Recomputes [`Self::visible`] as the host-ordered view: filter
@@ -455,9 +459,15 @@ pub fn tick_columns<State: 'static>(base_time_ns: i64) -> Vec<ColumnDef<DemoTick
             t.price_units
                 .saturating_mul(i64::try_from(t.size.unwrap_or(0)).unwrap_or(0))
         }),
+        // #111 demo: `Exchange` flexes, so when the grid is wider than its
+        // columns' natural total the surplus grows this column (rather than
+        // leaving a gutter); when narrower, the grid scrolls as before. It's
+        // not the last column, showing the fill targets the flex column, not
+        // just the trailing edge.
         text_column("Exchange", 120.0, CellAlign::Start, |t: &DemoTick| {
             demo_exchange(t.event_ns).to_string()
         })
+        .flex(1.0)
         .filterable_by_text(|t: &DemoTick| demo_exchange(t.event_ns).to_string()),
         text_column("VWAP", 100.0, CellAlign::End, |t: &DemoTick| {
             #[expect(clippy::cast_precision_loss, reason = "Display only")]
@@ -949,7 +959,11 @@ fn build_toolbar(
     notional_shown: bool,
     row_count: u64,
 ) -> impl WidgetView<Demo> + use<> {
-    flex_row((
+    // `flex_wrap` (not `flex_row`) so the toolbar's buttons wrap to more
+    // rows at narrow widths instead of forcing the whole panel — and the
+    // grid — wider than the window (which would push the grid's horizontal
+    // scrollbar off-screen). The app-wide pattern for wide button strips.
+    flex_wrap((
         crate::components::button::button(|s: &mut Demo| {
             s.append_n(100);
         })
@@ -980,7 +994,6 @@ fn build_toolbar(
         })
         .label("Jump to 50k")
         .render(theme),
-        FlexSpacer::Flex(1.0),
         crate::components::button::button(move |s: &mut Demo| {
             s.toggle_column(&ColumnId::from("Notional"));
         })
@@ -1000,14 +1013,13 @@ fn build_toolbar(
         })
         .label("Reset cols")
         .render(theme),
-        FlexSpacer::Flex(1.0),
         crate::label(format!("{row_count} rows"))
             .text_size(theme.typography.size_caption)
             .color(theme.palette.text_muted)
             .render(theme),
     ))
     .cross_axis_alignment(CrossAxisAlignment::Center)
-    .gap(Length::px(8.0))
+    .gap(8.0)
 }
 
 fn build_inner(theme: &Theme, demo: &Demo) -> impl WidgetView<Demo> + use<> {
