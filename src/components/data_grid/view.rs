@@ -787,6 +787,9 @@ where
     // Auto-hide the horizontal scrollbar (`OnActivity`) — the app-wide
     // convention every scroll surface uses. The `scroll_container` default is
     // `AlwaysVisible`, which would leave a heavy always-on bar under the grid.
+    // Unlike `.fill` (gated on `has_flex`), this applies to *every* grid: it's
+    // a deliberate chrome change, orthogonal to fill, so a non-flex grid keeps
+    // its exact column layout but no longer carries an always-on bar.
     let inner = scroll_container(stack.boxed())
         .constrain_vertical(true)
         .fill(has_flex)

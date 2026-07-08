@@ -148,7 +148,12 @@
 //! narrower than the natural total the grid falls back to scrolling, so
 //! `.flex(..)` means "fill the extra space, don't waste it" without giving
 //! up horizontal scroll on small screens. Fill is **opt-in**: with no flex
-//! column the layout is exactly as above (fixed widths + scroll).
+//! column the *layout* is exactly as above (fixed widths + scroll).
+//!
+//! One thing is **not** gated on flex: the horizontal scrollbar auto-hides
+//! (`OnActivity`) on every grid — flex or not. That's a deliberate chrome
+//! choice (the app-wide scroll convention), independent of fill and applied
+//! uniformly; it changes when the bar is *drawn*, never the column geometry.
 //!
 //! Flex and resize compose: **a width override pins a column to fixed**
 //! (its flex weight is dropped), and since a drag writes an override,
