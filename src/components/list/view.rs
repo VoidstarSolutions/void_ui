@@ -345,6 +345,9 @@ where
             lazy,
             render_row,
             leading_hit_zone: None,
+            // `list` does not expose row activation yet; Enter falls back to
+            // selection via the substrate.
+            on_activate: None,
             theme,
         });
         if loading && item_count > 0 {
