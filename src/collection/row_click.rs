@@ -66,6 +66,11 @@ pub enum RowInteraction {
     /// Enter on the focused row — *activate* ("open"). Carries the event
     /// modifiers for symmetry, though activation is modifier-agnostic today.
     Activate(RowClickAction),
+    /// Right on a collapsed parent, or Left on an expanded parent — *toggle*
+    /// the row's expansion (WAI-ARIA treegrid). Emitted only by expandable
+    /// rows that carry [`TreeRowMeta`]; the view routes it to the host's
+    /// expansion toggle.
+    Toggle,
 }
 
 /// Which host callback a [`RowInteraction`] resolves to, once the row's
@@ -79,14 +84,18 @@ enum RowDispatch {
     Select(RowClickAction),
     /// Run the activation callback (only possible when one is wired).
     Activate,
+    /// Run the expansion-toggle callback (an expandable row's Right/Left).
+    Toggle,
 }
 
 /// Resolves a [`RowInteraction`] to the callback that should fire. `Select`
 /// always selects; `Activate` activates only when the row has a handler
 /// (`has_activate`), otherwise it falls back to selection so keyboard
-/// operation never regresses when no handler is wired.
+/// operation never regresses when no handler is wired; `Toggle` routes to the
+/// expansion handler.
 fn classify_interaction(interaction: RowInteraction, has_activate: bool) -> RowDispatch {
     match interaction {
+        RowInteraction::Toggle => RowDispatch::Toggle,
         // A wired Enter activates; everything else (any click/Space, or an
         // unwired Enter) selects — the fallback that keeps keyboard operation
         // intact when no activation handler is present.
@@ -140,6 +149,21 @@ impl LeadingHitZone {
     }
 }
 
+/// Per-row tree metadata a collection attaches to an expandable row so the row
+/// can answer directional (Right/Left) keyboard navigation locally: whether it
+/// is an expandable parent, its expand state, and its tree depth. `None` on a
+/// [`RowClickable`] means a plain, non-tree row (Right/Left do nothing here and
+/// bubble to the collection body for focus movement).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TreeRowMeta {
+    /// 0-based tree depth (used by focus-to-parent navigation).
+    pub depth: u16,
+    /// Whether this row has children (i.e. is an expandable parent, not a leaf).
+    pub has_children: bool,
+    /// Whether this parent row is currently expanded.
+    pub is_expanded: bool,
+}
+
 /// Single-child wrapper that emits a [`RowInteraction`] on primary-button
 /// release, Space (select), or Enter (activate) inside its bounds.
 pub struct RowClickable {
@@ -172,6 +196,11 @@ pub struct RowClickable {
     /// positions (a leaf slot may later render a parent), so every row in a
     /// collection that *can* defer must propagate — see [`Self::new`].
     propagates_pointer: bool,
+    /// Tree metadata for directional keyboard nav, set by an expandable
+    /// collection. `Some` on a tree row lets Right/Left act locally (toggle
+    /// expansion); `None` on a plain row leaves Right/Left to bubble up. See
+    /// [`TreeRowMeta`] and [`Self::on_text_event`].
+    tree_meta: Option<TreeRowMeta>,
 }
 
 // --- MARK: BUILDERS
@@ -188,6 +217,7 @@ impl RowClickable {
         theme: &Theme,
         leading_hit: Option<LeadingHitZone>,
         propagates_pointer: bool,
+        tree_meta: Option<TreeRowMeta>,
     ) -> Self {
         Self {
             child: child.erased().to_pod(),
@@ -195,6 +225,7 @@ impl RowClickable {
             theme: *theme,
             leading_hit,
             propagates_pointer,
+            tree_meta,
         }
     }
 }
@@ -228,6 +259,25 @@ impl RowClickable {
     /// or relayout is requested.
     pub fn set_leading_hit(this: &mut WidgetMut<'_, Self>, zone: Option<LeadingHitZone>) {
         this.widget.leading_hit = zone;
+    }
+
+    /// Updates the row's [`TreeRowMeta`] (expand state / depth), driving what
+    /// Right/Left do on the focused row. Cheap: it only affects the next key
+    /// press, so no repaint or relayout is requested.
+    pub fn set_tree_meta(this: &mut WidgetMut<'_, Self>, meta: Option<TreeRowMeta>) {
+        this.widget.tree_meta = meta;
+    }
+}
+
+impl RowClickable {
+    /// Whether a directional key should *toggle* this row's expansion — true
+    /// only for an expandable parent whose current expand state matches
+    /// `expanded`. Right acts on a collapsed parent (`expanded == false`), Left
+    /// on an expanded one (`expanded == true`); leaves and plain rows never
+    /// toggle, so their Right/Left bubble up for focus movement.
+    fn toggles_on(&self, expanded: bool) -> bool {
+        self.tree_meta
+            .is_some_and(|m| m.has_children && m.is_expanded == expanded)
     }
 }
 
@@ -292,6 +342,15 @@ impl Widget for RowClickable {
             Key::Character(s) if s == " " => {
                 RowInteraction::Select(row_click_action(key.modifiers))
             }
+            // WAI-ARIA treegrid: Right on a collapsed parent expands it, Left
+            // on an expanded parent collapses it — a *toggle* the row can
+            // decide locally from its own tree metadata. The other Right/Left
+            // cases (Right on an expanded parent → first child, Left on a
+            // child → parent) are focus movement the row can't do (it doesn't
+            // know row order), so they're deliberately left unhandled to bubble
+            // to `CollectionBodyWidget`.
+            Key::Named(NamedKey::ArrowRight) if self.toggles_on(false) => RowInteraction::Toggle,
+            Key::Named(NamedKey::ArrowLeft) if self.toggles_on(true) => RowInteraction::Toggle,
             _ => return,
         };
         ctx.submit_action::<Self::Action>(interaction);
@@ -407,6 +466,11 @@ use xilem::{Pod, ViewCtx, WidgetView};
 /// has no activation handler, so Enter falls back to selection.
 type RowActivate<State> = Arc<dyn Fn(&mut State) + Send + Sync>;
 
+/// Boxed row-expansion toggle handler, run when Right/Left toggles an
+/// expandable row. The row id is baked in by the caller, so it only needs
+/// `&mut State`. `None` means the row can't be toggled by keyboard.
+type RowToggle<State> = Arc<dyn Fn(&mut State) + Send + Sync>;
+
 /// Wraps a child view in `RowClickable` and routes its [`RowInteraction`]
 /// through the supplied callbacks: a pointer click or Space runs `on_click`
 /// (selection); Enter runs the optional `on_activate` (activation), or falls
@@ -439,6 +503,12 @@ pub struct ClickableRow<V, State, Action, F> {
     /// child. Collection-level, not per-row (see [`RowClickable::new`]).
     propagates_pointer: bool,
     on_activate: Option<RowActivate<State>>,
+    /// See [`RowClickable::tree_meta`]. `None` by default (plain row); set via
+    /// [`Self::tree_meta`] on an expandable row so Right/Left can toggle it.
+    tree_meta: Option<TreeRowMeta>,
+    /// Expansion-toggle handler for Right/Left on an expandable row; `None` by
+    /// default. Set via [`Self::on_toggle`].
+    on_toggle: Option<RowToggle<State>>,
     phantom: PhantomData<fn() -> (State, Action)>,
 }
 
@@ -467,6 +537,8 @@ where
         leading_hit: None,
         propagates_pointer: false,
         on_activate: None,
+        tree_meta: None,
+        on_toggle: None,
         phantom: PhantomData,
     }
 }
@@ -509,6 +581,25 @@ impl<V, State, Action, F> ClickableRow<V, State, Action, F> {
         self.on_activate = Some(Arc::new(on_activate));
         self
     }
+
+    /// Attaches [`TreeRowMeta`] so Right/Left act on this row as a tree node —
+    /// Right expands a collapsed parent, Left collapses an expanded one (via
+    /// [`Self::on_toggle`]). `None` (the default) leaves the row plain.
+    pub fn tree_meta(mut self, meta: Option<TreeRowMeta>) -> Self {
+        self.tree_meta = meta;
+        self
+    }
+
+    /// Sets the row's expansion-toggle handler, run when Right/Left toggles an
+    /// expandable row (see [`Self::tree_meta`]). The row id is the caller's to
+    /// bake into `on_toggle`.
+    pub fn on_toggle(mut self, on_toggle: impl Fn(&mut State) + Send + Sync + 'static) -> Self
+    where
+        State: 'static,
+    {
+        self.on_toggle = Some(Arc::new(on_toggle));
+        self
+    }
 }
 
 impl<V, State, Action, F> ViewMarker for ClickableRow<V, State, Action, F> {}
@@ -531,6 +622,7 @@ where
             &self.theme,
             self.leading_hit,
             self.propagates_pointer,
+            self.tree_meta,
         );
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, child_state)
@@ -552,6 +644,9 @@ where
         }
         if self.leading_hit != prev.leading_hit {
             RowClickable::set_leading_hit(&mut element, self.leading_hit);
+        }
+        if self.tree_meta != prev.tree_meta {
+            RowClickable::set_tree_meta(&mut element, self.tree_meta);
         }
         let mut child = RowClickable::child_mut(&mut element);
         self.child
@@ -597,6 +692,11 @@ where
                             on_activate(app_state);
                         }
                     }
+                    RowDispatch::Toggle => {
+                        if let Some(on_toggle) = self.on_toggle.as_ref() {
+                            on_toggle(app_state);
+                        }
+                    }
                 }
             }
             return MessageResult::Action(Action::default());
@@ -630,7 +730,7 @@ mod tests {
     use masonry::widgets::Label;
 
     use super::{
-        LeadingHitZone, RowClickAction, RowClickable, RowDispatch, RowInteraction,
+        LeadingHitZone, RowClickAction, RowClickable, RowDispatch, RowInteraction, TreeRowMeta,
         classify_interaction,
     };
     use crate::Theme;
@@ -648,8 +748,36 @@ mod tests {
         let child = NewWidget::new(Label::new("row"));
         // Pointer propagation is orthogonal to these selection-guard tests
         // (the child is an inert label); `true` mirrors an expandable row.
-        let widget = RowClickable::new(child, false, &Theme::default(), zone, true);
+        let widget = RowClickable::new(child, false, &Theme::default(), zone, true, None);
         TestHarness::create_with_size(default_property_set(), NewWidget::new(widget), (120, 24))
+    }
+
+    /// A `RowClickable` carrying [`TreeRowMeta`] (an expandable tree row), for
+    /// exercising the Right/Left toggle intents.
+    fn tree_harness(has_children: bool, is_expanded: bool) -> TestHarness<RowClickable> {
+        let child = NewWidget::new(Label::new("row"));
+        let meta = TreeRowMeta {
+            depth: 0,
+            has_children,
+            is_expanded,
+        };
+        let widget = RowClickable::new(child, false, &Theme::default(), None, true, Some(meta));
+        let mut harness = TestHarness::create_with_size(
+            default_property_set(),
+            NewWidget::new(widget),
+            (120, 24),
+        );
+        let root = harness.root_widget().id();
+        harness.focus_on(Some(root));
+        harness
+    }
+
+    fn press_arrow(
+        harness: &mut TestHarness<RowClickable>,
+        key: NamedKey,
+    ) -> Option<RowInteraction> {
+        harness.process_text_event(key_down(Key::Named(key), Modifiers::empty()));
+        harness.pop_action::<RowInteraction>().map(|(a, _)| a)
     }
 
     /// A leading-edge zone `[0, width)` — the row-action / #97 shape (offset
@@ -891,6 +1019,7 @@ mod tests {
             &Theme::default(),
             None,
             propagates,
+            None,
         );
         let mut harness = TestHarness::create_with_size(
             default_property_set(),
@@ -941,5 +1070,73 @@ mod tests {
             "an opaque row must not forward the press to its children",
         );
         assert!(selected, "the row itself still selects");
+    }
+
+    /// A dispatch-level check: a `Toggle` intent routes to the expansion
+    /// handler, independent of whether an activation handler is wired.
+    #[test]
+    fn toggle_intent_dispatches_to_toggle() {
+        assert_eq!(
+            classify_interaction(RowInteraction::Toggle, true),
+            RowDispatch::Toggle,
+        );
+        assert_eq!(
+            classify_interaction(RowInteraction::Toggle, false),
+            RowDispatch::Toggle,
+        );
+    }
+
+    /// WAI-ARIA treegrid: Right on a **collapsed** parent emits `Toggle`
+    /// (expand); Left on a collapsed parent does not (it's a focus-to-parent
+    /// move the row leaves to the collection body).
+    #[test]
+    fn right_toggles_a_collapsed_parent_left_does_not() {
+        let mut harness = tree_harness(true, false);
+        assert_eq!(
+            press_arrow(&mut harness, NamedKey::ArrowRight),
+            Some(RowInteraction::Toggle),
+            "Right on a collapsed parent expands it",
+        );
+        assert_eq!(
+            press_arrow(&mut harness, NamedKey::ArrowLeft),
+            None,
+            "Left on a collapsed parent is focus movement — not the row's job",
+        );
+    }
+
+    /// Left on an **expanded** parent emits `Toggle` (collapse); Right on an
+    /// expanded parent does not (it's a focus-to-first-child move).
+    #[test]
+    fn left_toggles_an_expanded_parent_right_does_not() {
+        let mut harness = tree_harness(true, true);
+        assert_eq!(
+            press_arrow(&mut harness, NamedKey::ArrowLeft),
+            Some(RowInteraction::Toggle),
+            "Left on an expanded parent collapses it",
+        );
+        assert_eq!(
+            press_arrow(&mut harness, NamedKey::ArrowRight),
+            None,
+            "Right on an expanded parent is focus movement — not the row's job",
+        );
+    }
+
+    /// A leaf row (`has_children` = false) never toggles: both arrows bubble up
+    /// for focus movement.
+    #[test]
+    fn leaf_row_never_toggles() {
+        let mut harness = tree_harness(false, false);
+        assert_eq!(press_arrow(&mut harness, NamedKey::ArrowRight), None);
+        assert_eq!(press_arrow(&mut harness, NamedKey::ArrowLeft), None);
+    }
+
+    /// A plain (non-tree) row with no `TreeRowMeta` ignores Right/Left entirely.
+    #[test]
+    fn plain_row_ignores_arrows() {
+        let mut harness = harness();
+        let root = harness.root_widget().id();
+        harness.focus_on(Some(root));
+        assert_eq!(press_arrow(&mut harness, NamedKey::ArrowRight), None);
+        assert_eq!(press_arrow(&mut harness, NamedKey::ArrowLeft), None);
     }
 }

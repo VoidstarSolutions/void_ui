@@ -46,7 +46,7 @@ use crate::collection::ScrollState;
 use crate::collection::SelectionState;
 use crate::collection::{
     CollectionBodyParams, IdSource, ItemsFn, Lazy, LeadingHitZone, LeadingHitZoneFn, OnActivate,
-    RenderRow, SelectionLens, collection_body,
+    OnToggle, RenderRow, SelectionLens, TreeMetaFn, TreeRowMeta, collection_body,
 };
 use crate::components::icon::disclosure_chevron;
 use crate::components::scroll_container::{ScrollBarVisibility, scroll_container};
@@ -1321,6 +1321,26 @@ where
         f
     });
 
+    // Per-row tree metadata for keyboard nav (Right/Left) + the expansion
+    // toggle handler, both derived from the same `ExpandableConfig` closures.
+    // Every tree row carries meta (depth is needed even for leaves, by
+    // focus-to-parent nav); `has_children` distinguishes parents from leaves.
+    let tree_meta: Option<TreeMetaFn<R>> = expandable.as_ref().map(|cfg| {
+        let is_expanded = Arc::clone(&cfg.is_expanded);
+        let has_children = Arc::clone(&cfg.has_children);
+        let depth = Arc::clone(&cfg.depth);
+        let f: TreeMetaFn<R> = Arc::new(move |row: &R| {
+            Some(TreeRowMeta {
+                depth: depth(row),
+                has_children: has_children(row),
+                is_expanded: is_expanded(row),
+            })
+        });
+        f
+    });
+    let on_toggle: Option<OnToggle<State>> =
+        expandable.as_ref().map(|cfg| Arc::clone(&cfg.on_toggle));
+
     // Per-row CONTENT only: the cell strip. `collection_body` wraps this
     // with the selection background (`surface_2` when selected) and the
     // `clickable_row` selection routing, so this closure neither styles
@@ -1373,6 +1393,8 @@ where
         render_row,
         leading_hit_zone,
         on_activate,
+        tree_meta,
+        on_toggle,
         theme,
     })
 }

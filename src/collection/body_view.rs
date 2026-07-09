@@ -16,7 +16,7 @@ use xilem::view::{label, sized_box, virtual_scroll};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::body::CollectionBodyWidget;
-use super::row_click::{LeadingHitZone, RowClickAction, clickable_row};
+use super::row_click::{LeadingHitZone, RowClickAction, TreeRowMeta, clickable_row};
 use super::{
     IdSource, ItemsFn, OnActivate, ScrollState, SelectionLens, apply_row_activate, apply_row_click,
     clamp_scroll_index, nearing_end, scroll_idx_to_slice, scroll_range_end,
@@ -33,6 +33,17 @@ pub(crate) type RenderRow<State, Item> =
 /// reserves nothing. See
 /// [`ClickableRow::leading_hit`](super::row_click::ClickableRow::leading_hit).
 pub(crate) type LeadingHitZoneFn<Item> = Arc<dyn Fn(&Item) -> Option<LeadingHitZone> + Send + Sync>;
+
+/// Per-item tree metadata (`item -> meta`) for keyboard tree navigation.
+/// `data_grid`'s expandable rows supply one so Right/Left can toggle a row's
+/// expansion (and, later, move focus by depth). See
+/// [`ClickableRow::tree_meta`](super::row_click::ClickableRow::tree_meta).
+pub(crate) type TreeMetaFn<Item> = Arc<dyn Fn(&Item) -> Option<TreeRowMeta> + Send + Sync>;
+
+/// Host row-expansion toggle callback: `(state, row_id)`, run when Right/Left
+/// toggles an expandable row. Same shape as [`OnActivate`]; the substrate
+/// resolves the row's stable id and hands it in.
+pub(crate) type OnToggle<State> = Arc<dyn Fn(&mut State, u64) + Send + Sync>;
 
 /// Lazy-load config: fire `callback` when the active range comes within
 /// `threshold` items of the end.
@@ -58,6 +69,12 @@ pub(crate) struct CollectionBodyParams<State, Item, Action> {
     /// Optional row-activation handler (Enter on the focused row). `None`
     /// leaves Enter falling back to selection.
     pub(crate) on_activate: Option<OnActivate<State>>,
+    /// Optional per-row tree metadata for keyboard tree nav (Right/Left).
+    /// `None` (the common case) leaves rows non-tree.
+    pub(crate) tree_meta: Option<TreeMetaFn<Item>>,
+    /// Optional expansion-toggle handler, paired with `tree_meta`. Run when
+    /// Right/Left toggles an expandable row.
+    pub(crate) on_toggle: Option<OnToggle<State>>,
     pub(crate) theme: Theme,
 }
 
@@ -82,6 +99,8 @@ where
         render_row,
         leading_hit_zone,
         on_activate,
+        tree_meta,
+        on_toggle,
         theme,
     } = params;
     let valid_range_end = scroll_range_end(item_count);
@@ -100,6 +119,8 @@ where
         let render_row = Arc::clone(&render_row);
         let leading_hit_zone = leading_hit_zone.clone();
         let on_activate = on_activate.clone();
+        let tree_meta = tree_meta.clone();
+        let on_toggle = on_toggle.clone();
         move |state: &mut State, idx: i64| {
             let pos = scroll_idx_to_slice(idx);
 
@@ -115,16 +136,20 @@ where
             // Compute the per-row leading defer-to-child hit zone alongside
             // the content, from the same item borrow. An empty (past-end)
             // row reserves nothing.
-            let (content, leading): (Box<AnyWidgetView<State>>, Option<LeadingHitZone>) =
-                match data.get(pos) {
-                    Some(item) => (
-                        render_row(item, is_selected, &theme),
-                        leading_hit_zone.as_ref().and_then(|f| f(item)),
-                    ),
-                    // pos past the end (a row scrolled past a shrinking
-                    // dataset) — render an inert empty row.
-                    None => (Box::new(label("")), None),
-                };
+            let (content, leading, row_tree): (
+                Box<AnyWidgetView<State>>,
+                Option<LeadingHitZone>,
+                Option<TreeRowMeta>,
+            ) = match data.get(pos) {
+                Some(item) => (
+                    render_row(item, is_selected, &theme),
+                    leading_hit_zone.as_ref().and_then(|f| f(item)),
+                    tree_meta.as_ref().and_then(|f| f(item)),
+                ),
+                // pos past the end (a row scrolled past a shrinking
+                // dataset) — render an inert empty row.
+                None => (Box::new(label("")), None, None),
+            };
 
             let row_bg = if is_selected {
                 theme.palette.surface_2
@@ -149,16 +174,29 @@ where
                 }
             })
             .leading_hit(leading)
-            .propagate_pointer_to_children(defers_to_children);
+            .propagate_pointer_to_children(defers_to_children)
+            .tree_meta(row_tree);
             // Enter-activation, only when the host wired a handler: resolve the
             // row's stable id at activate time (mirroring `apply_row_click`) and
             // hand it to the host callback.
-            match on_activate.clone() {
+            let row = match on_activate.clone() {
                 Some(host_on_activate) => {
                     let items = Arc::clone(&items);
                     let id_source = id_source.clone();
                     row.on_activate(move |state: &mut State| {
                         apply_row_activate(state, pos, &items, &id_source, &host_on_activate);
+                    })
+                }
+                None => row,
+            };
+            // Right/Left expansion toggle, only when the host wired one: resolve
+            // the row's stable id at toggle time and hand it to the host.
+            match on_toggle.clone() {
+                Some(host_on_toggle) => {
+                    let items = Arc::clone(&items);
+                    let id_source = id_source.clone();
+                    row.on_toggle(move |state: &mut State| {
+                        apply_row_activate(state, pos, &items, &id_source, &host_on_toggle);
                     })
                 }
                 None => row,
@@ -592,6 +630,8 @@ mod tests {
             render_row,
             leading_hit_zone: None,
             on_activate: Some(Arc::new(|_state: &mut S, _id: u64| {})),
+            tree_meta: None,
+            on_toggle: None,
             theme: Theme::default(),
         });
 
@@ -634,6 +674,8 @@ mod tests {
             render_row,
             leading_hit_zone: None,
             on_activate: None,
+            tree_meta: None,
+            on_toggle: None,
             theme: Theme::default(),
         });
         assert_widget_view(&view);
