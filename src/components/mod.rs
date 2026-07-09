@@ -13,6 +13,7 @@
 //! the host, not a tree walk.
 
 pub(crate) mod access_wrap;
+pub mod action_row;
 pub mod alert;
 pub mod autocomplete;
 pub mod badge;
@@ -51,6 +52,7 @@ pub mod tabs;
 pub mod toggle;
 pub mod tooltip;
 
+pub use action_row::{ActionRow, action_row};
 pub use alert::{Alert, AlertVariant, alert};
 pub use autocomplete::{Autocomplete, autocomplete};
 pub use badge::{Badge, badge, pill};
