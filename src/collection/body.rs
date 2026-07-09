@@ -24,6 +24,12 @@ use super::single_child;
 /// [`RowClickable`](super::row_click::RowClickable)); the cases that reach here
 /// are the focus-movement ones the row can't do because it doesn't know row
 /// order.
+///
+/// Navigation operates over the **materialized** rows (`VirtualScroll` buffers
+/// ~a page beyond the viewport, so adjacent targets are present). A target past
+/// the materialized edge is a no-op — the same behavior as Up/Down. Scrolling
+/// the newly-focused row into view is a deferred, substrate-wide improvement
+/// (covers Up/Down + Left/Right); see issue #136.
 pub(crate) struct CollectionBodyWidget {
     child: WidgetPod<VirtualScrollWidget>,
     /// Per-visible-row tree metadata in materialized order, kept in sync by
@@ -432,5 +438,24 @@ mod tests {
             assert!(!harness.process_text_event(arrow_key(key)).is_handled());
             assert_eq!(harness.focused_widget_id(), Some(ids[&1]));
         }
+    }
+
+    /// Right on an expanded parent at the materialized edge is a no-op: its
+    /// first child (the next row) isn't materialized, so there's nothing to
+    /// focus — the same behavior Down has at the edge. Scrolling an off-screen
+    /// target into view is deferred (#136).
+    #[test]
+    fn tree_nav_to_an_unmaterialized_target_is_a_no_op() {
+        let (mut harness, _scroll, ids) = harness_with_rows();
+        let last_idx = *ids.keys().max().expect("at least one materialized row");
+        // Mark the last materialized row an expanded parent.
+        set_tree(&mut harness, &ids, &[(last_idx, 0, true, true)]);
+        harness.focus_on(Some(ids[&last_idx]));
+        let handled = harness.process_text_event(arrow_key(NamedKey::ArrowRight));
+        assert!(
+            !handled.is_handled(),
+            "no materialized first child → Right no-ops (like Down at the edge)",
+        );
+        assert_eq!(harness.focused_widget_id(), Some(ids[&last_idx]));
     }
 }
