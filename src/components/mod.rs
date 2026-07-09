@@ -126,6 +126,7 @@ pub use tooltip::{Tooltip, TooltipView, tooltip};
 /// Adding a new component is one variant + one dispatch arm in the gallery.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ComponentKind {
+    ActionRow,
     Alert,
     Autocomplete,
     Badge,
@@ -169,6 +170,7 @@ impl ComponentKind {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
+            Self::ActionRow => "Action Row",
             Self::Alert => "Alert",
             Self::Autocomplete => "Autocomplete",
             Self::Badge => "Badge",
@@ -212,6 +214,7 @@ impl ComponentKind {
     #[must_use]
     pub const fn all() -> &'static [Self] {
         &[
+            Self::ActionRow,
             Self::Alert,
             Self::Autocomplete,
             Self::Badge,

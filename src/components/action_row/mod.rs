@@ -9,6 +9,8 @@
 //! Fills the gap `sidebar_item` leaves: it covers a clickable nav row, but not
 //! this dot + label + badge + multiple-trailing-actions shape.
 
+#[cfg(feature = "gallery")]
+pub mod demo;
 mod view;
 
 pub use view::{ActionRow, action_row};
