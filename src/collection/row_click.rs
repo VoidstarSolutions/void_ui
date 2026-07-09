@@ -68,6 +68,35 @@ pub enum RowInteraction {
     Activate(RowClickAction),
 }
 
+/// Which host callback a [`RowInteraction`] resolves to, once the row's
+/// activation-handler presence is known. Split out from the view's message
+/// dispatch so the select/activate/fallback routing is unit-testable without
+/// standing up a live view tree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RowDispatch {
+    /// Run the selection callback with these modifiers — a pointer click,
+    /// Space, or an Enter that fell back for lack of an activation handler.
+    Select(RowClickAction),
+    /// Run the activation callback (only possible when one is wired).
+    Activate,
+}
+
+/// Resolves a [`RowInteraction`] to the callback that should fire. `Select`
+/// always selects; `Activate` activates only when the row has a handler
+/// (`has_activate`), otherwise it falls back to selection so keyboard
+/// operation never regresses when no handler is wired.
+fn classify_interaction(interaction: RowInteraction, has_activate: bool) -> RowDispatch {
+    match interaction {
+        // A wired Enter activates; everything else (any click/Space, or an
+        // unwired Enter) selects — the fallback that keeps keyboard operation
+        // intact when no activation handler is present.
+        RowInteraction::Activate(_) if has_activate => RowDispatch::Activate,
+        RowInteraction::Select(action) | RowInteraction::Activate(action) => {
+            RowDispatch::Select(action)
+        }
+    }
+}
+
 /// Builds a [`RowClickAction`] from a pointer or keyboard event's
 /// [`Modifiers`], applying the platform's action-modifier convention (Cmd on
 /// macOS, Ctrl elsewhere).
@@ -558,14 +587,16 @@ where
         // target"). Same guard as `CopyOnShortcutView` / `CollectionBodyView`.
         if message.remaining_path().is_empty() {
             if let Some(interaction) = message.take_message::<RowInteraction>() {
-                match *interaction {
-                    RowInteraction::Select(action) => (self.on_click)(app_state, action),
-                    RowInteraction::Activate(action) => match self.on_activate.as_ref() {
-                        Some(on_activate) => on_activate(app_state),
-                        // No activation handler wired: Enter falls back to
-                        // selection so keyboard operation never regresses.
-                        None => (self.on_click)(app_state, action),
-                    },
+                match classify_interaction(*interaction, self.on_activate.is_some()) {
+                    RowDispatch::Select(action) => (self.on_click)(app_state, action),
+                    // `classify_interaction` only yields `Activate` when a
+                    // handler is wired, so this `if let` always binds; an
+                    // unwired Enter comes back as `Select` (the fallback).
+                    RowDispatch::Activate => {
+                        if let Some(on_activate) = self.on_activate.as_ref() {
+                            on_activate(app_state);
+                        }
+                    }
                 }
             }
             return MessageResult::Action(Action::default());
@@ -598,7 +629,10 @@ mod tests {
     use masonry::theme::default_property_set;
     use masonry::widgets::Label;
 
-    use super::{LeadingHitZone, RowClickAction, RowClickable, RowInteraction};
+    use super::{
+        LeadingHitZone, RowClickAction, RowClickable, RowDispatch, RowInteraction,
+        classify_interaction,
+    };
     use crate::Theme;
 
     fn key_down(key: Key, modifiers: Modifiers) -> TextEvent {
@@ -673,6 +707,55 @@ mod tests {
         assert_eq!(
             harness.pop_action::<RowInteraction>().map(|(a, _)| a),
             Some(RowInteraction::Activate(RowClickAction::default())),
+        );
+    }
+
+    /// The view-layer dispatch decision, isolated: a `Select` intent always
+    /// selects, regardless of whether an activation handler is wired.
+    #[test]
+    fn select_intent_always_dispatches_to_selection() {
+        let action = RowClickAction {
+            shift: true,
+            action_mod: false,
+        };
+        let intent = RowInteraction::Select(action);
+        assert_eq!(
+            classify_interaction(intent, true),
+            RowDispatch::Select(action),
+        );
+        assert_eq!(
+            classify_interaction(intent, false),
+            RowDispatch::Select(action),
+        );
+    }
+
+    /// With an activation handler wired, Enter dispatches to *activation* —
+    /// not selection.
+    #[test]
+    fn activate_intent_dispatches_to_activation_when_handler_wired() {
+        let intent = RowInteraction::Activate(RowClickAction::default());
+        assert_eq!(
+            classify_interaction(intent, true),
+            RowDispatch::Activate,
+            "a wired handler routes Enter to activation",
+        );
+    }
+
+    /// The regression guard #108 promises: with *no* activation handler, Enter
+    /// falls back to selection (carrying its modifiers) so keyboard operation
+    /// never regresses on grids that don't opt into activation. This is the
+    /// path the live view takes when `on_activate` is `None`.
+    #[test]
+    fn activate_intent_falls_back_to_selection_when_no_handler() {
+        let action = RowClickAction {
+            shift: true,
+            action_mod: true,
+        };
+        let intent = RowInteraction::Activate(action);
+        assert_eq!(
+            classify_interaction(intent, false),
+            RowDispatch::Select(action),
+            "an unwired Enter must fall back to selection, modifiers intact",
         );
     }
 
