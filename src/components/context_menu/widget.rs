@@ -100,6 +100,16 @@ impl MenuRowSpec {
             _ => None,
         }
     }
+
+    /// The visible label used for type-ahead / first-letter navigation — an
+    /// action's or submenu's text; `None` for separators and sections (which
+    /// are never highlightable anyway).
+    fn type_ahead_label(&self) -> Option<ArcStr> {
+        match self {
+            Self::Action { label, .. } | Self::Submenu { label, .. } => Some(label.clone()),
+            _ => None,
+        }
+    }
 }
 
 impl PartialEq for MenuRowSpec {
@@ -171,6 +181,9 @@ pub(crate) enum MenuKey {
     /// Enter / Space — select the highlighted row (or open a submenu).
     Activate,
     Escape,
+    /// Type-ahead: a printable character typed to jump to the next row whose
+    /// label starts with it (WAI-ARIA first-letter navigation).
+    Search(char),
 }
 
 /// What the recursive key walk produced at one menu level, propagated up so the
@@ -214,6 +227,9 @@ struct RowEntry {
     is_submenu: bool,
     /// Global leaf id emitted when this row is selected (action rows only).
     leaf_id: Option<usize>,
+    /// Visible label, kept for type-ahead / first-letter navigation. `None`
+    /// for separators and sections.
+    label: Option<ArcStr>,
     /// Local-coordinate bounds (full panel width), populated during `layout`.
     rect: Rect,
 }
@@ -343,6 +359,39 @@ impl MenuPanel {
         Some(sel[next.cast_unsigned()])
     }
 
+    /// Type-ahead target: the next hoverable row whose label starts with `ch`
+    /// (case-insensitive), scanning forward from the current highlight and
+    /// wrapping. Because the scan starts *after* the current highlight,
+    /// repeated presses of the same letter cycle through the matches. `None`
+    /// when nothing matches.
+    fn search_highlight(&self, ch: char) -> Option<usize> {
+        let needle = ch.to_ascii_lowercase();
+        let sel = self.hoverable_indices();
+        if sel.is_empty() {
+            return None;
+        }
+        // Start just after the current highlight (or at the top) so a repeated
+        // letter advances to the next match rather than sticking.
+        let start = self
+            .highlighted
+            .and_then(|cur| sel.iter().position(|&i| i == cur))
+            .map_or(0, |p| p + 1);
+        let len = sel.len();
+        (0..len)
+            .map(|off| sel[(start + off) % len])
+            .find(|&row| self.row_label_starts_with(row, needle))
+    }
+
+    /// Whether row `row`'s label begins with `needle` (already lowercased),
+    /// compared case-insensitively on the first character.
+    fn row_label_starts_with(&self, row: usize, needle: char) -> bool {
+        self.rows[row]
+            .label
+            .as_ref()
+            .and_then(|l| l.chars().next())
+            .is_some_and(|first| first.to_ascii_lowercase() == needle)
+    }
+
     fn to_local(ctx: &EventCtx<'_>, window_pos: Point) -> Point {
         item_list::to_local(ctx, window_pos)
     }
@@ -366,7 +415,14 @@ pub(crate) fn menu_key_from(key: &Key) -> Option<MenuKey> {
         Key::Named(NamedKey::Enter) => Some(MenuKey::Activate),
         Key::Character(c) if c.as_str() == " " => Some(MenuKey::Activate),
         Key::Named(NamedKey::Escape) => Some(MenuKey::Escape),
-        _ => None,
+        // Any other printable character begins type-ahead (first-letter nav);
+        // its first char is the search key. Control chars are ignored.
+        Key::Character(c) => c
+            .chars()
+            .next()
+            .filter(|ch| !ch.is_control())
+            .map(MenuKey::Search),
+        Key::Named(_) => None,
     }
 }
 
@@ -389,6 +445,7 @@ fn build_rows(specs: impl IntoIterator<Item = MenuRowSpec>, theme: &Theme) -> Ve
             let is_submenu = matches!(spec, MenuRowSpec::Submenu { .. });
             let selectable = spec.selectable();
             let leaf_id = spec.leaf_id();
+            let label = spec.type_ahead_label();
             let set_pos = if spec.is_action() {
                 action_pos += 1;
                 Some((action_pos, action_count))
@@ -405,6 +462,7 @@ fn build_rows(specs: impl IntoIterator<Item = MenuRowSpec>, theme: &Theme) -> Ve
                 selectable,
                 is_submenu,
                 leaf_id,
+                label,
                 rect: Rect::ZERO,
             }
         })
@@ -465,6 +523,22 @@ impl MenuPanel {
             }
             _ => {}
         }
+    }
+
+    /// Dismiss the whole menu on a focus-out (Tab): collapse any open fly-out,
+    /// clear the highlight, and emit [`MenuAction::Dismissed`]. Unlike Escape,
+    /// the Tab key itself is left **unhandled** by the caller so masonry's
+    /// focus traversal moves focus out of the menu, per the WAI-ARIA menu
+    /// pattern. Dismisses the entire chain regardless of submenu depth.
+    pub(crate) fn dismiss(this: &mut WidgetMut<'_, Self>) {
+        if let Some(row) = this.widget.open_submenu.take() {
+            let mut node = this.ctx.get_mut(&mut this.widget.rows[row].node);
+            MenuItemNode::set_submenu_open(&mut node, false);
+        }
+        this.widget.kbd_submenu = None;
+        this.widget.highlighted = None;
+        this.ctx.submit_action::<MenuAction>(MenuAction::Dismissed);
+        this.ctx.request_paint_only();
     }
 
     /// Recursive key walk: moves highlight / opens-closes submenus at the active
@@ -547,6 +621,13 @@ impl MenuPanel {
                 this.widget.highlighted = None;
                 this.ctx.request_paint_only();
                 KeyOutcome::Dismiss
+            }
+            MenuKey::Search(ch) => {
+                if let Some(target) = this.widget.search_highlight(ch) {
+                    this.widget.highlighted = Some(target);
+                    this.ctx.request_paint_only();
+                }
+                KeyOutcome::Handled
             }
         }
     }
@@ -695,6 +776,16 @@ impl Widget for MenuPanel {
             return;
         };
         if key.state != KeyState::Down {
+            return;
+        }
+        // Tab dismisses the menu but is left UNHANDLED so masonry's focus
+        // traversal moves focus out in tab order (WAI-ARIA menu pattern);
+        // Escape, by contrast, consumes the key. Shift+Tab dismisses too.
+        if matches!(key.key, Key::Named(NamedKey::Tab)) {
+            ctx.mutate_self_later(|mut w| {
+                let mut w = w.downcast::<MenuPanel>();
+                MenuPanel::dismiss(&mut w);
+            });
             return;
         }
         if let Some(menu_key) = menu_key_from(&key.key) {
@@ -1037,8 +1128,53 @@ mod tests {
         h.process_text_event(TextEvent::key_down(Key::Named(key)))
     }
 
+    fn press_char(h: &mut TestHarness<MenuPanel>, ch: &str) -> Handled {
+        h.process_text_event(TextEvent::key_down(Key::Character(ch.into())))
+    }
+
     fn highlight(h: &mut TestHarness<MenuPanel>) -> Option<usize> {
         h.edit_root_widget(|wm| wm.widget.highlighted)
+    }
+
+    #[test]
+    fn type_ahead_jumps_to_a_matching_label_and_cycles() {
+        // rows: Save, Save As, Print, Preview.
+        let mut h = harness(vec![
+            action_id(0, "Save"),
+            action_id(1, "Save As"),
+            action_id(2, "Print"),
+            action_id(3, "Preview"),
+        ]);
+
+        press_char(&mut h, "p");
+        assert_eq!(highlight(&mut h), Some(2), "jumps to Print");
+        press_char(&mut h, "p");
+        assert_eq!(highlight(&mut h), Some(3), "repeat cycles to Preview");
+        press_char(&mut h, "p");
+        assert_eq!(highlight(&mut h), Some(2), "wraps back to Print");
+
+        // Case-insensitive; the search advances from the current highlight.
+        press_char(&mut h, "S");
+        assert_eq!(highlight(&mut h), Some(0), "uppercase S matches Save");
+        press_char(&mut h, "s");
+        assert_eq!(highlight(&mut h), Some(1), "the next s-match is Save As");
+    }
+
+    #[test]
+    fn type_ahead_ignores_nonmatches_and_skips_nonhoverable_rows() {
+        let mut h = harness(vec![
+            action("Apple"),
+            MenuRowSpec::Separator,
+            disabled("Banana"), // not hoverable → never a type-ahead target
+            action("Cherry"),
+        ]);
+
+        press_char(&mut h, "z");
+        assert_eq!(highlight(&mut h), None, "no match leaves the highlight");
+        press_char(&mut h, "b");
+        assert_eq!(highlight(&mut h), None, "disabled Banana is not a target");
+        press_char(&mut h, "c");
+        assert_eq!(highlight(&mut h), Some(3), "matches the hoverable Cherry");
     }
 
     #[test]
@@ -1138,6 +1274,24 @@ mod tests {
             h.pop_action::<MenuAction>().map(|(a, _)| a),
             Some(MenuAction::Dismissed)
         ));
+    }
+
+    #[test]
+    fn tab_dismisses_the_menu() {
+        // WAI-ARIA menu pattern: Tab dismisses the menu. The menu leaves the
+        // key unhandled (so masonry's focus traversal moves focus out in tab
+        // order — unlike Escape, which the menu consumes); here we assert the
+        // observable dismissal: a `Dismissed` action and a cleared highlight.
+        let mut h = harness(vec![action("a")]);
+        press(&mut h, NamedKey::ArrowDown); // highlight row 0
+        assert_eq!(highlight(&mut h), Some(0));
+
+        press(&mut h, NamedKey::Tab);
+        assert!(matches!(
+            h.pop_action::<MenuAction>().map(|(a, _)| a),
+            Some(MenuAction::Dismissed)
+        ));
+        assert_eq!(highlight(&mut h), None, "dismiss clears the highlight");
     }
 
     // --- per-row accessibility (TestHarness) ---
