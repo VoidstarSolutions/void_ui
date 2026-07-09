@@ -26,9 +26,9 @@ pub(crate) mod single_child;
 #[cfg(test)]
 pub(crate) use body::CollectionBodyWidget;
 pub(crate) use body_view::{
-    CollectionBodyParams, Lazy, LeadingHitZoneFn, OnActivate, RenderRow, collection_body,
+    CollectionBodyParams, Lazy, LeadingHitZoneFn, RenderRow, collection_body,
 };
-pub(crate) use click::{ItemsFn, SelectionLens, apply_row_click};
+pub(crate) use click::{ItemsFn, OnActivate, SelectionLens, apply_row_activate, apply_row_click};
 pub(crate) use ids::{
     IdSource, nearing_end, scroll_idx_to_slice, scroll_range_end, visual_range_ids,
 };

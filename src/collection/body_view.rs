@@ -18,8 +18,8 @@ use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 use super::body::CollectionBodyWidget;
 use super::row_click::{LeadingHitZone, RowClickAction, clickable_row};
 use super::{
-    IdSource, ItemsFn, ScrollState, SelectionLens, apply_row_click, clamp_scroll_index,
-    nearing_end, scroll_idx_to_slice, scroll_range_end,
+    IdSource, ItemsFn, OnActivate, ScrollState, SelectionLens, apply_row_activate, apply_row_click,
+    clamp_scroll_index, nearing_end, scroll_idx_to_slice, scroll_range_end,
 };
 use crate::Theme;
 
@@ -33,11 +33,6 @@ pub(crate) type RenderRow<State, Item> =
 /// reserves nothing. See
 /// [`ClickableRow::leading_hit`](super::row_click::ClickableRow::leading_hit).
 pub(crate) type LeadingHitZoneFn<Item> = Arc<dyn Fn(&Item) -> Option<LeadingHitZone> + Send + Sync>;
-
-/// Host row-activation callback: `(state, row_id)`, run when Enter is pressed
-/// on the focused row. The substrate resolves the row's stable id and hands
-/// it in; see [`ClickableRow::on_activate`](super::row_click::ClickableRow).
-pub(crate) type OnActivate<State> = Arc<dyn Fn(&mut State, u64) + Send + Sync>;
 
 /// Lazy-load config: fire `callback` when the active range comes within
 /// `threshold` items of the end.
@@ -163,13 +158,7 @@ where
                     let items = Arc::clone(&items);
                     let id_source = id_source.clone();
                     row.on_activate(move |state: &mut State| {
-                        let id = {
-                            let data = (*items)(state);
-                            data.get(pos).map(|item| id_source.id_of(pos, item))
-                        };
-                        if let Some(id) = id {
-                            host_on_activate(state, id);
-                        }
+                        apply_row_activate(state, pos, &items, &id_source, &host_on_activate);
                     })
                 }
                 None => row,
