@@ -4,6 +4,19 @@
 //! gently to signal activity. Size and shape it to match the content it
 //! replaces — text lines, image blocks, or avatar circles.
 //!
+//! ## Accessibility
+//!
+//! Each skeleton hides itself from assistive tech (`node.set_hidden()`) — a
+//! placeholder shape carries no announceable content, so exposing an empty
+//! generic container would only add noise. The consequence is that skeletons
+//! are **silent**: unlike [`crate::spinner`], which reports
+//! `Role::ProgressIndicator`, a screen full of skeletons announces nothing,
+//! so a screen-reader user is told neither that content is loading nor when
+//! it arrives. The loading cue is therefore the **host's** responsibility:
+//! mark the region busy (e.g. an `aria-busy` equivalent) or announce state
+//! transitions through a live region while the skeletons are mounted, and
+//! clear it once the real content replaces them.
+//!
 //! ```ignore
 //! use void_ui::skeleton;
 //!
