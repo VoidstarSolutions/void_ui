@@ -86,8 +86,15 @@ impl<State, Action> Breadcrumb<State, Action> {
     }
 
     /// Materialize the xilem view at the supplied theme.
+    ///
+    /// The returned view is built from owned values (segment labels, colors
+    /// read out of `theme`), so it does not borrow `theme`. `use<State,
+    /// Action>` precises the opaque type's captures to just the generic
+    /// parameters — without it, edition-2024 RPIT rules would capture the
+    /// `&Theme` lifetime too, barring callers that store the trail in a
+    /// `+ use<>` (lifetime-free) view, e.g. an app top bar.
     #[must_use = "View values do nothing unless provided to Xilem."]
-    pub fn render(self, theme: &Theme) -> impl WidgetView<State, Action>
+    pub fn render(self, theme: &Theme) -> impl WidgetView<State, Action> + use<State, Action>
     where
         State: 'static,
         Action: 'static,
