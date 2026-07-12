@@ -209,6 +209,7 @@ fn main_pane(focused: ComponentKind, theme: &Theme) -> Box<AnyWidgetView<State>>
         ComponentKind::Resizable => Box::new(void_ui::components::resizable::demo::panel(theme)),
         ComponentKind::Separator => Box::new(void_ui::components::separator::demo::panel(theme)),
         ComponentKind::Sidebar => Box::new(void_ui::components::sidebar::demo::panel(theme)),
+        ComponentKind::Skeleton => Box::new(void_ui::components::skeleton::demo::panel(theme)),
         ComponentKind::Slider => Box::new(void_ui::components::slider::demo::panel(theme)),
         ComponentKind::Spinner => Box::new(void_ui::components::spinner::demo::panel(theme)),
         ComponentKind::StatusDot => Box::new(void_ui::components::status_dot::demo::panel(theme)),

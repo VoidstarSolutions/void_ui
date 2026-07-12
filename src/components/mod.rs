@@ -43,6 +43,7 @@ pub mod resizable;
 pub mod scroll_container;
 pub mod separator;
 pub mod sidebar;
+pub mod skeleton;
 pub mod slider;
 pub mod spinner;
 pub mod status_dot;
@@ -104,6 +105,7 @@ pub use sidebar::{
     SidebarItem, SidebarItemView, SidebarNav, SidebarNavItem, SidebarNavView, SidebarPanel,
     SidebarPanelView, sidebar_item, sidebar_nav, sidebar_panel,
 };
+pub use skeleton::{Skeleton, SkeletonAnimation, SkeletonShape, SkeletonView, skeleton};
 pub use slider::{RangeSlider, RangeSliderView, Slider, SliderView, range_slider, slider};
 pub use spinner::{Spinner, SpinnerView, SpinnerWidget, spinner};
 pub use status_dot::{StatusDot, status_dot};
@@ -147,6 +149,7 @@ pub enum ComponentKind {
     ScrollContainer,
     Separator,
     Sidebar,
+    Skeleton,
     Slider,
     Spinner,
     StatusDot,
@@ -189,6 +192,7 @@ impl ComponentKind {
             Self::ScrollContainer => "Scroll Container",
             Self::Separator => "Separator",
             Self::Sidebar => "Sidebar",
+            Self::Skeleton => "Skeleton",
             Self::Slider => "Slider",
             Self::Spinner => "Spinner",
             Self::StatusDot => "Status Dot",
@@ -231,6 +235,7 @@ impl ComponentKind {
             Self::ScrollContainer,
             Self::Separator,
             Self::Sidebar,
+            Self::Skeleton,
             Self::Slider,
             Self::Spinner,
             Self::StatusDot,
