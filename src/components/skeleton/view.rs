@@ -162,14 +162,16 @@ impl Skeleton {
         self
     }
 
-    /// Enable or disable animation. Enabled (pulse) by default; `false` maps
-    /// to [`SkeletonAnimation::None`] and `true` maps to
-    /// [`SkeletonAnimation::Pulse`].
+    /// Enable or disable animation. `false` always disables it
+    /// ([`SkeletonAnimation::None`]). `true` re-enables it with the default
+    /// pulse *only when animation is currently off* — it never overrides an
+    /// explicit [`Self::wave`]/[`Self::pulse`] choice, so `.wave().animated(true)`
+    /// keeps the wave regardless of call order.
     pub fn animated(mut self, animated: bool) -> Self {
-        self.animation = if animated {
-            SkeletonAnimation::Pulse
-        } else {
-            SkeletonAnimation::None
+        self.animation = match (animated, self.animation) {
+            (false, _) => SkeletonAnimation::None,
+            (true, SkeletonAnimation::None) => SkeletonAnimation::Pulse,
+            (true, current) => current,
         };
         self
     }
@@ -343,10 +345,11 @@ mod tests {
         assert!((skeleton().rounded(12.0).render(&theme).radius - 12.0).abs() < f64::EPSILON);
     }
 
-    /// `.animated(bool)` is a two-value shortcut: `true` ⇒ pulse, `false` ⇒
-    /// no animation. It never selects wave.
+    /// `.animated(false)` always disables; `.animated(true)` re-enables the
+    /// default pulse from the off state and defaults to pulse on a fresh
+    /// builder.
     #[test]
-    fn animated_bool_maps_to_pulse_or_none() {
+    fn animated_bool_toggles_the_default_pulse() {
         let theme = Theme::default();
         assert_eq!(
             skeleton().animated(true).render(&theme).animation,
@@ -354,6 +357,31 @@ mod tests {
         );
         assert_eq!(
             skeleton().animated(false).render(&theme).animation,
+            SkeletonAnimation::None
+        );
+        // Off, then back on ⇒ pulse.
+        assert_eq!(
+            skeleton().animated(false).animated(true).render(&theme).animation,
+            SkeletonAnimation::Pulse
+        );
+    }
+
+    /// `.animated(true)` must not clobber an explicit wave/pulse choice, in
+    /// either call order — only `.animated(false)` can turn animation off.
+    #[test]
+    fn animated_true_preserves_an_explicit_animation() {
+        let theme = Theme::default();
+        assert_eq!(
+            skeleton().wave().animated(true).render(&theme).animation,
+            SkeletonAnimation::Wave
+        );
+        assert_eq!(
+            skeleton().animated(true).wave().render(&theme).animation,
+            SkeletonAnimation::Wave
+        );
+        // But false still wins, whatever was chosen.
+        assert_eq!(
+            skeleton().wave().animated(false).render(&theme).animation,
             SkeletonAnimation::None
         );
     }
