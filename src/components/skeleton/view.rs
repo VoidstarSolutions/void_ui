@@ -321,8 +321,14 @@ mod tests {
     fn explicit_color_overrides_secondary() {
         let theme = Theme::default();
         let custom = Color::from_rgb8(255, 0, 0);
-        assert_eq!(skeleton().secondary().color(custom).render(&theme).color, custom);
-        assert_eq!(skeleton().color(custom).secondary().render(&theme).color, custom);
+        assert_eq!(
+            skeleton().secondary().color(custom).render(&theme).color,
+            custom
+        );
+        assert_eq!(
+            skeleton().color(custom).secondary().render(&theme).color,
+            custom
+        );
     }
 
     /// `.circle(d)` selects the circle shape and squares the box to the
@@ -361,7 +367,11 @@ mod tests {
         );
         // Off, then back on ⇒ pulse.
         assert_eq!(
-            skeleton().animated(false).animated(true).render(&theme).animation,
+            skeleton()
+                .animated(false)
+                .animated(true)
+                .render(&theme)
+                .animation,
             SkeletonAnimation::Pulse
         );
     }
