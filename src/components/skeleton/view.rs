@@ -283,3 +283,84 @@ impl<S: 'static, A: 'static> View<S, A, ViewCtx> for SkeletonView {
         MessageResult::Stale
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use masonry::peniko::Color;
+
+    use super::{SkeletonAnimation, SkeletonShape, skeleton};
+    use crate::Theme;
+
+    /// Height defaults to one line of body text (`size_body * 1.2`) when the
+    /// caller doesn't fix one, and honors an explicit `.height(..)`.
+    #[test]
+    fn height_defaults_to_a_body_line_then_yields_to_explicit() {
+        let theme = Theme::default();
+        let expected = f64::from(theme.typography.size_body) * 1.2;
+        assert!((skeleton().render(&theme).height - expected).abs() < f64::EPSILON);
+        assert!((skeleton().height(48.0).render(&theme).height - 48.0).abs() < f64::EPSILON);
+    }
+
+    /// Color defaults to `surface_hi` for the primary tone and `surface_2` for
+    /// the secondary tone.
+    #[test]
+    fn color_defaults_track_the_secondary_flag() {
+        let theme = Theme::default();
+        assert_eq!(skeleton().render(&theme).color, theme.palette.surface_hi);
+        assert_eq!(
+            skeleton().secondary().render(&theme).color,
+            theme.palette.surface_2
+        );
+    }
+
+    /// An explicit `.color(..)` wins over `.secondary()` regardless of call
+    /// order (the docs promise it "takes precedence").
+    #[test]
+    fn explicit_color_overrides_secondary() {
+        let theme = Theme::default();
+        let custom = Color::from_rgb8(255, 0, 0);
+        assert_eq!(skeleton().secondary().color(custom).render(&theme).color, custom);
+        assert_eq!(skeleton().color(custom).secondary().render(&theme).color, custom);
+    }
+
+    /// `.circle(d)` selects the circle shape and squares the box to the
+    /// diameter on both axes.
+    #[test]
+    fn circle_squares_the_box_to_its_diameter() {
+        let theme = Theme::default();
+        let view = skeleton().circle(40.0).render(&theme);
+        assert!(view.circle);
+        assert_eq!(view.width, Some(40.0));
+        assert!((view.height - 40.0).abs() < f64::EPSILON);
+    }
+
+    /// Radius defaults to `theme.radius.small`, and `.rounded(..)` overrides it.
+    #[test]
+    fn radius_defaults_to_theme_small_then_yields_to_rounded() {
+        let theme = Theme::default();
+        let expected = f64::from(theme.radius.small);
+        assert!((skeleton().render(&theme).radius - expected).abs() < f64::EPSILON);
+        assert!((skeleton().rounded(12.0).render(&theme).radius - 12.0).abs() < f64::EPSILON);
+    }
+
+    /// `.animated(bool)` is a two-value shortcut: `true` ⇒ pulse, `false` ⇒
+    /// no animation. It never selects wave.
+    #[test]
+    fn animated_bool_maps_to_pulse_or_none() {
+        let theme = Theme::default();
+        assert_eq!(
+            skeleton().animated(true).render(&theme).animation,
+            SkeletonAnimation::Pulse
+        );
+        assert_eq!(
+            skeleton().animated(false).render(&theme).animation,
+            SkeletonAnimation::None
+        );
+    }
+
+    /// The default shape is a text line, unrelated to the animation shortcuts.
+    #[test]
+    fn shape_defaults_to_text() {
+        assert_eq!(skeleton().shape, SkeletonShape::Text);
+    }
+}

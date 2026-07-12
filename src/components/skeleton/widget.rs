@@ -234,3 +234,59 @@ impl Widget for SkeletonWidget {
         ChildrenIds::from_slice(&[])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use masonry::core::NewWidget;
+    use masonry::peniko::Color;
+    use masonry::testing::TestHarness;
+    use masonry::theme::default_property_set;
+
+    use super::{SkeletonAnimation, SkeletonWidget};
+
+    fn widget(animation: SkeletonAnimation) -> SkeletonWidget {
+        SkeletonWidget {
+            color: Color::from_rgb8(80, 80, 80),
+            highlight: Color::from_rgb8(160, 160, 160),
+            radius: 4.0,
+            circle: false,
+            width: Some(120.0),
+            height: 16.0,
+            animation,
+            t: 0.0,
+        }
+    }
+
+    /// Mounting, laying out, and painting the widget must not panic for any
+    /// animation — this exercises the pulse alpha math, the wave gradient, and
+    /// the static fill through the harness's redraw.
+    #[test]
+    fn mounts_and_paints_without_panicking() {
+        for animation in [
+            SkeletonAnimation::Pulse,
+            SkeletonAnimation::Wave,
+            SkeletonAnimation::None,
+        ] {
+            let mut h = TestHarness::create_with_size(
+                default_property_set(),
+                NewWidget::new(widget(animation)),
+                (160, 40),
+            );
+            h.redraw();
+        }
+    }
+
+    /// A placeholder shape carries no announceable content, so its node must
+    /// stay hidden from assistive tech.
+    #[test]
+    fn node_is_hidden_from_assistive_tech() {
+        let mut h = TestHarness::create_with_size(
+            default_property_set(),
+            NewWidget::new(widget(SkeletonAnimation::None)),
+            (160, 40),
+        );
+        h.redraw();
+        let node = h.access_node(h.root_id()).expect("node exists");
+        assert!(node.is_hidden());
+    }
+}
