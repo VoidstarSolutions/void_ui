@@ -187,14 +187,16 @@ pub struct RowClickable {
     /// so the gutter to its left stays selectable. LTR only.
     leading_hit: Option<LeadingHitZone>,
     /// Backs [`propagates_pointer_interaction`](Widget::propagates_pointer_interaction)
-    /// — whether pointer hover/press reaches the row's children. `false` (the
-    /// default) makes the row an opaque selection target, the original
-    /// behavior; a collection sets it `true` only when it hosts an interactive
-    /// row child (an expandable grid's disclosure chevron). It's a
-    /// **collection-level** constant, not per-row: masonry caches this at
-    /// widget creation and virtualization recycles a row widget across
-    /// positions (a leaf slot may later render a parent), so every row in a
-    /// collection that *can* defer must propagate — see [`Self::new`].
+    /// — whether pointer hover/press reaches the row's children. `body_view`
+    /// sets this `true` for every collection: the capture guard in
+    /// `on_pointer_event` is what actually keeps a non-capturing child from
+    /// stealing the row's selection, so propagation itself is safe
+    /// unconditionally, not just for rows with an interactive leading child.
+    /// `false` remains available as a widget-level opaque-row mode (see
+    /// [`Self::new`]'s doc). It's a **collection-level** constant, not
+    /// per-row: masonry caches this at widget creation and virtualization
+    /// recycles a row widget across positions (a leaf slot may later render a
+    /// different row), so it can't vary per row within one collection.
     propagates_pointer: bool,
     /// Tree metadata for directional keyboard nav, set by an expandable
     /// collection. `Some` on a tree row lets Right/Left act locally (toggle
@@ -454,14 +456,12 @@ impl Widget for RowClickable {
     }
 
     fn propagates_pointer_interaction(&self) -> bool {
-        // Collection-gated (see the `propagates_pointer` field): a plain
-        // grid/list keeps `false` — an opaque selection target, the original
-        // behavior — while a collection with an interactive row child (an
-        // expandable grid's disclosure chevron) sets `true` so that child
-        // receives hover/press. A press over a non-interactive cell still
-        // bubbles up here, so row selection is unchanged; the positional guard
-        // in `on_pointer_event` keeps a press over the leading control from
-        // also selecting the row.
+        // Collection-gated (see the `propagates_pointer` field): `body_view`
+        // sets `true` for every collection, plain grid/list included, so
+        // interactive cell children receive hover/press. A press over a
+        // non-interactive cell still bubbles up here, so row selection is
+        // unchanged; the capture/positional guard in `on_pointer_event` keeps
+        // a press a child actually claimed from also selecting the row.
         self.propagates_pointer
     }
 }
@@ -571,13 +571,15 @@ impl<V, State, Action, F> ClickableRow<V, State, Action, F> {
     }
 
     /// Lets pointer hover/press reach the row's children (so an interactive
-    /// row child — a disclosure chevron — can receive them). `false` (the
-    /// default) keeps the row an opaque selection target.
+    /// row child — a disclosure chevron, a cell button — can receive them).
+    /// `false` (the default) keeps the row an opaque selection target;
+    /// `body_view` passes `true` unconditionally, since the capture guard in
+    /// `RowClickable::on_pointer_event` makes propagation safe even when no
+    /// row child ever defers.
     ///
-    /// Pass a **collection-level** value (`true` iff the collection ever
-    /// defers to a row child), not a per-row one: it's cached at widget
-    /// creation and virtualization recycles a row across positions — see
-    /// [`RowClickable::new`].
+    /// Pass a **collection-level** value, not a per-row one: it's cached at
+    /// widget creation and virtualization recycles a row across positions —
+    /// see [`RowClickable::new`].
     pub fn propagate_pointer_to_children(mut self, propagate: bool) -> Self {
         self.propagates_pointer = propagate;
         self
@@ -1053,10 +1055,12 @@ mod tests {
         )
     }
 
-    /// With propagation on (an expandable collection), a control nested in row
-    /// content receives pointer events — this is what lets the disclosure
-    /// chevron become reachable. The press also bubbles up so the row still
-    /// selects (no leading zone reserved here).
+    /// With propagation on — `body_view`'s setting for every collection, not
+    /// just an expandable one — a control nested in row content receives
+    /// pointer events; this is what lets both the disclosure chevron and a
+    /// plain grid's cell button become reachable. The press also bubbles up
+    /// so the row still selects (no leading zone reserved, and the child
+    /// doesn't capture).
     #[test]
     fn nested_interactive_child_receives_the_press_when_propagating() {
         let (child_downs, selected) = press_with_propagation(true);
@@ -1070,11 +1074,12 @@ mod tests {
         );
     }
 
-    /// With propagation off (a plain grid/list — the collection-level default),
-    /// the row is opaque: children never see the pointer, exactly as before the
-    /// expandable feature. Row selection is unaffected either way. This locks
-    /// the collection-level gate so the flip to `true` can't silently reach
-    /// non-expandable collections.
+    /// With propagation off, the row is opaque: children never see the
+    /// pointer, exactly as before the expandable feature. Row selection is
+    /// unaffected either way. `body_view` never constructs this combination
+    /// today — every collection propagates, and the capture guard is what
+    /// keeps that safe — but the flag stays a widget-level mode in its own
+    /// right, so this locks its behavior in isolation.
     #[test]
     fn opaque_row_withholds_the_press_from_children() {
         let (child_downs, selected) = press_with_propagation(false);
@@ -1155,7 +1160,11 @@ mod tests {
 
     /// Presses the primary button mid-row over a full-width interactive child
     /// that *captures* the pointer on Down — a cell button ("Open"), the
-    /// disclosure chevron — and returns `(child_downs, row_selected)`.
+    /// disclosure chevron — and returns `(child_downs, row_selected)`. Builds
+    /// `RowClickable` with `(leading_hit: None, propagates_pointer: true)` —
+    /// exactly what `body_view::collection_body` derives for *every*
+    /// collection (plain grid, plain list, or expandable), not a state
+    /// production wiring can't reach.
     fn press_with_capturing_child() -> (usize, bool) {
         let child_downs = Arc::new(AtomicUsize::new(0));
         let counter = Arc::clone(&child_downs);
