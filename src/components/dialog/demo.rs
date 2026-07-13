@@ -1,7 +1,7 @@
 //! Dialog demo panel used by the void-ui gallery.
 //!
 //! A dialog registers with the *root* [`crate::overlay_scope`] (see
-//! [`crate::overlay_scope::root_portal`]) so it's centered over the whole
+//! [`crate::overlay_scope::root_portal_lookup`]) so it's centered over the whole
 //! window, not just this panel — which means it needs `State`/`Action` type
 //! parameters matching that root scope's. So, like the notification demo (see
 //! `project_xilem_local_state` in memory), this panel's open/closed flag
@@ -121,7 +121,7 @@ pub struct DialogDemoPanelState<S: DialogDemoHost> {
 ///
 /// `S` must implement [`AsMut<DialogDemoState>`]; the registered dialog
 /// content is centered over the whole window via the root `overlay_scope`
-/// (see [`crate::overlay_scope::root_portal`]).
+/// (see [`crate::overlay_scope::root_portal_lookup`]).
 #[must_use]
 pub fn panel(theme: &Theme) -> DialogDemoPanel {
     DialogDemoPanel { theme: *theme }

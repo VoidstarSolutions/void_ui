@@ -20,7 +20,7 @@
 //! `render` erases the content view into an `Arc` and registers it with the
 //! ROOT [`crate::overlay_scope`]'s [`OverlayPortal`] — the outermost scope
 //! ancestor, regardless of how deeply nested the dialog's own scope ancestor
-//! is (see [`crate::overlay_scope::root_portal`]) — so the dialog is always
+//! is (see [`crate::overlay_scope::root_portal_lookup`]) — so the dialog is always
 //! centered on the whole region the app wrapped in `overlay_scope`, not just
 //! a smaller sub-region. `popover`, by contrast, uses the *nearest* scope.
 //! There is no in-tree fallback: a dialog has no trigger rect to anchor an
@@ -49,7 +49,7 @@ use crate::components::button::{ButtonVariant, button};
 use crate::components::icon::IconName;
 use crate::overlay::SurfaceStyle;
 use crate::overlay_portal::{OverlayPortal, PortalContentView, PortalPlacement};
-use crate::overlay_scope::root_portal;
+use crate::overlay_scope::root_portal_lookup;
 
 /// Implemented by `()` (no dismiss callback) and by `Fn(&mut State) ->
 /// Action` closures, so [`Dialog::on_dismiss`] is optional without boxing the
@@ -215,13 +215,12 @@ where
     type ViewState = DialogViewState<State, Action>;
 
     fn build(&self, ctx: &mut ViewCtx, _app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        // `root_portal` targets the outermost scope ancestor; it only
-        // succeeds if that scope was published for the same `State`/`Action`
-        // pair as this dialog, so dialogs must be rendered with the host
-        // app's own state type (see module docs).
-        let portal = root_portal::<State, Action>().expect(
-            "dialog requires a root overlay_scope of matching State/Action — wrap the app root in overlay_scope(...) and render the dialog with the app's own State type",
-        );
+        // Targets the outermost scope ancestor, and only succeeds if that scope
+        // was published for the same `State`/`Action` pair as this dialog — so
+        // dialogs must be rendered with the host app's own state type (see
+        // module docs). `or_panic` distinguishes "no scope at all" from "a scope
+        // that isn't yours", which have opposite fixes.
+        let portal = root_portal_lookup::<State, Action>().or_panic("dialog");
         let key = portal.register(
             self.content.clone(),
             &self.theme,
