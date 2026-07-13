@@ -187,14 +187,16 @@ pub struct RowClickable {
     /// so the gutter to its left stays selectable. LTR only.
     leading_hit: Option<LeadingHitZone>,
     /// Backs [`propagates_pointer_interaction`](Widget::propagates_pointer_interaction)
-    /// — whether pointer hover/press reaches the row's children. `false` (the
-    /// default) makes the row an opaque selection target, the original
-    /// behavior; a collection sets it `true` only when it hosts an interactive
-    /// row child (an expandable grid's disclosure chevron). It's a
-    /// **collection-level** constant, not per-row: masonry caches this at
-    /// widget creation and virtualization recycles a row widget across
-    /// positions (a leaf slot may later render a parent), so every row in a
-    /// collection that *can* defer must propagate — see [`Self::new`].
+    /// — whether pointer hover/press reaches the row's children. `body_view`
+    /// sets this `true` for every collection: the capture guard in
+    /// `on_pointer_event` is what actually keeps a non-capturing child from
+    /// stealing the row's selection, so propagation itself is safe
+    /// unconditionally, not just for rows with an interactive leading child.
+    /// `false` remains available as a widget-level opaque-row mode (see
+    /// [`Self::new`]'s doc). It's a **collection-level** constant, not
+    /// per-row: masonry caches this at widget creation and virtualization
+    /// recycles a row widget across positions (a leaf slot may later render a
+    /// different row), so it can't vary per row within one collection.
     propagates_pointer: bool,
     /// Tree metadata for directional keyboard nav, set by an expandable
     /// collection. `Some` on a tree row lets Right/Left act locally (toggle
@@ -292,18 +294,31 @@ impl Widget for RowClickable {
         event: &PointerEvent,
     ) {
         // Shared Down→capture / Up-iff-active-and-hovered recognizer, with a
-        // positional capture guard that defers a leading hit zone to an
-        // interactive child (chevron / row action). Outside that zone the row
-        // captures and behaves exactly as before; a press inside it is not
-        // captured (guard returns false ⇒ no `Down`, so the child handles it).
-        // A pointer click is always a *selection* intent.
+        // capture guard that keeps the row from stealing a press an interactive
+        // cell child was aimed at. Two ways the row defers:
+        //
+        //  1. A descendant that already *captured the pointer* on this Down — a
+        //     cell button ("Open"), the disclosure chevron. Pointer events
+        //     bubble child→parent and `capture_pointer` is last-writer-wins
+        //     (masonry), so without this guard the row would overwrite the
+        //     child's capture on the way up and swallow the click. Because the
+        //     child ran first, its capture is already visible here as the
+        //     pointer-capture target. This is the general "pass the click
+        //     through to clickable children" rule — no per-control geometry.
+        //  2. The positional leading hit zone, for a leading child that does
+        //     *not* capture (an inert alignment spacer still reserves the box).
+        //
+        // When the guard rejects, there's no `Down` (so no capture, no focus)
+        // and the release can't complete (`is_active` stayed false), so the row
+        // neither selects nor steals — the child owns the interaction. A pointer
+        // click that reaches the row is always a *selection* intent.
         let zone = self.leading_hit;
         match click::primary_click_when(ctx, event, |ctx, state| {
-            // Capture (→ select) unless the press lands in the deferred
-            // child's zone; an inset zone leaves the gutter to its left
-            // selectable (see `LeadingHitZone`).
+            let descendant_captured = ctx
+                .pointer_capture_target_id()
+                .is_some_and(|id| id != ctx.widget_id());
             let x = ctx.local_position(state.position).x;
-            !zone.is_some_and(|z| z.contains(x))
+            !descendant_captured && !zone.is_some_and(|z| z.contains(x))
         }) {
             // Rows take keyboard focus so a subsequent Ctrl/Cmd+C lands
             // inside the grid (see the module docs).
@@ -441,14 +456,12 @@ impl Widget for RowClickable {
     }
 
     fn propagates_pointer_interaction(&self) -> bool {
-        // Collection-gated (see the `propagates_pointer` field): a plain
-        // grid/list keeps `false` — an opaque selection target, the original
-        // behavior — while a collection with an interactive row child (an
-        // expandable grid's disclosure chevron) sets `true` so that child
-        // receives hover/press. A press over a non-interactive cell still
-        // bubbles up here, so row selection is unchanged; the positional guard
-        // in `on_pointer_event` keeps a press over the leading control from
-        // also selecting the row.
+        // Collection-gated (see the `propagates_pointer` field): `body_view`
+        // sets `true` for every collection, plain grid/list included, so
+        // interactive cell children receive hover/press. A press over a
+        // non-interactive cell still bubbles up here, so row selection is
+        // unchanged; the capture/positional guard in `on_pointer_event` keeps
+        // a press a child actually claimed from also selecting the row.
         self.propagates_pointer
     }
 }
@@ -558,13 +571,15 @@ impl<V, State, Action, F> ClickableRow<V, State, Action, F> {
     }
 
     /// Lets pointer hover/press reach the row's children (so an interactive
-    /// row child — a disclosure chevron — can receive them). `false` (the
-    /// default) keeps the row an opaque selection target.
+    /// row child — a disclosure chevron, a cell button — can receive them).
+    /// `false` (the default) keeps the row an opaque selection target;
+    /// `body_view` passes `true` unconditionally, since the capture guard in
+    /// `RowClickable::on_pointer_event` makes propagation safe even when no
+    /// row child ever defers.
     ///
-    /// Pass a **collection-level** value (`true` iff the collection ever
-    /// defers to a row child), not a per-row one: it's cached at widget
-    /// creation and virtualization recycles a row across positions — see
-    /// [`RowClickable::new`].
+    /// Pass a **collection-level** value, not a per-row one: it's cached at
+    /// widget creation and virtualization recycles a row across positions —
+    /// see [`RowClickable::new`].
     pub fn propagate_pointer_to_children(mut self, propagate: bool) -> Self {
         self.propagates_pointer = propagate;
         self
@@ -1040,10 +1055,12 @@ mod tests {
         )
     }
 
-    /// With propagation on (an expandable collection), a control nested in row
-    /// content receives pointer events — this is what lets the disclosure
-    /// chevron become reachable. The press also bubbles up so the row still
-    /// selects (no leading zone reserved here).
+    /// With propagation on — `body_view`'s setting for every collection, not
+    /// just an expandable one — a control nested in row content receives
+    /// pointer events; this is what lets both the disclosure chevron and a
+    /// plain grid's cell button become reachable. The press also bubbles up
+    /// so the row still selects (no leading zone reserved, and the child
+    /// doesn't capture).
     #[test]
     fn nested_interactive_child_receives_the_press_when_propagating() {
         let (child_downs, selected) = press_with_propagation(true);
@@ -1057,11 +1074,12 @@ mod tests {
         );
     }
 
-    /// With propagation off (a plain grid/list — the collection-level default),
-    /// the row is opaque: children never see the pointer, exactly as before the
-    /// expandable feature. Row selection is unaffected either way. This locks
-    /// the collection-level gate so the flip to `true` can't silently reach
-    /// non-expandable collections.
+    /// With propagation off, the row is opaque: children never see the
+    /// pointer, exactly as before the expandable feature. Row selection is
+    /// unaffected either way. `body_view` never constructs this combination
+    /// today — every collection propagates, and the capture guard is what
+    /// keeps that safe — but the flag stays a widget-level mode in its own
+    /// right, so this locks its behavior in isolation.
     #[test]
     fn opaque_row_withholds_the_press_from_children() {
         let (child_downs, selected) = press_with_propagation(false);
@@ -1138,5 +1156,79 @@ mod tests {
         harness.focus_on(Some(root));
         assert_eq!(press_arrow(&mut harness, NamedKey::ArrowRight), None);
         assert_eq!(press_arrow(&mut harness, NamedKey::ArrowLeft), None);
+    }
+
+    /// Presses the primary button mid-row over a full-width interactive child
+    /// that *captures* the pointer on Down — a cell button ("Open"), the
+    /// disclosure chevron — and returns `(child_downs, row_selected)`. Builds
+    /// `RowClickable` with `(leading_hit: None, propagates_pointer: true)` —
+    /// exactly what `body_view::collection_body` derives for *every*
+    /// collection (plain grid, plain list, or expandable), not a state
+    /// production wiring can't reach.
+    fn press_with_capturing_child() -> (usize, bool) {
+        let child_downs = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&child_downs);
+        let child = ModularWidget::new(())
+            .accepts_pointer_interaction(true)
+            .measure_fn(|(), _ctx, _props, axis, _len_req, _cross| match axis {
+                Axis::Horizontal => Length::px(120.0),
+                Axis::Vertical => Length::px(24.0),
+            })
+            .pointer_event_fn(move |(), ctx, _props, event| {
+                // Claim the press exactly as a real cell button does.
+                if matches!(event, PointerEvent::Down(_)) {
+                    counter.fetch_add(1, Ordering::Relaxed);
+                    ctx.capture_pointer();
+                }
+            });
+        let widget = RowClickable::new(
+            NewWidget::new(child),
+            false,
+            &Theme::default(),
+            // No leading hit zone: deference here is driven purely by the
+            // child's capture, not by any per-control geometry.
+            None,
+            true,
+            None,
+        );
+        let mut harness = TestHarness::create_with_size(
+            default_property_set(),
+            NewWidget::new(widget),
+            (120, 24),
+        );
+
+        harness.mouse_move(Point::new(60.0, 12.0));
+        harness.mouse_button_press(Some(PointerButton::Primary));
+        harness.mouse_button_release(Some(PointerButton::Primary));
+
+        (
+            child_downs.load(Ordering::Relaxed),
+            matches!(
+                harness.pop_action::<RowInteraction>().map(|(a, _)| a),
+                Some(RowInteraction::Select(_)),
+            ),
+        )
+    }
+
+    /// The new capture-deference guard: an interactive cell child that
+    /// *captures* the pointer on Down owns the press. Pointer events bubble
+    /// child->parent and `capture_pointer` is last-writer-wins, so without the
+    /// guard the row would overwrite the child's capture on the way up and
+    /// swallow the click. The child must still receive the press (it passes
+    /// through), and the row must neither steal it nor select. Regression for
+    /// "the Open button on a grid row does nothing". Contrast with
+    /// `nested_interactive_child_receives_the_press_when_propagating`, where a
+    /// *non-capturing* child lets the press bubble on and the row selects.
+    #[test]
+    fn capturing_child_takes_the_click_and_the_row_defers() {
+        let (child_downs, selected) = press_with_capturing_child();
+        assert_eq!(
+            child_downs, 1,
+            "the press must reach the capturing child (it owns the click)",
+        );
+        assert!(
+            !selected,
+            "the row must defer to the capturing child — no click stolen, no select",
+        );
     }
 }

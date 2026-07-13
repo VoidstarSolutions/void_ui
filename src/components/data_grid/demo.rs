@@ -106,6 +106,11 @@ pub struct Demo {
     last_price_units: i64,
     /// Next stable row id to hand out (monotonic; never reused).
     next_id: u64,
+    /// Stable id of the row most recently **opened** via its in-cell "Open"
+    /// button — demonstrates an interactive cell child: the button captures
+    /// the press so the row defers (no selection), while a click anywhere
+    /// else on the row still selects. `None` until the first press.
+    last_opened: Option<u64>,
 }
 
 impl Demo {
@@ -127,9 +132,17 @@ impl Demo {
             last_time_ns: 0,
             last_price_units: START_PRICE_UNITS,
             next_id: 0,
+            last_opened: None,
         };
         demo.append_n(initial_count);
         demo
+    }
+
+    /// Records the row **opened** by an in-cell "Open" button press. The
+    /// button captures the pointer, so the row defers (no selection) and the
+    /// press passes through to the button instead.
+    pub fn open_row(&mut self, id: u64) {
+        self.last_opened = Some(id);
     }
 
     /// Whether the displayed view is a materialized reorder of `ticks`
@@ -975,6 +988,7 @@ fn build_toolbar(
     theme: &Theme,
     notional_shown: bool,
     row_count: u64,
+    last_opened: Option<u64>,
 ) -> impl WidgetView<Demo> + use<> {
     // `flex_wrap` (not `flex_row`) so the toolbar's buttons wrap to more
     // rows at narrow widths instead of forcing the whole panel — and the
@@ -1034,6 +1048,15 @@ fn build_toolbar(
             .text_size(theme.typography.size_caption)
             .color(theme.palette.text_muted)
             .render(theme),
+        // Feedback for the in-cell "Open" button (the interactive-cell path):
+        // pressing it opens the row without selecting it.
+        crate::label(match last_opened {
+            Some(id) => format!("Opened row #{id} (via its Open button)"),
+            None => "Click a row's Open button — it opens without selecting".to_string(),
+        })
+        .text_size(theme.typography.size_caption)
+        .color(theme.palette.accent)
+        .render(theme),
     ))
     .cross_axis_alignment(CrossAxisAlignment::Center)
     .gap(8.0)
@@ -1053,12 +1076,31 @@ fn build_inner(theme: &Theme, demo: &Demo) -> impl WidgetView<Demo> + use<> {
     let scroll = demo.scroll;
     let column_layout = demo.column_layout();
 
-    let columns = arrange_columns::<Demo>(&column_layout, base_time_ns);
+    let mut columns = arrange_columns::<Demo>(&column_layout, base_time_ns);
+    // A trailing interactive-cell column: a real "Open" action button. Pressing
+    // it captures the pointer, so the row defers (no selection) and the press
+    // passes through to the button — the "click through a cell to a child
+    // widget" path. Clicking anywhere else on the row still selects. Appended
+    // after the reorderable columns (it's a pinned action column, outside the
+    // show/hide layout).
+    columns.push(ColumnDef::new(
+        "Actions",
+        70.0,
+        CellAlign::Center,
+        |t: &DemoTick, theme: &Theme| {
+            let id = t.id;
+            Box::new(
+                crate::components::button::button(move |s: &mut Demo| s.open_row(id))
+                    .label("Open")
+                    .render(theme),
+            )
+        },
+    ));
     let notional_id = ColumnId::from("Notional");
     let notional_shown = column_layout.contains(&notional_id);
     let theme_copy = *theme;
 
-    let toolbar = build_toolbar(theme, notional_shown, row_count);
+    let toolbar = build_toolbar(theme, notional_shown, row_count, demo.last_opened);
 
     let grid = super::view::data_grid(columns)
         .rows(|s: &Demo| {
@@ -1081,7 +1123,7 @@ fn build_inner(theme: &Theme, demo: &Demo) -> impl WidgetView<Demo> + use<> {
         .on_column_resize(|s: &mut Demo, col: ColumnId, new_width: f64| {
             s.resize_column(col, new_width);
         })
-        .row_height(22.0)
+        .row_height(26.0)
         .scroll_to(scroll)
         .render(&theme_copy);
 

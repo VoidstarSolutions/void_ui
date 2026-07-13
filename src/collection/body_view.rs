@@ -130,12 +130,14 @@ where
     // `refresh_tree_row_meta`). `None` for a flat list.
     let depth_at = build_depth_at(tree_meta.as_ref(), &items);
 
-    // Collection-level: only propagate pointer interaction to row children when
-    // this collection can actually defer to one (an expandable grid supplies a
-    // `leading_hit_zone`). A plain grid/list keeps opaque, whole-row-selects
-    // behavior. Must be decided here, not per row — `RowClickable` caches it at
-    // creation and virtualization recycles a row widget across positions.
-    let defers_to_children = leading_hit_zone.is_some();
+    // Collection-level, and unconditionally true: `RowClickable`'s capture
+    // guard (see `row_click.rs`) is what actually decides whether a press
+    // reaches a child — a non-capturing cell still bubbles the press up and
+    // the row still selects, so propagating is safe even for a plain,
+    // non-expandable grid/list. Must be decided here, not per row —
+    // `RowClickable` caches it at creation and virtualization recycles a row
+    // widget across positions.
+    let defers_to_children = true;
 
     let child = virtual_scroll(0..valid_range_end, {
         let items = Arc::clone(&items);
