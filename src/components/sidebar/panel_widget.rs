@@ -14,12 +14,10 @@ use crate::components::icon::IconName;
 use crate::focus_ring::paint_focus_ring;
 use masonry::accesskit;
 use masonry::accesskit::{Node, Role};
-use masonry::core::keyboard::{Key, NamedKey};
 use masonry::core::{
     AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
-    PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef,
-    RegisterCtx, StyleProperty, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
-    WidgetPod,
+    PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty, TextEvent,
+    Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, Size};
@@ -29,7 +27,9 @@ use masonry::properties::ContentColor;
 use masonry::widgets::Label;
 
 use crate::Theme;
+use crate::components::click::{self, ClickPhase};
 use crate::components::icon::icon;
+use crate::components::interaction;
 
 // --- MARK: CONSTANTS
 
@@ -180,6 +180,9 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
         _props: &mut PropertiesMut<'_>,
         event: &PointerEvent,
     ) {
+        // Positional hover: only the trailing strip is interactive, so track
+        // whether the pointer sits over it — this drives the strip's paint
+        // state and is not part of the shared press machine.
         match event {
             PointerEvent::Move(update) => {
                 let pos = ctx.local_position(update.current.position);
@@ -189,34 +192,35 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
                     ctx.request_paint_only();
                 }
             }
-            PointerEvent::Down(PointerButtonEvent {
-                button: Some(PointerButton::Primary),
-                state,
-                ..
-            }) => {
-                let pos = ctx.local_position(state.position);
-                if pos.x >= self.current_strip_x {
-                    self.strip_pressed = true;
-                    ctx.capture_pointer();
-                    ctx.request_focus();
-                    ctx.request_paint_only();
-                }
-            }
-            PointerEvent::Up(PointerButtonEvent {
-                button: Some(PointerButton::Primary),
-                ..
-            }) if self.strip_pressed => {
-                if ctx.is_hovered() && self.strip_hovered {
-                    ctx.submit_action::<Self::Action>(SidebarTogglePressed);
-                }
-                self.strip_pressed = false;
-                ctx.request_paint_only();
-            }
             PointerEvent::Leave(_) if self.strip_hovered => {
                 self.strip_hovered = false;
                 ctx.request_paint_only();
             }
             _ => {}
+        }
+
+        // Shared press machine, with the strip's hit test as the capture guard
+        // so a press aimed at the panel *content* never arms the toggle.
+        let strip_x = self.current_strip_x;
+        let phase = click::primary_click_when(ctx, event, |ctx, state| {
+            ctx.local_position(state.position).x >= strip_x
+        });
+        match phase {
+            Some(ClickPhase::Down(_)) => {
+                self.strip_pressed = true;
+                ctx.request_focus();
+                ctx.request_paint_only();
+            }
+            Some(ClickPhase::Up { completed, .. }) => {
+                // `completed` is widget-level; refine it positionally — the
+                // toggle only fires if the release is still over the strip.
+                if completed && self.strip_hovered {
+                    ctx.submit_action::<Self::Action>(SidebarTogglePressed);
+                }
+                self.strip_pressed = false;
+                ctx.request_paint_only();
+            }
+            None => {}
         }
     }
 
@@ -226,19 +230,11 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
         _props: &mut PropertiesMut<'_>,
         event: &TextEvent,
     ) {
-        let TextEvent::Keyboard(event) = event else {
-            return;
-        };
-        let is_activation_key = matches!(&event.key, Key::Character(c) if c == " ")
-            || event.key == Key::Named(NamedKey::Enter);
-        if !is_activation_key {
-            return;
-        }
-        if event.state.is_down() {
+        if interaction::keyboard_press_start(event, true) {
             ctx.set_handled();
             self.strip_keyboard_pressed = true;
             ctx.request_paint_only();
-        } else if event.state.is_up() {
+        } else if interaction::keyboard_activate(event, true) {
             ctx.set_handled();
             self.strip_keyboard_pressed = false;
             ctx.request_paint_only();
@@ -252,7 +248,7 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
         _props: &mut PropertiesMut<'_>,
         event: &AccessEvent,
     ) {
-        if event.action == accesskit::Action::Click {
+        if interaction::is_access_click(event) {
             ctx.submit_action::<Self::Action>(SidebarTogglePressed);
         }
     }

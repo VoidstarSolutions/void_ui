@@ -16,8 +16,8 @@ use masonry::accesskit::{self, Node, Orientation, Role};
 use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
     AccessCtx, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
-    PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx,
-    TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
+    PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx, Widget,
+    WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, RoundedRect, Size};
@@ -25,6 +25,8 @@ use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use masonry::peniko::Color;
 
 use crate::Theme;
+use crate::components::click::{self, ClickPhase};
+use crate::components::interaction;
 use crate::components::item_list;
 use crate::focus_ring::{FOCUS_RING_OUTSET, paint_focus_ring};
 
@@ -363,6 +365,8 @@ impl Widget for ThemedSidebarNav {
         _props: &mut PropertiesMut<'_>,
         event: &PointerEvent,
     ) {
+        // Positional hover over the item list — nav-specific paint state, not
+        // part of the shared press machine.
         match event {
             PointerEvent::Move(update) => {
                 let pos = ctx.local_position(update.current.position);
@@ -372,39 +376,40 @@ impl Widget for ThemedSidebarNav {
                     ctx.request_paint_only();
                 }
             }
-            PointerEvent::Down(PointerButtonEvent {
-                button: Some(PointerButton::Primary),
-                state,
-                ..
-            }) => {
-                let pos = ctx.local_position(state.position);
-                if let Some(i) = self.item_at(pos) {
-                    self.pressed = Some(i);
-                    self.focused = i;
-                    ctx.request_focus();
-                    ctx.capture_pointer();
-                    ctx.request_paint_only();
-                }
-            }
-            PointerEvent::Up(PointerButtonEvent {
-                button: Some(PointerButton::Primary),
-                state,
-                ..
-            }) => {
-                if let Some(i) = self.pressed.take() {
-                    let pos = ctx.local_position(state.position);
-                    if self.item_at(pos) == Some(i) && i != self.active {
-                        ctx.submit_action::<Self::Action>(SidebarNavSelected(i));
-                    }
-                    ctx.request_paint_only();
-                }
-            }
             PointerEvent::Leave(_) if self.hovered.is_some() || self.pressed.is_some() => {
                 self.hovered = None;
                 self.pressed = None;
                 ctx.request_paint_only();
             }
             _ => {}
+        }
+
+        // Shared press machine, guarded by the item hit test so a press in the
+        // gutter between items never arms a selection.
+        let phase = click::primary_click_when(ctx, event, |ctx, state| {
+            self.item_at(ctx.local_position(state.position)).is_some()
+        });
+        match phase {
+            Some(ClickPhase::Down(state)) => {
+                if let Some(i) = self.item_at(ctx.local_position(state.position)) {
+                    self.pressed = Some(i);
+                    self.focused = i;
+                    ctx.request_focus();
+                    ctx.request_paint_only();
+                }
+            }
+            Some(ClickPhase::Up { state, completed }) => {
+                if let Some(i) = self.pressed.take() {
+                    // Positional refinement: only select if the release lands
+                    // back on the same item it was pressed on.
+                    let pos = ctx.local_position(state.position);
+                    if completed && self.item_at(pos) == Some(i) && i != self.active {
+                        ctx.submit_action::<Self::Action>(SidebarNavSelected(i));
+                    }
+                    ctx.request_paint_only();
+                }
+            }
+            None => {}
         }
     }
 
@@ -441,33 +446,23 @@ impl Widget for ThemedSidebarNav {
                 }
                 ctx.set_handled();
             }
-            Key::Named(NamedKey::Enter) if key.state == KeyState::Down => {
-                ctx.set_handled();
-                self.keyboard_pressed = true;
-                ctx.request_paint_only();
-            }
-            Key::Character(ref c) if c == " " && key.state == KeyState::Down => {
-                ctx.set_handled();
-                self.keyboard_pressed = true;
-                ctx.request_paint_only();
-            }
-            Key::Named(NamedKey::Enter) if key.state.is_up() => {
-                ctx.set_handled();
-                self.keyboard_pressed = false;
-                ctx.request_paint_only();
-                if self.focused != self.active {
-                    ctx.submit_action::<Self::Action>(SidebarNavSelected(self.focused));
-                }
-            }
-            Key::Character(ref c) if c == " " && key.state.is_up() => {
-                ctx.set_handled();
-                self.keyboard_pressed = false;
-                ctx.request_paint_only();
-                if self.focused != self.active {
-                    ctx.submit_action::<Self::Action>(SidebarNavSelected(self.focused));
-                }
-            }
             _ => {}
+        }
+
+        // Space / Enter activation via the shared helpers — four near-identical
+        // arms collapse into the one definition every other press widget uses.
+        // Activates the roving-focused item, and only if it isn't already active.
+        if interaction::keyboard_press_start(event, true) {
+            ctx.set_handled();
+            self.keyboard_pressed = true;
+            ctx.request_paint_only();
+        } else if interaction::keyboard_activate(event, true) {
+            ctx.set_handled();
+            self.keyboard_pressed = false;
+            ctx.request_paint_only();
+            if self.focused != self.active {
+                ctx.submit_action::<Self::Action>(SidebarNavSelected(self.focused));
+            }
         }
     }
 
@@ -636,6 +631,7 @@ impl Widget for ThemedSidebarNav {
 
 #[cfg(test)]
 mod tests {
+    use masonry::core::PointerButton;
     use masonry::testing::TestHarness;
     use masonry::theme::default_property_set;
     use masonry::widgets::SizedBox;
