@@ -27,6 +27,7 @@ use masonry::properties::ContentColor;
 use masonry::widgets::Label;
 
 use crate::Theme;
+use crate::anim;
 
 /// Seconds the check icon is shown before reverting to the copy icon — a
 /// duration, not spacing, so it doesn't scale with density.
@@ -136,8 +137,7 @@ impl Widget for ClipboardWidget {
         interval: u64,
     ) {
         if self.copied {
-            let interval_ns = u32::try_from(interval).unwrap_or(u32::MAX);
-            self.copied_t += f64::from(interval_ns) * 1e-9;
+            self.copied_t += anim::elapsed_secs(interval);
             if self.copied_t >= COPIED_DURATION {
                 self.copied = false;
                 self.copied_t = 0.0;

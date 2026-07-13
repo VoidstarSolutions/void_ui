@@ -21,6 +21,8 @@ use masonry::properties::AutoHideScrollBar;
 use masonry::{kurbo, theme};
 use tracing::{Span, trace_span};
 
+use crate::anim;
+
 fn compute_pan_range(viewport: Range<f64>, target: Range<f64>) -> Range<f64> {
     let len = viewport.end - viewport.start;
     let start = if target.start < viewport.start {
@@ -180,10 +182,7 @@ impl Widget for VoidScrollBar {
         // Fade-out duration for the scrollbar thumb — an animation timing
         // value, not spacing, so it doesn't scale with density.
         const FADE_MILLIS: f32 = 300.0;
-        // Quantize the frame interval to whole microseconds: a u16 µs count
-        // converts to f32 losslessly, and a >65 ms frame just clamps the step.
-        let interval_us = u16::try_from(interval / 1_000).unwrap_or(u16::MAX);
-        let delta = (f32::from(interval_us) / 1_000.0) / FADE_MILLIS;
+        let delta = anim::elapsed_fraction(interval, FADE_MILLIS);
         let diff = self.target_opacity - self.opacity;
         if diff.abs() > 1e-4 {
             self.opacity = if diff > 0.0 {
