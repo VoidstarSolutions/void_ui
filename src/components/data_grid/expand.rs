@@ -119,12 +119,15 @@ pub(crate) fn tree_indent_step(density: &Density) -> f64 {
 }
 
 /// Width of the disclosure chevron's square-ish click target
-/// (`ui_font_size + pad_h` — 20 px at balanced). A leaf row reserves the
-/// same width as an inert spacer so its cell text lines up under a parent's
-/// text. This is also the chevron slice of a parent row's leading
-/// defer-to-toggle hit zone (see the tree-cell builder in `view.rs`).
+/// (`ui_font_size + pad_h + gap` — 25 px at balanced; the `gap` term over
+/// plain `ui_font_size + pad_h` gives the small glyph a more comfortable
+/// pointer/touch target without widening the tree indent it sits in). A
+/// leaf row reserves the same width as an inert spacer so its cell text
+/// lines up under a parent's text. This is also the chevron slice of a
+/// parent row's leading defer-to-toggle hit zone (see the tree-cell builder
+/// in `view.rs`).
 pub(crate) fn disclosure_hit_width(density: &Density) -> f64 {
-    f64::from(density.ui_font_size) + f64::from(density.pad_h)
+    f64::from(density.ui_font_size) + f64::from(density.pad_h) + f64::from(density.gap)
 }
 
 // --- MARK: DISCLOSURE TOGGLE WIDGET ------------------------------------
