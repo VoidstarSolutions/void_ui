@@ -34,13 +34,13 @@ use masonry::core::{
     UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Point, Rect, Size};
+use masonry::kurbo::{Axis, Size};
 use masonry::layout::{LenReq, Length};
 
 use super::single_child;
 use crate::Theme;
 use crate::components::click::{self, ClickPhase};
-use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
+use crate::focus_ring::paint_focus_ring_inset;
 
 /// Modifiers carried by a row *selection* intent (a primary-button release
 /// or Space). The receiver inspects them to decide whether this is a plain
@@ -417,16 +417,7 @@ impl Widget for RowClickable {
         painter: &mut Painter<'_>,
     ) {
         if ctx.is_focus_target() {
-            let size = ctx.border_box_size();
-            let inset = FOCUS_RING_INSET;
-            let rect = Rect::from_origin_size(
-                Point::new(inset, inset),
-                Size::new(
-                    (size.width - 2.0 * inset).max(0.0),
-                    (size.height - 2.0 * inset).max(0.0),
-                ),
-            );
-            paint_focus_ring(painter, rect, &self.theme);
+            paint_focus_ring_inset(painter, ctx.border_box_size(), &self.theme);
         }
     }
 
