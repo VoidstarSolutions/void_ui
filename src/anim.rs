@@ -43,13 +43,14 @@ pub(crate) fn elapsed_secs(interval: u64) -> f64 {
 /// still produce a non-zero step — the property whose absence caused #139.
 /// Callers add this to a `0.0..=1.0` progress value and clamp to the target.
 ///
-/// `duration_millis` must be positive; a non-positive duration yields a step of
-/// `1.0` (i.e. "complete immediately"), which keeps callers terminating rather
-/// than looping forever on a misconfigured duration.
+/// `duration_millis` must be positive; a non-positive or NaN duration yields a
+/// step of `1.0` (i.e. "complete immediately"), which keeps callers
+/// terminating rather than looping forever or propagating NaN progress on a
+/// misconfigured duration.
 ///
 /// [`on_anim_frame`]: masonry::core::Widget::on_anim_frame
 pub(crate) fn elapsed_fraction(interval: u64, duration_millis: f32) -> f32 {
-    if duration_millis <= 0.0 {
+    if duration_millis.is_nan() || duration_millis <= 0.0 {
         return 1.0;
     }
     let elapsed_millis = elapsed_secs(interval) * 1e3;
@@ -106,5 +107,6 @@ mod tests {
         // duration, report the transition as complete.
         assert!((elapsed_fraction(16 * MS, 0.0) - 1.0).abs() < f32::EPSILON);
         assert!((elapsed_fraction(16 * MS, -5.0) - 1.0).abs() < f32::EPSILON);
+        assert!((elapsed_fraction(16 * MS, f32::NAN) - 1.0).abs() < f32::EPSILON);
     }
 }
