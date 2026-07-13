@@ -1537,7 +1537,7 @@ fn build_tree_inner(theme: &Theme, demo: &TreeDemo) -> impl WidgetView<TreeDemo>
     let theme_copy = *theme;
 
     let toolbar = flex_row((
-        crate::label("Portfolio tree — click a chevron to expand/collapse")
+        crate::label("Portfolio tree — click a chevron, or drive it from the keyboard")
             .text_size(theme.typography.size_caption)
             .color(theme.palette.text_muted)
             .render(theme),
@@ -1560,6 +1560,24 @@ fn build_tree_inner(theme: &Theme, demo: &TreeDemo) -> impl WidgetView<TreeDemo>
     ))
     .cross_axis_alignment(CrossAxisAlignment::Center)
     .gap(Length::px(8.0));
+
+    // Keyboard tree navigation is wired by `.expandable(..)` alone — no extra
+    // builder call — so this legend is the only thing making it discoverable.
+    // Keep it in step with the key handling in `collection::row_click`.
+    //
+    // ASCII key names, not arrow glyphs: at caption size the Windows fallback
+    // font renders U+2190/2192 as a bare horizontal stroke with no head, making
+    // Left and Right indistinguishable — the one distinction this legend exists
+    // to draw. Same reason `context_menu`'s demo spells out `Ctrl+K`.
+    let key_legend = crate::label(
+        "Click a row, then: Up/Down move focus · Right expands a collapsed row (or steps into an \
+         expanded one) · Left collapses an expanded row (or steps out to its parent) · Space \
+         selects · Enter activates",
+    )
+    .text_size(theme.typography.size_caption)
+    .color(theme.palette.text_faint)
+    .multiline(true)
+    .render(theme);
 
     // The first column is the tree column: wide enough to hold the depth
     // indent + chevron + name.
@@ -1591,7 +1609,7 @@ fn build_tree_inner(theme: &Theme, demo: &TreeDemo) -> impl WidgetView<TreeDemo>
         .row_height(24.0)
         .render(&theme_copy);
 
-    flex_col((toolbar, sized_box(grid).flex(1.0)))
+    flex_col((toolbar, key_legend, sized_box(grid).flex(1.0)))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .gap(Length::px(12.0))
 }
