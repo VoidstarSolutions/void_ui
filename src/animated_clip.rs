@@ -24,6 +24,8 @@ use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Size};
 use masonry::layout::{LayoutSize, LenReq, Length};
 
+use crate::anim;
+
 /// Duration of the open/close animation — an animation timing value, not
 /// spacing, so it doesn't scale with density.
 const SLIDE_MILLIS: f32 = 250.0;
@@ -99,24 +101,18 @@ const SNAP_EPSILON: f32 = 1e-4;
 /// Advances `progress` (0.0 open … 1.0 closed) toward its target for a frame
 /// of `interval` nanoseconds, returning the new progress.
 ///
-/// The elapsed fraction is computed in `f64` so a frame shorter than a
-/// millisecond still advances. The previous code did `interval / 1_000_000`
-/// (integer nanoseconds → milliseconds), which truncated any sub-millisecond
-/// frame to a `0` delta — the animation never progressed and re-armed an anim
-/// frame forever, pegging a CPU core (#139). Returns `progress` unchanged once
-/// within [`SNAP_EPSILON`] of the target.
+/// The per-frame step comes from [`crate::anim::elapsed_fraction`], which
+/// guarantees a non-zero step for a non-zero interval — the property whose
+/// absence (integer ns→ms truncation) stalled this animation and spun the CPU
+/// forever (#139). Returns `progress` unchanged once within [`SNAP_EPSILON`] of
+/// the target.
 fn advance_progress(progress: f32, open: bool, interval: u64) -> f32 {
     let target: f32 = if open { 0.0 } else { 1.0 };
     let diff = target - progress;
     if diff.abs() <= SNAP_EPSILON {
         return progress;
     }
-    let interval_ns = u32::try_from(interval).unwrap_or(u32::MAX);
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "slide progress only needs f32"
-    )]
-    let delta = (f64::from(interval_ns) * 1e-6 / f64::from(SLIDE_MILLIS)) as f32;
+    let delta = anim::elapsed_fraction(interval, SLIDE_MILLIS);
     if diff > 0.0 {
         (progress + delta).min(target)
     } else {

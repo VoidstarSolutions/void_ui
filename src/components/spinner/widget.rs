@@ -17,6 +17,8 @@ use masonry::kurbo::{Affine, Arc as KurboArc, Axis, BezPath, Point, Shape, Size,
 use masonry::layout::{LenReq, Length};
 use masonry::peniko::Color;
 
+use crate::anim;
+
 /// Sweep angle (radians) of the spinner arc — leaves a ~60° gap. An angle,
 /// not spacing, so it doesn't scale with density.
 const SPINNER_SWEEP: f64 = std::f64::consts::TAU * (300.0 / 360.0);
@@ -91,8 +93,7 @@ impl Widget for SpinnerWidget {
         _props: &mut PropertiesMut<'_>,
         interval: u64,
     ) {
-        let interval_ns = u32::try_from(interval).unwrap_or(u32::MAX);
-        self.t = (self.t + f64::from(interval_ns) * 1e-9).rem_euclid(1.0);
+        self.t = (self.t + anim::elapsed_secs(interval)).rem_euclid(1.0);
         ctx.request_anim_frame();
         ctx.request_paint_only();
     }

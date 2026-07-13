@@ -47,6 +47,7 @@ macro_rules! widget_id_handle {
 }
 
 pub mod anchored_overlay;
+mod anim;
 pub mod animated_clip;
 mod collection;
 pub mod components;

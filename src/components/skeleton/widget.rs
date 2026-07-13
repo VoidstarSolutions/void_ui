@@ -17,6 +17,7 @@ use masonry::layout::{LenReq, Length};
 use masonry::peniko::{Color, Gradient};
 
 use super::view::SkeletonAnimation;
+use crate::anim;
 
 /// One full animation cycle in seconds — pulse breathes and the wave sweeps
 /// at ~0.66 Hz.
@@ -131,8 +132,7 @@ impl Widget for SkeletonWidget {
         if self.animation == SkeletonAnimation::None {
             return;
         }
-        let interval_ns = u32::try_from(interval).unwrap_or(u32::MAX);
-        let delta = f64::from(interval_ns) * 1e-9 / ANIM_PERIOD_SECS;
+        let delta = anim::elapsed_secs(interval) / ANIM_PERIOD_SECS;
         self.t = (self.t + delta).rem_euclid(1.0);
         ctx.request_anim_frame();
         ctx.request_paint_only();
