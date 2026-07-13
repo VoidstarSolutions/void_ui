@@ -5,6 +5,7 @@
 //! a new variant is: add a `header`, add an example block, wrap in
 //! `with_source!`.
 
+use masonry::peniko::Color;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::layout::Length;
 use xilem::masonry::widgets::Passthrough;
@@ -231,34 +232,45 @@ fn icons_section(theme: &Theme, disabled: bool) -> impl WidgetView<ButtonDemoSta
 /// is the only condition under which fill-vs-center is visible: the filled rows
 /// keep their columns aligned (the middle column is `.flex(1.0)`), the centered
 /// one collapses to its natural width.
-fn composite_section(
-    theme: &Theme,
-    state: &ButtonDemoState,
-) -> impl WidgetView<ButtonDemoState> + use<> {
-    let header = |text: &'static str| {
-        label(text)
-            .text_size(theme.typography.size_caption)
-            .letter_spacing(1.2)
-            .color(theme.palette.text_faint)
-            .render(theme)
-    };
-    let disabled = state.disabled;
-    let active = state.active;
+/// Mutes `color` to the faint text token when the button is disabled.
+///
+/// `content_button`'s child is an arbitrary view that owns its own colors, so
+/// `.disabled(..)` mutes the *button's* chrome but cannot reach into the child
+/// to mute its text — the caller has to pass an already-muted child (see the
+/// `content` module docs). Honoring that contract is the whole point of these
+/// examples: `Ghost` paints a transparent background when disabled, so a child
+/// that ignores `disabled` would leave the toggle with no visible effect at all.
+fn muted(theme: &Theme, disabled: bool, color: Color) -> Color {
+    if disabled {
+        theme.palette.text_faint
+    } else {
+        color
+    }
+}
 
+fn composite_rows_example(
+    theme: &Theme,
+    disabled: bool,
+    active: bool,
+) -> impl WidgetView<ButtonDemoState> + use<> {
     let symbol_row = |sym: &'static str, name: &'static str, change: &'static str| {
         flex_row((
-            label(sym).render(theme),
+            label(sym)
+                .color(muted(theme, disabled, theme.palette.text))
+                .render(theme),
             label(name)
-                .color(theme.palette.text_muted)
+                .color(muted(theme, disabled, theme.palette.text_muted))
                 .render(theme)
                 .flex(1.0),
-            label(change).color(theme.palette.success).render(theme),
+            label(change)
+                .color(muted(theme, disabled, theme.palette.success))
+                .render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(8.0))
     };
 
-    let rows_example = with_source!(theme, {
+    with_source!(theme, {
         flex_col((
             sized_box(
                 content_button(
@@ -291,13 +303,34 @@ fn composite_section(
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(4.0))
-    });
+    })
+}
+
+fn composite_section(
+    theme: &Theme,
+    state: &ButtonDemoState,
+) -> impl WidgetView<ButtonDemoState> + use<> {
+    let header = |text: &'static str| {
+        label(text)
+            .text_size(theme.typography.size_caption)
+            .letter_spacing(1.2)
+            .color(theme.palette.text_faint)
+            .render(theme)
+    };
+    let disabled = state.disabled;
+    let active = state.active;
+
+    let rows_example = composite_rows_example(theme, disabled, active);
 
     let centered_example = with_source!(theme, {
         sized_box(
             content_button(
                 flex_row((
-                    label("Add symbol").render(theme),
+                    // The caller mutes the child when disabled — the button's
+                    // `disabled` cannot reach into an arbitrary child view.
+                    label("Add symbol")
+                        .color(muted(theme, disabled, theme.palette.text))
+                        .render(theme),
                     label("Ctrl+K")
                         .color(theme.palette.text_faint)
                         .render(theme),
@@ -317,6 +350,14 @@ fn composite_section(
 
     flex_col((
         header("Composite rows — flexed columns fill the button width"),
+        label(
+            "Toggle disabled_bool: the child owns its own colors, so the caller mutes the child's \
+             text — the button's `disabled` only mutes its own chrome.",
+        )
+        .text_size(theme.typography.size_caption)
+        .color(theme.palette.text_faint)
+        .multiline(true)
+        .render(theme),
         rows_example,
         header("fill_content(false) — content centered at its natural width"),
         centered_example,
