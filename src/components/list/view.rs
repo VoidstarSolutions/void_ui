@@ -348,6 +348,9 @@ where
             // `list` does not expose row activation yet; Enter falls back to
             // selection via the substrate.
             on_activate: None,
+            // `list` is flat — no tree nav.
+            tree_meta: None,
+            on_toggle: None,
             theme,
         });
         if loading && item_count > 0 {

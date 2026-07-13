@@ -16,7 +16,7 @@ use xilem::view::{label, sized_box, virtual_scroll};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::body::CollectionBodyWidget;
-use super::row_click::{LeadingHitZone, RowClickAction, clickable_row};
+use super::row_click::{LeadingHitZone, RowClickAction, TreeRowMeta, clickable_row};
 use super::{
     IdSource, ItemsFn, OnActivate, ScrollState, SelectionLens, apply_row_activate, apply_row_click,
     clamp_scroll_index, nearing_end, scroll_idx_to_slice, scroll_range_end,
@@ -33,6 +33,38 @@ pub(crate) type RenderRow<State, Item> =
 /// reserves nothing. See
 /// [`ClickableRow::leading_hit`](super::row_click::ClickableRow::leading_hit).
 pub(crate) type LeadingHitZoneFn<Item> = Arc<dyn Fn(&Item) -> Option<LeadingHitZone> + Send + Sync>;
+
+/// Per-item tree metadata (`item -> meta`) for keyboard tree navigation.
+/// `data_grid`'s expandable rows supply one so Right/Left can toggle a row's
+/// expansion (and, later, move focus by depth). See
+/// [`ClickableRow::tree_meta`](super::row_click::ClickableRow::tree_meta).
+pub(crate) type TreeMetaFn<Item> = Arc<dyn Fn(&Item) -> Option<TreeRowMeta> + Send + Sync>;
+
+/// Host row-expansion toggle callback: `(state, row_id)`, run when Right/Left
+/// toggles an expandable row. Same shape as [`OnActivate`]; the substrate
+/// resolves the row's stable id and hands it in.
+pub(crate) type OnToggle<State> = Arc<dyn Fn(&mut State, u64) + Send + Sync>;
+
+/// A row's [`TreeRowMeta`] by slice position, read from host state — closes over
+/// the `items` accessor + the `tree_meta` projector with `Item` erased so the
+/// body view (generic only over `State`) can hold it. Used to refresh the
+/// depth map for Left/Right nav *without* touching live `VirtualScroll` children
+/// (which can be mid-transition and panic on read).
+type DepthAtFn<State> = Arc<dyn Fn(&State, usize) -> Option<TreeRowMeta> + Send + Sync>;
+
+/// Builds a [`DepthAtFn`] from the tree-meta projector + items accessor,
+/// erasing `Item` so the body view (generic only over `State`) can hold it.
+/// `None` when the collection isn't an expandable tree.
+fn build_depth_at<State: 'static, Item: 'static>(
+    tree_meta: Option<&TreeMetaFn<Item>>,
+    items: &ItemsFn<State, Item>,
+) -> Option<DepthAtFn<State>> {
+    let tm = tree_meta?.clone();
+    let items = Arc::clone(items);
+    Some(Arc::new(move |state: &State, pos: usize| {
+        (*items)(state).get(pos).and_then(|i| tm(i))
+    }))
+}
 
 /// Lazy-load config: fire `callback` when the active range comes within
 /// `threshold` items of the end.
@@ -58,6 +90,12 @@ pub(crate) struct CollectionBodyParams<State, Item, Action> {
     /// Optional row-activation handler (Enter on the focused row). `None`
     /// leaves Enter falling back to selection.
     pub(crate) on_activate: Option<OnActivate<State>>,
+    /// Optional per-row tree metadata for keyboard tree nav (Right/Left).
+    /// `None` (the common case) leaves rows non-tree.
+    pub(crate) tree_meta: Option<TreeMetaFn<Item>>,
+    /// Optional expansion-toggle handler, paired with `tree_meta`. Run when
+    /// Right/Left toggles an expandable row.
+    pub(crate) on_toggle: Option<OnToggle<State>>,
     pub(crate) theme: Theme,
 }
 
@@ -82,9 +120,15 @@ where
         render_row,
         leading_hit_zone,
         on_activate,
+        tree_meta,
+        on_toggle,
         theme,
     } = params;
     let valid_range_end = scroll_range_end(item_count);
+    // For an expandable tree, a closure yielding a row's `TreeRowMeta` by slice
+    // position, read from host state (never from live row widgets — see
+    // `refresh_tree_row_meta`). `None` for a flat list.
+    let depth_at = build_depth_at(tree_meta.as_ref(), &items);
 
     // Collection-level: only propagate pointer interaction to row children when
     // this collection can actually defer to one (an expandable grid supplies a
@@ -100,6 +144,8 @@ where
         let render_row = Arc::clone(&render_row);
         let leading_hit_zone = leading_hit_zone.clone();
         let on_activate = on_activate.clone();
+        let tree_meta = tree_meta.clone();
+        let on_toggle = on_toggle.clone();
         move |state: &mut State, idx: i64| {
             let pos = scroll_idx_to_slice(idx);
 
@@ -115,16 +161,20 @@ where
             // Compute the per-row leading defer-to-child hit zone alongside
             // the content, from the same item borrow. An empty (past-end)
             // row reserves nothing.
-            let (content, leading): (Box<AnyWidgetView<State>>, Option<LeadingHitZone>) =
-                match data.get(pos) {
-                    Some(item) => (
-                        render_row(item, is_selected, &theme),
-                        leading_hit_zone.as_ref().and_then(|f| f(item)),
-                    ),
-                    // pos past the end (a row scrolled past a shrinking
-                    // dataset) — render an inert empty row.
-                    None => (Box::new(label("")), None),
-                };
+            let (content, leading, row_tree): (
+                Box<AnyWidgetView<State>>,
+                Option<LeadingHitZone>,
+                Option<TreeRowMeta>,
+            ) = match data.get(pos) {
+                Some(item) => (
+                    render_row(item, is_selected, &theme),
+                    leading_hit_zone.as_ref().and_then(|f| f(item)),
+                    tree_meta.as_ref().and_then(|f| f(item)),
+                ),
+                // pos past the end (a row scrolled past a shrinking
+                // dataset) — render an inert empty row.
+                None => (Box::new(label("")), None, None),
+            };
 
             let row_bg = if is_selected {
                 theme.palette.surface_2
@@ -149,16 +199,29 @@ where
                 }
             })
             .leading_hit(leading)
-            .propagate_pointer_to_children(defers_to_children);
+            .propagate_pointer_to_children(defers_to_children)
+            .tree_meta(row_tree);
             // Enter-activation, only when the host wired a handler: resolve the
             // row's stable id at activate time (mirroring `apply_row_click`) and
             // hand it to the host callback.
-            match on_activate.clone() {
+            let row = match on_activate.clone() {
                 Some(host_on_activate) => {
                     let items = Arc::clone(&items);
                     let id_source = id_source.clone();
                     row.on_activate(move |state: &mut State| {
                         apply_row_activate(state, pos, &items, &id_source, &host_on_activate);
+                    })
+                }
+                None => row,
+            };
+            // Right/Left expansion toggle, only when the host wired one: resolve
+            // the row's stable id at toggle time and hand it to the host.
+            match on_toggle.clone() {
+                Some(host_on_toggle) => {
+                    let items = Arc::clone(&items);
+                    let id_source = id_source.clone();
+                    row.on_toggle(move |state: &mut State| {
+                        apply_row_activate(state, pos, &items, &id_source, &host_on_toggle);
                     })
                 }
                 None => row,
@@ -171,6 +234,7 @@ where
         scroll,
         item_count,
         lazy,
+        depth_at,
     }
 }
 
@@ -179,11 +243,48 @@ struct CollectionBodyView<V, State, Action> {
     scroll: ScrollState,
     item_count: u64,
     lazy: Option<Lazy<State, Action>>,
+    /// For an expandable tree, reads a row's [`TreeRowMeta`] by slice position
+    /// from host state; the body refreshes its per-visible-row depth map from
+    /// this on rebuild (for Left/Right nav). `None` for a flat collection.
+    depth_at: Option<DepthAtFn<State>>,
+}
+
+/// Rebuilds [`CollectionBodyWidget`]'s per-visible-row depth map for Left/Right
+/// nav. The materialized rows are `children_ids()` (authoritative + live); each
+/// row's slice position is `active_start + k`, and its
+/// [`TreeRowMeta`](super::row_click::TreeRowMeta) is read from **host state**
+/// via `depth_at` — never from the live `VirtualScroll` child (which can be
+/// mid-transition and panic on read). A stale `active_start` at worst yields a
+/// transiently-wrong map that the next settled rebuild corrects; it can't panic.
+fn refresh_tree_row_meta<State>(
+    element: &mut Mut<'_, Pod<CollectionBodyWidget>>,
+    depth_at: &DepthAtFn<State>,
+    active_start: i64,
+    app_state: &State,
+) {
+    use masonry::core::Widget as _;
+    let ids: Vec<masonry::core::WidgetId> = {
+        let vs = CollectionBodyWidget::virtual_scroll_mut(element);
+        vs.widget.children_ids().iter().copied().collect()
+    };
+    let meta: Vec<(masonry::core::WidgetId, TreeRowMeta)> = ids
+        .iter()
+        .enumerate()
+        .filter_map(|(k, &id)| {
+            let pos = usize::try_from(active_start + i64::try_from(k).ok()?).ok()?;
+            depth_at(app_state, pos).map(|m| (id, m))
+        })
+        .collect();
+    CollectionBodyWidget::set_row_meta(element, meta);
 }
 
 struct CollectionBodyViewState<S> {
     child_state: S,
     applied_generation: u64,
+    /// Latest active (materialized) index range, captured from the child's
+    /// `VirtualScrollAction` in `message` and consumed by the *next* `rebuild`
+    /// (once materialization has caught up) to refresh the tree depth map.
+    active_range: std::ops::Range<i64>,
 }
 
 impl<V, State, Action> ViewMarker for CollectionBodyView<V, State, Action> {}
@@ -204,6 +305,7 @@ where
             CollectionBodyViewState {
                 child_state,
                 applied_generation: 0,
+                active_range: 0..0,
             },
         )
     }
@@ -223,9 +325,21 @@ where
                 VirtualScrollWidget::overwrite_anchor(&mut vs, idx);
             }
         }
-        let vs = CollectionBodyWidget::virtual_scroll_mut(&mut element);
-        self.child
-            .rebuild(&prev.child, &mut view_state.child_state, ctx, vs, app_state);
+        {
+            let vs = CollectionBodyWidget::virtual_scroll_mut(&mut element);
+            self.child
+                .rebuild(&prev.child, &mut view_state.child_state, ctx, vs, app_state);
+        }
+        // Materialization has now caught up, so refresh the tree depth map for
+        // Left/Right nav — read from `app_state`, never from live row widgets.
+        if let Some(depth_at) = self.depth_at.as_ref() {
+            refresh_tree_row_meta(
+                &mut element,
+                depth_at,
+                view_state.active_range.start,
+                app_state,
+            );
+        }
     }
 
     fn teardown(
@@ -249,14 +363,20 @@ where
         // maybe_take_message debug-asserts the path is empty, so probing
         // mid-route would panic.
         let mut lazy_action: Option<Action> = None;
-        if message.remaining_path().is_empty()
-            && let Some(lazy) = self.lazy.as_ref()
-        {
+        let mut tree_active: Option<std::ops::Range<i64>> = None;
+        if message.remaining_path().is_empty() && (self.lazy.is_some() || self.depth_at.is_some()) {
             // Peek without consuming (`false`): the `VirtualScrollAction`
             // still routes onward to the child so virtualization handles it.
             message.maybe_take_message::<VirtualScrollAction>(|action| {
-                if nearing_end(self.item_count, action.target.end, lazy.threshold) {
+                if let Some(lazy) = self.lazy.as_ref()
+                    && nearing_end(self.item_count, action.target.end, lazy.threshold)
+                {
                     lazy_action = Some((lazy.callback)(app_state));
+                }
+                // Capture the new active range so we can refresh the tree depth
+                // map once the child has materialized it (below).
+                if self.depth_at.is_some() {
+                    tree_active = Some(action.target.clone());
                 }
                 false
             });
@@ -265,6 +385,12 @@ where
         let child_result = self
             .child
             .message(&mut view_state.child_state, message, vs, app_state);
+        // Materialization for `tree_active` is deferred to the next rebuild, so
+        // just remember the range; that rebuild refreshes the tree depth map
+        // once the rows are actually present (reading here would panic).
+        if let Some(active) = tree_active {
+            view_state.active_range = active;
+        }
         match lazy_action {
             // The lazy-load callback's action wins: it must reach the root
             // so the host's app logic re-runs with the grown item_count.
@@ -592,6 +718,8 @@ mod tests {
             render_row,
             leading_hit_zone: None,
             on_activate: Some(Arc::new(|_state: &mut S, _id: u64| {})),
+            tree_meta: None,
+            on_toggle: None,
             theme: Theme::default(),
         });
 
@@ -634,6 +762,8 @@ mod tests {
             render_row,
             leading_hit_zone: None,
             on_activate: None,
+            tree_meta: None,
+            on_toggle: None,
             theme: Theme::default(),
         });
         assert_widget_view(&view);
