@@ -109,6 +109,33 @@ impl VoidScrollBar {
     }
 }
 
+/// Fade-out duration for the scrollbar thumb — an animation timing value,
+/// not spacing, so it doesn't scale with density.
+const FADE_MILLIS: f32 = 300.0;
+
+/// How close `opacity` must be to `target_opacity` to count as settled.
+const OPACITY_SNAP_EPSILON: f32 = 1e-4;
+
+/// Advances `opacity` toward `target_opacity` for a frame of `interval`
+/// nanoseconds, returning the new opacity.
+///
+/// The per-frame step comes from [`crate::anim::elapsed_fraction`], scaled by
+/// how long the fade is supposed to take. A frame interval longer than the
+/// fade duration itself (e.g. the window was backgrounded or the compositor
+/// stalled for a while) produces a step `>= 1.0`, which jumps straight to
+/// `target_opacity` in one frame rather than crawling toward it over several
+/// — correct, since that much real time actually elapsed while the widget
+/// wasn't rendering.
+fn advance_opacity(opacity: f32, target_opacity: f32, interval: u64) -> f32 {
+    let delta = anim::elapsed_fraction(interval, FADE_MILLIS);
+    let diff = target_opacity - opacity;
+    if diff > 0.0 {
+        (opacity + delta).min(target_opacity)
+    } else {
+        (opacity - delta).max(target_opacity)
+    }
+}
+
 impl AllowRawMut for VoidScrollBar {}
 
 impl Widget for VoidScrollBar {
@@ -179,19 +206,11 @@ impl Widget for VoidScrollBar {
         _props: &mut PropertiesMut<'_>,
         interval: u64,
     ) {
-        // Fade-out duration for the scrollbar thumb — an animation timing
-        // value, not spacing, so it doesn't scale with density.
-        const FADE_MILLIS: f32 = 300.0;
-        let delta = anim::elapsed_fraction(interval, FADE_MILLIS);
         let diff = self.target_opacity - self.opacity;
-        if diff.abs() > 1e-4 {
-            self.opacity = if diff > 0.0 {
-                (self.opacity + delta).min(self.target_opacity)
-            } else {
-                (self.opacity - delta).max(self.target_opacity)
-            };
+        if diff.abs() > OPACITY_SNAP_EPSILON {
+            self.opacity = advance_opacity(self.opacity, self.target_opacity, interval);
             ctx.request_render();
-            if (self.target_opacity - self.opacity).abs() > 1e-4 {
+            if (self.target_opacity - self.opacity).abs() > OPACITY_SNAP_EPSILON {
                 ctx.request_anim_frame();
             }
         }
@@ -1215,7 +1234,43 @@ mod tests {
     use masonry::testing::TestHarness;
     use masonry::widgets::SizedBox;
 
-    use super::{ScrollView, VoidScrollBar, compute_pan_range};
+    use super::{ScrollView, VoidScrollBar, advance_opacity, compute_pan_range};
+
+    const MS: u64 = 1_000_000; // one millisecond in nanoseconds
+
+    // --- advance_opacity ---
+
+    #[test]
+    fn opacity_fades_gradually_over_the_fade_duration() {
+        let mut opacity = 1.0_f32;
+        for _ in 0..1_000 {
+            opacity = advance_opacity(opacity, 0.0, 16 * MS); // ~60 Hz frame
+        }
+        assert!(
+            opacity.abs() < 1e-3,
+            "should fade to fully transparent, got {opacity}"
+        );
+    }
+
+    #[test]
+    fn opacity_snaps_to_target_after_a_stall_longer_than_the_fade() {
+        // A frame interval longer than the 300ms fade itself (backgrounded
+        // window, stalled compositor) means that much real time already
+        // elapsed while unrendered, so the fade should complete in one step
+        // rather than crawl toward the target over several more frames.
+        let stalled_frame = 800 * MS;
+        let opacity = advance_opacity(1.0, 0.0, stalled_frame);
+        assert!(
+            opacity.abs() < f32::EPSILON,
+            "should snap to 0.0, got {opacity}"
+        );
+    }
+
+    #[test]
+    fn settled_opacity_is_unchanged() {
+        assert!((advance_opacity(0.0, 0.0, 16 * MS)).abs() < f32::EPSILON);
+        assert!((advance_opacity(1.0, 1.0, 16 * MS) - 1.0).abs() < f32::EPSILON);
+    }
 
     /// Builds a `ScrollView` whose content is much taller than the 100x100
     /// viewport, so it starts out vertically scrollable.
