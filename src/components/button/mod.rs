@@ -5,11 +5,13 @@
 //! exposed publicly so the [`ButtonView`]'s public `Element` associated
 //! type can name it without leaking a private type through the public API.
 
+mod content;
 #[cfg(feature = "gallery")]
 pub mod demo;
 mod view;
 pub mod widget;
 
+pub use content::{ContentButton, ContentButtonView, content_button};
 pub use view::{Button, ButtonView, button};
 
 /// Visual style applied to a button — controls how background and border
