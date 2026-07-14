@@ -13,7 +13,6 @@
 #[cfg(feature = "gallery")]
 pub mod demo;
 mod view;
-pub mod widget;
+pub(crate) mod widget;
 
 pub use view::{Spinner, SpinnerView, spinner};
-pub use widget::SpinnerWidget;

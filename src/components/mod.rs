@@ -109,7 +109,7 @@ pub use sidebar::{
 };
 pub use skeleton::{Skeleton, SkeletonAnimation, SkeletonShape, SkeletonView, skeleton};
 pub use slider::{RangeSlider, RangeSliderView, Slider, SliderView, range_slider, slider};
-pub use spinner::{Spinner, SpinnerView, SpinnerWidget, spinner};
+pub use spinner::{Spinner, SpinnerView, spinner};
 pub use status_dot::{StatusDot, status_dot};
 pub use tabs::{TabItem, Tabs, TabsVariant, TabsView, tabs};
 pub use toggle::{Toggle, ToggleView, toggle};
