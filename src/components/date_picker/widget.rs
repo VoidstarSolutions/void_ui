@@ -799,24 +799,26 @@ impl Widget for ThemedDatePickerWidget {
 
         if let Some(DatePickerTriggerAction::Clear) = action.downcast_ref() {
             if !self.disabled {
-                self.selected = None;
-                let display = self.placeholder.clone();
-                let cleanable = self.cleanable;
-                let overlay_id = self.overlay_host.id();
-                ctx.mutate_later(overlay_id, move |mut w| {
-                    let mut ov = w.downcast::<AnchoredOverlay>();
-                    {
-                        let mut primary = AnchoredOverlay::primary_mut(&mut ov);
-                        let mut trig = primary.downcast::<DatePickerTrigger>();
-                        DatePickerTrigger::set_text(&mut trig, display);
-                        DatePickerTrigger::set_has_value(&mut trig, false, cleanable);
-                    }
-                    {
-                        let mut overlay = AnchoredOverlay::overlay_mut(&mut ov);
-                        let mut body = overlay.downcast::<CalendarBodyWidget>();
-                        CalendarBodyWidget::set_selected(&mut body, None);
-                    }
-                });
+                if !self.controlled {
+                    self.selected = None;
+                    let display = self.placeholder.clone();
+                    let cleanable = self.cleanable;
+                    let overlay_id = self.overlay_host.id();
+                    ctx.mutate_later(overlay_id, move |mut w| {
+                        let mut ov = w.downcast::<AnchoredOverlay>();
+                        {
+                            let mut primary = AnchoredOverlay::primary_mut(&mut ov);
+                            let mut trig = primary.downcast::<DatePickerTrigger>();
+                            DatePickerTrigger::set_text(&mut trig, display);
+                            DatePickerTrigger::set_has_value(&mut trig, false, cleanable);
+                        }
+                        {
+                            let mut overlay = AnchoredOverlay::overlay_mut(&mut ov);
+                            let mut body = overlay.downcast::<CalendarBodyWidget>();
+                            CalendarBodyWidget::set_selected(&mut body, None);
+                        }
+                    });
+                }
                 ctx.submit_action::<Self::Action>(DatePickerAction::DateChanged(None));
             }
             ctx.set_handled();
