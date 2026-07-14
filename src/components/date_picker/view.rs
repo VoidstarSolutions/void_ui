@@ -5,6 +5,14 @@
 //! selecting a date fires `on_changed` with `Some(date)`, and clearing fires it
 //! with `None`.
 //!
+//! At `build`, the view looks for the nearest [`crate::overlay_scope`]'s
+//! [`OverlayPortal`] in the xilem `Environment`: if present, the calendar body
+//! is registered as a [`CalendarBodyView`] with
+//! [`PortalPlacement::BareTrigger`] (the scope's own view mounts it in the
+//! always-on-top `PortalSlot`) and the picker hosts only the trigger;
+//! otherwise the calendar is built in-tree under the picker's
+//! `AnchoredOverlay`, exactly as before.
+//!
 //! ```ignore
 //! use void_ui::components::date_picker::date_picker;
 //! date_picker(self.selected_date, |s: &mut State, date| {
@@ -21,11 +29,17 @@ use std::sync::Arc;
 
 use chrono::NaiveDate;
 use masonry::core::ArcStr;
+use masonry::widgets::Passthrough;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx};
 
 use crate::Theme;
-use crate::components::date_picker::widget::{DatePickerAction, ThemedDatePickerWidget};
+use crate::components::date_picker::calendar_body::{CalendarBodyAction, CalendarBodyWidget};
+use crate::components::date_picker::widget::{
+    DatePickerAction, DatePickerHandle, ThemedDatePickerWidget,
+};
+use crate::overlay::SurfaceStyle;
+use crate::overlay_portal::{OverlayPortal, PortalContentView, PortalPlacement, portal_from_env};
 
 type OnChangedFn<State, Action> =
     Arc<dyn Fn(&mut State, Option<NaiveDate>) -> Action + Send + Sync>;
@@ -177,34 +191,104 @@ pub struct DatePickerView<State, Action> {
 
 impl<State, Action> ViewMarker for DatePickerView<State, Action> {}
 
+/// Where this date picker's calendar body is bound: the nearest scope's portal
+/// (registered by key; the scope's view mounts/rebuilds it), or in-tree under
+/// our own `ThemedDatePickerWidget` (fallback, handled entirely by the widget).
+enum PickerBinding<State: 'static, Action: 'static> {
+    Portal {
+        portal: OverlayPortal<State, Action>,
+        key: u64,
+        handle: DatePickerHandle,
+    },
+    InTree,
+}
+
+/// View state for `DatePickerView`: just the calendar binding (see
+/// [`PickerBinding`]) — the trigger has no nested view-layer children of its
+/// own (it's built directly by `ThemedDatePickerWidget`).
+#[doc(hidden)]
+pub struct DatePickerViewState<State: 'static, Action: 'static> {
+    binding: PickerBinding<State, Action>,
+}
+
 impl<State, Action> View<State, Action, ViewCtx> for DatePickerView<State, Action>
 where
     State: 'static,
     Action: 'static,
 {
     type Element = Pod<ThemedDatePickerWidget>;
-    type ViewState = ();
+    type ViewState = DatePickerViewState<State, Action>;
 
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
-        let widget = ThemedDatePickerWidget::new(
-            self.selected,
-            self.placeholder.clone(),
-            self.date_format,
-            self.min_date,
-            self.max_date,
-            self.disabled,
-            self.cleanable,
-            &self.theme,
-        )
-        .with_open_state(self.open.unwrap_or(false), self.open.is_some());
-        let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
-        (element, ())
+        let portal = portal_from_env::<State, Action>(ctx);
+        if let Some(portal) = portal {
+            let handle = DatePickerHandle::new();
+            let body_view = CalendarBodyView {
+                selected: self.selected,
+                min_date: self.min_date,
+                max_date: self.max_date,
+                picker_handle: handle.clone(),
+                on_changed: self.on_changed.clone(),
+                theme: self.theme,
+            };
+            let content: Arc<PortalContentView<State, Action>> = Arc::new(body_view);
+            let key = portal.register(
+                content,
+                &self.theme,
+                PortalPlacement::BareTrigger,
+                SurfaceStyle::Popover,
+            );
+            let widget = ThemedDatePickerWidget::new_portal(
+                self.selected,
+                self.placeholder.clone(),
+                self.date_format,
+                self.min_date,
+                self.max_date,
+                self.disabled,
+                self.cleanable,
+                &self.theme,
+                handle.clone(),
+                portal.scope().clone(),
+                key,
+            )
+            .with_open_state(self.open.unwrap_or(false), self.open.is_some());
+            let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
+            (
+                element,
+                DatePickerViewState {
+                    binding: PickerBinding::Portal {
+                        portal,
+                        key,
+                        handle,
+                    },
+                },
+            )
+        } else {
+            let widget = ThemedDatePickerWidget::new(
+                self.selected,
+                self.placeholder.clone(),
+                self.date_format,
+                self.min_date,
+                self.max_date,
+                self.disabled,
+                self.cleanable,
+                &self.theme,
+            )
+            .with_open_state(self.open.unwrap_or(false), self.open.is_some());
+            let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
+            (
+                element,
+                DatePickerViewState {
+                    binding: PickerBinding::InTree,
+                },
+            )
+        }
     }
 
     fn rebuild(
         &self,
         prev: &Self,
-        (): &mut Self::ViewState,
+        view_state: &mut Self::ViewState,
         _ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
         _app_state: &mut State,
@@ -241,6 +325,142 @@ where
                 ThemedDatePickerWidget::set_open(&mut element, open);
             }
         }
+
+        if let PickerBinding::Portal {
+            portal,
+            key,
+            handle,
+        } = &mut view_state.binding
+        {
+            // Content rebuild happens when the scope's view diffs the
+            // registry (after our subtree's rebuild returns) — we only
+            // refresh the registered view value here, mirroring
+            // `DropdownButtonView::rebuild`'s `MenuBinding::Portal` arm.
+            if self.theme != prev.theme
+                || self.selected != prev.selected
+                || self.min_date != prev.min_date
+                || self.max_date != prev.max_date
+            {
+                let body_view = CalendarBodyView {
+                    selected: self.selected,
+                    min_date: self.min_date,
+                    max_date: self.max_date,
+                    picker_handle: handle.clone(),
+                    on_changed: self.on_changed.clone(),
+                    theme: self.theme,
+                };
+                let content: Arc<PortalContentView<State, Action>> = Arc::new(body_view);
+                portal.update(
+                    *key,
+                    content,
+                    &self.theme,
+                    PortalPlacement::BareTrigger,
+                    SurfaceStyle::Popover,
+                );
+            }
+        }
+    }
+
+    fn teardown(
+        &self,
+        view_state: &mut Self::ViewState,
+        ctx: &mut ViewCtx,
+        element: Mut<'_, Self::Element>,
+    ) {
+        if let PickerBinding::Portal { portal, key, .. } = &mut view_state.binding {
+            portal.deregister(*key);
+        }
+        ctx.teardown_action_source(element);
+    }
+
+    fn message(
+        &self,
+        view_state: &mut Self::ViewState,
+        message: &mut MessageCtx,
+        _element: Mut<'_, Self::Element>,
+        app_state: &mut State,
+    ) -> MessageResult<Action> {
+        let _ = &view_state.binding;
+        match message.take_message::<DatePickerAction>() {
+            Some(action) => match *action {
+                DatePickerAction::DateChanged(date) => {
+                    MessageResult::Action((self.on_changed)(app_state, date))
+                }
+                DatePickerAction::OpenChanged(open) => match &self.on_open_change {
+                    Some(f) => MessageResult::Action(f(app_state, open)),
+                    None => MessageResult::Nop,
+                },
+            },
+            None => MessageResult::Stale,
+        }
+    }
+}
+
+/// The content view registered with the scope's [`OverlayPortal`] for a
+/// portal-mode date picker — wraps [`CalendarBodyWidget`] and, on day
+/// selection, both calls the `on_changed` callback (producing `Action`) and
+/// notifies the owning [`ThemedDatePickerWidget`] (via [`DatePickerHandle`])
+/// to close the picker and update the trigger display. The calendar body is not
+/// a descendant of the picker in this mode, so normal action bubbling never
+/// reaches `ThemedDatePickerWidget::on_action`.
+pub(crate) struct CalendarBodyView<State, Action> {
+    selected: Option<NaiveDate>,
+    min_date: Option<NaiveDate>,
+    max_date: Option<NaiveDate>,
+    picker_handle: DatePickerHandle,
+    on_changed: OnChangedFn<State, Action>,
+    theme: Theme,
+}
+
+impl<State, Action> ViewMarker for CalendarBodyView<State, Action> {}
+
+impl<State, Action> View<State, Action, ViewCtx> for CalendarBodyView<State, Action>
+where
+    State: 'static,
+    Action: 'static,
+{
+    type Element = Pod<Passthrough>;
+    type ViewState = ();
+
+    fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
+        let widget =
+            CalendarBodyWidget::new(self.selected, self.min_date, self.max_date, &self.theme);
+        // CalendarBodyWidget submits CalendarBodyAction via action bubbling.
+        // We wrap it in a Passthrough so it fits the `Pod<Passthrough>` element
+        // type that `PortalContentView` expects (the slot wraps everything in
+        // Passthrough).
+        let passthrough =
+            masonry::widgets::Passthrough::new(masonry::core::NewWidget::new(widget).erased());
+        let element = ctx.with_action_widget(|ctx| ctx.create_pod(passthrough));
+        (element, ())
+    }
+
+    fn rebuild(
+        &self,
+        prev: &Self,
+        (): &mut Self::ViewState,
+        _ctx: &mut ViewCtx,
+        mut element: Mut<'_, Self::Element>,
+        _app_state: &mut State,
+    ) {
+        if self.theme != prev.theme
+            || self.selected != prev.selected
+            || self.min_date != prev.min_date
+            || self.max_date != prev.max_date
+        {
+            // Push to the CalendarBodyWidget through the Passthrough wrapper.
+            let mut child = masonry::widgets::Passthrough::child_mut(&mut element);
+            let mut body = child.downcast::<CalendarBodyWidget>();
+            if self.theme != prev.theme {
+                CalendarBodyWidget::set_theme(&mut body, &self.theme);
+            }
+            if self.selected != prev.selected {
+                CalendarBodyWidget::set_selected(&mut body, self.selected);
+            }
+            if self.min_date != prev.min_date || self.max_date != prev.max_date {
+                CalendarBodyWidget::set_min_max(&mut body, self.min_date, self.max_date);
+            }
+        }
     }
 
     fn teardown(
@@ -256,19 +476,23 @@ where
         &self,
         (): &mut Self::ViewState,
         message: &mut MessageCtx,
-        _element: Mut<'_, Self::Element>,
+        mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        match message.take_message::<DatePickerAction>() {
-            Some(action) => match *action {
-                DatePickerAction::DateChanged(date) => {
-                    MessageResult::Action((self.on_changed)(app_state, date))
+        match message.take_message::<CalendarBodyAction>() {
+            Some(boxed) => {
+                let CalendarBodyAction::DateSelected(date) = *boxed;
+                // Back-channel to the picker widget to close it and update the
+                // trigger text — the calendar body is not a descendant of the
+                // picker in portal mode, so normal action bubbling won't reach it.
+                if let Some(picker_id) = self.picker_handle.widget_id() {
+                    element.ctx.mutate_later(picker_id, move |mut w| {
+                        let mut picker = w.downcast::<ThemedDatePickerWidget>();
+                        ThemedDatePickerWidget::close_for_selection(&mut picker, date);
+                    });
                 }
-                DatePickerAction::OpenChanged(open) => match &self.on_open_change {
-                    Some(f) => MessageResult::Action(f(app_state, open)),
-                    None => MessageResult::Nop,
-                },
-            },
+                MessageResult::Action((self.on_changed)(app_state, Some(date)))
+            }
             None => MessageResult::Stale,
         }
     }

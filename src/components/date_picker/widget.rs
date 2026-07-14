@@ -1,6 +1,7 @@
 //! `DatePickerTrigger` (the clickable input-box trigger) and
-//! `ThemedDatePickerWidget` (the full in-tree composite: trigger +
-//! `CalendarBodyWidget` inside an `AnchoredOverlay`).
+//! `ThemedDatePickerWidget` (the full composite: trigger +
+//! `CalendarBodyWidget` inside an `AnchoredOverlay` for in-tree hosting, or
+//! trigger-only with a portal-registered `CalendarBodyView` for portal hosting).
 //!
 //! This file covers the widget layer only. The view layer (`DatePickerView`)
 //! lives in `view.rs` (Task 5). Portal hosting is added in Task 7.
@@ -9,9 +10,9 @@ use chrono::NaiveDate;
 use masonry::accesskit::{Node, Role};
 use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
-    AccessCtx, ActionCtx, ArcStr, ChildrenIds, ErasedAction, EventCtx, LayoutCtx, MeasureCtx,
-    NewWidget, PaintCtx, PointerEvent, PointerUpdate, PropertiesMut, PropertiesRef, RegisterCtx,
-    TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, ActionCtx, ArcStr, ChildrenIds, ComposeCtx, ErasedAction, EventCtx, LayoutCtx,
+    MeasureCtx, NewWidget, PaintCtx, PointerEvent, PointerUpdate, PropertiesMut, PropertiesRef,
+    RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, RoundedRect, Size, Stroke};
@@ -26,6 +27,8 @@ use crate::components::date_picker::calendar_body::{CalendarBodyAction, Calendar
 use crate::components::icon::{IconName, icon};
 use crate::focus_ring::paint_focus_ring;
 use crate::overlay::OverlayAnchor;
+use crate::overlay::binding::{self, PortalBinding, PortalCtx, PortalOpenCtx};
+use crate::overlay_scope::OverlayScopeHandle;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DatePickerTrigger
@@ -337,7 +340,7 @@ impl Widget for DatePickerTrigger {
         ctx: &mut MeasureCtx<'_>,
         _props: &PropertiesRef<'_>,
         axis: Axis,
-        len_req: LenReq,
+        _len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
         // Fixed height; defer horizontal to the parent (redirect to primary
@@ -452,17 +455,78 @@ pub enum DatePickerAction {
     OpenChanged(bool),
 }
 
-/// In-tree composite date-picker widget.
+widget_id_handle!(
+    /// Self-filling handle to a [`ThemedDatePickerWidget`]'s widget id.
+    /// Given to portal-mounted [`super::view::CalendarBodyView`] so a day
+    /// selection can `mutate_later` back to close the picker and sync the
+    /// trigger display.
+    DatePickerHandle
+);
+
+/// How this date picker mounts its calendar panel: permanently in-tree
+/// (fallback, no scope ancestor), or portal-mounted in the nearest scope's
+/// `PortalSlot` (the calendar body is a view child of the scope; we only hold
+/// the key).
+enum Hosting {
+    InTree {
+        overlay_host: WidgetPod<AnchoredOverlay>,
+    },
+    Portal {
+        trigger: WidgetPod<DatePickerTrigger>,
+        binding: PortalBinding,
+    },
+}
+
+/// Navigate from `$this: &mut WidgetMut<'_, ThemedDatePickerWidget>` down to
+/// the `DatePickerTrigger` and run `$body`.
 ///
-/// Hosts a [`DatePickerTrigger`] and a [`CalendarBodyWidget`] inside an
-/// [`AnchoredOverlay`]. The overlay opens and closes in response to trigger
-/// clicks, date selections, Escape, and focus loss.
+/// Works for both `InTree` (navigates through `AnchoredOverlay::primary_mut`)
+/// and `Portal` (navigates directly to the trigger pod).
+macro_rules! with_trigger {
+    ($this:ident, |$trig:ident| $body:block) => {
+        match &mut $this.widget.hosting {
+            Hosting::InTree { overlay_host } => {
+                let mut ov = $this.ctx.get_mut(overlay_host);
+                let mut primary = AnchoredOverlay::primary_mut(&mut ov);
+                let mut $trig = primary.downcast::<DatePickerTrigger>();
+                $body
+            }
+            Hosting::Portal { trigger, .. } => {
+                let mut trig_wm = $this.ctx.get_mut(trigger);
+                let mut $trig = trig_wm.downcast::<DatePickerTrigger>();
+                $body
+            }
+        }
+    };
+}
+
+/// Navigate from `$this: &mut WidgetMut<'_, ThemedDatePickerWidget>` down to
+/// the `CalendarBodyWidget` and run `$body`. Only valid in `InTree` mode.
+macro_rules! with_body {
+    ($this:ident, |$body_var:ident| $body:block) => {{
+        if let Hosting::InTree { overlay_host } = &mut $this.widget.hosting {
+            let mut ov = $this.ctx.get_mut(overlay_host);
+            let mut overlay = AnchoredOverlay::overlay_mut(&mut ov);
+            let mut $body_var = overlay.downcast::<CalendarBodyWidget>();
+            $body
+        }
+    }};
+}
+
+/// Composite date-picker widget.
+///
+/// In-tree mode: hosts a [`DatePickerTrigger`] and a [`CalendarBodyWidget`]
+/// inside an [`AnchoredOverlay`].
+///
+/// Portal mode: hosts only a [`DatePickerTrigger`]; the calendar body lives in
+/// the scope's `PortalSlot`, mounted via [`crate::overlay_portal::OverlayPortal`].
 #[allow(
     clippy::struct_excessive_bools,
     reason = "four independent boolean props, not a state machine"
 )]
 pub struct ThemedDatePickerWidget {
-    overlay_host: WidgetPod<AnchoredOverlay>,
+    hosting: Hosting,
+    handle: DatePickerHandle,
     selected: Option<NaiveDate>,
     placeholder: ArcStr,
     date_format: &'static str,
@@ -523,7 +587,60 @@ impl ThemedDatePickerWidget {
         );
 
         Self {
-            overlay_host: NewWidget::new(overlay_host).to_pod(),
+            hosting: Hosting::InTree {
+                overlay_host: NewWidget::new(overlay_host).to_pod(),
+            },
+            handle: DatePickerHandle::new(),
+            selected,
+            placeholder,
+            date_format,
+            min_date,
+            max_date,
+            disabled,
+            cleanable,
+            theme: *theme,
+            open: false,
+            controlled: false,
+        }
+    }
+
+    /// Portal-mode constructor: the calendar body lives in the scope's slot
+    /// under `key`, registered by the view layer as a `CalendarBodyView`; we
+    /// host only the trigger. `handle` is filled at `Update::WidgetAdded` and
+    /// given to the registered `CalendarBodyView` so it can notify us back.
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub(crate) fn new_portal(
+        selected: Option<NaiveDate>,
+        placeholder: ArcStr,
+        date_format: &'static str,
+        min_date: Option<NaiveDate>,
+        max_date: Option<NaiveDate>,
+        disabled: bool,
+        cleanable: bool,
+        theme: &Theme,
+        handle: DatePickerHandle,
+        scope: OverlayScopeHandle,
+        key: u64,
+    ) -> Self {
+        let display = selected.map_or_else(
+            || placeholder.clone(),
+            |d| ArcStr::from(d.format(date_format).to_string()),
+        );
+        let trigger = DatePickerTrigger::new(
+            display,
+            placeholder.clone(),
+            selected.is_some(),
+            cleanable,
+            disabled,
+            theme,
+        );
+        Self {
+            hosting: Hosting::Portal {
+                trigger: NewWidget::new(trigger).to_pod(),
+                binding: PortalBinding::new(scope, key, date_picker_dismiss_hook),
+            },
+            handle,
             selected,
             placeholder,
             date_format,
@@ -546,35 +663,12 @@ impl ThemedDatePickerWidget {
     }
 }
 
-// ── MARK: Navigation macros ──────────────────────────────────────────────────
-
-/// Navigate from `$this: &mut WidgetMut<'_, ThemedDatePickerWidget>` down to
-/// the `DatePickerTrigger` and run `$body`.
-macro_rules! with_trigger {
-    ($this:ident, |$trig:ident| $body:block) => {{
-        let mut ov = $this.ctx.get_mut(&mut $this.widget.overlay_host);
-        let mut primary = AnchoredOverlay::primary_mut(&mut ov);
-        let mut $trig = primary.downcast::<DatePickerTrigger>();
-        $body
-    }};
-}
-
-/// Navigate from `$this: &mut WidgetMut<'_, ThemedDatePickerWidget>` down to
-/// the `CalendarBodyWidget` and run `$body`.
-macro_rules! with_body {
-    ($this:ident, |$body_var:ident| $body:block) => {{
-        let mut ov = $this.ctx.get_mut(&mut $this.widget.overlay_host);
-        let mut overlay = AnchoredOverlay::overlay_mut(&mut ov);
-        let mut $body_var = overlay.downcast::<CalendarBodyWidget>();
-        $body
-    }};
-}
-
 // ── MARK: WidgetMut setters ──────────────────────────────────────────────────
 
 impl ThemedDatePickerWidget {
     /// Update the selected date, refreshing both the trigger display and the
-    /// calendar body.
+    /// calendar body (in-tree mode only — portal mode rebuilds the calendar
+    /// body via the view layer).
     pub fn set_selected(this: &mut WidgetMut<'_, Self>, selected: Option<NaiveDate>) {
         if this.widget.selected == selected {
             return;
@@ -602,11 +696,11 @@ impl ThemedDatePickerWidget {
             return;
         }
         this.widget.open = open;
-        let overlay_id = this.widget.overlay_host.id();
-        this.ctx.mutate_later(overlay_id, move |mut w| {
-            let mut ov = w.downcast::<AnchoredOverlay>();
-            AnchoredOverlay::set_overlay_visible(&mut ov, open);
-        });
+        if open {
+            this.widget.open_menu(&mut this.ctx);
+        } else {
+            this.widget.close_menu(&mut this.ctx);
+        }
         this.ctx.request_paint_only();
     }
 
@@ -676,11 +770,7 @@ impl ThemedDatePickerWidget {
         // Force close if disabling while open.
         if disabled && this.widget.open {
             this.widget.open = false;
-            let overlay_id = this.widget.overlay_host.id();
-            this.ctx.mutate_later(overlay_id, |mut w| {
-                let mut ov = w.downcast::<AnchoredOverlay>();
-                AnchoredOverlay::set_overlay_visible(&mut ov, false);
-            });
+            this.widget.close_menu(&mut this.ctx);
             this.ctx
                 .submit_action::<DatePickerAction>(DatePickerAction::OpenChanged(false));
         }
@@ -717,6 +807,90 @@ impl ThemedDatePickerWidget {
         });
         this.ctx.request_paint_only();
     }
+
+    /// Sync `open` state after the portal slot dismissed the calendar without
+    /// going through our own event handlers (outside press;
+    /// `PortalSlot::dismiss_outside`), called via `mutate_later(handle)` from
+    /// [`date_picker_dismiss_hook`]. The slot has *already hidden* the content,
+    /// so both `open` in both modes must go `false`. Controlled hosts observe
+    /// [`DatePickerAction::OpenChanged`] and re-apply `true` via
+    /// [`Self::set_open`] if they disagree.
+    pub(crate) fn mark_closed(this: &mut WidgetMut<'_, Self>) {
+        if this.widget.open {
+            this.widget.open = false;
+            this.widget.close_menu(&mut this.ctx);
+            this.ctx
+                .submit_action::<DatePickerAction>(DatePickerAction::OpenChanged(false));
+            this.ctx.request_paint_only();
+        }
+    }
+
+    /// Close after a portal-mounted `CalendarBodyView` handled a day
+    /// selection (see `super::view::CalendarBodyView::message`, which calls
+    /// this via `mutate_later(handle)`). Unlike [`Self::mark_closed`], nothing
+    /// has pre-hidden the slot content here — this IS the close — so it must
+    /// honor controlled mode: gate the self-mutation behind `!controlled`,
+    /// always report both `DateChanged` and `OpenChanged(false)`.
+    pub(crate) fn close_for_selection(this: &mut WidgetMut<'_, Self>, date: NaiveDate) {
+        if !this.widget.controlled {
+            this.widget.selected = Some(date);
+            this.widget.open = false;
+            let display = ArcStr::from(date.format(this.widget.date_format).to_string());
+            let cleanable = this.widget.cleanable;
+            this.widget.close_menu(&mut this.ctx);
+            with_trigger!(this, |trig| {
+                DatePickerTrigger::set_text(&mut trig, display);
+                DatePickerTrigger::set_has_value(&mut trig, true, cleanable);
+            });
+        }
+        this.ctx
+            .submit_action::<DatePickerAction>(DatePickerAction::DateChanged(Some(date)));
+        this.ctx
+            .submit_action::<DatePickerAction>(DatePickerAction::OpenChanged(false));
+        this.ctx.request_paint_only();
+    }
+}
+
+/// Dismiss hook registered with the portal slot (see
+/// [`crate::overlay_portal::DismissHook`]): syncs `open` after an
+/// outside-press dismissal via [`ThemedDatePickerWidget::mark_closed`].
+pub(crate) fn date_picker_dismiss_hook(mut w: WidgetMut<'_, dyn Widget>) {
+    let mut picker = w.downcast::<ThemedDatePickerWidget>();
+    ThemedDatePickerWidget::mark_closed(&mut picker);
+}
+
+// ── MARK: Internal helpers ───────────────────────────────────────────────────
+
+impl ThemedDatePickerWidget {
+    /// Close the calendar panel in whichever host mounts it. Shared by every
+    /// close path; generic over the context — see [`PortalCtx`].
+    fn close_menu(&mut self, ctx: &mut impl PortalCtx) {
+        match &mut self.hosting {
+            Hosting::InTree { overlay_host } => {
+                ctx.queue_mutate(overlay_host.id(), |mut w| {
+                    let mut ov = w.downcast::<AnchoredOverlay>();
+                    AnchoredOverlay::set_overlay_visible(&mut ov, false);
+                });
+            }
+            Hosting::Portal { binding, .. } => binding.close(ctx),
+        }
+    }
+
+    /// Open the calendar panel in whichever host mounts it (trigger toggle
+    /// only).
+    fn open_menu(&mut self, ctx: &mut impl PortalOpenCtx) {
+        match &mut self.hosting {
+            Hosting::InTree { overlay_host } => {
+                ctx.queue_mutate(overlay_host.id(), |mut w| {
+                    let mut ov = w.downcast::<AnchoredOverlay>();
+                    AnchoredOverlay::set_overlay_visible(&mut ov, true);
+                });
+            }
+            Hosting::Portal { binding, .. } => {
+                binding.open(ctx, OverlayAnchor::BottomStart, 0.0);
+            }
+        }
+    }
 }
 
 // ── MARK: Widget impl ────────────────────────────────────────────────────────
@@ -729,40 +903,47 @@ impl Widget for ThemedDatePickerWidget {
     }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.overlay_host);
+        match &mut self.hosting {
+            Hosting::InTree { overlay_host } => ctx.register_child(overlay_host),
+            Hosting::Portal { trigger, .. } => ctx.register_child(trigger),
+        }
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
             Update::WidgetAdded => {
                 ctx.set_disabled(self.disabled);
+                self.handle.set(ctx.widget_id());
                 if self.open {
-                    let overlay_id = self.overlay_host.id();
-                    ctx.mutate_later(overlay_id, |mut w| {
-                        let mut ov = w.downcast::<AnchoredOverlay>();
-                        AnchoredOverlay::set_overlay_visible(&mut ov, true);
-                    });
+                    self.open_menu(ctx);
                 }
             }
-            Update::ChildFocusChanged(false) if self.open => {
+            // The trigger is the actual focus target, so we react to
+            // `ChildFocusChanged` — masonry's "focus entered/left my subtree"
+            // signal for ancestors — rather than `FocusChanged`. Only
+            // meaningful in-tree: there the calendar is a *descendant*
+            // (clicks on the trigger or inside the calendar keep our subtree
+            // focused), so this only fires for genuine outside clicks. In
+            // portal mode the calendar lives in the scope's slot, not under
+            // us — the slot's own outside-press dismissal handles it instead
+            // (see `PortalSlot::dismiss_outside`).
+            Update::ChildFocusChanged(false)
+                if self.open && matches!(self.hosting, Hosting::InTree { .. }) =>
+            {
                 if !self.controlled {
                     self.open = false;
-                    let overlay_id = self.overlay_host.id();
-                    ctx.mutate_later(overlay_id, |mut w| {
-                        let mut ov = w.downcast::<AnchoredOverlay>();
-                        AnchoredOverlay::set_overlay_visible(&mut ov, false);
-                    });
+                    self.close_menu(ctx);
                 }
                 ctx.submit_action::<Self::Action>(DatePickerAction::OpenChanged(false));
                 ctx.request_paint_only();
             }
+            // A trigger stashed mid-open (e.g. a tab/panel container hiding
+            // us without tearing us down) can no longer be clicked to dismiss
+            // its calendar, and the calendar would stay visible/painted. Close
+            // eagerly for both hosting modes.
             Update::StashedChanged(true) if self.open => {
                 self.open = false;
-                let overlay_id = self.overlay_host.id();
-                ctx.mutate_later(overlay_id, |mut w| {
-                    let mut ov = w.downcast::<AnchoredOverlay>();
-                    AnchoredOverlay::set_overlay_visible(&mut ov, false);
-                });
+                self.close_menu(ctx);
                 ctx.submit_action::<Self::Action>(DatePickerAction::OpenChanged(false));
                 ctx.request_paint_only();
             }
@@ -784,11 +965,11 @@ impl Widget for ThemedDatePickerWidget {
                 let desired = !self.open;
                 if !self.controlled {
                     self.open = desired;
-                    let overlay_id = self.overlay_host.id();
-                    ctx.mutate_later(overlay_id, move |mut w| {
-                        let mut ov = w.downcast::<AnchoredOverlay>();
-                        AnchoredOverlay::set_overlay_visible(&mut ov, desired);
-                    });
+                    if desired {
+                        self.open_menu(ctx);
+                    } else {
+                        self.close_menu(ctx);
+                    }
                 }
                 ctx.submit_action::<Self::Action>(DatePickerAction::OpenChanged(desired));
             }
@@ -801,23 +982,40 @@ impl Widget for ThemedDatePickerWidget {
             if !self.disabled {
                 if !self.controlled {
                     self.selected = None;
-                    let display = self.placeholder.clone();
-                    let cleanable = self.cleanable;
-                    let overlay_id = self.overlay_host.id();
-                    ctx.mutate_later(overlay_id, move |mut w| {
-                        let mut ov = w.downcast::<AnchoredOverlay>();
-                        {
-                            let mut primary = AnchoredOverlay::primary_mut(&mut ov);
-                            let mut trig = primary.downcast::<DatePickerTrigger>();
-                            DatePickerTrigger::set_text(&mut trig, display);
-                            DatePickerTrigger::set_has_value(&mut trig, false, cleanable);
+                    // In-tree: update trigger and body directly via the
+                    // overlay host. Portal: trigger is our direct child; body
+                    // is rebuilt by the view layer.
+                    match &self.hosting {
+                        Hosting::InTree { overlay_host } => {
+                            let display = self.placeholder.clone();
+                            let cleanable = self.cleanable;
+                            let overlay_id = overlay_host.id();
+                            ctx.mutate_later(overlay_id, move |mut w| {
+                                let mut ov = w.downcast::<AnchoredOverlay>();
+                                {
+                                    let mut primary = AnchoredOverlay::primary_mut(&mut ov);
+                                    let mut trig = primary.downcast::<DatePickerTrigger>();
+                                    DatePickerTrigger::set_text(&mut trig, display);
+                                    DatePickerTrigger::set_has_value(&mut trig, false, cleanable);
+                                }
+                                {
+                                    let mut overlay = AnchoredOverlay::overlay_mut(&mut ov);
+                                    let mut body = overlay.downcast::<CalendarBodyWidget>();
+                                    CalendarBodyWidget::set_selected(&mut body, None);
+                                }
+                            });
                         }
-                        {
-                            let mut overlay = AnchoredOverlay::overlay_mut(&mut ov);
-                            let mut body = overlay.downcast::<CalendarBodyWidget>();
-                            CalendarBodyWidget::set_selected(&mut body, None);
+                        Hosting::Portal { trigger, .. } => {
+                            let display = self.placeholder.clone();
+                            let cleanable = self.cleanable;
+                            let trig_id = trigger.id();
+                            ctx.mutate_later(trig_id, move |mut w| {
+                                let mut trig = w.downcast::<DatePickerTrigger>();
+                                DatePickerTrigger::set_text(&mut trig, display);
+                                DatePickerTrigger::set_has_value(&mut trig, false, cleanable);
+                            });
                         }
-                    });
+                    }
                 }
                 ctx.submit_action::<Self::Action>(DatePickerAction::DateChanged(None));
             }
@@ -826,6 +1024,10 @@ impl Widget for ThemedDatePickerWidget {
             return;
         }
 
+        // `CalendarBodyAction::DateSelected` only bubbles here in in-tree
+        // mode (the calendar is our descendant). In portal mode that action
+        // is handled by `CalendarBodyView::message` → `mutate_later` →
+        // `close_for_selection` instead.
         if let Some(CalendarBodyAction::DateSelected(date)) = action.downcast_ref() {
             let date = *date;
             if !self.controlled {
@@ -833,7 +1035,20 @@ impl Widget for ThemedDatePickerWidget {
                 self.open = false;
                 let display = ArcStr::from(date.format(self.date_format).to_string());
                 let cleanable = self.cleanable;
-                let overlay_id = self.overlay_host.id();
+                let overlay_id = match &self.hosting {
+                    Hosting::InTree { overlay_host } => overlay_host.id(),
+                    Hosting::Portal { .. } => {
+                        // Should not happen in portal mode (see comment above),
+                        // but if it did, there's nothing to do here.
+                        ctx.submit_action::<Self::Action>(DatePickerAction::DateChanged(Some(
+                            date,
+                        )));
+                        ctx.submit_action::<Self::Action>(DatePickerAction::OpenChanged(false));
+                        ctx.set_handled();
+                        ctx.request_paint_only();
+                        return;
+                    }
+                };
                 ctx.mutate_later(overlay_id, move |mut w| {
                     let mut ov = w.downcast::<AnchoredOverlay>();
                     AnchoredOverlay::set_overlay_visible(&mut ov, false);
@@ -870,16 +1085,32 @@ impl Widget for ThemedDatePickerWidget {
         if let Key::Named(NamedKey::Escape) = &key.key {
             if !self.controlled {
                 self.open = false;
-                let overlay_id = self.overlay_host.id();
-                ctx.mutate_later(overlay_id, |mut w| {
-                    let mut ov = w.downcast::<AnchoredOverlay>();
-                    AnchoredOverlay::set_overlay_visible(&mut ov, false);
-                });
+                self.close_menu(ctx);
             }
             ctx.submit_action::<Self::Action>(DatePickerAction::OpenChanged(false));
             ctx.set_handled();
             ctx.request_paint_only();
         }
+    }
+
+    /// Re-anchors a still-open portal-mode calendar as we move in window space.
+    /// Mirrors `ThemedDropdownButton::compose`; no-op in-tree.
+    fn compose(&mut self, ctx: &mut ComposeCtx<'_>) {
+        let binding = match &mut self.hosting {
+            Hosting::Portal { binding, .. } => Some(binding),
+            Hosting::InTree { .. } => None,
+        };
+        binding::compose_reanchor(ctx, self.open, binding);
+    }
+
+    /// Keeps a still-open portal-mode calendar's [`Self::compose`] running
+    /// every frame — see [`binding::arm_reanchor_on_anim_frame`].
+    fn on_anim_frame(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, _: u64) {
+        binding::arm_reanchor_on_anim_frame(
+            ctx,
+            self.open,
+            matches!(self.hosting, Hosting::Portal { .. }),
+        );
     }
 
     fn measure(
@@ -890,13 +1121,29 @@ impl Widget for ThemedDatePickerWidget {
         _len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        ctx.redirect_measurement(&mut self.overlay_host, axis, cross_length)
+        match &mut self.hosting {
+            Hosting::InTree { overlay_host } => {
+                ctx.redirect_measurement(overlay_host, axis, cross_length)
+            }
+            Hosting::Portal { trigger, .. } => {
+                ctx.redirect_measurement(trigger, axis, cross_length)
+            }
+        }
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        ctx.run_layout(&mut self.overlay_host, size);
-        ctx.place_child(&mut self.overlay_host, Point::ORIGIN);
-        ctx.derive_baselines(&self.overlay_host);
+        match &mut self.hosting {
+            Hosting::InTree { overlay_host } => {
+                ctx.run_layout(overlay_host, size);
+                ctx.place_child(overlay_host, Point::ORIGIN);
+                ctx.derive_baselines(overlay_host);
+            }
+            Hosting::Portal { trigger, .. } => {
+                ctx.run_layout(trigger, size);
+                ctx.place_child(trigger, Point::ORIGIN);
+                ctx.derive_baselines(trigger);
+            }
+        }
     }
 
     fn paint(
@@ -921,6 +1168,9 @@ impl Widget for ThemedDatePickerWidget {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.overlay_host.id()])
+        match &self.hosting {
+            Hosting::InTree { overlay_host } => ChildrenIds::from_slice(&[overlay_host.id()]),
+            Hosting::Portal { trigger, .. } => ChildrenIds::from_slice(&[trigger.id()]),
+        }
     }
 }
