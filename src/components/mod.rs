@@ -55,7 +55,9 @@ pub use alert::{Alert, AlertVariant, alert};
 pub use autocomplete::{Autocomplete, autocomplete};
 pub use badge::{Badge, badge, pill};
 pub use breadcrumb::{Breadcrumb, BreadcrumbSegment, breadcrumb, segment};
-pub use button::{Button, ButtonVariant, ButtonView, button};
+pub use button::{
+    Button, ButtonVariant, ButtonView, ContentButton, ContentButtonView, button, content_button,
+};
 pub use button_group::{ButtonGroup, button_group, toggle_button_group};
 pub use card::{Card, card};
 pub use checkbox::{Checkbox, CheckboxView, checkbox};

@@ -89,6 +89,16 @@ pub struct ThemedButton {
     /// the pointer-driven `pressed` flag read from the widget context, so
     /// keyboard activation shows the same pressed fill a pointer click does.
     keyboard_pressed: bool,
+    /// When true, the child is sized to the button's full inner box and
+    /// left-aligned instead of being sized to fit and centered.
+    ///
+    /// A label wants fit-and-center (the default). A composite child — a
+    /// `flex_row` of columns behind [`content_button`] — wants fill: under
+    /// `SizeDef::fit` a flexed child collapses to its minimum, so columns
+    /// never line up across rows.
+    ///
+    /// [`content_button`]: super::content_button
+    stretch_child: bool,
 }
 
 // --- MARK: BUILDERS
@@ -113,6 +123,7 @@ impl ThemedButton {
             clipboard_payload: None,
             corners: RoundedRectRadii::from_single_radius(f64::from(theme.radius.small)),
             keyboard_pressed: false,
+            stretch_child: false,
         }
     }
 
@@ -187,6 +198,14 @@ impl ThemedButton {
     #[must_use]
     pub fn with_corners(mut self, corners: RoundedRectRadii) -> Self {
         self.corners = corners;
+        self
+    }
+
+    /// Sizes the child to the button's full inner box and left-aligns it,
+    /// instead of sizing it to fit and centering it. See [`Self::stretch_child`].
+    #[must_use]
+    pub fn with_stretch_child(mut self, stretch: bool) -> Self {
+        self.stretch_child = stretch;
         self
     }
 }
@@ -327,6 +346,14 @@ impl ThemedButton {
         if this.widget.corners != corners {
             this.widget.corners = corners;
             this.ctx.request_paint_only();
+        }
+    }
+
+    /// Toggles child stretching. Requests layout on change.
+    pub fn set_stretch_child(this: &mut WidgetMut<'_, Self>, stretch: bool) {
+        if this.widget.stretch_child != stretch {
+            this.widget.stretch_child = stretch;
+            this.ctx.request_layout();
         }
     }
 
@@ -631,24 +658,40 @@ impl Widget for ThemedButton {
             (size.width - 2.0 * pad_h - icon_base - trailing_base).max(0.0),
             (size.height - 2.0 * pad_v).max(0.0),
         );
-        let child_size = ctx.compute_size(&mut self.child, SizeDef::fit(inner), inner.into());
+        let (child_size, child_x) = if self.stretch_child {
+            // Fill: the icon columns and their gaps are reserved up front.
+            // The fit path below derives its gaps from the *measured* child
+            // width, which isn't available here — a stretched child's width is
+            // what we're solving for, so the reservation has to come first.
+            let leading_gap = if icon_base > 0.0 { ICON_GAP } else { 0.0 };
+            let trailing_gap = if trailing_base > 0.0 { ICON_GAP } else { 0.0 };
+            let avail = Size::new(
+                (inner.width - leading_gap - trailing_gap).max(0.0),
+                inner.height,
+            );
+            let child_size = ctx.compute_size(&mut self.child, SizeDef::fixed(avail), avail.into());
+            (child_size, pad_h + icon_base + leading_gap)
+        } else {
+            let child_size = ctx.compute_size(&mut self.child, SizeDef::fit(inner), inner.into());
+            let gap = if child_size.width > 0.0 {
+                ICON_GAP
+            } else {
+                0.0
+            };
+            let icon_extra = if icon_base > 0.0 {
+                icon_base + gap
+            } else {
+                0.0
+            };
+            let leading_gap = icon_extra - icon_base;
+            let trailing_gap = if trailing_base > 0.0 { gap } else { 0.0 };
+            let label_area = (inner.width - leading_gap - trailing_gap).max(0.0);
+            // Label is centered in the space between the leading and trailing icon areas.
+            let child_x = pad_h + icon_extra + ((label_area - child_size.width) * 0.5).max(0.0);
+            (child_size, child_x)
+        };
         ctx.run_layout(&mut self.child, child_size);
 
-        let gap = if child_size.width > 0.0 {
-            ICON_GAP
-        } else {
-            0.0
-        };
-        let icon_extra = if icon_base > 0.0 {
-            icon_base + gap
-        } else {
-            0.0
-        };
-        let leading_gap = icon_extra - icon_base;
-        let trailing_gap = if trailing_base > 0.0 { gap } else { 0.0 };
-        let label_area = (inner.width - leading_gap - trailing_gap).max(0.0);
-        // Label is centered in the space between the leading and trailing icon areas.
-        let child_x = pad_h + icon_extra + ((label_area - child_size.width) * 0.5).max(0.0);
         let child_y = pad_v + ((inner.height - child_size.height) * 0.5).max(0.0);
         ctx.place_child(&mut self.child, Point::new(child_x, child_y));
         ctx.derive_baselines(&self.child);
@@ -776,7 +819,7 @@ impl Widget for ThemedButton {
 #[cfg(test)]
 mod tests {
     use masonry::core::keyboard::{Key, NamedKey};
-    use masonry::core::{NewWidget, TextEvent};
+    use masonry::core::{NewWidget, TextEvent, WidgetTag};
     use masonry::kurbo::Point;
     use masonry::testing::TestHarness;
     use masonry::theme::default_property_set;
@@ -789,6 +832,30 @@ mod tests {
         let widget = ThemedButton::new(NewWidget::new(Label::new("Go")), &Theme::dark())
             .with_disabled(disabled);
         TestHarness::create_with_size(default_property_set(), NewWidget::new(widget), (120, 32))
+    }
+
+    /// Tags the child so the layout tests can read its geometry back out.
+    const CHILD: WidgetTag<Label> = WidgetTag::named("themed-button-child");
+
+    /// A button far wider than its "Go" label, so fit-and-center and fill are
+    /// distinguishable (at natural width they would coincide).
+    fn harness_with_stretch(stretch: bool) -> TestHarness<ThemedButton> {
+        let child = NewWidget::new(Label::new("Go")).with_tag(CHILD);
+        let widget = ThemedButton::new(child, &Theme::dark()).with_stretch_child(stretch);
+        TestHarness::create_with_size(default_property_set(), NewWidget::new(widget), (300, 40))
+    }
+
+    /// `(button width, child width, child x relative to the button)`.
+    fn child_geometry(h: &TestHarness<ThemedButton>) -> (f64, f64, f64) {
+        let button_x = h.root_widget().ctx().window_transform().translation().x;
+        let button_w = h.root_widget().ctx().border_box_size().width;
+        let child = h.get_widget(CHILD);
+        let child_x = child.ctx().window_transform().translation().x;
+        (
+            button_w,
+            child.ctx().border_box_size().width,
+            child_x - button_x,
+        )
     }
 
     #[test]
@@ -841,6 +908,39 @@ mod tests {
         h.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
         assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
         assert!(h.pop_action::<ButtonPress>().is_some());
+    }
+
+    #[test]
+    fn child_is_fit_and_centered_by_default() {
+        let h = harness_with_stretch(false);
+        let pad_h = f64::from(Theme::dark().density.button_pad_h);
+        let (button_w, child_w, child_x) = child_geometry(&h);
+        let inner_w = button_w - 2.0 * pad_h;
+
+        assert!(
+            child_w < inner_w,
+            "a label keeps its natural width ({child_w}) inside a {inner_w}px inner box"
+        );
+        // Centered: equal slack on both sides, so x is past the left padding.
+        let expected_x = pad_h + (inner_w - child_w) * 0.5;
+        assert!((child_x - expected_x).abs() < 0.5, "child_x {child_x}");
+    }
+
+    #[test]
+    fn stretch_child_fills_the_inner_box_and_left_aligns() {
+        // Why this exists: `content_button` puts a composite child (a flex_row
+        // of columns) in a button that a parent stretches. Under the fit path a
+        // flexed column collapses to its minimum, so columns never line up
+        // across rows — filling is what makes composite rows possible.
+        let h = harness_with_stretch(true);
+        let pad_h = f64::from(Theme::dark().density.button_pad_h);
+        let (button_w, child_w, child_x) = child_geometry(&h);
+
+        assert!(
+            (child_w - (button_w - 2.0 * pad_h)).abs() < 0.5,
+            "child ({child_w}) should fill the inner box of a {button_w}px button"
+        );
+        assert!((child_x - pad_h).abs() < 0.5, "left-aligned, got {child_x}");
     }
 
     #[test]

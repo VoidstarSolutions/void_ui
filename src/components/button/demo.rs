@@ -5,16 +5,17 @@
 //! a new variant is: add a `header`, add an example block, wrap in
 //! `with_source!`.
 
+use masonry::peniko::Color;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::layout::Length;
 use xilem::masonry::widgets::Passthrough;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, flex_col, flex_row};
+use xilem::view::{CrossAxisAlignment, FlexExt as _, flex_col, flex_row, sized_box};
 
 use crate::label;
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
-use super::button;
+use super::{button, content_button};
 use crate::components::checkbox::checkbox;
 use crate::components::{ButtonVariant, IconName, ScrollBarVisibility};
 use crate::with_source;
@@ -23,6 +24,9 @@ use crate::{Theme, scroll_container, separator};
 struct ButtonDemoState {
     disabled: bool,
     active: bool,
+    /// Click count for the composite-content rows — proves the *whole* row is
+    /// the click target, not just some inner label.
+    opens: u32,
 }
 
 type InnerView = Box<AnyWidgetView<ButtonDemoState>>;
@@ -222,6 +226,149 @@ fn icons_section(theme: &Theme, disabled: bool) -> impl WidgetView<ButtonDemoSta
     .gap(Length::px(16.0))
 }
 
+/// `content_button` — the whole composite is the button.
+///
+/// The demo width is fixed so the buttons are wider than their content, which
+/// is the only condition under which fill-vs-center is visible: the filled rows
+/// keep their columns aligned (the middle column is `.flex(1.0)`), the centered
+/// one collapses to its natural width.
+/// Mutes `color` to the faint text token when the button is disabled.
+///
+/// `content_button`'s child is an arbitrary view that owns its own colors, so
+/// `.disabled(..)` mutes the *button's* chrome but cannot reach into the child
+/// to mute its text — the caller has to pass an already-muted child (see the
+/// `content` module docs). Honoring that contract is the whole point of these
+/// examples: `Ghost` paints a transparent background when disabled, so a child
+/// that ignores `disabled` would leave the toggle with no visible effect at all.
+fn muted(theme: &Theme, disabled: bool, color: Color) -> Color {
+    if disabled {
+        theme.palette.text_faint
+    } else {
+        color
+    }
+}
+
+fn composite_rows_example(
+    theme: &Theme,
+    disabled: bool,
+    active: bool,
+) -> impl WidgetView<ButtonDemoState> + use<> {
+    let symbol_row = |sym: &'static str, name: &'static str, change: &'static str| {
+        flex_row((
+            label(sym)
+                .color(muted(theme, disabled, theme.palette.text))
+                .render(theme),
+            label(name)
+                .color(muted(theme, disabled, theme.palette.text_muted))
+                .render(theme)
+                .flex(1.0),
+            label(change)
+                .color(muted(theme, disabled, theme.palette.success))
+                .render(theme),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .gap(Length::px(8.0))
+    };
+
+    with_source!(theme, {
+        flex_col((
+            sized_box(
+                content_button(
+                    symbol_row("AAPL", "Apple Inc.", "+1.24%"),
+                    |s: &mut ButtonDemoState| {
+                        s.opens += 1;
+                    },
+                )
+                .variant(ButtonVariant::Ghost)
+                .accessible_name("Open AAPL")
+                .disabled(disabled)
+                .active(active)
+                .render(theme),
+            )
+            .fixed_width(Length::px(360.0)),
+            sized_box(
+                content_button(
+                    symbol_row("MSFT", "Microsoft Corp.", "+0.63%"),
+                    |s: &mut ButtonDemoState| {
+                        s.opens += 1;
+                    },
+                )
+                .variant(ButtonVariant::Ghost)
+                .accessible_name("Open MSFT")
+                .disabled(disabled)
+                .active(active)
+                .render(theme),
+            )
+            .fixed_width(Length::px(360.0)),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .gap(Length::px(4.0))
+    })
+}
+
+fn composite_section(
+    theme: &Theme,
+    state: &ButtonDemoState,
+) -> impl WidgetView<ButtonDemoState> + use<> {
+    let header = |text: &'static str| {
+        label(text)
+            .text_size(theme.typography.size_caption)
+            .letter_spacing(1.2)
+            .color(theme.palette.text_faint)
+            .render(theme)
+    };
+    let disabled = state.disabled;
+    let active = state.active;
+
+    let rows_example = composite_rows_example(theme, disabled, active);
+
+    let centered_example = with_source!(theme, {
+        sized_box(
+            content_button(
+                flex_row((
+                    // The caller mutes the child when disabled — the button's
+                    // `disabled` cannot reach into an arbitrary child view.
+                    label("Add symbol")
+                        .color(muted(theme, disabled, theme.palette.text))
+                        .render(theme),
+                    label("Ctrl+K")
+                        .color(theme.palette.text_faint)
+                        .render(theme),
+                ))
+                .gap(Length::px(8.0)),
+                |s: &mut ButtonDemoState| {
+                    s.opens += 1;
+                },
+            )
+            .fill_content(false)
+            .accessible_name("Add symbol")
+            .disabled(disabled)
+            .render(theme),
+        )
+        .fixed_width(Length::px(360.0))
+    });
+
+    flex_col((
+        header("Composite rows — flexed columns fill the button width"),
+        label(
+            "Toggle disabled_bool: the child owns its own colors, so the caller mutes the child's \
+             text — the button's `disabled` only mutes its own chrome.",
+        )
+        .text_size(theme.typography.size_caption)
+        .color(theme.palette.text_faint)
+        .multiline(true)
+        .render(theme),
+        rows_example,
+        header("fill_content(false) — content centered at its natural width"),
+        centered_example,
+        label(format!("Rows opened: {}", state.opens))
+            .color(theme.palette.text_muted)
+            .render(theme),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Start)
+    .gap(Length::px(16.0))
+}
+
 fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<ButtonDemoState> + use<> {
     let header = |text: &'static str| {
         label(text)
@@ -258,6 +405,7 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
             controls_row(theme, state),
             variants_section,
             icons_section(theme, state.disabled),
+            composite_section(theme, state),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(16.0)),
@@ -277,6 +425,7 @@ impl<S: 'static> View<S, (), ViewCtx> for ButtonDemoPanel {
         let mut state = ButtonDemoState {
             disabled: false,
             active: false,
+            opens: 0,
         };
         let inner_view: InnerView = Box::new(build_inner(&self.theme, &state));
         let (element, inner_state) = inner_view.build(ctx, &mut state);
