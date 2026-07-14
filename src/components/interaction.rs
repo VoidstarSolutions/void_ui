@@ -3,13 +3,18 @@
 //!
 //! The Space/Enter key-up activation block, the accesskit `Click`
 //! activation predicate, and the `WidgetAdded`/`HoveredChanged` update
-//! block were each written near-verbatim in five widgets (button,
-//! checkbox, toggle, radio, sidebar item). Centralizing them here means
-//! a future change to activation semantics lands once instead of
-//! drifting across copies. The sidebar panel strip and nav item
-//! (`sidebar/panel_widget.rs`, `sidebar/nav_widget.rs`) still hand-roll
-//! these blocks pending a follow-up port. The pointer press machine
-//! lives next door in [`super::click`].
+//! block were each written near-verbatim across the press widgets
+//! (button, checkbox, toggle, radio, sidebar item, sidebar panel strip,
+//! sidebar nav). Centralizing them here means a future change to
+//! activation semantics lands once instead of drifting across copies.
+//! Every press widget now composes these helpers — there are no
+//! hand-rolled copies left. The pointer press machine lives next door in
+//! [`super::click`].
+//!
+//! Widgets with extra concerns still keep their own `update()` — the
+//! sidebar panel strip and nav track *positional* hover (which item /
+//! whether the strip is under the pointer), which these shared blocks
+//! have no notion of.
 
 use masonry::accesskit;
 use masonry::core::keyboard::{Key, NamedKey};

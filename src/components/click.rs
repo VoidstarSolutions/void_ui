@@ -5,11 +5,11 @@
 //! `is_hovered`, so dragging out of the widget cancels it — was written
 //! near-verbatim across the press widgets (button, popover trigger,
 //! row/header click wrappers, checkbox, toggle, radio, sidebar item,
-//! tabs, collapsible header). Centralizing it means a future change to
-//! the press semantics (pointer-capture loss, cancel rules, non-primary
-//! buttons) lands once instead of drifting across copies. Two sidebar
-//! widgets (`sidebar/panel_widget.rs`, `sidebar/nav_widget.rs`) still
-//! hand-roll the pattern pending a follow-up port.
+//! sidebar panel strip, sidebar nav, tabs, collapsible header).
+//! Centralizing it means a future change to the press semantics
+//! (pointer-capture loss, cancel rules, non-primary buttons) lands once
+//! instead of drifting across copies. Every press widget now composes
+//! this recognizer — there are no hand-rolled copies left.
 //!
 //! The recognizer owns only the *shared* control flow: it captures the
 //! pointer on Down (gated by the caller's hit test in
