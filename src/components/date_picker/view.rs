@@ -380,7 +380,6 @@ where
         _element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        let _ = &view_state.binding;
         match message.take_message::<DatePickerAction>() {
             Some(action) => match *action {
                 DatePickerAction::DateChanged(date) => {

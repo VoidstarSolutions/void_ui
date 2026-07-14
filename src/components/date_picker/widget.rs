@@ -818,7 +818,11 @@ impl ThemedDatePickerWidget {
     pub(crate) fn mark_closed(this: &mut WidgetMut<'_, Self>) {
         if this.widget.open {
             this.widget.open = false;
-            this.widget.close_menu(&mut this.ctx);
+            // In portal mode the slot already hid the content — close_menu
+            // is a redundant re-push. InTree mode must close the AnchoredOverlay.
+            if matches!(this.widget.hosting, Hosting::InTree { .. }) {
+                this.widget.close_menu(&mut this.ctx);
+            }
             this.ctx
                 .submit_action::<DatePickerAction>(DatePickerAction::OpenChanged(false));
             this.ctx.request_paint_only();
