@@ -167,10 +167,9 @@ fn year_range_label(year_page: i32) -> String {
 }
 
 fn header_month_label(nav: &CalendarNavState) -> ArcStr {
-    match nav.view_mode {
-        ViewMode::Month => ArcStr::from(""),
-        _ => ArcStr::from(month_label(nav.current_month)),
-    }
+    // In Month mode the button is disabled but retains its label so the user
+    // can still read which month they are browsing.
+    ArcStr::from(month_label(nav.current_month))
 }
 
 fn header_year_label(nav: &CalendarNavState) -> ArcStr {
@@ -375,10 +374,10 @@ impl CalendarBodyWidget {
             }
         };
 
-        // Push updated data to the grid child.
+        // Push updated data and column count to the grid child.
         {
             let mut grid = this.ctx.get_mut(&mut this.widget.grid);
-            CalendarGridWidget::set_data(&mut grid, grid_data);
+            CalendarGridWidget::set_data(&mut grid, grid_data, cols);
         }
 
         // Update header month button label and disabled state.
@@ -412,7 +411,6 @@ impl CalendarBodyWidget {
             ThemedButton::set_disabled(&mut btn, nav_disabled);
         }
 
-        let _ = cols; // cols tracked implicitly by grid widget
         this.ctx.request_layout();
     }
 }
@@ -612,7 +610,7 @@ impl CalendarBodyWidget {
         let grid_id = self.grid.id();
         ctx.mutate_later(grid_id, move |mut w| {
             let mut g = w.downcast::<CalendarGridWidget>();
-            CalendarGridWidget::set_data(&mut g, new_data);
+            CalendarGridWidget::set_data(&mut g, new_data, 7);
         });
         ctx.set_handled();
         ctx.request_paint_only();
@@ -635,7 +633,7 @@ impl CalendarBodyWidget {
         let grid_id = self.grid.id();
         ctx.mutate_later(grid_id, move |mut w| {
             let mut g = w.downcast::<CalendarGridWidget>();
-            CalendarGridWidget::set_data(&mut g, new_data);
+            CalendarGridWidget::set_data(&mut g, new_data, 7);
         });
         let month_lbl = ArcStr::from(month_label(self.nav.current_month));
         let year_lbl = ArcStr::from(self.nav.current_year.to_string());
@@ -687,7 +685,7 @@ impl CalendarBodyWidget {
         let grid_id = self.grid.id();
         ctx.mutate_later(grid_id, move |mut w| {
             let mut g = w.downcast::<CalendarGridWidget>();
-            CalendarGridWidget::set_data(&mut g, new_data);
+            CalendarGridWidget::set_data(&mut g, new_data, 7);
         });
         let year_lbl = ArcStr::from(year.to_string());
         let year_btn_id = self.header_year.id();
@@ -735,8 +733,11 @@ impl CalendarBodyWidget {
     }
 
     fn handle_prev(&mut self, ctx: &mut ActionCtx<'_>) {
+        if self.nav.view_mode == ViewMode::Month {
+            return;
+        }
         match self.nav.view_mode {
-            ViewMode::Day | ViewMode::Month => {
+            ViewMode::Day => {
                 // Step back one month.
                 let (y, m) = add_months(self.nav.current_year, self.nav.current_month, -1);
                 self.nav.current_year = y;
@@ -748,13 +749,17 @@ impl CalendarBodyWidget {
                 // Step back one page of years.
                 self.nav.year_page -= 1;
             }
+            ViewMode::Month => unreachable!("guarded above"),
         }
         self.push_grid_and_headers(ctx);
     }
 
     fn handle_next(&mut self, ctx: &mut ActionCtx<'_>) {
+        if self.nav.view_mode == ViewMode::Month {
+            return;
+        }
         match self.nav.view_mode {
-            ViewMode::Day | ViewMode::Month => {
+            ViewMode::Day => {
                 let (y, m) = add_months(self.nav.current_year, self.nav.current_month, 1);
                 self.nav.current_year = y;
                 self.nav.current_month = m;
@@ -764,6 +769,7 @@ impl CalendarBodyWidget {
             ViewMode::Year => {
                 self.nav.year_page += 1;
             }
+            ViewMode::Month => unreachable!("guarded above"),
         }
         self.push_grid_and_headers(ctx);
     }
@@ -797,23 +803,32 @@ impl CalendarBodyWidget {
         let min_date = self.min_date;
         let max_date = self.max_date;
 
-        let new_data: Vec<CellDatum> = match nav.view_mode {
-            ViewMode::Day => build_day_cells(
-                &nav.day_grid,
-                nav.current_month,
-                selected,
-                today,
-                min_date,
-                max_date,
+        let (new_data, new_cols): (Vec<CellDatum>, usize) = match nav.view_mode {
+            ViewMode::Day => (
+                build_day_cells(
+                    &nav.day_grid,
+                    nav.current_month,
+                    selected,
+                    today,
+                    min_date,
+                    max_date,
+                ),
+                7,
             ),
-            ViewMode::Month => build_month_cells(nav.current_year, selected, min_date, max_date),
-            ViewMode::Year => build_year_cells(nav.year_page, selected, min_date, max_date),
+            ViewMode::Month => (
+                build_month_cells(nav.current_year, selected, min_date, max_date),
+                4,
+            ),
+            ViewMode::Year => (
+                build_year_cells(nav.year_page, selected, min_date, max_date),
+                4,
+            ),
         };
 
         let grid_id = self.grid.id();
         ctx.mutate_later(grid_id, move |mut w| {
             let mut g = w.downcast::<CalendarGridWidget>();
-            CalendarGridWidget::set_data(&mut g, new_data);
+            CalendarGridWidget::set_data(&mut g, new_data, new_cols);
         });
 
         // Header month label + disabled state.

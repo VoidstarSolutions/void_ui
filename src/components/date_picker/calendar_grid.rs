@@ -146,9 +146,13 @@ impl CalendarGridWidget {
 
     // ── MARK: WidgetMut setters ───────────────────────────────────────────────
 
-    /// Replaces the cell data, reconciling pods (add / remove as needed), and
-    /// requests a layout + repaint.
-    pub(crate) fn set_data(this: &mut WidgetMut<'_, Self>, data: Vec<CellDatum>) {
+    /// Replaces the cell data and column count, reconciling pods (add / remove
+    /// as needed), and requests a layout + repaint.
+    ///
+    /// `cols` must match the grid layout for the new data set (7 for Day mode,
+    /// 4 for Month/Year mode). Failing to update it would keep the old column
+    /// count and produce garbled layout when switching view modes.
+    pub(crate) fn set_data(this: &mut WidgetMut<'_, Self>, data: Vec<CellDatum>, cols: usize) {
         // Drain all existing pods.
         for pod in this.widget.cells.drain(..) {
             this.ctx.remove_child(pod);
@@ -157,6 +161,7 @@ impl CalendarGridWidget {
         // Build fresh pods from the new data.
         this.widget.cells = data.iter().map(|d| make_cell(d, &theme)).collect();
         this.widget.data = data;
+        this.widget.cols = cols;
         this.widget.cell_rects.clear();
         this.widget.hover_index = None;
         this.ctx.children_changed();
