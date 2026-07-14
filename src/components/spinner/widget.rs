@@ -1,6 +1,6 @@
 //! Masonry widget for the standalone spinner component.
 //!
-//! [`SpinnerWidget`] is a leaf widget — no children — that drives its own
+//! `SpinnerWidget` is a leaf widget — no children — that drives its own
 //! animation loop. It requests an anim frame on [`Update::WidgetAdded`] and
 //! advances the rotation phase each frame, requesting the next frame until
 //! the widget is removed.
