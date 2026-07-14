@@ -214,12 +214,12 @@ mod tests {
 
         let mut node = Node::new(Role::Button);
         disclosure_accessibility(&mut node, true, true);
-        assert!(node.is_expanded() == Some(true));
+        assert_eq!(node.is_expanded(), Some(true));
         assert!(node.supports_action(Action::Click));
 
         let mut node = Node::new(Role::Button);
         disclosure_accessibility(&mut node, false, false);
-        assert!(node.is_expanded() == Some(false));
+        assert_eq!(node.is_expanded(), Some(false));
         assert!(
             !node.supports_action(Action::Click),
             "a disabled disclosure control must not advertise Click"
