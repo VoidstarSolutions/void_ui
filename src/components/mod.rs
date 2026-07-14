@@ -27,6 +27,7 @@ pub mod code_view;
 pub mod collapsible;
 pub mod context_menu;
 pub mod data_grid;
+pub(crate) mod date_picker;
 pub mod dialog;
 pub mod dropdown_button;
 pub mod group_box;
