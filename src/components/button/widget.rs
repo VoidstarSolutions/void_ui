@@ -30,7 +30,7 @@ use crate::components::click::{self, ClickPhase};
 use crate::components::interaction::{self, InteractionState};
 use crate::components::spinner::widget::SpinnerWidget;
 
-/// Border thickness for the active and focus states.
+/// Border thickness for the selected and focus states.
 const BORDER_WIDTH: f64 = 1.0;
 /// Inset of the focus ring from the button edge.
 ///
@@ -51,11 +51,11 @@ const ICON_GAP: f64 = 5.0;
 ///
 /// Owns its child (typically a `Label`) and a [`Theme`] value used to
 /// resolve background / border / text colors at paint time. The host drives
-/// the `active` flag for "currently-selected toggle" semantics. Pointer state
+/// the `selected` flag for "currently-selected toggle" semantics. Pointer state
 /// (hovered, pressed) is read from the widget context.
-// `active`/`disabled`/`loading`/`keyboard_pressed` are independent flags with
+// `selected`/`disabled`/`loading`/`keyboard_pressed` are independent flags with
 // no shared state machine to fold them into — each can be true or false
-// regardless of the others (e.g. disabled-while-loading, active-while-
+// regardless of the others (e.g. disabled-while-loading, selected-while-
 // keyboard_pressed) — so an enum would just relocate the same four
 // independent facts, not simplify them.
 #[allow(clippy::struct_excessive_bools)]
@@ -63,7 +63,7 @@ pub struct ThemedButton {
     child: WidgetPod<dyn Widget>,
     theme: Theme,
     /// Host-controlled toggle — Tessera's `.tb-btn.active`.
-    active: bool,
+    selected: bool,
     /// When true, all interaction is suppressed and colors are muted.
     disabled: bool,
     /// Visual style variant.
@@ -112,7 +112,7 @@ impl ThemedButton {
         Self {
             child: child.erased().to_pod(),
             theme: *theme,
-            active: false,
+            selected: false,
             disabled: false,
             variant: ButtonVariant::Default,
             icon: None,
@@ -129,8 +129,8 @@ impl ThemedButton {
 
     /// Marks the button as the currently-selected toggle.
     #[must_use]
-    pub fn with_active(mut self, active: bool) -> Self {
-        self.active = active;
+    pub fn with_selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
         self
     }
 
@@ -222,10 +222,10 @@ impl ThemedButton {
         }
     }
 
-    /// Toggles the host-driven `active` flag. Requests a repaint on change.
-    pub fn set_active(this: &mut WidgetMut<'_, Self>, active: bool) {
-        if this.widget.active != active {
-            this.widget.active = active;
+    /// Toggles the host-driven `selected` flag. Requests a repaint on change.
+    pub fn set_selected(this: &mut WidgetMut<'_, Self>, selected: bool) {
+        if this.widget.selected != selected {
+            this.widget.selected = selected;
             this.ctx.request_paint_only();
         }
     }
@@ -377,7 +377,7 @@ impl ThemedButton {
     /// | rest            | `surface`    | `danger_soft` | `accent_soft` | transparent/border | `warning_soft` |
     /// | hover           | `surface_2`  | `danger`      | `accent`      | `surface_2`  | `warning`      |
     /// | pressed         | `surface_hi` | `danger_deep` | `accent_deep` | `surface_hi` | `warning_deep` |
-    /// | active (toggle) | `surface_2`  | `danger_soft` | `accent_soft` | `surface_2`  | `warning_soft` |
+    /// | selected (toggle) | `surface_2`  | `danger_soft` | `accent_soft` | `surface_2`  | `warning_soft` |
     fn resolve_colors(&self, hovered: bool, pressed: bool) -> (Color, Color) {
         let p = &self.theme.palette;
         if self.disabled {
@@ -387,7 +387,7 @@ impl ThemedButton {
             ButtonVariant::Default => {
                 let bg = if pressed {
                     p.surface_hi
-                } else if self.active || hovered {
+                } else if self.selected || hovered {
                     p.surface_2
                 } else {
                     p.surface
@@ -454,16 +454,16 @@ impl ThemedButton {
                 };
                 (bg, Color::TRANSPARENT)
             }
-            // Ghost: always-visible border, fill on hover/press/active.
+            // Ghost: always-visible border, fill on hover/press/selected.
             ButtonVariant::Ghost => {
                 let bg = if pressed {
                     p.surface_hi
-                } else if self.active || hovered {
+                } else if self.selected || hovered {
                     p.surface_2
                 } else {
                     Color::TRANSPARENT
                 };
-                let border = if self.active || hovered {
+                let border = if self.selected || hovered {
                     p.border_strong
                 } else {
                     p.border

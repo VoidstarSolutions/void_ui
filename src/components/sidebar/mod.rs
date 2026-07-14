@@ -8,7 +8,7 @@
 //! sidebar_panel(
 //!     flex_col((
 //!         sidebar_item("Charts", |s: &mut State| s.focused = Section::Charts)
-//!             .active(state.focused == Section::Charts)
+//!             .selected(state.focused == Section::Charts)
 //!             .render(&theme),
 //!     ))
 //!     .cross_axis_alignment(CrossAxisAlignment::Stretch)

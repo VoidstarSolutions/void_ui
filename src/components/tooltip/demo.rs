@@ -1,5 +1,7 @@
 //! Tooltip demo panel used by the void-ui gallery.
 
+use std::time::Duration;
+
 use xilem::WidgetView;
 use xilem::masonry::layout::Length;
 use xilem::style::Style as _;
@@ -58,13 +60,13 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
                 "Instant — 0 ms delay",
                 button(|_: &mut S| {}).label("Fast").render(theme),
             )
-            .delay_ms(0)
+            .delay(Duration::from_millis(0))
             .render(theme),
             tooltip(
                 "Slow — 1500 ms delay",
                 button(|_: &mut S| {}).label("Slow").render(theme),
             )
-            .delay_ms(1500)
+            .delay(Duration::from_millis(1500))
             .render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Center)
@@ -90,7 +92,7 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
             separator().render(theme),
             header("Default — 300 ms hover-idle, dismiss on pointer activity"),
             default_example,
-            header("Custom delay — .delay_ms(0) or .delay_ms(1500)"),
+            header("Custom delay — .delay(Duration::from_millis(0..1500))"),
             custom_delay_example,
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)

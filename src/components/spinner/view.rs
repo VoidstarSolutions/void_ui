@@ -45,8 +45,8 @@ impl Spinner {
     }
 
     /// Override the spinner size in pixels. Defaults to `density.ui_font_size`.
-    pub fn size(mut self, size: f64) -> Self {
-        self.size = Some(size);
+    pub fn size(mut self, size: f32) -> Self {
+        self.size = Some(f64::from(size));
         self
     }
 

@@ -167,7 +167,7 @@ fn outline_section(theme: &Theme, state: &GroupBoxDemo) -> Box<AnyWidgetView<Gro
         .gap(Length::px(6.0)),
     )
     .title("Appearance")
-    .outline()
+    .border()
     .render(theme)
 }
 
@@ -184,7 +184,7 @@ fn untitled_section(theme: &Theme, state: &GroupBoxDemo) -> Box<AnyWidgetView<Gr
         .render(theme),
         theme,
     ))
-    .outline()
+    .border()
     .render(theme)
 }
 
@@ -204,7 +204,7 @@ fn custom_section(theme: &Theme) -> Box<AnyWidgetView<GroupBoxDemo>> {
     .title("This is a custom style")
     .title_color(theme.palette.text_faint)
     .background(theme.palette.surface_2)
-    .outline()
+    .border()
     .render(theme)
 }
 

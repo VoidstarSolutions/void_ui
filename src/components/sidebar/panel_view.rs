@@ -8,7 +8,7 @@
 //! sidebar_panel(
 //!     flex_col((
 //!         sidebar_item("Dashboard", |s: &mut State| s.nav = Nav::Dashboard)
-//!             .active(s.nav == Nav::Dashboard)
+//!             .selected(s.nav == Nav::Dashboard)
 //!             .render(&theme),
 //!     ))
 //!     .cross_axis_alignment(CrossAxisAlignment::Stretch)

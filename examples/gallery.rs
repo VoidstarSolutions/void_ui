@@ -135,7 +135,7 @@ fn topbar(theme_panel_open: bool, theme: &Theme) -> impl WidgetView<State> + use
         s.theme_panel_open = !s.theme_panel_open;
     })
     .label("\u{2699} Theme")
-    .active(theme_panel_open)
+    .selected(theme_panel_open)
     .render(theme);
 
     let chrome = flex_row((header, FlexSpacer::Flex(1.0), gear))
@@ -265,14 +265,14 @@ fn theme_variant_row(theme: &Theme) -> impl WidgetView<State> + use<> {
             s.theme = Theme::dark().with_density(d);
         })
         .label("Dark")
-        .active(theme.is_dark())
+        .selected(theme.is_dark())
         .render(theme),
         button(|s: &mut State| {
             let d = s.theme.density;
             s.theme = Theme::light().with_density(d);
         })
         .label("Light")
-        .active(theme.is_light())
+        .selected(theme.is_light())
         .render(theme),
     ))
     .cross_axis_alignment(CrossAxisAlignment::Center)
@@ -285,19 +285,19 @@ fn density_row(theme: &Theme) -> impl WidgetView<State> + use<> {
             s.theme = s.theme.with_density(Density::compact());
         })
         .label("Compact")
-        .active(theme.density == Density::compact())
+        .selected(theme.density == Density::compact())
         .render(theme),
         button(|s: &mut State| {
             s.theme = s.theme.with_density(Density::balanced());
         })
         .label("Balanced")
-        .active(theme.density == Density::balanced())
+        .selected(theme.density == Density::balanced())
         .render(theme),
         button(|s: &mut State| {
             s.theme = s.theme.with_density(Density::airy());
         })
         .label("Airy")
-        .active(theme.density == Density::airy())
+        .selected(theme.density == Density::airy())
         .render(theme),
     ))
     .cross_axis_alignment(CrossAxisAlignment::Center)

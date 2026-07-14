@@ -14,7 +14,7 @@
 //!     .title("Settings")
 //!     .render(&theme)
 //!
-//! group_box(content).title("Section").outline().render(&theme)
+//! group_box(content).title("Section").border().render(&theme)
 //! ```
 
 use masonry::core::ArcStr;
@@ -136,9 +136,18 @@ impl<V, T> GroupBox<V, T> {
     }
 
     /// Use a bordered outline with rounded corners.
-    pub fn outline(mut self) -> Self {
+    pub fn border(mut self) -> Self {
         self.variant = GroupBoxVariant::Outline;
         self
+    }
+
+    /// Deprecated alias of [`Self::border`].
+    #[deprecated(
+        since = "0.1.0",
+        note = "renamed to `border` to match card's vocabulary"
+    )]
+    pub fn outline(self) -> Self {
+        self.border()
     }
 
     /// Override the content area's background color.
@@ -146,7 +155,7 @@ impl<V, T> GroupBox<V, T> {
     /// Applies regardless of variant: it fills behind the default
     /// (no-background) variant, replaces the default `surface` fill set by
     /// [`Self::fill`], and adds a fill behind the border drawn by
-    /// [`Self::outline`].
+    /// [`Self::border`].
     pub fn background(mut self, color: Color) -> Self {
         self.background = Some(color);
         self
@@ -268,5 +277,20 @@ mod tests {
             resolve_style(GroupBoxVariant::Outline, Some(CUSTOM), SURFACE),
             (Some(CUSTOM), true)
         );
+    }
+
+    /// The deprecated `.outline` shim must still compile and delegate to
+    /// `.border` — a host mid-migration off the old name must see identical
+    /// behavior.
+    #[test]
+    #[allow(deprecated)]
+    fn deprecated_outline_delegates_to_border() {
+        use crate::Theme;
+        use crate::label;
+
+        let theme = Theme::default();
+        let _ = group_box(label("content").render::<(), ()>(&theme))
+            .outline()
+            .render::<(), ()>(&theme);
     }
 }

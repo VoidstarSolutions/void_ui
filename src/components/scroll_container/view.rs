@@ -84,9 +84,19 @@ impl<V> ScrollContainer<V> {
 
     /// When `true`, the child is guaranteed to be at least as large as the
     /// viewport on each axis.
-    pub fn fill(mut self, v: bool) -> Self {
+    pub fn fill_viewport(mut self, v: bool) -> Self {
         self.fill = v;
         self
+    }
+
+    /// Deprecated alias of [`Self::fill_viewport`].
+    #[deprecated(
+        since = "0.1.0",
+        note = "renamed to `fill_viewport` — `.fill()` was ambiguous with group_box's \
+                filled-background meaning"
+    )]
+    pub fn fill(self, v: bool) -> Self {
+        self.fill_viewport(v)
     }
 
     /// Controls when scrollbars are shown. Defaults to [`ScrollBarVisibility::AlwaysVisible`].
@@ -206,5 +216,33 @@ where
         let mut child = ContentClip::child_mut(&mut clip);
         self.child
             .message(view_state, message, child.downcast(), app_state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scroll_container;
+    use crate::Theme;
+    use crate::label;
+
+    #[test]
+    fn fill_viewport_is_the_canonical_builder_name() {
+        let theme = Theme::default();
+        let _ = scroll_container(label("content").render::<(), ()>(&theme))
+            .fill_viewport(true)
+            .render::<(), ()>(&theme);
+    }
+
+    /// The deprecated `.fill` shim must still compile and delegate to
+    /// `.fill_viewport` — a host mid-migration off the old name must see
+    /// identical behavior.
+    #[test]
+    #[allow(deprecated)]
+    fn deprecated_fill_delegates_to_fill_viewport() {
+        let theme = Theme::default();
+        let view = scroll_container(label("content").render::<(), ()>(&theme))
+            .fill(true)
+            .render::<(), ()>(&theme);
+        assert!(view.fill);
     }
 }

@@ -1,13 +1,13 @@
 //! Tessera sidebar navigation item — interactive, theme-driven.
 //!
 //! Wraps [`super::widget::ThemedSidebarItem`] in a xilem [`View`]. Pointer
-//! state (hover, press) is tracked by the masonry widget; the `active` flag
+//! state (hover, press) is tracked by the masonry widget; the `selected` flag
 //! is the host-controlled selected-row state.
 //!
 //! ```ignore
 //! use void_ui::components::sidebar_item;
 //! sidebar_item("Charts", |s: &mut State| s.focused = Section::Charts)
-//!     .active(state.focused == Section::Charts)
+//!     .selected(state.focused == Section::Charts)
 //!     .render(&theme)
 //! ```
 
@@ -29,7 +29,7 @@ use crate::Theme;
 #[must_use = "SidebarItem does nothing until rendered with .render(&theme)"]
 pub struct SidebarItem<F> {
     label: ArcStr,
-    active: bool,
+    selected: bool,
     disabled: bool,
     callback: F,
 }
@@ -42,7 +42,7 @@ pub struct SidebarItem<F> {
 pub fn sidebar_item<F>(label: impl Into<ArcStr>, callback: F) -> SidebarItem<F> {
     SidebarItem {
         label: label.into(),
-        active: false,
+        selected: false,
         disabled: false,
         callback,
     }
@@ -50,9 +50,18 @@ pub fn sidebar_item<F>(label: impl Into<ArcStr>, callback: F) -> SidebarItem<F> 
 
 impl<F> SidebarItem<F> {
     /// Mark this item as the currently-selected nav entry.
-    pub fn active(mut self, on: bool) -> Self {
-        self.active = on;
+    pub fn selected(mut self, on: bool) -> Self {
+        self.selected = on;
         self
+    }
+
+    /// Deprecated alias of [`Self::selected`].
+    #[deprecated(
+        since = "0.1.0",
+        note = "renamed to `selected` to match tabs/button_group vocabulary"
+    )]
+    pub fn active(self, on: bool) -> Self {
+        self.selected(on)
     }
 
     /// Suppress all interaction and mute the visual appearance.
@@ -70,7 +79,7 @@ impl<F> SidebarItem<F> {
     {
         SidebarItemView {
             label: self.label,
-            active: self.active,
+            selected: self.selected,
             disabled: self.disabled,
             theme: *theme,
             callback: self.callback,
@@ -86,7 +95,7 @@ impl<F> SidebarItem<F> {
 #[must_use = "View values do nothing unless provided to Xilem."]
 pub struct SidebarItemView<F, State, Action> {
     label: ArcStr,
-    active: bool,
+    selected: bool,
     disabled: bool,
     theme: Theme,
     callback: F,
@@ -107,7 +116,7 @@ where
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
         let text_color = if self.disabled {
             self.theme.palette.text_faint
-        } else if self.active {
+        } else if self.selected {
             self.theme.palette.text
         } else {
             self.theme.palette.text_muted
@@ -117,7 +126,7 @@ where
             .prepare();
         label.properties.insert(ContentColor::new(text_color));
         let widget = ThemedSidebarItem::new(label, &self.theme)
-            .with_active(self.active)
+            .with_selected(self.selected)
             .with_disabled(self.disabled);
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, ())
@@ -135,7 +144,7 @@ where
             ThemedSidebarItem::set_theme(&mut element, &self.theme);
             let text_color = if self.disabled {
                 self.theme.palette.text_faint
-            } else if self.active {
+            } else if self.selected {
                 self.theme.palette.text
             } else {
                 self.theme.palette.text_muted
@@ -148,11 +157,11 @@ where
                 StyleProperty::FontSize(self.theme.density.ui_font_size),
             );
         }
-        if self.active != prev.active {
-            ThemedSidebarItem::set_active(&mut element, self.active);
+        if self.selected != prev.selected {
+            ThemedSidebarItem::set_selected(&mut element, self.selected);
             let text_color = if self.disabled {
                 self.theme.palette.text_faint
-            } else if self.active {
+            } else if self.selected {
                 self.theme.palette.text
             } else {
                 self.theme.palette.text_muted
@@ -164,7 +173,7 @@ where
             ThemedSidebarItem::set_disabled(&mut element, self.disabled);
             let text_color = if self.disabled {
                 self.theme.palette.text_faint
-            } else if self.active {
+            } else if self.selected {
                 self.theme.palette.text
             } else {
                 self.theme.palette.text_muted
@@ -198,5 +207,32 @@ where
             Some(_press) => MessageResult::Action((self.callback)(app_state)),
             None => MessageResult::Stale,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sidebar_item;
+    use crate::Theme;
+
+    #[test]
+    fn selected_is_the_canonical_builder_name() {
+        let theme = Theme::default();
+        let _ = sidebar_item("Charts", |_: &mut u8| {})
+            .selected(true)
+            .render::<u8, ()>(&theme);
+    }
+
+    /// The deprecated `.active` shim must still compile and delegate to
+    /// `.selected` — a host mid-migration off the old name must see identical
+    /// behavior.
+    #[test]
+    #[allow(deprecated)]
+    fn deprecated_active_delegates_to_selected() {
+        let theme = Theme::default();
+        let view = sidebar_item("Charts", |_: &mut u8| {})
+            .active(true)
+            .render::<u8, ()>(&theme);
+        assert!(view.selected);
     }
 }

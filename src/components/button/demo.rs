@@ -23,7 +23,7 @@ use crate::{Theme, scroll_container, separator};
 
 struct ButtonDemoState {
     disabled: bool,
-    active: bool,
+    selected: bool,
     /// Click count for the composite-content rows — proves the *whole* row is
     /// the click target, not just some inner label.
     opens: u32,
@@ -57,68 +57,68 @@ pub fn panel(theme: &Theme) -> ButtonDemoPanel {
 fn variants_example(
     theme: &Theme,
     disabled_bool: bool,
-    active_bool: bool,
+    selected_bool: bool,
 ) -> impl WidgetView<ButtonDemoState> + use<> {
     with_source!(theme, {
         flex_row((
             button(|_: &mut ButtonDemoState| {})
                 .label("Default")
                 .disabled(disabled_bool)
-                .active(active_bool)
+                .selected(selected_bool)
                 .render(theme),
             button(|_: &mut ButtonDemoState| {})
                 .label("Primary")
                 .variant(ButtonVariant::Primary)
                 .disabled(disabled_bool)
-                .active(active_bool)
+                .selected(selected_bool)
                 .render(theme),
             button(|_: &mut ButtonDemoState| {})
                 .label("Secondary")
                 .variant(ButtonVariant::Secondary)
                 .disabled(disabled_bool)
-                .active(active_bool)
+                .selected(selected_bool)
                 .render(theme),
             button(|_: &mut ButtonDemoState| {})
                 .label("Danger")
                 .variant(ButtonVariant::Danger)
                 .disabled(disabled_bool)
-                .active(active_bool)
+                .selected(selected_bool)
                 .render(theme),
             button(|_: &mut ButtonDemoState| {})
                 .label("Warning")
                 .variant(ButtonVariant::Warning)
                 .disabled(disabled_bool)
-                .active(active_bool)
+                .selected(selected_bool)
                 .render(theme),
             button(|_: &mut ButtonDemoState| {})
                 .label("Success")
                 .variant(ButtonVariant::Success)
                 .disabled(disabled_bool)
-                .active(active_bool)
+                .selected(selected_bool)
                 .render(theme),
             button(|_: &mut ButtonDemoState| {})
                 .label("Info")
                 .variant(ButtonVariant::Info)
                 .disabled(disabled_bool)
-                .active(active_bool)
+                .selected(selected_bool)
                 .render(theme),
             button(|_: &mut ButtonDemoState| {})
                 .label("Ghost")
                 .variant(ButtonVariant::Ghost)
                 .disabled(disabled_bool)
-                .active(active_bool)
+                .selected(selected_bool)
                 .render(theme),
             button(|_: &mut ButtonDemoState| {})
                 .label("Link")
                 .variant(ButtonVariant::Link)
                 .disabled(disabled_bool)
-                .active(active_bool)
+                .selected(selected_bool)
                 .render(theme),
             button(|_: &mut ButtonDemoState| {})
                 .label("Text")
                 .variant(ButtonVariant::Text)
                 .disabled(disabled_bool)
-                .active(active_bool)
+                .selected(selected_bool)
                 .render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Center)
@@ -137,14 +137,14 @@ fn controls_row(
         .label("disabled_bool")
         .render(theme),
     );
-    let active_toggle = flex_row(
-        checkbox(state.active, |s: &mut ButtonDemoState, checked: bool| {
-            s.active = checked;
+    let selected_toggle = flex_row(
+        checkbox(state.selected, |s: &mut ButtonDemoState, checked: bool| {
+            s.selected = checked;
         })
-        .label("active_bool")
+        .label("selected_bool")
         .render(theme),
     );
-    flex_row((disabled_toggle, active_toggle))
+    flex_row((disabled_toggle, selected_toggle))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(12.0))
 }
@@ -251,7 +251,7 @@ fn muted(theme: &Theme, disabled: bool, color: Color) -> Color {
 fn composite_rows_example(
     theme: &Theme,
     disabled: bool,
-    active: bool,
+    selected: bool,
 ) -> impl WidgetView<ButtonDemoState> + use<> {
     let symbol_row = |sym: &'static str, name: &'static str, change: &'static str| {
         flex_row((
@@ -282,7 +282,7 @@ fn composite_rows_example(
                 .variant(ButtonVariant::Ghost)
                 .accessible_name("Open AAPL")
                 .disabled(disabled)
-                .active(active)
+                .selected(selected)
                 .render(theme),
             )
             .fixed_width(Length::px(360.0)),
@@ -296,7 +296,7 @@ fn composite_rows_example(
                 .variant(ButtonVariant::Ghost)
                 .accessible_name("Open MSFT")
                 .disabled(disabled)
-                .active(active)
+                .selected(selected)
                 .render(theme),
             )
             .fixed_width(Length::px(360.0)),
@@ -318,9 +318,9 @@ fn composite_section(
             .render(theme)
     };
     let disabled = state.disabled;
-    let active = state.active;
+    let selected = state.selected;
 
-    let rows_example = composite_rows_example(theme, disabled, active);
+    let rows_example = composite_rows_example(theme, disabled, selected);
 
     let centered_example = with_source!(theme, {
         sized_box(
@@ -383,7 +383,7 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
             .text_size(theme.typography.size_title)
             .color(theme.palette.text)
             .render(theme),
-        label("Themed, interactive button with style variants, disabled/active states, and an optional loading spinner.")
+        label("Themed, interactive button with style variants, disabled/selected states, and an optional loading spinner.")
             .color(theme.palette.text_muted)
             .multiline(true)
             .render(theme),
@@ -393,7 +393,7 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
 
     let variants_section = flex_col((
         header("Variants"),
-        variants_example(theme, state.disabled, state.active),
+        variants_example(theme, state.disabled, state.selected),
     ))
     .cross_axis_alignment(CrossAxisAlignment::Start)
     .gap(Length::px(16.0));
@@ -424,7 +424,7 @@ impl<S: 'static> View<S, (), ViewCtx> for ButtonDemoPanel {
     fn build(&self, ctx: &mut ViewCtx, _: &mut S) -> (Self::Element, Self::ViewState) {
         let mut state = ButtonDemoState {
             disabled: false,
-            active: false,
+            selected: false,
             opens: 0,
         };
         let inner_view: InnerView = Box::new(build_inner(&self.theme, &state));

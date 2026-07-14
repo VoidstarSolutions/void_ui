@@ -55,7 +55,7 @@ use crate::Theme;
 pub struct ContentButton<V, F> {
     child: V,
     accessible_name: Option<ArcStr>,
-    active: bool,
+    selected: bool,
     disabled: bool,
     variant: ButtonVariant,
     corners: Option<RoundedRectRadii>,
@@ -76,7 +76,7 @@ pub fn content_button<V, F>(child: V, callback: F) -> ContentButton<V, F> {
     ContentButton {
         child,
         accessible_name: None,
-        active: false,
+        selected: false,
         disabled: false,
         variant: ButtonVariant::Default,
         corners: None,
@@ -87,9 +87,18 @@ pub fn content_button<V, F>(child: V, callback: F) -> ContentButton<V, F> {
 
 impl<V, F> ContentButton<V, F> {
     /// Mark this button as the currently-selected toggle.
-    pub fn active(mut self, on: bool) -> Self {
-        self.active = on;
+    pub fn selected(mut self, on: bool) -> Self {
+        self.selected = on;
         self
+    }
+
+    /// Deprecated alias of [`Self::selected`].
+    #[deprecated(
+        since = "0.1.0",
+        note = "renamed to `selected` to match tabs/button_group vocabulary"
+    )]
+    pub fn active(self, on: bool) -> Self {
+        self.selected(on)
     }
 
     /// Suppress all interaction and mute the button's background.
@@ -148,7 +157,7 @@ impl<V, F> ContentButton<V, F> {
         ContentButtonView {
             child: self.child,
             accessible_name: self.accessible_name,
-            active: self.active,
+            selected: self.selected,
             disabled: self.disabled,
             variant: self.variant,
             corners: self.corners,
@@ -167,7 +176,7 @@ impl<V, F> ContentButton<V, F> {
 pub struct ContentButtonView<V, F, State, Action> {
     child: V,
     accessible_name: Option<ArcStr>,
-    active: bool,
+    selected: bool,
     disabled: bool,
     variant: ButtonVariant,
     corners: Option<RoundedRectRadii>,
@@ -202,7 +211,7 @@ where
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let (child_pod, child_state) = self.child.build(ctx, app_state);
         let widget = ThemedButton::new(child_pod.new_widget, &self.theme)
-            .with_active(self.active)
+            .with_selected(self.selected)
             .with_disabled(self.disabled)
             .with_variant(self.variant)
             .with_accessibility_label(self.accessible_name.clone())
@@ -227,8 +236,8 @@ where
         if self.theme != prev.theme {
             ThemedButton::set_theme(&mut element, &self.theme);
         }
-        if self.active != prev.active {
-            ThemedButton::set_active(&mut element, self.active);
+        if self.selected != prev.selected {
+            ThemedButton::set_selected(&mut element, self.selected);
         }
         if self.disabled != prev.disabled {
             ThemedButton::set_disabled(&mut element, self.disabled);
@@ -354,13 +363,26 @@ mod tests {
         let theme = Theme::dark();
         let view = content_button(label("row").render(&theme), |(): &mut ()| ())
             .variant(ButtonVariant::Ghost)
-            .active(true)
+            .selected(true)
             .disabled(true)
             .accessible_name("Open AAPL")
             .render::<(), ()>(&theme);
         assert_eq!(view.variant, ButtonVariant::Ghost);
-        assert!(view.active);
+        assert!(view.selected);
         assert!(view.disabled);
         assert_eq!(view.accessible_name.as_deref(), Some("Open AAPL"));
+    }
+
+    /// The deprecated `.active` shim must still compile and delegate to
+    /// `.selected` — a host mid-migration off the old name must see identical
+    /// behavior.
+    #[test]
+    #[allow(deprecated)]
+    fn deprecated_active_delegates_to_selected() {
+        let theme = Theme::dark();
+        let view = content_button(label("row").render(&theme), |(): &mut ()| ())
+            .active(true)
+            .render::<(), ()>(&theme);
+        assert!(view.selected);
     }
 }

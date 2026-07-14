@@ -151,7 +151,7 @@ impl<F> ButtonGroup<F> {
                     .label(self.items[i].clone())
                     .variant(self.variant)
                     .disabled(self.disabled)
-                    .active(self.selected == Some(i))
+                    .selected(self.selected == Some(i))
                     .corners(corners)
                     .render(theme)
                     .into_any_flex()

@@ -1,14 +1,14 @@
 //! Tessera `.tb-btn` button — interactive, theme-driven.
 //!
 //! Wraps [`super::widget::ThemedButton`] in a xilem [`View`]. Pointer state
-//! (hover, press) is tracked by the masonry widget; the `active` flag is the
+//! (hover, press) is tracked by the masonry widget; the `selected` flag is the
 //! host-controlled selected-toggle state.
 //!
 //! ```ignore
 //! use void_ui::components::button;
 //! button(|s: &mut State| s.reset())
 //!     .label("Reset view")
-//!     .active(false)
+//!     .selected(false)
 //!     .render(&theme)
 //! ```
 
@@ -38,7 +38,7 @@ use crate::components::spinner::widget::SpinnerWidget;
 pub struct Button<F> {
     label: Option<ArcStr>,
     accessible_name: Option<ArcStr>,
-    active: bool,
+    selected: bool,
     disabled: bool,
     loading: bool,
     variant: ButtonVariant,
@@ -58,7 +58,7 @@ pub fn button<F>(callback: F) -> Button<F> {
     Button {
         label: None,
         accessible_name: None,
-        active: false,
+        selected: false,
         disabled: false,
         loading: false,
         variant: ButtonVariant::Default,
@@ -72,9 +72,18 @@ pub fn button<F>(callback: F) -> Button<F> {
 
 impl<F> Button<F> {
     /// Mark this button as the currently-selected toggle.
-    pub fn active(mut self, on: bool) -> Self {
-        self.active = on;
+    pub fn selected(mut self, on: bool) -> Self {
+        self.selected = on;
         self
+    }
+
+    /// Deprecated alias of [`Self::selected`].
+    #[deprecated(
+        since = "0.1.0",
+        note = "renamed to `selected` to match tabs/button_group vocabulary"
+    )]
+    pub fn active(self, on: bool) -> Self {
+        self.selected(on)
     }
 
     /// Suppress all interaction and mute the visual appearance.
@@ -150,7 +159,7 @@ impl<F> Button<F> {
         ButtonView {
             label: self.label,
             accessible_name: self.accessible_name,
-            active: self.active,
+            selected: self.selected,
             disabled: self.disabled,
             loading: self.loading,
             variant: self.variant,
@@ -172,7 +181,7 @@ impl<F> Button<F> {
 pub struct ButtonView<F, State, Action> {
     label: Option<ArcStr>,
     accessible_name: Option<ArcStr>,
-    active: bool,
+    selected: bool,
     disabled: bool,
     loading: bool,
     variant: ButtonVariant,
@@ -227,7 +236,7 @@ where
         label.properties.insert(ContentColor::new(text_color));
         let icon_color = self.icon_color();
         let mut widget = ThemedButton::new(label, &self.theme)
-            .with_active(self.active)
+            .with_selected(self.selected)
             .with_disabled(self.disabled)
             .with_loading(self.loading)
             .with_variant(self.variant)
@@ -285,8 +294,8 @@ where
             SpinnerWidget::set_color(&mut s, self.theme.palette.text_muted);
             SpinnerWidget::set_size(&mut s, f64::from(self.theme.density.ui_font_size));
         }
-        if self.active != prev.active {
-            ThemedButton::set_active(&mut element, self.active);
+        if self.selected != prev.selected {
+            ThemedButton::set_selected(&mut element, self.selected);
         }
         if self.loading != prev.loading {
             ThemedButton::set_loading(&mut element, self.loading);
@@ -440,5 +449,26 @@ mod tests {
             .render::<(), ()>(&theme);
         assert_eq!(view.text_color(), theme.palette.text_faint);
         assert_eq!(view.icon_color(), theme.palette.text_faint);
+    }
+
+    #[test]
+    fn selected_is_the_canonical_builder_name() {
+        let theme = Theme::default();
+        let _ = button(|(): &mut ()| ())
+            .selected(true)
+            .render::<(), ()>(&theme);
+    }
+
+    /// The deprecated `.active` shim must still compile and delegate to
+    /// `.selected` — a host mid-migration off the old name must see identical
+    /// behavior.
+    #[test]
+    #[allow(deprecated)]
+    fn deprecated_active_delegates_to_selected() {
+        let theme = Theme::default();
+        let view = button(|(): &mut ()| ())
+            .active(true)
+            .render::<(), ()>(&theme);
+        assert!(view.selected);
     }
 }

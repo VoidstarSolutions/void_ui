@@ -64,7 +64,7 @@ fn build_inner(theme: &Theme, state: &SidebarDemo) -> impl WidgetView<SidebarDem
     let active_example = with_source!(theme, {
         flex_col((
             sidebar_item("Button", |_: &mut SidebarDemo| {})
-                .active(true)
+                .selected(true)
                 .render(theme),
             sidebar_item("Data Grid", |_: &mut SidebarDemo| {}).render(theme),
             sidebar_item("Sidebar", |_: &mut SidebarDemo| {}).render(theme),

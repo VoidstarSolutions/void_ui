@@ -91,10 +91,10 @@ impl Skeleton {
 
     /// Render as a circle of the given diameter in px — the idiom for avatar
     /// placeholders.
-    pub fn circle(mut self, diameter: f64) -> Self {
+    pub fn circle(mut self, diameter: f32) -> Self {
         self.shape = SkeletonShape::Circle;
-        self.width = Some(diameter);
-        self.height = Some(diameter);
+        self.width = Some(f64::from(diameter));
+        self.height = Some(f64::from(diameter));
         self
     }
 
@@ -106,28 +106,28 @@ impl Skeleton {
 
     /// Set a fixed width in px. Without this, the placeholder fills the
     /// available width.
-    pub fn width(mut self, px: f64) -> Self {
-        self.width = Some(px);
+    pub fn width(mut self, px: f32) -> Self {
+        self.width = Some(f64::from(px));
         self
     }
 
     /// Set a fixed height in px. Defaults to one line of body text.
-    pub fn height(mut self, px: f64) -> Self {
-        self.height = Some(px);
+    pub fn height(mut self, px: f32) -> Self {
+        self.height = Some(f64::from(px));
         self
     }
 
     /// Set both width and height to the same square size in px.
-    pub fn size(mut self, px: f64) -> Self {
-        self.width = Some(px);
-        self.height = Some(px);
+    pub fn size(mut self, px: f32) -> Self {
+        self.width = Some(f64::from(px));
+        self.height = Some(f64::from(px));
         self
     }
 
     /// Override the corner radius in px. Defaults to `theme.radius.small`.
     /// Ignored when the shape is [`SkeletonShape::Circle`].
-    pub fn rounded(mut self, px: f64) -> Self {
-        self.radius = Some(px);
+    pub fn rounded(mut self, px: f32) -> Self {
+        self.radius = Some(f64::from(px));
         self
     }
 
