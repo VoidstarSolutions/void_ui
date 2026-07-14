@@ -16,7 +16,7 @@
 //! whether the strip is under the pointer), which these shared blocks
 //! have no notion of.
 
-use masonry::accesskit;
+use masonry::accesskit::{self, Node};
 use masonry::core::keyboard::{Key, NamedKey};
 use masonry::core::{AccessEvent, PaintCtx, TextEvent, Update, UpdateCtx};
 
@@ -64,6 +64,19 @@ pub(crate) fn keyboard_press_start(event: &TextEvent, accept_enter: bool) -> boo
 /// additions (e.g. `accesskit::Action::Default`) land here once.
 pub(crate) fn is_access_click(event: &AccessEvent) -> bool {
     event.action == accesskit::Action::Click
+}
+
+/// Stamps the shared `Role::Button` accessibility for a disclosure control
+/// (a collapsible header, a tree row's expand/collapse chevron): the
+/// `Click` action — advertised only while `enabled`, so a disabled control
+/// isn't exposed as clickable — plus `aria-expanded` reflecting the current
+/// open/closed state. Callers add any control-specific attributes on top
+/// (e.g. `aria-level` for a tree row's depth).
+pub(crate) fn disclosure_accessibility(node: &mut Node, expanded: bool, enabled: bool) {
+    if enabled {
+        node.add_action(accesskit::Action::Click);
+    }
+    node.set_expanded(expanded);
 }
 
 /// The shared `update()` block for disabled-aware press widgets:
@@ -191,6 +204,26 @@ mod tests {
             data: None,
         };
         assert!(!is_access_click(&focus));
+    }
+
+    #[test]
+    fn disclosure_accessibility_reports_expanded_and_gated_click() {
+        use masonry::accesskit::{Action, Node, Role};
+
+        use super::disclosure_accessibility;
+
+        let mut node = Node::new(Role::Button);
+        disclosure_accessibility(&mut node, true, true);
+        assert_eq!(node.is_expanded(), Some(true));
+        assert!(node.supports_action(Action::Click));
+
+        let mut node = Node::new(Role::Button);
+        disclosure_accessibility(&mut node, false, false);
+        assert_eq!(node.is_expanded(), Some(false));
+        assert!(
+            !node.supports_action(Action::Click),
+            "a disabled disclosure control must not advertise Click"
+        );
     }
 
     #[test]

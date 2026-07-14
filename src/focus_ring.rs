@@ -10,7 +10,7 @@
 //! system's focus treatment can be changed in one place.
 
 use masonry::imaging::{PaintShape, Painter};
-use masonry::kurbo::Stroke;
+use masonry::kurbo::{Point, Rect, Size, Stroke};
 
 use crate::Theme;
 
@@ -45,4 +45,22 @@ where
     painter
         .stroke(shape, &Stroke::new(FOCUS_RING_WIDTH), theme.palette.focus)
         .draw();
+}
+
+/// Paints a focus ring inset [`FOCUS_RING_INSET`] into a plain axis-aligned
+/// `size` — the ring shape for widgets whose focusable area is their whole
+/// (unrounded) border box. Callers still gate the call on
+/// `ctx.is_focus_target() && !disabled`; widgets whose ring needs rounding
+/// or a sub-rect (checkboxes, toggles, buttons) compute their own shape and
+/// call [`paint_focus_ring`] directly instead.
+pub fn paint_focus_ring_inset(painter: &mut Painter<'_>, size: Size, theme: &Theme) {
+    let inset = FOCUS_RING_INSET;
+    let rect = Rect::from_origin_size(
+        Point::new(inset, inset),
+        Size::new(
+            (size.width - 2.0 * inset).max(0.0),
+            (size.height - 2.0 * inset).max(0.0),
+        ),
+    );
+    paint_focus_ring(painter, rect, theme);
 }

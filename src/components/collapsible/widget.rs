@@ -9,7 +9,7 @@
 
 use std::any::TypeId;
 
-use masonry::accesskit::{self, Node, Role};
+use masonry::accesskit::{Node, Role};
 use masonry::core::{
     AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
     PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty, TextEvent,
@@ -26,8 +26,8 @@ use crate::Theme;
 use crate::animated_clip::AnimatedClip;
 use crate::components::click::{self, ClickPhase};
 use crate::components::icon::{disclosure_icon, icon};
-use crate::components::interaction;
-use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
+use crate::components::interaction::{self, disclosure_accessibility};
+use crate::focus_ring::paint_focus_ring_inset;
 
 // --- MARK: CONSTANTS
 
@@ -453,12 +453,7 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
 
         // Keyboard-focus ring around the header.
         if ctx.is_focus_target() {
-            let inset = FOCUS_RING_INSET;
-            let focus_rect = Rect::from_origin_size(
-                Point::new(inset, inset),
-                Size::new((w - 2.0 * inset).max(0.0), (h - 2.0 * inset).max(0.0)),
-            );
-            paint_focus_ring(painter, focus_rect, &self.theme);
+            paint_focus_ring_inset(painter, Size::new(w, h), &self.theme);
         }
 
         // Separator below the header.
@@ -480,10 +475,7 @@ impl<W: Widget + ?Sized> Widget for CollapsibleWidget<W> {
         _props: &PropertiesRef<'_>,
         node: &mut Node,
     ) {
-        if !self.disabled {
-            node.add_action(accesskit::Action::Click);
-        }
-        node.set_expanded(self.open);
+        disclosure_accessibility(node, self.open, !self.disabled);
     }
 
     fn children_ids(&self) -> ChildrenIds {

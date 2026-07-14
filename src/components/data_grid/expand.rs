@@ -139,14 +139,16 @@ use masonry::core::{
     WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Point, Rect, Size};
+use masonry::kurbo::{Axis, Size};
 use masonry::layout::{LenReq, Length};
 
 use crate::Theme;
 use crate::collection::single_child;
 use crate::components::click::{self, ClickPhase};
-use crate::components::interaction::{is_access_click, keyboard_activate};
-use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
+use crate::components::interaction::{
+    disclosure_accessibility, is_access_click, keyboard_activate,
+};
+use crate::focus_ring::paint_focus_ring_inset;
 
 /// Action emitted by [`DisclosureToggle`] on a primary-button click — the
 /// user asked to expand/collapse this row. It carries no payload: the
@@ -318,16 +320,7 @@ impl Widget for DisclosureToggle {
         // The chevron child paints the glyph; the toggle adds a focus ring
         // while focused, inset like every other focusable control.
         if ctx.is_focus_target() {
-            let size = ctx.border_box_size();
-            let inset = FOCUS_RING_INSET;
-            let rect = Rect::from_origin_size(
-                Point::new(inset, inset),
-                Size::new(
-                    (size.width - 2.0 * inset).max(0.0),
-                    (size.height - 2.0 * inset).max(0.0),
-                ),
-            );
-            paint_focus_ring(painter, rect, &self.theme);
+            paint_focus_ring_inset(painter, ctx.border_box_size(), &self.theme);
         }
     }
 
@@ -341,11 +334,8 @@ impl Widget for DisclosureToggle {
         _props: &PropertiesRef<'_>,
         node: &mut Node,
     ) {
-        node.set_expanded(self.expanded);
+        disclosure_accessibility(node, self.expanded, true);
         node.set_level(self.level);
-        // Advertise that this button handles activation, so assistive tech
-        // exposes it as clickable and routes a `Click` action here.
-        node.add_action(masonry::accesskit::Action::Click);
     }
 
     fn children_ids(&self) -> ChildrenIds {
