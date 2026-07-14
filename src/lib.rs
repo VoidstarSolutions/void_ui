@@ -73,7 +73,8 @@ pub use components::{
     ClipboardView, Collapsible, CollapsibleView, ColumnDef, ColumnId, ColumnWidths, ComponentKind,
     ContentButton, ContentButtonView, ContextMenuAction, ContextMenuArea, ContextMenuAreaBuilder,
     ContextMenuAreaView, CurrencyFormat, CurrencyInput, DEFAULT_NOTIFICATION_WIDTH,
-    DEFAULT_TIMEOUT, DataGrid, Dialog, DialogView, DropdownButton, DropdownButtonView,
+    DEFAULT_TIMEOUT, DataGrid, DatePicker, DatePickerAction, DatePickerView, Dialog, DialogView,
+    DropdownButton, DropdownButtonView,
     ExpansionState, FilterState, GroupBox, Highlighter, Icon, IconName, Input, Label,
     LabelAlignment, List, MIN_COLUMN_WIDTH, MIN_PANEL_SIZE, MaskedInput, Menu, MenuItem, MenuView,
     NoTitle, Notification, NotificationLayerView, NotificationPosition, NumberInput, OnClose,
@@ -88,7 +89,8 @@ pub use components::{
     TitleState, Toggle, ToggleView, TokenKind, TokenSpan, Tooltip, TooltipView, WithTitle, alert,
     autocomplete, badge, breadcrumb, button, button_group, card, checkbox, clickable_row,
     clipboard, collapsible, colored_text_column, content_button, context_menu_area, currency_input,
-    data_grid, dialog, disclosure_chevron, disclosure_icon, dropdown_button, filtered_indices,
+    data_grid, date_picker, dialog, disclosure_chevron, disclosure_icon, dropdown_button,
+    filtered_indices,
     format_currency, format_mask, group_box, h_resizable, h_resizable_panels, icon, input, label,
     list, masked_input, menu, notification, notification_layer, notification_overlay,
     notification_stack, number_input, optional_text_column, pill, popover, radio, range_slider,
@@ -127,7 +129,8 @@ mod root_export_tests {
             ColumnId, ColumnWidths, ComponentKind, ContentButton, ContentButtonView,
             ContextMenuAction, ContextMenuArea, ContextMenuAreaBuilder, ContextMenuAreaView,
             CurrencyFormat, CurrencyInput, DEFAULT_NOTIFICATION_WIDTH, DEFAULT_TIMEOUT, DataGrid,
-            Dialog, DialogView, DropdownButton, DropdownButtonView, ExpansionState, FilterState,
+            DatePicker, DatePickerAction, DatePickerView, Dialog, DialogView, DropdownButton,
+            DropdownButtonView, ExpansionState, FilterState,
             GroupBox, Highlighter, Icon, IconName, Input, Label, LabelAlignment, List,
             MIN_COLUMN_WIDTH, MIN_PANEL_SIZE, MaskedInput, Menu, MenuItem, MenuView, NoTitle,
             Notification, NotificationLayerView, NotificationPosition, NumberInput, OnClose,
@@ -142,7 +145,7 @@ mod root_export_tests {
             TabsView, TitleState, Toggle, ToggleView, TokenKind, TokenSpan, Tooltip, TooltipView,
             WithTitle, alert, autocomplete, badge, breadcrumb, button, button_group, card,
             checkbox, clickable_row, clipboard, collapsible, colored_text_column, content_button,
-            context_menu_area, currency_input, data_grid, dialog, disclosure_chevron,
+            context_menu_area, currency_input, data_grid, date_picker, dialog, disclosure_chevron,
             disclosure_icon, dropdown_button, filtered_indices, format_currency, format_mask,
             group_box, h_resizable, h_resizable_panels, icon, input, label, list, masked_input,
             menu, menu_item, notification, notification_layer, notification_overlay,
@@ -162,5 +165,9 @@ mod root_export_tests {
         let _: crate::Menu<(), ()> = crate::menu();
         let _: crate::Submenu<(), ()> = crate::submenu("Open Recent");
         let _: crate::Input<_> = crate::input("text", |(): &mut (), _: String| {});
+        let _: crate::DatePicker<_, _> = crate::date_picker(
+            None::<chrono::NaiveDate>,
+            |(): &mut (), _: Option<chrono::NaiveDate>| {},
+        );
     }
 }
