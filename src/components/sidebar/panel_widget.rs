@@ -211,7 +211,11 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
                 ctx.request_focus();
                 ctx.request_paint_only();
             }
-            Some(ClickPhase::Up { completed, .. }) => {
+            // Guarded on `strip_pressed` so an Up bubbling up from a click
+            // elsewhere in the panel's (arbitrary) child content — which
+            // never captured here, since `should_capture` rejected it — is a
+            // no-op rather than an extra repaint request every time.
+            Some(ClickPhase::Up { completed, .. }) if self.strip_pressed => {
                 // `completed` is widget-level; refine it positionally — the
                 // toggle only fires if the release is still over the strip.
                 if completed && self.strip_hovered {
@@ -220,7 +224,7 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
                 self.strip_pressed = false;
                 ctx.request_paint_only();
             }
-            None => {}
+            Some(ClickPhase::Up { .. }) | None => {}
         }
     }
 
@@ -407,7 +411,8 @@ impl<W: Widget + ?Sized> Widget for ThemedSidebarPanel<W> {
 #[cfg(test)]
 mod tests {
     use masonry::core::keyboard::{Key, NamedKey};
-    use masonry::core::{NewWidget, TextEvent};
+    use masonry::core::{NewWidget, PointerButton, TextEvent};
+    use masonry::kurbo::Point;
     use masonry::layout::Length;
     use masonry::testing::TestHarness;
     use masonry::theme::default_property_set;
@@ -464,5 +469,31 @@ mod tests {
 
         h.focus_on(None);
         assert!(!h.edit_root_widget(|wm| wm.widget.strip_keyboard_pressed));
+    }
+
+    #[test]
+    fn clicking_the_strip_toggles() {
+        // Strip occupies the trailing STRIP_WIDTH (20px) of the 100px-wide
+        // harness, i.e. x in [80, 100).
+        let mut h = harness();
+        h.mouse_move(Point::new(90.0, 100.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+        assert!(h.pop_action::<SidebarTogglePressed>().is_some());
+    }
+
+    #[test]
+    fn clicking_the_content_area_does_not_toggle() {
+        // Regression: the shared click recognizer's Up phase fires on every
+        // primary-button release that bubbles through this widget, not just
+        // ones it captured — the `strip_pressed` guard on the Up arm is what
+        // keeps a click on the wrapped content (never captured here, since
+        // the strip hit test rejects it) from being mistaken for a strip
+        // press.
+        let mut h = harness();
+        h.mouse_move(Point::new(10.0, 100.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+        assert!(h.pop_action::<SidebarTogglePressed>().is_none());
     }
 }
