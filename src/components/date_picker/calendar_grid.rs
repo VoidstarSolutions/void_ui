@@ -99,6 +99,7 @@ fn text_color_for(datum: &CellDatum, theme: &Theme) -> masonry::peniko::Color {
         p.text_faint
     } else if datum.selected {
         // Selected cells get a filled accent background — use bg for contrast.
+        // TODO: replace with palette.on_accent once that token is added to Palette
         p.bg
     } else if datum.muted {
         p.text_muted
@@ -120,7 +121,7 @@ fn make_cell(datum: &CellDatum, theme: &Theme) -> WidgetPod<Label> {
 /// Computes the side length (width = height) of a calendar cell from density
 /// tokens. Exported as a free function so `CalendarBodyWidget` can compute the
 /// total grid size without holding a reference to the widget.
-fn cell_side(theme: &Theme) -> f64 {
+pub(crate) fn cell_side(theme: &Theme) -> f64 {
     f64::from(theme.density.row_height) + f64::from(theme.density.pad_v)
 }
 
@@ -216,7 +217,7 @@ impl Widget for CalendarGridWidget {
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        if let Update::ChildFocusChanged(_) = event {
+        if let Update::FocusChanged(_) | Update::ChildFocusChanged(_) = event {
             ctx.request_paint_only();
         }
     }
@@ -334,11 +335,7 @@ impl Widget for CalendarGridWidget {
         let Some(phase) = primary_click_when(ctx, event, |ctx, state| {
             // Only capture if the press landed on a cell.
             !self.cell_rects.is_empty()
-                && hit_item(
-                    &self.cell_rects,
-                    state.logical_point() - ctx.to_window(Point::ZERO).to_vec2(),
-                )
-                .is_some()
+                && hit_item(&self.cell_rects, to_local(ctx, state.logical_point())).is_some()
         }) else {
             return;
         };
