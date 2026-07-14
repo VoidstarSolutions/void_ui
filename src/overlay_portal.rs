@@ -76,7 +76,7 @@ use xilem_masonry::{Pod, ViewCtx};
 
 use crate::Theme;
 use crate::overlay::SurfaceStyle;
-use crate::overlay_scope::OverlayScopeHandle;
+use crate::overlay_scope::{OverlayScopeHandle, ScopeLookup};
 
 /// Erased popover-content view stored in the portal registry. Equivalent to
 /// [`xilem_masonry::AnyWidgetView`].
@@ -288,6 +288,37 @@ pub(crate) fn portal_from_env<State: 'static, Action: 'static>(
         .as_ref()
         .and_then(|item| item.value.downcast_ref::<OverlayPortal<State, Action>>())
         .cloned()
+}
+
+/// The nearest scope's handle, whatever `State`/`Action` it was published for.
+///
+/// The portal resource is generic, so a typed lookup for it can't distinguish
+/// "no scope" from "someone else's scope". The *handle* is not generic, so its
+/// presence answers "is there a scope at all?" on its own — which is what makes
+/// [`portal_from_env_lookup`]'s diagnosis possible.
+fn scope_handle_from_env(ctx: &mut ViewCtx) -> Option<OverlayScopeHandle> {
+    let idx = ctx
+        .environment()
+        .get_slot_for_type::<OverlayScopeHandle>()?;
+    ctx.environment().slots[idx as usize]
+        .item
+        .as_ref()
+        .and_then(|item| item.value.downcast_ref::<OverlayScopeHandle>())
+        .cloned()
+}
+
+/// Like [`portal_from_env`], but diagnoses *why* the nearest scope is unusable.
+/// For the components that require one; see [`ScopeLookup`].
+pub(crate) fn portal_from_env_lookup<State: 'static, Action: 'static>(
+    ctx: &mut ViewCtx,
+) -> ScopeLookup<State, Action> {
+    if let Some(portal) = portal_from_env::<State, Action>(ctx) {
+        return ScopeLookup::Found(portal);
+    }
+    match scope_handle_from_env(ctx).and_then(|handle| handle.scope_types()) {
+        Some(types) => ScopeLookup::TypeMismatch(types),
+        None => ScopeLookup::Missing,
+    }
 }
 
 // --- MARK: PortalSlot

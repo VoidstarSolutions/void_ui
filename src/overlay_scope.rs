@@ -28,10 +28,27 @@
 //! Xilem `Environment` — [`OverlayScopeHandle`] (for `mutate_later` targeting)
 //! and [`crate::overlay_portal::OverlayPortal`] (the portal registry) are both
 //! published with `provides` and read with
-//! [`xilem_masonry::core::Environment::get_slot_for_type`]. Consumers fall
-//! back to [`crate::AnchoredOverlay`] when no scope ancestor exists.
+//! [`xilem_masonry::core::Environment::get_slot_for_type`].
+//!
+//! # Which consumers *require* a scope
+//!
+//! `popover`, `dropdown_button`, and `autocomplete` fall back to
+//! [`crate::AnchoredOverlay`] when no scope ancestor exists — they anchor to a
+//! trigger rect, which an in-tree overlay can do.
+//!
+//! `dialog` and `notification_layer` **require** one and panic without it: a
+//! dialog has no trigger to anchor to and must paint above an entire region,
+//! which only a scope's portal can guarantee. **Host apps should wrap their
+//! root (or each independent region) in `overlay_scope` once.**
+//!
+//! Two distinct things can go wrong, and they have opposite fixes — no scope at
+//! all, or a scope published for a *different* `State`/`Action` pair than the
+//! consumer (a scope only ever serves descendants rendered with its own types).
+//! A typed Environment lookup can't tell these apart; both simply miss. The
+//! internal `ScopeLookup` does, and the resulting panic names which one you
+//! have rather than always blaming a missing scope.
 
-use std::any::Any;
+use std::any::{self, Any};
 use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::sync::{Arc, OnceLock};
@@ -68,17 +85,61 @@ use crate::overlay_portal::{
 /// cloned into both the published resource and the widget itself, and filled
 /// exactly once, by the widget, on its first [`Update::WidgetAdded`].
 #[derive(Clone, Debug)]
-pub struct OverlayScopeHandle(Arc<OnceLock<WidgetId>>);
+pub struct OverlayScopeHandle {
+    id: Arc<OnceLock<WidgetId>>,
+    /// The `State`/`Action` pair this scope publishes its portal for.
+    ///
+    /// **Diagnostics only** — never load-bearing. A scope only serves
+    /// descendants rendered with its own `State`/`Action`, and a mismatch is
+    /// indistinguishable from "no scope at all" through a typed Environment
+    /// lookup (both simply miss). Recording the names here is what lets
+    /// [`ScopeLookup`] tell a consumer *which* of those two very different
+    /// problems it has. `None` for handles built outside [`overlay_scope`]
+    /// (widget tests), which never take part in that diagnosis.
+    types: Option<ScopeTypes>,
+}
+
+/// The `State`/`Action` type names a scope was published for. Diagnostics only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ScopeTypes {
+    state: &'static str,
+    action: &'static str,
+}
+
+impl ScopeTypes {
+    fn of<State: 'static, Action: 'static>() -> Self {
+        Self {
+            state: any::type_name::<State>(),
+            action: any::type_name::<Action>(),
+        }
+    }
+}
 
 impl Resource for OverlayScopeHandle {}
 
 impl OverlayScopeHandle {
+    /// A handle with no scope behind it, for widget tests that drive an
+    /// `OverlayScope`/`OverlayPortal` directly. Real scopes use
+    /// [`Self::for_scope`], which records the type identity diagnostics need.
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
-        Self(Arc::new(OnceLock::new()))
+        Self {
+            id: Arc::new(OnceLock::new()),
+            types: None,
+        }
+    }
+
+    /// The handle [`overlay_scope`] publishes: carries the scope's type
+    /// identity so a mismatched consumer can be told what it actually found.
+    fn for_scope<State: 'static, Action: 'static>() -> Self {
+        Self {
+            id: Arc::new(OnceLock::new()),
+            types: Some(ScopeTypes::of::<State, Action>()),
+        }
     }
 
     fn set(&self, id: WidgetId) {
-        let _ = self.0.set(id);
+        let _ = self.id.set(id);
     }
 
     /// The scope widget's `WidgetId`, once it has been mounted.
@@ -89,7 +150,11 @@ impl OverlayScopeHandle {
     /// practice this is always `Some` by the time a consumer needs it.
     #[must_use]
     pub fn widget_id(&self) -> Option<WidgetId> {
-        self.0.get().copied()
+        self.id.get().copied()
+    }
+
+    pub(crate) fn scope_types(&self) -> Option<ScopeTypes> {
+        self.types
     }
 }
 
@@ -98,13 +163,20 @@ thread_local! {
     /// built or rebuilt, valid for the duration of that scope's (and its
     /// descendants') `build`/`rebuild` call — `None` outside of that window.
     ///
-    /// `dialog` reads this via [`root_portal`] to always target the root
+    /// `dialog` reads this via [`root_portal_lookup`] to always target the root
     /// scope, unlike `popover`, which uses the *nearest* scope's portal
     /// published through the Environment. A nested
     /// `overlay_scope` leaves this untouched, so descendants — including
     /// dialogs registered by a nested scope's content — see the outermost
     /// scope's portal.
-    static ROOT_PORTAL: RefCell<Option<Box<dyn Any>>> = RefCell::new(None);
+    static ROOT_PORTAL: RefCell<Option<RootPortalEntry>> = const { RefCell::new(None) };
+}
+
+/// The claimed root portal, plus the type identity it was claimed under — so a
+/// consumer whose downcast misses can be told what the scope actually is.
+struct RootPortalEntry {
+    portal: Box<dyn Any>,
+    types: ScopeTypes,
 }
 
 /// If no scope has yet claimed the root slot for this build/rebuild pass,
@@ -120,7 +192,10 @@ fn claim_root_portal<State: 'static, Action: 'static>(
         if cell.is_some() {
             return false;
         }
-        *cell = Some(Box::new(portal.clone()));
+        *cell = Some(RootPortalEntry {
+            portal: Box::new(portal.clone()),
+            types: ScopeTypes::of::<State, Action>(),
+        });
         true
     })
 }
@@ -156,20 +231,83 @@ impl Drop for RootPortalGuard {
     }
 }
 
-/// The [`OverlayPortal`] of the outermost `overlay_scope` ancestor currently
-/// being built or rebuilt, if any.
+/// The outcome of looking for the `overlay_scope` a component needs.
 ///
-/// Returns `None` both when there is no `overlay_scope` ancestor at all and
-/// when the root scope was published for a different `State`/`Action` pair
-/// (e.g. a sub-tree rendered with different generic parameters than its
-/// enclosing scope) — callers should treat both cases the same way.
-pub(crate) fn root_portal<State: 'static, Action: 'static>() -> Option<OverlayPortal<State, Action>>
-{
+/// A typed lookup can only ever say "hit" or "miss", but a miss has two causes
+/// with opposite fixes — *add a scope* vs. *fix the types on the scope you
+/// already have*. Collapsing them into one `None` is what made the missing
+/// scope hard to diagnose (issue #128): a consumer who **had** wrapped their
+/// root in `overlay_scope` still got told, in effect, "no scope".
+pub(crate) enum ScopeLookup<State: 'static, Action: 'static> {
+    /// A scope published for this consumer's own `State`/`Action`.
+    Found(OverlayPortal<State, Action>),
+    /// No `overlay_scope` ancestor at all.
+    Missing,
+    /// A scope exists, but publishes for a different `State`/`Action` pair.
+    TypeMismatch(ScopeTypes),
+}
+
+impl<State: 'static, Action: 'static> ScopeLookup<State, Action> {
+    /// The portal, or a panic that says which of the two problems this is.
+    ///
+    /// `component` names the caller (`"dialog"`, `"notification_layer"`) — the
+    /// components that *require* a scope. `popover` and friends never call
+    /// this: they fall back to an in-tree `AnchoredOverlay` instead.
+    pub(crate) fn or_panic(self, component: &str) -> OverlayPortal<State, Action> {
+        match self {
+            Self::Found(portal) => portal,
+            Self::Missing => panic!("{}", missing_scope_message(component)),
+            Self::TypeMismatch(found) => panic!(
+                "{}",
+                mismatched_scope_message(component, found, ScopeTypes::of::<State, Action>())
+            ),
+        }
+    }
+}
+
+/// Panic text for "there is no scope at all".
+fn missing_scope_message(component: &str) -> String {
+    format!(
+        "`{component}` requires an ancestor `overlay_scope`, but there is none in the view tree.\n\
+         Wrap your app root once, at the top:\n\
+         \n    overlay_scope::<State, Action, _>(root_view)\n\n\
+         `{component}` has no in-tree fallback — it must paint above everything in its region, \
+         which only a scope's portal can guarantee. (`popover` and `dropdown_button` do fall back, \
+         which is why they work without a scope and `{component}` does not.) \
+         Add exactly one scope at the root; a second, differently-scoped one is its own bug.",
+    )
+}
+
+/// Panic text for "a scope exists, but it isn't yours".
+///
+/// The case that actually confuses people: the app root *is* wrapped in an
+/// `overlay_scope`, so the obvious fix looks already applied.
+fn mismatched_scope_message(component: &str, found: ScopeTypes, wanted: ScopeTypes) -> String {
+    format!(
+        "`{component}` found an ancestor `overlay_scope`, but it was published for a different \
+         app type, so its portal cannot serve this {component}:\n\
+         \n    scope was built for:  State = {}, Action = {}\n      \
+         this {component} wants:  State = {}, Action = {}\n\n\
+         A scope only serves descendants rendered with its own `State`/`Action` pair. Render the \
+         {component} with the host app's own `State` type (this usually means a sub-view was \
+         rendered with a narrower state type than the app root), or move the scope so it encloses \
+         this subtree with matching types.",
+        found.state, found.action, wanted.state, wanted.action,
+    )
+}
+
+/// Look for the outermost `overlay_scope` ancestor currently being built or
+/// rebuilt, diagnosing *why* it isn't usable when it isn't. See [`ScopeLookup`].
+pub(crate) fn root_portal_lookup<State: 'static, Action: 'static>() -> ScopeLookup<State, Action> {
     ROOT_PORTAL.with(|cell| {
-        cell.borrow()
-            .as_ref()
-            .and_then(|boxed| boxed.downcast_ref::<OverlayPortal<State, Action>>())
-            .cloned()
+        let cell = cell.borrow();
+        let Some(entry) = cell.as_ref() else {
+            return ScopeLookup::Missing;
+        };
+        match entry.portal.downcast_ref::<OverlayPortal<State, Action>>() {
+            Some(portal) => ScopeLookup::Found(portal.clone()),
+            None => ScopeLookup::TypeMismatch(entry.types),
+        }
     })
 }
 
@@ -383,7 +521,7 @@ where
     Action: 'static,
     V: WidgetView<State, Action>,
 {
-    let handle = OverlayScopeHandle::new();
+    let handle = OverlayScopeHandle::for_scope::<State, Action>();
     let resource_handle = handle.clone();
     let portal_handle = handle.clone();
     // `provides` build-once semantics: each app pass recreates these closures
@@ -1087,17 +1225,74 @@ mod tests {
         let outer_portal = OverlayPortal::<(), ()>::new(outer_handle.clone());
         let inner_portal = OverlayPortal::<(), ()>::new(inner_handle.clone());
 
-        assert!(root_portal::<(), ()>().is_none());
+        assert!(matches!(
+            root_portal_lookup::<(), ()>(),
+            ScopeLookup::Missing
+        ));
 
         assert!(claim_root_portal(&outer_portal));
         // A nested scope's claim is a no-op while the outer claim is active.
         assert!(!claim_root_portal(&inner_portal));
 
-        let seen = root_portal::<(), ()>().expect("root portal claimed");
+        let ScopeLookup::Found(seen) = root_portal_lookup::<(), ()>() else {
+            panic!("root portal claimed");
+        };
         assert_eq!(seen.scope().widget_id(), outer_handle.widget_id());
 
         release_root_portal();
-        assert!(root_portal::<(), ()>().is_none());
+        assert!(matches!(
+            root_portal_lookup::<(), ()>(),
+            ScopeLookup::Missing
+        ));
+    }
+
+    /// The distinction issue #128 is about: a consumer whose `State`/`Action`
+    /// don't match the scope's must be told *that*, not "there is no scope" —
+    /// they have wrapped their root already, so the missing-scope advice would
+    /// send them hunting for a bug that isn't there.
+    #[test]
+    fn a_mismatched_state_type_is_reported_as_a_mismatch_not_a_missing_scope() {
+        struct AppState;
+
+        let handle = OverlayScopeHandle::new();
+        let portal = OverlayPortal::<AppState, ()>::new(handle);
+        assert!(claim_root_portal(&portal));
+
+        // Same scope, looked up with the *wrong* state type.
+        let ScopeLookup::TypeMismatch(found) = root_portal_lookup::<(), ()>() else {
+            release_root_portal();
+            panic!("a claimed scope of another type must report TypeMismatch");
+        };
+        assert!(found.state.ends_with("AppState"), "got {}", found.state);
+
+        release_root_portal();
+    }
+
+    #[test]
+    fn missing_scope_message_says_to_add_one() {
+        let msg = missing_scope_message("dialog");
+        assert!(msg.contains("requires an ancestor `overlay_scope`"));
+        assert!(msg.contains("overlay_scope::<State, Action, _>(root_view)"));
+    }
+
+    /// The mismatch text must name *both* type pairs — naming only one leaves
+    /// the reader unable to see which side is wrong.
+    #[test]
+    fn mismatched_scope_message_names_both_type_pairs() {
+        let msg = mismatched_scope_message(
+            "dialog",
+            ScopeTypes {
+                state: "citadel::ChartWindow",
+                action: "()",
+            },
+            ScopeTypes {
+                state: "drill::DrillState",
+                action: "()",
+            },
+        );
+        assert!(msg.contains("citadel::ChartWindow"), "{msg}");
+        assert!(msg.contains("drill::DrillState"), "{msg}");
+        assert!(!msg.contains("there is none"), "not the missing-scope text");
     }
 
     /// Dismiss hook standing in for a real owner's (`PopoverHost::mark_closed`

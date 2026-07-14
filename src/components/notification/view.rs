@@ -40,7 +40,7 @@ use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 use super::widget::{NotificationHost, NotificationTimeout};
 use crate::components::alert::{CloseCallback, alert};
 use crate::overlay::SurfaceStyle;
-use crate::overlay_portal::{PortalContentView, PortalPlacement, portal_from_env};
+use crate::overlay_portal::{PortalContentView, PortalPlacement, portal_from_env_lookup};
 use crate::{AlertVariant, IconName, Theme};
 
 /// Attached close callback for a [`Notification`] — see
@@ -436,8 +436,7 @@ where
     type ViewState = (crate::overlay_portal::OverlayPortal<State, Action>, u64);
 
     fn build(&self, ctx: &mut ViewCtx, _app_state: &mut State) -> (Self::Element, Self::ViewState) {
-        let portal = portal_from_env::<State, Action>(ctx)
-            .expect("notification_layer requires an ancestor overlay_scope");
+        let portal = portal_from_env_lookup::<State, Action>(ctx).or_panic("notification_layer");
         let key = portal.register(
             self.content.clone(),
             &self.theme,
