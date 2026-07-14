@@ -77,15 +77,6 @@ impl<F> Button<F> {
         self
     }
 
-    /// Deprecated alias of [`Self::selected`].
-    #[deprecated(
-        since = "0.1.0",
-        note = "renamed to `selected` to match tabs/button_group vocabulary"
-    )]
-    pub fn active(self, on: bool) -> Self {
-        self.selected(on)
-    }
-
     /// Suppress all interaction and mute the visual appearance.
     pub fn disabled(mut self, on: bool) -> Self {
         self.disabled = on;
@@ -457,18 +448,5 @@ mod tests {
         let _ = button(|(): &mut ()| ())
             .selected(true)
             .render::<(), ()>(&theme);
-    }
-
-    /// The deprecated `.active` shim must still compile and delegate to
-    /// `.selected` — a host mid-migration off the old name must see identical
-    /// behavior.
-    #[test]
-    #[allow(deprecated)]
-    fn deprecated_active_delegates_to_selected() {
-        let theme = Theme::default();
-        let view = button(|(): &mut ()| ())
-            .active(true)
-            .render::<(), ()>(&theme);
-        assert!(view.selected);
     }
 }

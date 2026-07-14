@@ -52,16 +52,6 @@ impl<V> Tooltip<V> {
         self
     }
 
-    /// Deprecated alias of [`Self::delay`]; wraps `ms` in [`Duration::from_millis`].
-    #[deprecated(
-        since = "0.1.0",
-        note = "renamed to `delay`, taking a `Duration` — `Tooltip` was the only \
-                component shipping two spellings of one setter"
-    )]
-    pub fn delay_ms(self, ms: u64) -> Self {
-        self.delay(Duration::from_millis(ms))
-    }
-
     /// Materialize the xilem view at the supplied theme.
     pub fn render<State, Action>(self, theme: &Theme) -> TooltipView<V, State, Action>
     where
@@ -170,18 +160,5 @@ mod tests {
         let _ = tooltip("hint", label("child").render::<(), ()>(&theme))
             .delay(Duration::from_millis(500))
             .render::<(), ()>(&theme);
-    }
-
-    /// The deprecated `.delay_ms` shim must still compile and delegate to
-    /// `.delay` — a host mid-migration off the old name must see identical
-    /// behavior.
-    #[test]
-    #[allow(deprecated)]
-    fn deprecated_delay_ms_delegates_to_delay() {
-        let theme = Theme::default();
-        let view = tooltip("hint", label("child").render::<(), ()>(&theme))
-            .delay_ms(500)
-            .render::<(), ()>(&theme);
-        assert_eq!(view.delay, Duration::from_millis(500));
     }
 }

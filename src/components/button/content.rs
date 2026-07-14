@@ -92,15 +92,6 @@ impl<V, F> ContentButton<V, F> {
         self
     }
 
-    /// Deprecated alias of [`Self::selected`].
-    #[deprecated(
-        since = "0.1.0",
-        note = "renamed to `selected` to match tabs/button_group vocabulary"
-    )]
-    pub fn active(self, on: bool) -> Self {
-        self.selected(on)
-    }
-
     /// Suppress all interaction and mute the button's background.
     ///
     /// The child renders its own colors — see the [module docs](self).
@@ -371,18 +362,5 @@ mod tests {
         assert!(view.selected);
         assert!(view.disabled);
         assert_eq!(view.accessible_name.as_deref(), Some("Open AAPL"));
-    }
-
-    /// The deprecated `.active` shim must still compile and delegate to
-    /// `.selected` — a host mid-migration off the old name must see identical
-    /// behavior.
-    #[test]
-    #[allow(deprecated)]
-    fn deprecated_active_delegates_to_selected() {
-        let theme = Theme::dark();
-        let view = content_button(label("row").render(&theme), |(): &mut ()| ())
-            .active(true)
-            .render::<(), ()>(&theme);
-        assert!(view.selected);
     }
 }

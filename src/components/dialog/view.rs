@@ -140,18 +140,6 @@ where
         }
     }
 
-    /// Deprecated alias of [`Self::on_close`].
-    #[deprecated(
-        since = "0.1.0",
-        note = "renamed to `on_close` to match alert/notification vocabulary"
-    )]
-    pub fn on_dismiss<F>(self, on_dismiss: F) -> Dialog<State, Action, ContentV, F>
-    where
-        F: Fn(&mut State) -> Action + Send + Sync + 'static,
-    {
-        self.on_close(on_dismiss)
-    }
-
     /// Show an X close button that invokes [`Self::on_close`] when clicked.
     /// No-op unless [`Self::on_close`] is also set.
     pub fn show_close_button(mut self) -> Self {
@@ -326,18 +314,5 @@ mod tests {
         let mut ctx = ViewCtx::new(proxy, runtime);
         let mut state = AppState;
         let _ = scope.build(&mut ctx, &mut state);
-    }
-
-    /// The deprecated `.on_dismiss` shim must still compile and delegate to
-    /// `.on_close` — a host mid-migration off the old name must see identical
-    /// behavior.
-    #[test]
-    #[allow(deprecated)]
-    fn deprecated_on_dismiss_delegates_to_on_close() {
-        let theme = Theme::default();
-        let content = label("content").render::<AppState, ()>(&theme);
-        let _ = dialog(true, content)
-            .on_dismiss(|_: &mut AppState| {})
-            .render(&theme);
     }
 }

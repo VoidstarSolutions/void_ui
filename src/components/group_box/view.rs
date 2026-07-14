@@ -141,15 +141,6 @@ impl<V, T> GroupBox<V, T> {
         self
     }
 
-    /// Deprecated alias of [`Self::border`].
-    #[deprecated(
-        since = "0.1.0",
-        note = "renamed to `border` to match card's vocabulary"
-    )]
-    pub fn outline(self) -> Self {
-        self.border()
-    }
-
     /// Override the content area's background color.
     ///
     /// Applies regardless of variant: it fills behind the default
@@ -277,20 +268,5 @@ mod tests {
             resolve_style(GroupBoxVariant::Outline, Some(CUSTOM), SURFACE),
             (Some(CUSTOM), true)
         );
-    }
-
-    /// The deprecated `.outline` shim must still compile and delegate to
-    /// `.border` — a host mid-migration off the old name must see identical
-    /// behavior.
-    #[test]
-    #[allow(deprecated)]
-    fn deprecated_outline_delegates_to_border() {
-        use crate::Theme;
-        use crate::label;
-
-        let theme = Theme::default();
-        let _ = group_box(label("content").render::<(), ()>(&theme))
-            .outline()
-            .render::<(), ()>(&theme);
     }
 }

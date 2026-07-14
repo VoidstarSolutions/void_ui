@@ -89,16 +89,6 @@ impl<V> ScrollContainer<V> {
         self
     }
 
-    /// Deprecated alias of [`Self::fill_viewport`].
-    #[deprecated(
-        since = "0.1.0",
-        note = "renamed to `fill_viewport` — `.fill()` was ambiguous with group_box's \
-                filled-background meaning"
-    )]
-    pub fn fill(self, v: bool) -> Self {
-        self.fill_viewport(v)
-    }
-
     /// Controls when scrollbars are shown. Defaults to [`ScrollBarVisibility::AlwaysVisible`].
     pub fn scroll_bar_visibility(mut self, v: ScrollBarVisibility) -> Self {
         self.scroll_bar_visibility = v;
@@ -231,18 +221,5 @@ mod tests {
         let _ = scroll_container(label("content").render::<(), ()>(&theme))
             .fill_viewport(true)
             .render::<(), ()>(&theme);
-    }
-
-    /// The deprecated `.fill` shim must still compile and delegate to
-    /// `.fill_viewport` — a host mid-migration off the old name must see
-    /// identical behavior.
-    #[test]
-    #[allow(deprecated)]
-    fn deprecated_fill_delegates_to_fill_viewport() {
-        let theme = Theme::default();
-        let view = scroll_container(label("content").render::<(), ()>(&theme))
-            .fill(true)
-            .render::<(), ()>(&theme);
-        assert!(view.fill);
     }
 }
