@@ -1235,7 +1235,7 @@ mod tests {
         (harness, outer_id, inner_id)
     }
 
-    /// With a nav target set, ArrowDown moves focus to it and is handled.
+    /// With a nav target set, `ArrowDown` moves focus to it and is handled.
     #[test]
     fn arrow_down_moves_focus_to_the_nav_target() {
         let (mut harness, _outer_id, inner_id) = harness_with_nested_row();
@@ -1248,7 +1248,7 @@ mod tests {
         assert_eq!(harness.focused_widget_id(), Some(inner_id));
     }
 
-    /// Same for ArrowUp / `nav_up`.
+    /// Same for `ArrowUp` / `nav_up`.
     #[test]
     fn arrow_up_moves_focus_to_the_nav_target() {
         let (mut harness, _outer_id, inner_id) = harness_with_nested_row();
