@@ -779,14 +779,18 @@ impl Widget for CalendarBodyWidget {
         ctx.run_layout(&mut self.header_next, btn_size);
         ctx.place_child(&mut self.header_next, Point::new(pad + btn_w * 3.0, pad));
 
-        // Weekday row: visible (full height) in Day mode, zero-height otherwise.
-        let (weekday_h, weekday_cell_h) = if self.nav.view_mode == ViewMode::Day {
-            (cell_px, cell_px)
-        } else {
-            (0.0, 0.0)
-        };
+        // Weekday row: laid out in Day mode; stashed (excluded from layout
+        // and paint) otherwise. A zero-height box alone doesn't stop a
+        // `Label` from painting its text at natural size, so a collapsed
+        // box isn't enough to hide these — they must be stashed.
+        let day_mode = self.nav.view_mode == ViewMode::Day;
+        let weekday_h = if day_mode { cell_px } else { 0.0 };
         for (i, pod) in self.weekday_row.iter_mut().enumerate() {
-            let cell_size = Size::new(cell_px, weekday_cell_h);
+            ctx.set_stashed(pod, !day_mode);
+            if !day_mode {
+                continue;
+            }
+            let cell_size = Size::new(cell_px, cell_px);
             ctx.run_layout(pod, cell_size);
             ctx.place_child(
                 pod,
