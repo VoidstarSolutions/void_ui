@@ -330,6 +330,10 @@ where
             self.child
                 .rebuild(&prev.child, &mut view_state.child_state, ctx, vs, app_state);
         }
+        // Materialization has now caught up, so refresh each row's Up/Down
+        // nav targets — every collection needs this, not just tree ones
+        // (see `refresh_tree_row_meta` just below for the tree-only case).
+        CollectionBodyWidget::refresh_row_nav(&mut element, view_state.active_range.start);
         // Materialization has now caught up, so refresh the tree depth map for
         // Left/Right nav — read from `app_state`, never from live row widgets.
         if let Some(depth_at) = self.depth_at.as_ref() {
@@ -363,25 +367,26 @@ where
         // maybe_take_message debug-asserts the path is empty, so probing
         // mid-route would panic.
         let mut lazy_action: Option<Action> = None;
-        let mut tree_active: Option<std::ops::Range<usize>> = None;
-        if message.remaining_path().is_empty() && (self.lazy.is_some() || self.depth_at.is_some()) {
+        let mut active_range_update: Option<std::ops::Range<usize>> = None;
+        if message.remaining_path().is_empty() {
             // Peek without consuming (`false`): the `VirtualScrollAction`
             // still routes onward to the child so virtualization handles it.
             message.maybe_take_message::<VirtualScrollAction>(|action| {
                 // Only the `Fetch` variant carries a materialized-range change;
                 // `Scroll` (viewport movement within the already-materialized
-                // window) doesn't affect lazy-load or the tree depth map.
+                // window) doesn't affect lazy-load, the tree depth map, or
+                // row nav targets.
                 if let VirtualScrollAction::Fetch(fetch) = action {
                     if let Some(lazy) = self.lazy.as_ref()
                         && nearing_end(self.item_count, fetch.target().end, lazy.threshold)
                     {
                         lazy_action = Some((lazy.callback)(app_state));
                     }
-                    // Capture the new active range so we can refresh the tree depth
-                    // map once the child has materialized it (below).
-                    if self.depth_at.is_some() {
-                        tree_active = Some(fetch.target().clone());
-                    }
+                    // Capture the new active range so we can refresh the tree
+                    // depth map and row nav targets once the child has
+                    // materialized it (below) — every collection needs the
+                    // latter, not just tree ones.
+                    active_range_update = Some(fetch.target().clone());
                 }
                 false
             });
@@ -390,10 +395,11 @@ where
         let child_result = self
             .child
             .message(&mut view_state.child_state, message, vs, app_state);
-        // Materialization for `tree_active` is deferred to the next rebuild, so
-        // just remember the range; that rebuild refreshes the tree depth map
-        // once the rows are actually present (reading here would panic).
-        if let Some(active) = tree_active {
+        // Materialization for `active_range_update` is deferred to the next
+        // rebuild, so just remember the range; that rebuild refreshes the
+        // tree depth map and row nav once the rows are actually present
+        // (reading here would panic).
+        if let Some(active) = active_range_update {
             view_state.active_range = active;
         }
         match lazy_action {
