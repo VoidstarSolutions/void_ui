@@ -75,11 +75,19 @@ impl CollectionBodyWidget {
     ///
     /// # Panics
     ///
-    /// Panics (via [`VirtualScrollWidget::child_mut`]) if `active_start` is
-    /// stale enough that `active_start + k` falls outside the live active
-    /// range for some materialized row `k` — this is the same invariant
-    /// `refresh_tree_row_meta` relies on and should not happen once
-    /// materialization has settled.
+    /// Unlike `refresh_tree_row_meta` (which reads row metadata from
+    /// `app_state` by computed index and just degrades to a transiently-wrong
+    /// map on a stale index), this function indexes a *live* `VirtualScroll`
+    /// child via [`VirtualScrollWidget::child_mut`], which panics if
+    /// `active_start + k` isn't a currently-materialized index for some row
+    /// `k`. In practice this doesn't happen: the only caller is
+    /// `CollectionBodyView::rebuild`, immediately after the same rebuild pass
+    /// has driven the child's own `rebuild` (the upstream `virtual_scroll`
+    /// View), which always fully and contiguously materializes its target
+    /// range — it never leaves gaps unless a driver deliberately skips
+    /// indices, which this crate's driver doesn't. `VirtualScrollWidget` has no
+    /// non-panicking presence check, so this is a consciously accepted risk
+    /// rather than something guarded in code.
     pub(crate) fn refresh_row_nav(this: &mut WidgetMut<'_, Self>, active_start: usize) {
         let ids: Vec<WidgetId> = {
             let vs = Self::virtual_scroll_mut(this);

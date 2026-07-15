@@ -581,6 +581,9 @@ pub struct ClickableRow<V, State, Action, F> {
 /// [`SelectionState`](super::SelectionState) membership. `theme` colors the
 /// focus ring drawn when the row has keyboard focus. The row has no
 /// activation handler by default; add one with [`ClickableRow::on_activate`].
+/// Up/Down are collection-oriented: without a collection pushing nav targets
+/// via `RowClickable::set_nav`, they're handled as no-ops rather than
+/// bubbling to an ancestor.
 pub fn clickable_row<V, State, Action, F>(
     child: V,
     selected: bool,
@@ -1270,6 +1273,20 @@ mod tests {
             Key::Named(NamedKey::ArrowDown),
             Modifiers::empty(),
         ));
+        assert!(
+            handled.is_handled(),
+            "must be handled so it never falls through to VirtualScroll's native scroll"
+        );
+        assert_eq!(harness.focused_widget_id(), Some(outer_id));
+    }
+
+    /// Same for `ArrowUp` / `nav_up`.
+    #[test]
+    fn arrow_up_without_a_target_is_a_handled_no_op() {
+        let (mut harness, outer_id, _inner_id) = harness_with_nested_row();
+        // nav_up defaults to None; no set_nav call.
+        let handled =
+            harness.process_text_event(key_down(Key::Named(NamedKey::ArrowUp), Modifiers::empty()));
         assert!(
             handled.is_handled(),
             "must be handled so it never falls through to VirtualScroll's native scroll"
