@@ -393,7 +393,7 @@ impl Widget for DatePickerTrigger {
         _props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
-        let size = ctx.border_box_size();
+        let size = ctx.border_box().size();
         let p = &self.theme.palette;
         let radius = f64::from(self.theme.radius.small);
         let rrect = RoundedRect::from_origin_size(Point::ORIGIN, size, radius);

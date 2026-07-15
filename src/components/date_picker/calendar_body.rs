@@ -794,7 +794,7 @@ impl Widget for CalendarBodyWidget {
         _props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
-        let size = ctx.border_box_size();
+        let size = ctx.border_box().size();
         let p = &self.theme.palette;
         let radius = f64::from(self.theme.radius.large);
         let rrect = RoundedRect::from_origin_size(Point::ORIGIN, size, radius);
