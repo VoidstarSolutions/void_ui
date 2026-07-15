@@ -1125,3 +1125,42 @@ impl CalendarBodyWidget {
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use masonry::core::NewWidget;
+    use masonry::kurbo::Point;
+    use masonry::testing::TestHarness;
+    use masonry::theme::default_property_set;
+    use xilem::view::PointerButton;
+
+    #[test]
+    fn clicking_a_day_cell_selects_it_without_panicking() {
+        let theme = Theme::default();
+        let date = NaiveDate::from_ymd_opt(2024, 6, 15).unwrap();
+        let widget = CalendarBodyWidget::new(Some(date), None, None, &theme);
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+
+        let dg = day_grid(2024, 6);
+        let idx = dg.iter().position(|&d| d == date).unwrap();
+        let cell_px = cell_side(&theme);
+        let header_h = f64::from(theme.density.row_height);
+        let weekday_h = cell_px; // Day mode
+        let grid_y = header_h + weekday_h;
+        let col = idx % 7;
+        let row = idx / 7;
+        let x = (index_f64(col) + 0.5) * cell_px;
+        let y = grid_y + (index_f64(row) + 0.5) * cell_px;
+
+        h.mouse_move(Point::new(x, y));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+
+        let action = h.pop_action::<CalendarBodyAction>();
+        assert!(
+            matches!(&action, Some((CalendarBodyAction::DateSelected(d), _)) if *d == date),
+            "expected DateSelected({date:?}), got {action:?}"
+        );
+    }
+}

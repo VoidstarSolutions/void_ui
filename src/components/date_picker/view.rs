@@ -29,7 +29,6 @@ use std::sync::Arc;
 
 use chrono::NaiveDate;
 use masonry::core::ArcStr;
-use masonry::widgets::Passthrough;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx};
 
@@ -418,19 +417,22 @@ where
     State: 'static,
     Action: 'static,
 {
-    type Element = Pod<Passthrough>;
+    type Element = Pod<CalendarBodyWidget>;
     type ViewState = ();
 
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
         let widget =
             CalendarBodyWidget::new(self.selected, self.min_date, self.max_date, &self.theme);
-        // CalendarBodyWidget submits CalendarBodyAction via action bubbling.
-        // We wrap it in a Passthrough so it fits the `Pod<Passthrough>` element
-        // type that `PortalContentView` expects (the slot wraps everything in
-        // Passthrough).
-        let passthrough =
-            masonry::widgets::Passthrough::new(masonry::core::NewWidget::new(widget).erased());
-        let element = ctx.with_action_widget(|ctx| ctx.create_pod(passthrough));
+        // `CalendarBodyWidget` itself must be the widget registered here —
+        // it's the one that calls `ctx.submit_action::<CalendarBodyAction>`.
+        // Wrapping it in an extra `Passthrough` first (as a previous version
+        // of this code did) registers the *wrapper's* id instead, so the
+        // action's origin never matches and masonry drops it with "unknown
+        // widget". The `Pod<Passthrough>` erasure `PortalContentView` needs
+        // is applied automatically at the `AnyView` boundary — see
+        // `dropdown_button`'s `MenuContentView`, which uses this same
+        // direct-registration pattern.
+        let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, ())
     }
 
@@ -442,23 +444,14 @@ where
         mut element: Mut<'_, Self::Element>,
         _app_state: &mut State,
     ) {
-        if self.theme != prev.theme
-            || self.selected != prev.selected
-            || self.min_date != prev.min_date
-            || self.max_date != prev.max_date
-        {
-            // Push to the CalendarBodyWidget through the Passthrough wrapper.
-            let mut child = masonry::widgets::Passthrough::child_mut(&mut element);
-            let mut body = child.downcast::<CalendarBodyWidget>();
-            if self.theme != prev.theme {
-                CalendarBodyWidget::set_theme(&mut body, &self.theme);
-            }
-            if self.selected != prev.selected {
-                CalendarBodyWidget::set_selected(&mut body, self.selected);
-            }
-            if self.min_date != prev.min_date || self.max_date != prev.max_date {
-                CalendarBodyWidget::set_min_max(&mut body, self.min_date, self.max_date);
-            }
+        if self.theme != prev.theme {
+            CalendarBodyWidget::set_theme(&mut element, &self.theme);
+        }
+        if self.selected != prev.selected {
+            CalendarBodyWidget::set_selected(&mut element, self.selected);
+        }
+        if self.min_date != prev.min_date || self.max_date != prev.max_date {
+            CalendarBodyWidget::set_min_max(&mut element, self.min_date, self.max_date);
         }
     }
 
