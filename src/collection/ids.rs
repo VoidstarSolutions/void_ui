@@ -171,8 +171,8 @@ mod tests {
 
     #[test]
     fn nearing_end_saturates_for_huge_counts_and_thresholds() {
-        // item_count past i64::MAX clamps to i64::MAX; an active end near it
-        // is still "far" unless the threshold is also huge.
+        // item_count past usize::MAX clamps to usize::MAX; an active end near
+        // it is still "far" unless the threshold is also huge.
         assert!(!nearing_end(u64::MAX, 0, 20));
         assert!(nearing_end(u64::MAX, 0, u64::MAX));
     }
