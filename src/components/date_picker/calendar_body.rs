@@ -18,7 +18,7 @@ use masonry::core::{
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, RoundedRect, Size, Stroke};
-use masonry::layout::{LenReq, Length};
+use masonry::layout::{LayoutSize, LenReq, Length};
 use masonry::properties::ContentColor;
 use masonry::widgets::{ButtonPress, Label};
 
@@ -728,15 +728,15 @@ impl Widget for CalendarBodyWidget {
 
     fn measure(
         &mut self,
-        _ctx: &mut MeasureCtx<'_>,
+        ctx: &mut MeasureCtx<'_>,
         _props: &PropertiesRef<'_>,
         axis: Axis,
-        _len_req: LenReq,
+        len_req: LenReq,
         _cross_length: Option<Length>,
     ) -> Length {
         let cell_px = cell_side(&self.theme);
         let cols = cols_for(self.nav.view_mode);
-        let total_w = index_f64(cols) * cell_px;
+        let grid_w = index_f64(cols) * cell_px;
         let header_h = f64::from(self.theme.density.row_height);
         let weekday_h = if self.nav.view_mode == ViewMode::Day {
             cell_px
@@ -752,7 +752,32 @@ impl Widget for CalendarBodyWidget {
         let grid_h = index_f64(rows) * cell_px;
         let pad = self.pad();
         match axis {
-            Axis::Horizontal => Length::px(total_w + 2.0 * pad),
+            Axis::Horizontal => {
+                // Each header button's natural (unclipped) label width — not
+                // simply `grid_w / 4`, which would truncate long labels like
+                // a year range ("2000–2019") down to a single grid-cell
+                // width in Month/Year mode.
+                let cross = Some(Length::px(header_h));
+                let mut max_btn_w: f64 = 0.0;
+                for pod in [
+                    &mut self.header_prev,
+                    &mut self.header_month,
+                    &mut self.header_year,
+                    &mut self.header_next,
+                ] {
+                    let w = ctx
+                        .compute_length(
+                            pod,
+                            len_req.into(),
+                            LayoutSize::maybe(Axis::Vertical, cross),
+                            Axis::Horizontal,
+                            cross,
+                        )
+                        .get();
+                    max_btn_w = max_btn_w.max(w);
+                }
+                Length::px(grid_w.max(max_btn_w * 4.0) + 2.0 * pad)
+            }
             Axis::Vertical => Length::px(header_h + weekday_h + grid_h + 2.0 * pad),
         }
     }
@@ -760,11 +785,15 @@ impl Widget for CalendarBodyWidget {
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         let cell_px = cell_side(&self.theme);
         let cols = cols_for(self.nav.view_mode);
-        let total_w = index_f64(cols) * cell_px;
+        let grid_w = index_f64(cols) * cell_px;
         let header_h = f64::from(self.theme.density.row_height);
-        let btn_w = (total_w / 4.0).max(1.0);
-        let btn_size = Size::new(btn_w, header_h);
         let pad = self.pad();
+        // Header buttons split the panel's full content width evenly.
+        // `measure` already widened that content width to fit each button's
+        // natural label, so this can never be narrower than `grid_w / 4`.
+        let content_w = (size.width - 2.0 * pad).max(0.0);
+        let btn_w = (content_w / 4.0).max(1.0);
+        let btn_size = Size::new(btn_w, header_h);
 
         // Header row: 4 buttons side-by-side.
         ctx.run_layout(&mut self.header_prev, btn_size);
@@ -798,10 +827,12 @@ impl Widget for CalendarBodyWidget {
             );
         }
 
-        // Grid: fills remaining space.
+        // Grid: fills remaining height; keeps its own natural width (it may
+        // be narrower than the header if a header label — e.g. a year
+        // range — needed more room).
         let grid_y = pad + header_h + weekday_h;
         let grid_h = (size.height - grid_y - pad).max(0.0);
-        let grid_size = Size::new(total_w, grid_h);
+        let grid_size = Size::new(grid_w, grid_h);
         ctx.run_layout(&mut self.grid, grid_size);
         ctx.place_child(&mut self.grid, Point::new(pad, grid_y));
     }
