@@ -14,7 +14,7 @@ use masonry::kurbo::{Axis, Size};
 use masonry::layout::{LenReq, Length};
 use xilem::masonry::widgets::VirtualScroll as VirtualScrollWidget;
 
-use super::row_click::TreeRowMeta;
+use super::row_click::{RowClickable, TreeRowMeta};
 use super::single_child;
 
 /// Single-child wrapper around masonry's `VirtualScroll` adding arrow-key
@@ -56,6 +56,41 @@ impl CollectionBodyWidget {
     /// it only affects the next key press, so no repaint/relayout is requested.
     pub(crate) fn set_row_meta(this: &mut WidgetMut<'_, Self>, meta: Vec<(WidgetId, TreeRowMeta)>) {
         this.widget.row_meta = meta;
+    }
+
+    /// Precomputes each visible row's up/down materialized-neighbor
+    /// `WidgetId` and pushes it into the row via [`RowClickable::set_nav`],
+    /// so Up/Down navigation can be handled locally by the focused row
+    /// itself — see [`row_click`](super::row_click)'s module docs for why
+    /// this widget can't handle Up/Down directly anymore. Called on every
+    /// rebuild by `body_view::CollectionBodyView::rebuild`, mirroring
+    /// `refresh_tree_row_meta`'s "materialization has caught up" trigger
+    /// point: a momentarily-stale `active_start` mid-transition at worst
+    /// yields a transiently-wrong nav map the next settled rebuild corrects.
+    ///
+    /// # Panics
+    ///
+    /// Panics (via [`VirtualScrollWidget::child_mut`]) if `active_start` is
+    /// stale enough that `active_start + k` falls outside the live active
+    /// range for some materialized row `k` — this is the same invariant
+    /// `refresh_tree_row_meta` relies on and should not happen once
+    /// materialization has settled.
+    pub(crate) fn refresh_row_nav(this: &mut WidgetMut<'_, Self>, active_start: usize) {
+        let ids: Vec<WidgetId> = {
+            let vs = Self::virtual_scroll_mut(this);
+            vs.widget.children_ids().iter().copied().collect()
+        };
+        for k in 0..ids.len() {
+            let up = k.checked_sub(1).and_then(|j| ids.get(j)).copied();
+            let down = ids.get(k + 1).copied();
+            let idx = active_start + k;
+            {
+                let mut vs = Self::virtual_scroll_mut(this);
+                let mut row = VirtualScrollWidget::child_mut(&mut vs, idx);
+                let mut row = row.downcast::<RowClickable>();
+                RowClickable::set_nav(&mut row, up, down);
+            }
+        }
     }
 
     /// The tree metadata for the materialized row with id `id`, if tracked.
@@ -205,7 +240,8 @@ mod tests {
     use masonry::widgets::Label;
     use xilem::masonry::widgets::{VirtualScroll, VirtualScrollAction};
 
-    use super::{CollectionBodyWidget, TreeRowMeta};
+    use super::{CollectionBodyWidget, RowClickable, TreeRowMeta};
+    use crate::Theme;
 
     /// Builds a [`TextEvent`] for a `Down`-state press of the given named key.
     fn arrow_key(named: NamedKey) -> TextEvent {
@@ -305,6 +341,94 @@ mod tests {
         let mut rows = HashMap::new();
         drive_to_fixpoint(&mut harness, &mut rows);
         (harness, scroll_id, rows)
+    }
+
+    /// Like `drive_to_fixpoint`/`harness_with_rows` above, but materializes each
+    /// row as a `RowClickable` (wrapping a `Label`) instead of a bare `Label` —
+    /// needed to exercise `refresh_row_nav`, which pushes targets into
+    /// `RowClickable` specifically.
+    fn drive_to_fixpoint_clickable(
+        harness: &mut TestHarness<CollectionBodyWidget>,
+        rows: &mut HashMap<usize, WidgetId>,
+    ) {
+        let mut iteration = 0;
+        loop {
+            iteration += 1;
+            assert!(iteration <= 1000, "Took too long to reach fixpoint");
+            let Some((action, _id)) = harness.pop_action::<VirtualScrollAction>() else {
+                break;
+            };
+            let VirtualScrollAction::Fetch(action) = action else {
+                continue;
+            };
+            harness.edit_root_widget(|mut body| {
+                let mut scroll = CollectionBodyWidget::virtual_scroll_mut(&mut body);
+                VirtualScroll::will_handle_action(&mut scroll, &action);
+                for idx in action.old_active().clone() {
+                    if !action.target().contains(&idx) {
+                        VirtualScroll::remove_child(&mut scroll, idx);
+                        rows.remove(&idx);
+                    }
+                }
+                for idx in action.target().clone() {
+                    if !action.old_active().contains(&idx) {
+                        let row = NewWidget::new(RowClickable::new(
+                            NewWidget::new(Label::new(format!("row {idx}"))),
+                            false,
+                            &Theme::default(),
+                            None,
+                            false,
+                            None,
+                        ))
+                        .erased();
+                        let row_id = row.id();
+                        VirtualScroll::add_child(&mut scroll, idx, row);
+                        rows.insert(idx, row_id);
+                    }
+                }
+            });
+        }
+    }
+
+    /// Builds a body of materialized `RowClickable` rows and returns the
+    /// harness and a map from row index to row id.
+    fn harness_with_clickable_rows() -> (TestHarness<CollectionBodyWidget>, HashMap<usize, WidgetId>)
+    {
+        let scroll = NewWidget::new(VirtualScroll::new(0, 100));
+        let body = NewWidget::new(CollectionBodyWidget::new(scroll));
+        let mut harness = TestHarness::create_with_size(default_property_set(), body, (200, 400));
+        let mut rows = HashMap::new();
+        drive_to_fixpoint_clickable(&mut harness, &mut rows);
+        (harness, rows)
+    }
+
+    /// The core of the fix: after `refresh_row_nav`, pressing `ArrowDown` on a
+    /// materialized row moves focus to the next materialized row.
+    #[test]
+    fn refresh_row_nav_lets_arrow_down_move_focus_between_materialized_rows() {
+        let (mut harness, rows) = harness_with_clickable_rows();
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
+
+        let first = rows[&0];
+        let second = rows[&1];
+        harness.focus_on(Some(first));
+        let handled = harness.process_text_event(arrow_key(NamedKey::ArrowDown));
+        assert!(handled.is_handled());
+        assert_eq!(harness.focused_widget_id(), Some(second));
+    }
+
+    /// ...and `ArrowUp` moves it back.
+    #[test]
+    fn refresh_row_nav_lets_arrow_up_move_focus_between_materialized_rows() {
+        let (mut harness, rows) = harness_with_clickable_rows();
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
+
+        let first = rows[&0];
+        let second = rows[&1];
+        harness.focus_on(Some(second));
+        let handled = harness.process_text_event(arrow_key(NamedKey::ArrowUp));
+        assert!(handled.is_handled());
+        assert_eq!(harness.focused_widget_id(), Some(first));
     }
 
     #[test]
