@@ -320,10 +320,10 @@ where
         if self.open.is_some() != prev.open.is_some() {
             ThemedDatePickerWidget::set_controlled(&mut element, self.open.is_some());
         }
-        if let Some(open) = self.open {
-            if Some(open) != prev.open {
-                ThemedDatePickerWidget::set_open(&mut element, open);
-            }
+        if let Some(open) = self.open
+            && prev.open != Some(open)
+        {
+            ThemedDatePickerWidget::set_open(&mut element, open);
         }
 
         if let PickerBinding::Portal {
@@ -375,7 +375,7 @@ where
 
     fn message(
         &self,
-        view_state: &mut Self::ViewState,
+        _view_state: &mut Self::ViewState,
         message: &mut MessageCtx,
         _element: Mut<'_, Self::Element>,
         app_state: &mut State,

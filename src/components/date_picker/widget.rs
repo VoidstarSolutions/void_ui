@@ -18,17 +18,20 @@ use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, RoundedRect, Size, Stroke};
 use masonry::layout::{LenReq, Length};
 use masonry::properties::ContentColor;
-use masonry::widgets::Label;
+use masonry::widgets::{Label, Passthrough};
 
 use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
 use crate::components::click::{ClickPhase, primary_click};
-use crate::components::date_picker::calendar_body::{CalendarBodyAction, CalendarBodyWidget};
+use crate::components::date_picker::calendar_body::{
+    CalendarBodyAction, CalendarBodyWidget, CalendarNavKey,
+};
 use crate::components::icon::{IconName, icon};
 use crate::focus_ring::paint_focus_ring;
 use crate::overlay::OverlayAnchor;
 use crate::overlay::binding::{self, PortalBinding, PortalCtx, PortalOpenCtx};
-use crate::overlay_scope::OverlayScopeHandle;
+use crate::overlay_portal::PortalSlot;
+use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DatePickerTrigger
@@ -1077,16 +1080,17 @@ impl Widget for ThemedDatePickerWidget {
         _props: &mut PropertiesMut<'_>,
         event: &TextEvent,
     ) {
-        if !self.open {
-            return;
-        }
         let TextEvent::Keyboard(key) = event else {
             return;
         };
         if key.state != KeyState::Down {
             return;
         }
-        if let Key::Named(NamedKey::Escape) = &key.key {
+        // Escape: close the calendar (regardless of whether nav keys work).
+        if matches!(&key.key, Key::Named(NamedKey::Escape)) {
+            if !self.open {
+                return;
+            }
             if !self.controlled {
                 self.open = false;
                 self.close_menu(ctx);
@@ -1094,7 +1098,59 @@ impl Widget for ThemedDatePickerWidget {
             ctx.submit_action::<Self::Action>(DatePickerAction::OpenChanged(false));
             ctx.set_handled();
             ctx.request_paint_only();
+            return;
         }
+
+        if !self.open {
+            return;
+        }
+
+        let nav_key = match &key.key {
+            Key::Named(NamedKey::ArrowUp) => Some(CalendarNavKey::Up),
+            Key::Named(NamedKey::ArrowDown) => Some(CalendarNavKey::Down),
+            Key::Named(NamedKey::ArrowLeft) => Some(CalendarNavKey::Left),
+            Key::Named(NamedKey::ArrowRight) => Some(CalendarNavKey::Right),
+            Key::Named(NamedKey::Home) => Some(CalendarNavKey::Home),
+            Key::Named(NamedKey::End) => Some(CalendarNavKey::End),
+            Key::Named(NamedKey::Enter) => Some(CalendarNavKey::Activate),
+            _ => None,
+        };
+
+        let Some(nav) = nav_key else {
+            return;
+        };
+
+        match &self.hosting {
+            Hosting::InTree { overlay_host } => {
+                let overlay_id = overlay_host.id();
+                ctx.mutate_later(overlay_id, move |mut w| {
+                    let mut ov = w.downcast::<AnchoredOverlay>();
+                    let mut overlay = AnchoredOverlay::overlay_mut(&mut ov);
+                    let mut body = overlay.downcast::<CalendarBodyWidget>();
+                    CalendarBodyWidget::handle_nav_key(&mut body, nav);
+                });
+            }
+            Hosting::Portal { binding, .. } => {
+                let Some(scope_id) = binding.scope_widget_id() else {
+                    return;
+                };
+                let key_val = binding.key();
+                ctx.mutate_later(scope_id, move |mut w| {
+                    let mut scope = w.downcast::<OverlayScope>();
+                    let mut slot = OverlayScope::portal_slot_mut(&mut scope);
+                    let Some(mut child) = PortalSlot::child_mut(&mut slot, key_val) else {
+                        return;
+                    };
+                    // BareTrigger placement: child IS the Passthrough wrapping
+                    // CalendarBodyWidget (see CalendarBodyView::build).
+                    let mut passthrough = child.downcast::<Passthrough>();
+                    let mut body_wm = Passthrough::child_mut(&mut passthrough);
+                    let mut body = body_wm.downcast::<CalendarBodyWidget>();
+                    CalendarBodyWidget::handle_nav_key(&mut body, nav);
+                });
+            }
+        }
+        ctx.set_handled();
     }
 
     /// Re-anchors a still-open portal-mode calendar as we move in window space.

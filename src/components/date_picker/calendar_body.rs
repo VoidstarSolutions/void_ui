@@ -12,9 +12,9 @@
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
-    AccessCtx, ActionCtx, ArcStr, ChildrenIds, ErasedAction, EventCtx, LayoutCtx, MeasureCtx,
-    NewWidget, PaintCtx, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty, Update,
-    UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, ActionCtx, ArcStr, ChildrenIds, ErasedAction, LayoutCtx, MeasureCtx, NewWidget,
+    PaintCtx, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty, Update, UpdateCtx, Widget,
+    WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, RoundedRect, Size, Stroke};
@@ -57,6 +57,26 @@ pub(crate) enum CalendarBodyAction {
     DateSelected(NaiveDate),
 }
 
+/// Keys routed from [`super::widget::ThemedDatePickerWidget::on_text_event`] to
+/// the calendar body via `mutate_later` / `mutate_child_later`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CalendarNavKey {
+    /// Arrow up — move focus up one row.
+    Up,
+    /// Arrow down — move focus down one row.
+    Down,
+    /// Arrow left — move focus left one cell.
+    Left,
+    /// Arrow right — move focus right one cell.
+    Right,
+    /// Home — jump to the first non-disabled cell.
+    Home,
+    /// End — jump to the last non-disabled cell.
+    End,
+    /// Enter — activate the focused cell.
+    Activate,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal nav state
 // ─────────────────────────────────────────────────────────────────────────────
@@ -88,6 +108,10 @@ pub(crate) struct CalendarBodyWidget {
     weekday_row: [WidgetPod<Label>; 7],
     grid: WidgetPod<CalendarGridWidget>,
     theme: Theme,
+    /// Keyboard-roving focus index within the current grid, driven by
+    /// [`CalendarNavKey`] events routed from the parent date-picker widget.
+    /// `None` when the keyboard focus is not inside the grid.
+    focused_index: Option<usize>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -211,6 +235,42 @@ fn cols_for(mode: ViewMode) -> usize {
     }
 }
 
+/// Walks forward or backward from `start` by `step` until a non-disabled cell
+/// is found (returning its index) or the grid boundary is reached (returning
+/// `None`).
+///
+/// Uses checked arithmetic to avoid clippy cast lints; `step` may be negative.
+fn nav_step_skip(start: usize, step: isize, len: usize, disabled: &[bool]) -> Option<usize> {
+    let len_isize = isize::try_from(len).unwrap_or(isize::MAX);
+    let mut idx: isize = isize::try_from(start).ok()?.checked_add(step)?;
+    while idx >= 0 && idx < len_isize {
+        let i = usize::try_from(idx).unwrap_or(usize::MAX);
+        if !disabled.get(i).copied().unwrap_or(true) {
+            return Some(i);
+        }
+        idx = idx.checked_add(step)?;
+    }
+    None
+}
+
+/// Like [`nav_step_skip`] but starts one full `step` before index 0 — used for
+/// the initial Down keypress (no prior focus), which should land on the first
+/// reachable cell in the first row.
+fn nav_step_skip_from_before_start(step: isize, len: usize, disabled: &[bool]) -> Option<usize> {
+    // Starting idx is `0 - step`, i.e. one stride before the grid begins.
+    let start_isize: isize = isize::try_from(0usize).ok()?.checked_sub(step)?;
+    let len_isize = isize::try_from(len).unwrap_or(isize::MAX);
+    let mut idx: isize = start_isize.checked_add(step)?;
+    while idx >= 0 && idx < len_isize {
+        let i = usize::try_from(idx).unwrap_or(usize::MAX);
+        if !disabled.get(i).copied().unwrap_or(true) {
+            return Some(i);
+        }
+        idx = idx.checked_add(step)?;
+    }
+    None
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Constructor
 // ─────────────────────────────────────────────────────────────────────────────
@@ -265,6 +325,7 @@ impl CalendarBodyWidget {
             weekday_row,
             grid,
             theme: *theme,
+            focused_index: None,
         }
     }
 }
@@ -336,6 +397,198 @@ impl CalendarBodyWidget {
 
         this.ctx.request_layout();
         this.ctx.request_paint_only();
+    }
+
+    /// Routes a keyboard navigation key to the calendar grid.
+    ///
+    /// Arrow keys move the keyboard-roving focus one cell in the requested
+    /// direction, skipping disabled cells. Home/End jump to the first/last
+    /// non-disabled cell. Enter activates the focused cell (same logic as
+    /// clicking it).
+    ///
+    /// # Known v1 limitation
+    ///
+    /// In Day mode, arrow keys clamp at the grid boundary rather than crossing
+    /// month boundaries. Navigating across months via the keyboard is reserved
+    /// for a future release.
+    pub(crate) fn handle_nav_key(this: &mut WidgetMut<'_, Self>, key: CalendarNavKey) {
+        let disabled = Self::build_disabled_flags(this);
+        if key == CalendarNavKey::Activate {
+            Self::handle_nav_activate(this, &disabled);
+        } else {
+            Self::handle_nav_move(this, key, &disabled);
+        }
+    }
+
+    /// Builds a flat `disabled` flag array from the current nav state, mirroring
+    /// how [`build_day_cells`] / [`build_month_cells`] / [`build_year_cells`]
+    /// compute the disabled flag, without borrowing into the child grid widget.
+    fn build_disabled_flags(this: &WidgetMut<'_, Self>) -> Vec<bool> {
+        match this.widget.nav.view_mode {
+            ViewMode::Day => {
+                let dg = this.widget.nav.day_grid;
+                let min_date = this.widget.min_date;
+                let max_date = this.widget.max_date;
+                dg.iter()
+                    .map(|&date| !day_in_range(date, min_date, max_date))
+                    .collect()
+            }
+            ViewMode::Month => {
+                let year = this.widget.nav.current_year;
+                let min_date = this.widget.min_date;
+                let max_date = this.widget.max_date;
+                (1u32..=12)
+                    .map(|month| !month_in_range(year, month, min_date, max_date))
+                    .collect()
+            }
+            ViewMode::Year => {
+                let year_page = this.widget.nav.year_page;
+                let min_date = this.widget.min_date;
+                let max_date = this.widget.max_date;
+                years_in_page(year_page)
+                    .into_iter()
+                    .map(|year| !year_in_range(year, min_date, max_date))
+                    .collect()
+            }
+        }
+    }
+
+    /// Handles arrow/Home/End movement within the grid.
+    fn handle_nav_move(this: &mut WidgetMut<'_, Self>, key: CalendarNavKey, disabled: &[bool]) {
+        let (cols, len) = match this.widget.nav.view_mode {
+            ViewMode::Day => (7usize, 42usize),
+            ViewMode::Month => (4, 12),
+            ViewMode::Year => (4, 20),
+        };
+        let current = this.widget.focused_index;
+
+        let new_index = match key {
+            CalendarNavKey::Left => {
+                let from = current.unwrap_or(0);
+                nav_step_skip(from, -1, len, disabled)
+            }
+            CalendarNavKey::Right => {
+                let from = current.unwrap_or_else(|| len.saturating_sub(1));
+                nav_step_skip(from, 1, len, disabled)
+            }
+            CalendarNavKey::Up => current.and_then(|from| {
+                let step = isize::try_from(cols).ok()?.checked_neg()?;
+                nav_step_skip(from, step, len, disabled)
+            }),
+            CalendarNavKey::Down => {
+                if let Some(from) = current {
+                    let step = isize::try_from(cols).unwrap_or(isize::MAX);
+                    nav_step_skip(from, step, len, disabled)
+                } else {
+                    // Initial Down: land on the first non-disabled cell by
+                    // starting one row before index 0.
+                    let step = isize::try_from(cols).unwrap_or(isize::MAX);
+                    nav_step_skip_from_before_start(step, len, disabled)
+                }
+            }
+            CalendarNavKey::Home => disabled.iter().position(|&d| !d),
+            CalendarNavKey::End => disabled.iter().rposition(|&d| !d),
+            // Activate is handled by handle_nav_activate, never reaches here.
+            CalendarNavKey::Activate => return,
+        };
+
+        let new_index = new_index.filter(|&i| i < len);
+        if new_index == this.widget.focused_index {
+            return;
+        }
+        this.widget.focused_index = new_index;
+        let mut grid = this.ctx.get_mut(&mut this.widget.grid);
+        CalendarGridWidget::set_focused_index(&mut grid, new_index);
+    }
+
+    /// Handles Enter — activates the currently focused cell.
+    fn handle_nav_activate(this: &mut WidgetMut<'_, Self>, disabled: &[bool]) {
+        let Some(i) = this.widget.focused_index else {
+            return;
+        };
+        if disabled.get(i).copied().unwrap_or(true) {
+            return;
+        }
+        // Dispatch the same logic as on_action/CalendarGridAction::CellActivated
+        // but via MutateCtx.submit_action (available in WidgetMut context).
+        match this.widget.nav.view_mode {
+            ViewMode::Day => Self::activate_day_nav(this, i),
+            ViewMode::Month => Self::activate_month_nav(this, i),
+            ViewMode::Year => Self::activate_year_nav(this, i),
+        }
+    }
+
+    fn activate_day_nav(this: &mut WidgetMut<'_, Self>, i: usize) {
+        let Some(&date) = this.widget.nav.day_grid.get(i) else {
+            return;
+        };
+        if !day_in_range(date, this.widget.min_date, this.widget.max_date) {
+            return;
+        }
+        this.widget.selected = Some(date);
+        this.widget.focused_index = None;
+        this.ctx
+            .submit_action::<CalendarBodyAction>(CalendarBodyAction::DateSelected(date));
+        // Refresh grid to show the new selection immediately.
+        let nav = &this.widget.nav;
+        let selected = this.widget.selected;
+        let today = this.widget.today;
+        let min_date = this.widget.min_date;
+        let max_date = this.widget.max_date;
+        let new_data = build_day_cells(
+            &nav.day_grid,
+            nav.current_month,
+            selected,
+            today,
+            min_date,
+            max_date,
+        );
+        let mut grid = this.ctx.get_mut(&mut this.widget.grid);
+        CalendarGridWidget::set_data(&mut grid, new_data, 7);
+        CalendarGridWidget::set_focused_index(&mut grid, None);
+    }
+
+    fn activate_month_nav(this: &mut WidgetMut<'_, Self>, i: usize) {
+        let month = u32::try_from(i + 1).unwrap_or(1).clamp(1, 12);
+        this.widget.nav.current_month = month;
+        this.widget.nav.view_mode = ViewMode::Day;
+        this.widget.nav.day_grid = day_grid(this.widget.nav.current_year, month);
+        this.widget.focused_index = None;
+        Self::refresh_grid(this);
+        let prev_id = this.widget.header_prev.id();
+        let next_id = this.widget.header_next.id();
+        this.ctx.mutate_later(prev_id, |mut w| {
+            let mut btn = w.downcast::<ThemedButton>();
+            ThemedButton::set_disabled(&mut btn, false);
+        });
+        this.ctx.mutate_later(next_id, |mut w| {
+            let mut btn = w.downcast::<ThemedButton>();
+            ThemedButton::set_disabled(&mut btn, false);
+        });
+        this.ctx.request_layout();
+    }
+
+    fn activate_year_nav(this: &mut WidgetMut<'_, Self>, i: usize) {
+        let years = years_in_page(this.widget.nav.year_page);
+        let Some(&year) = years.get(i) else {
+            return;
+        };
+        this.widget.nav.current_year = year;
+        this.widget.nav.view_mode = ViewMode::Day;
+        this.widget.nav.day_grid = day_grid(year, this.widget.nav.current_month);
+        this.widget.focused_index = None;
+        Self::refresh_grid(this);
+        let prev_id = this.widget.header_prev.id();
+        let next_id = this.widget.header_next.id();
+        this.ctx.mutate_later(prev_id, |mut w| {
+            let mut btn = w.downcast::<ThemedButton>();
+            ThemedButton::set_disabled(&mut btn, false);
+        });
+        this.ctx.mutate_later(next_id, |mut w| {
+            let mut btn = w.downcast::<ThemedButton>();
+            ThemedButton::set_disabled(&mut btn, false);
+        });
+        this.ctx.request_layout();
     }
 
     /// Recomputes grid data based on the current nav state and pushes it to
@@ -618,7 +871,7 @@ impl CalendarBodyWidget {
 
     fn activate_month_cell(&mut self, ctx: &mut ActionCtx<'_>, i: usize) {
         // Cell index 0..11 → month 1..12.
-        let month = u32::try_from(i + 1).unwrap_or(1).min(12).max(1);
+        let month = u32::try_from(i + 1).unwrap_or(1).clamp(1, 12);
         self.nav.current_month = month;
         self.nav.view_mode = ViewMode::Day;
         self.nav.day_grid = day_grid(self.nav.current_year, month);

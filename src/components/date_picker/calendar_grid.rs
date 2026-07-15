@@ -357,10 +357,10 @@ impl Widget for CalendarGridWidget {
             ClickPhase::Up { state, completed } => {
                 if completed {
                     let local = to_local(ctx, state.logical_point());
-                    if let Some(i) = hit_item(&self.cell_rects, local) {
-                        if !self.data.get(i).is_some_and(|d| d.disabled) {
-                            ctx.submit_action::<Self::Action>(CalendarGridAction::CellActivated(i));
-                        }
+                    if let Some(i) = hit_item(&self.cell_rects, local)
+                        && !self.data.get(i).is_some_and(|d| d.disabled)
+                    {
+                        ctx.submit_action::<Self::Action>(CalendarGridAction::CellActivated(i));
                     }
                 }
             }
