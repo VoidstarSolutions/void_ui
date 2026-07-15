@@ -1004,6 +1004,7 @@ impl CalendarBodyWidget {
             }
             ViewMode::Month => unreachable!("guarded above"),
         }
+        self.focused_index = None;
         self.push_grid_and_headers(ctx);
     }
 
@@ -1024,6 +1025,7 @@ impl CalendarBodyWidget {
             }
             ViewMode::Month => unreachable!("guarded above"),
         }
+        self.focused_index = None;
         self.push_grid_and_headers(ctx);
     }
 
@@ -1034,6 +1036,7 @@ impl CalendarBodyWidget {
         } else {
             ViewMode::Day
         };
+        self.focused_index = None;
         self.push_grid_and_headers(ctx);
         ctx.request_layout();
     }
@@ -1044,6 +1047,7 @@ impl CalendarBodyWidget {
         } else {
             ViewMode::Year
         };
+        self.focused_index = None;
         self.push_grid_and_headers(ctx);
         ctx.request_layout();
     }
@@ -1082,6 +1086,7 @@ impl CalendarBodyWidget {
         ctx.mutate_later(grid_id, move |mut w| {
             let mut g = w.downcast::<CalendarGridWidget>();
             CalendarGridWidget::set_data(&mut g, new_data, new_cols);
+            CalendarGridWidget::set_focused_index(&mut g, None);
         });
 
         // Header month label + disabled state.
