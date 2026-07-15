@@ -16,8 +16,8 @@ use masonry::core::{
     Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Circle, Insets, Point, Rect, RoundedRect, Size};
-use masonry::layout::{LenReq, Length};
+use masonry::kurbo::{Axis, Circle, Insets, Point, Rect, RoundedRect, Size, Vec2};
+use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use masonry::properties::ContentColor;
 use masonry::widgets::Label;
 
@@ -247,11 +247,16 @@ impl Widget for CalendarGridWidget {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, _size: Size) {
+    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         let cell_px = cell_side(&self.theme);
-        let cell_size = Size::new(cell_px, cell_px);
-
         let cols = self.cols.max(1);
+        // Columns stretch to fill whatever width the parent granted (it may
+        // be wider than `cols * cell_px` — e.g. Year mode, where the header's
+        // "2020–2039" label needs more room than 4 grid columns do), so the
+        // grid never leaves dead space to the right of a narrower parent.
+        let col_w = (size.width / index_f64(cols)).max(cell_px);
+        let cell_size = Size::new(col_w, cell_px);
+
         let n = self.cells.len();
 
         self.cell_rects.clear();
@@ -264,13 +269,23 @@ impl Widget for CalendarGridWidget {
             let col_f = index_f64(col);
             let row_f = index_f64(row);
 
-            let origin = Point::new(col_f * cell_px, row_f * cell_px);
+            let origin = Point::new(col_f * col_w, row_f * cell_px);
             let rect = Rect::from_origin_size(origin, cell_size);
             self.cell_rects.push(rect);
 
-            // Place the label at cell origin; the label fills the square cell.
-            ctx.run_layout(pod, cell_size);
-            ctx.place_child(pod, origin);
+            // Center the label's own natural size within the cell, rather
+            // than stretching it to fill the cell — a label placed at cell
+            // origin and forced to the full cell size sits top/left-anchored
+            // (Label doesn't center within an oversized box), which reads as
+            // a large gap below/right of each row of text.
+            let natural = ctx.compute_size(pod, SizeDef::MIN, LayoutSize::from(cell_size));
+            ctx.run_layout(pod, natural);
+            let label_origin = origin
+                + Vec2::new(
+                    ((cell_size.width - natural.width) / 2.0).max(0.0),
+                    ((cell_size.height - natural.height) / 2.0).max(0.0),
+                );
+            ctx.place_child(pod, label_origin);
         }
     }
 

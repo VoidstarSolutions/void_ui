@@ -18,7 +18,7 @@ use masonry::core::{
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, RoundedRect, Size, Stroke};
-use masonry::layout::{LayoutSize, LenReq, Length};
+use masonry::layout::{LayoutSize, LenDef, LenReq, Length};
 use masonry::properties::ContentColor;
 use masonry::widgets::{ButtonPress, Label};
 
@@ -753,19 +753,19 @@ impl Widget for CalendarBodyWidget {
         let pad = self.pad();
         match axis {
             Axis::Horizontal => {
-                // Each header button's natural (unclipped) label width — not
-                // simply `grid_w / 4`, which would truncate long labels like
-                // a year range ("2000–2019") down to a single grid-cell
-                // width in Month/Year mode.
+                // Sum of each header button's own natural (unclipped) label
+                // width — buttons shrink to their content instead of all
+                // sharing the width of the widest one (which used to stretch
+                // "‹"/"›" out to match a label like "2000–2019").
                 let cross = Some(Length::px(header_h));
-                let mut max_btn_w: f64 = 0.0;
+                let mut header_w: f64 = 0.0;
                 for pod in [
                     &mut self.header_prev,
                     &mut self.header_month,
                     &mut self.header_year,
                     &mut self.header_next,
                 ] {
-                    let w = ctx
+                    header_w += ctx
                         .compute_length(
                             pod,
                             len_req.into(),
@@ -774,9 +774,8 @@ impl Widget for CalendarBodyWidget {
                             cross,
                         )
                         .get();
-                    max_btn_w = max_btn_w.max(w);
                 }
-                Length::px(grid_w.max(max_btn_w * 4.0) + 2.0 * pad)
+                Length::px(grid_w.max(header_w) + 2.0 * pad)
             }
             Axis::Vertical => Length::px(header_h + weekday_h + grid_h + 2.0 * pad),
         }
@@ -788,25 +787,45 @@ impl Widget for CalendarBodyWidget {
         let grid_w = index_f64(cols) * cell_px;
         let header_h = f64::from(self.theme.density.row_height);
         let pad = self.pad();
-        // Header buttons split the panel's full content width evenly.
-        // `measure` already widened that content width to fit each button's
-        // natural label, so this can never be narrower than `grid_w / 4`.
         let content_w = (size.width - 2.0 * pad).max(0.0);
-        let btn_w = (content_w / 4.0).max(1.0);
-        let btn_size = Size::new(btn_w, header_h);
 
-        // Header row: 4 buttons side-by-side.
-        ctx.run_layout(&mut self.header_prev, btn_size);
-        ctx.place_child(&mut self.header_prev, Point::new(pad, pad));
+        // Header row: each button sized to its own natural width, spread
+        // across the content width with equal gaps (prev/next pinned to the
+        // edges, month/year evenly spaced between them).
+        let cross = Some(Length::px(header_h));
+        let mut btn_widths = [0.0_f64; 4];
+        for (w, pod) in btn_widths.iter_mut().zip([
+            &mut self.header_prev,
+            &mut self.header_month,
+            &mut self.header_year,
+            &mut self.header_next,
+        ]) {
+            *w = ctx
+                .compute_length(
+                    pod,
+                    LenDef::MinContent,
+                    LayoutSize::maybe(Axis::Vertical, cross),
+                    Axis::Horizontal,
+                    cross,
+                )
+                .get();
+        }
+        let header_w: f64 = btn_widths.iter().sum();
+        let gap = ((content_w - header_w) / 3.0).max(0.0);
 
-        ctx.run_layout(&mut self.header_month, btn_size);
-        ctx.place_child(&mut self.header_month, Point::new(pad + btn_w, pad));
-
-        ctx.run_layout(&mut self.header_year, btn_size);
-        ctx.place_child(&mut self.header_year, Point::new(pad + btn_w * 2.0, pad));
-
-        ctx.run_layout(&mut self.header_next, btn_size);
-        ctx.place_child(&mut self.header_next, Point::new(pad + btn_w * 3.0, pad));
+        let mut x = pad;
+        let header_pods = [
+            &mut self.header_prev,
+            &mut self.header_month,
+            &mut self.header_year,
+            &mut self.header_next,
+        ];
+        for (pod, w) in header_pods.into_iter().zip(btn_widths) {
+            let btn_size = Size::new(w, header_h);
+            ctx.run_layout(pod, btn_size);
+            ctx.place_child(pod, Point::new(x, pad));
+            x += w + gap;
+        }
 
         // Weekday row: laid out in Day mode; stashed (excluded from layout
         // and paint) otherwise. A zero-height box alone doesn't stop a
@@ -827,12 +846,12 @@ impl Widget for CalendarBodyWidget {
             );
         }
 
-        // Grid: fills remaining height; keeps its own natural width (it may
-        // be narrower than the header if a header label — e.g. a year
-        // range — needed more room).
+        // Grid: fills the remaining space, stretched to the same content
+        // width as the header row (see `CalendarGridWidget::layout`) so a
+        // wide header label never leaves dead space to the grid's right.
         let grid_y = pad + header_h + weekday_h;
         let grid_h = (size.height - grid_y - pad).max(0.0);
-        let grid_size = Size::new(grid_w, grid_h);
+        let grid_size = Size::new(content_w.max(grid_w), grid_h);
         ctx.run_layout(&mut self.grid, grid_size);
         ctx.place_child(&mut self.grid, Point::new(pad, grid_y));
     }
@@ -1196,10 +1215,17 @@ mod tests {
         let cell_px = cell_side(&theme);
         let header_h = f64::from(theme.density.row_height);
         let weekday_h = cell_px; // Day mode
-        let grid_y = header_h + weekday_h;
+        let pad = f64::from(theme.density.pad);
+        // Grid columns stretch to fill the panel's full content width (which
+        // may be wider than `7 * cell_px` if the header's buttons need more
+        // room), so derive the actual column width from the rendered widget
+        // rather than assuming it's exactly `cell_px`.
+        let total_w = h.root_widget().ctx().border_box().size().width;
+        let col_w = ((total_w - 2.0 * pad) / 7.0).max(cell_px);
+        let grid_y = pad + header_h + weekday_h;
         let col = idx % 7;
         let row = idx / 7;
-        let x = (index_f64(col) + 0.5) * cell_px;
+        let x = pad + (index_f64(col) + 0.5) * col_w;
         let y = grid_y + (index_f64(row) + 0.5) * cell_px;
 
         h.mouse_move(Point::new(x, y));
