@@ -25,13 +25,25 @@
 //! `accepts_focus = true` so subsequent Ctrl/Cmd+C on the parent
 //! [`CopyOnShortcut`](crate::components::data_grid::copy_shortcut::CopyOnShortcut)
 //! wrapper has a focused descendant inside the grid.
+//!
+//! Up/Down also move focus between materialized rows — handled locally
+//! here rather than in
+//! [`CollectionBodyWidget`](super::body::CollectionBodyWidget), which would
+//! be the more natural owner, because masonry's `VirtualScroll` sits
+//! between a focused row and `CollectionBodyWidget` in the tree and claims
+//! Up/Down via its own built-in arrow-key scrolling before
+//! `CollectionBodyWidget`'s `on_text_event` would run (masonry's keyboard
+//! dispatch is bubble-only, with no capture phase). `CollectionBodyWidget`
+//! precomputes each row's up/down neighbor and pushes it via
+//! [`Self::set_nav`] whenever the materialized window settles, since a row
+//! doesn't know its siblings on its own.
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
     AccessCtx, AccessEvent, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, Modifiers, NewWidget,
     PaintCtx, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update,
-    UpdateCtx, Widget, WidgetMut, WidgetPod,
+    UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Size};
@@ -203,6 +215,14 @@ pub struct RowClickable {
     /// expansion); `None` on a plain row leaves Right/Left to bubble up. See
     /// [`TreeRowMeta`] and [`Self::on_text_event`].
     tree_meta: Option<TreeRowMeta>,
+    /// Precomputed up/down materialized-neighbor targets for Up/Down
+    /// row-focus navigation, pushed by
+    /// [`CollectionBodyWidget::refresh_row_nav`](super::body::CollectionBodyWidget::refresh_row_nav)
+    /// whenever the materialized window settles. `None` when there's no
+    /// neighbor in that direction (a materialized-window or data edge) —
+    /// see [`Self::on_text_event`].
+    nav_up: Option<WidgetId>,
+    nav_down: Option<WidgetId>,
 }
 
 // --- MARK: BUILDERS
@@ -228,6 +248,8 @@ impl RowClickable {
             leading_hit,
             propagates_pointer,
             tree_meta,
+            nav_up: None,
+            nav_down: None,
         }
     }
 }
@@ -268,6 +290,18 @@ impl RowClickable {
     /// press, so no repaint or relayout is requested.
     pub fn set_tree_meta(this: &mut WidgetMut<'_, Self>, meta: Option<TreeRowMeta>) {
         this.widget.tree_meta = meta;
+    }
+
+    /// Updates the row's up/down materialized-neighbor targets for Up/Down
+    /// navigation (see [`Self::on_text_event`]). Cheap: it only affects the
+    /// next key press, so no repaint or relayout is requested.
+    pub(crate) fn set_nav(
+        this: &mut WidgetMut<'_, Self>,
+        up: Option<WidgetId>,
+        down: Option<WidgetId>,
+    ) {
+        this.widget.nav_up = up;
+        this.widget.nav_down = down;
     }
 }
 
@@ -349,6 +383,32 @@ impl Widget for RowClickable {
         };
         if key.state != KeyState::Down {
             return;
+        }
+        // Up/Down move focus to the precomputed materialized neighbor
+        // (pushed by `CollectionBodyWidget::refresh_row_nav`). Always
+        // handled once a row has focus — even a no-op at a materialized or
+        // data edge — so the event never falls through to `VirtualScroll`'s
+        // built-in scroll-by-arrow-key, which would otherwise silently
+        // replace row-focus movement with viewport scrolling (masonry's
+        // keyboard dispatch is bubble-only, and `VirtualScroll` sits
+        // between a focused row and `CollectionBodyWidget` in the tree —
+        // see the module docs above).
+        match &key.key {
+            Key::Named(NamedKey::ArrowDown) => {
+                if let Some(target) = self.nav_down {
+                    ctx.set_focus(target);
+                }
+                ctx.set_handled();
+                return;
+            }
+            Key::Named(NamedKey::ArrowUp) => {
+                if let Some(target) = self.nav_up {
+                    ctx.set_focus(target);
+                }
+                ctx.set_handled();
+                return;
+            }
+            _ => {}
         }
         let interaction = match &key.key {
             Key::Named(NamedKey::Enter) => {
@@ -728,7 +788,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use masonry::core::keyboard::{Key, KeyState, KeyboardEvent, Modifiers, NamedKey};
-    use masonry::core::{NewWidget, PointerButton, PointerEvent, TextEvent};
+    use masonry::core::{NewWidget, PointerButton, PointerEvent, TextEvent, WidgetId};
     use masonry::kurbo::{Axis, Point};
     use masonry::layout::Length;
     use masonry::testing::{ModularWidget, TestHarness};
@@ -1147,6 +1207,74 @@ mod tests {
         harness.focus_on(Some(root));
         assert_eq!(press_arrow(&mut harness, NamedKey::ArrowRight), None);
         assert_eq!(press_arrow(&mut harness, NamedKey::ArrowLeft), None);
+    }
+
+    /// Builds a harness whose root is a `RowClickable` ("outer") wrapping a
+    /// second, nested `RowClickable` ("inner") as its content. The nesting is
+    /// just a cheap way to get a second real, focusable `WidgetId` inside a
+    /// single harness to use as a nav target — in production the target is
+    /// always a sibling row (pushed by `CollectionBodyWidget::refresh_row_nav`),
+    /// but `RowClickable`'s own `on_text_event` doesn't know or care where the
+    /// id came from, so this is a faithful unit test of its local behavior.
+    /// Returns `(harness, outer_id, inner_id)` with `outer` already focused.
+    fn harness_with_nested_row() -> (TestHarness<RowClickable>, WidgetId, WidgetId) {
+        let inner = NewWidget::new(RowClickable::new(
+            NewWidget::new(Label::new("inner")),
+            false,
+            &Theme::default(),
+            None,
+            false,
+            None,
+        ));
+        let inner_id = inner.id();
+        let outer = RowClickable::new(inner, false, &Theme::default(), None, false, None);
+        let mut harness =
+            TestHarness::create_with_size(default_property_set(), NewWidget::new(outer), (120, 48));
+        let outer_id = harness.root_widget().id();
+        harness.focus_on(Some(outer_id));
+        (harness, outer_id, inner_id)
+    }
+
+    /// With a nav target set, ArrowDown moves focus to it and is handled.
+    #[test]
+    fn arrow_down_moves_focus_to_the_nav_target() {
+        let (mut harness, _outer_id, inner_id) = harness_with_nested_row();
+        harness.edit_root_widget(|mut row| RowClickable::set_nav(&mut row, None, Some(inner_id)));
+        let handled = harness.process_text_event(key_down(
+            Key::Named(NamedKey::ArrowDown),
+            Modifiers::empty(),
+        ));
+        assert!(handled.is_handled());
+        assert_eq!(harness.focused_widget_id(), Some(inner_id));
+    }
+
+    /// Same for ArrowUp / `nav_up`.
+    #[test]
+    fn arrow_up_moves_focus_to_the_nav_target() {
+        let (mut harness, _outer_id, inner_id) = harness_with_nested_row();
+        harness.edit_root_widget(|mut row| RowClickable::set_nav(&mut row, Some(inner_id), None));
+        let handled =
+            harness.process_text_event(key_down(Key::Named(NamedKey::ArrowUp), Modifiers::empty()));
+        assert!(handled.is_handled());
+        assert_eq!(harness.focused_widget_id(), Some(inner_id));
+    }
+
+    /// With no nav target in that direction (a materialized/data edge), the key
+    /// is still handled — never left to fall through to `VirtualScroll`'s
+    /// built-in scroll-by-arrow-key — but focus doesn't move.
+    #[test]
+    fn arrow_down_without_a_target_is_a_handled_no_op() {
+        let (mut harness, outer_id, _inner_id) = harness_with_nested_row();
+        // nav_down defaults to None; no set_nav call.
+        let handled = harness.process_text_event(key_down(
+            Key::Named(NamedKey::ArrowDown),
+            Modifiers::empty(),
+        ));
+        assert!(
+            handled.is_handled(),
+            "must be handled so it never falls through to VirtualScroll's native scroll"
+        );
+        assert_eq!(harness.focused_widget_id(), Some(outer_id));
     }
 
     /// Presses the primary button mid-row over a full-width interactive child
