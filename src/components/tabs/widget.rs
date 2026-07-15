@@ -716,7 +716,7 @@ impl Widget for TabsWidget {
         _props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
-        let size = ctx.border_box_size();
+        let size = ctx.border_box().size();
         let p = &self.theme.palette;
         let radius_small = f64::from(self.theme.radius.small);
         let radius_large = f64::from(self.theme.radius.large);

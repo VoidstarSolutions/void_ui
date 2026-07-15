@@ -29,9 +29,7 @@ pub(crate) use body_view::{
     CollectionBodyParams, Lazy, LeadingHitZoneFn, OnToggle, RenderRow, TreeMetaFn, collection_body,
 };
 pub(crate) use click::{ItemsFn, OnActivate, SelectionLens, apply_row_activate, apply_row_click};
-pub(crate) use ids::{
-    IdSource, nearing_end, scroll_idx_to_slice, scroll_range_end, visual_range_ids,
-};
+pub(crate) use ids::{IdSource, nearing_end, scroll_range_end, visual_range_ids};
 pub(crate) use row_click::{LeadingHitZone, TreeRowMeta};
 pub use scroll::ScrollState;
 pub(crate) use scroll::clamp_scroll_index;

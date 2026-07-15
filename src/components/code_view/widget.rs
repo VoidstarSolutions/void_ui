@@ -444,7 +444,7 @@ impl Widget for CodeViewWidget {
         _props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
-        let size = ctx.border_box_size();
+        let size = ctx.border_box().size();
         let rect =
             RoundedRect::from_origin_size(Point::ORIGIN, size, f64::from(self.corner_radius));
 

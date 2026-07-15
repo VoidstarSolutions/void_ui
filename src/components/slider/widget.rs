@@ -507,7 +507,7 @@ impl Widget for SliderWidget {
         if self.disabled {
             return;
         }
-        let size = ctx.border_box_size();
+        let size = ctx.border_box().size();
         match event {
             PointerEvent::Down(PointerButtonEvent {
                 button: Some(PointerButton::Primary),
@@ -689,7 +689,7 @@ impl Widget for SliderWidget {
         _props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
-        let size = ctx.border_box_size();
+        let size = ctx.border_box().size();
         let hovered = ctx.is_hovered();
         let active = ctx.is_active() && hovered;
         let focused = ctx.is_focus_target();

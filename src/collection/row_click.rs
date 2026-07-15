@@ -417,7 +417,7 @@ impl Widget for RowClickable {
         painter: &mut Painter<'_>,
     ) {
         if ctx.is_focus_target() {
-            paint_focus_ring_inset(painter, ctx.border_box_size(), &self.theme);
+            paint_focus_ring_inset(painter, ctx.border_box().size(), &self.theme);
         }
     }
 

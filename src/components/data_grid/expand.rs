@@ -320,7 +320,7 @@ impl Widget for DisclosureToggle {
         // The chevron child paints the glyph; the toggle adds a focus ring
         // while focused, inset like every other focusable control.
         if ctx.is_focus_target() {
-            paint_focus_ring_inset(painter, ctx.border_box_size(), &self.theme);
+            paint_focus_ring_inset(painter, ctx.border_box().size(), &self.theme);
         }
     }
 

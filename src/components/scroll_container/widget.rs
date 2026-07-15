@@ -147,7 +147,7 @@ impl Widget for VoidScrollBar {
         _props: &mut PropertiesMut<'_>,
         event: &PointerEvent,
     ) {
-        let size = ctx.content_box_size();
+        let size = ctx.content_box().size();
         match event {
             PointerEvent::Down(state) => {
                 ctx.capture_pointer();
@@ -254,7 +254,7 @@ impl Widget for VoidScrollBar {
         _props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
-        let size = ctx.content_box_size();
+        let size = ctx.content_box().size();
         let needs_opacity = self.opacity < 1.0 - 1e-4;
 
         if needs_opacity {
@@ -573,7 +573,7 @@ impl<W: Widget + ?Sized> ScrollView<W> {
         // scrolled down visually stuck there even though there's nothing
         // left to scroll. Bailing out here whenever `viewport_pos` already
         // happened to be at the origin would skip fixing exactly that case.
-        let eff_size = this.widget.effective_size(this.ctx.border_box_size());
+        let eff_size = this.widget.effective_size(this.ctx.border_box().size());
         let (px, py) = this.widget.scrollbar_progress(eff_size);
         {
             let (sb, mut sb_ctx) = this.ctx.get_raw_mut(&mut this.widget.scrollbar_h);
@@ -813,7 +813,7 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
     ) {
         let cache = ctx.property_cache();
         let auto_hide = props.get::<AutoHideScrollBar>(cache).0;
-        let size = ctx.content_box_size();
+        let size = ctx.content_box().size();
         let eff_size = self.effective_size(size);
 
         match event {
@@ -859,7 +859,7 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
         _props: &mut PropertiesMut<'_>,
         event: &TextEvent,
     ) {
-        let size = ctx.content_box_size();
+        let size = ctx.content_box().size();
         let eff_size = self.effective_size(size);
         let target = ctx.target();
         let scrollbar_target = target == self.scrollbar_v.id() || target == self.scrollbar_h.id();
@@ -920,7 +920,7 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
         _props: &mut PropertiesMut<'_>,
         event: &AccessEvent,
     ) {
-        let size = ctx.content_box_size();
+        let size = ctx.content_box().size();
         let eff_size = self.effective_size(size);
         let target = ctx.target();
         let scrollbar_target = target == self.scrollbar_v.id() || target == self.scrollbar_h.id();
@@ -1015,7 +1015,7 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         if let Update::RequestPanToChild(target) = event {
-            let size = ctx.content_box_size();
+            let size = ctx.content_box().size();
             let eff_size = self.effective_size(size);
             let viewport = kurbo::Rect::from_origin_size(self.viewport_pos, eff_size);
 
@@ -1180,7 +1180,7 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
         node: &mut Node,
     ) {
         node.set_clips_children();
-        let size = ctx.content_box_size();
+        let size = ctx.content_box().size();
         let eff_size = self.effective_size(size);
         let range = Self::scroll_range(eff_size, self.content_size);
 

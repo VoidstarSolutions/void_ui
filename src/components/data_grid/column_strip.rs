@@ -541,7 +541,7 @@ impl Widget for ColumnStrip {
         let Some(style) = self.separators else {
             return;
         };
-        let height = ctx.border_box_size().height;
+        let height = ctx.border_box().size().height;
         let active = self.drag.map(|d| d.col).or(self.hovered_boundary);
         // Running accumulator (like `layout`) so painting n separators is
         // O(n), not O(n²) via a fresh prefix-sum per boundary. Reads

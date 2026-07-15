@@ -217,8 +217,8 @@ mod tests {
     /// is_expanded)` in ascending-index (materialized) order.
     fn set_tree(
         harness: &mut TestHarness<CollectionBodyWidget>,
-        rows: &HashMap<i64, WidgetId>,
-        layout: &[(i64, u16, bool, bool)],
+        rows: &HashMap<usize, WidgetId>,
+        layout: &[(usize, u16, bool, bool)],
     ) {
         let meta: Vec<(WidgetId, TreeRowMeta)> = layout
             .iter()
@@ -244,7 +244,7 @@ mod tests {
     //   2    Child A2   depth 1, expanded parent
     //   3      GC A2a   depth 2, leaf
     //   4  Parent B     depth 0, collapsed
-    const TREE: &[(i64, u16, bool, bool)] = &[
+    const TREE: &[(usize, u16, bool, bool)] = &[
         (0, 0, true, true),
         (1, 1, false, false),
         (2, 1, true, true),
@@ -257,7 +257,7 @@ mod tests {
     /// recording its [`WidgetId`] keyed by row index.
     fn drive_to_fixpoint(
         harness: &mut TestHarness<CollectionBodyWidget>,
-        rows: &mut HashMap<i64, WidgetId>,
+        rows: &mut HashMap<usize, WidgetId>,
     ) {
         let mut iteration = 0;
         loop {
@@ -266,17 +266,20 @@ mod tests {
             let Some((action, _id)) = harness.pop_action::<VirtualScrollAction>() else {
                 break;
             };
+            let VirtualScrollAction::Fetch(action) = action else {
+                continue;
+            };
             harness.edit_root_widget(|mut body| {
                 let mut scroll = CollectionBodyWidget::virtual_scroll_mut(&mut body);
                 VirtualScroll::will_handle_action(&mut scroll, &action);
-                for idx in action.old_active.clone() {
-                    if !action.target.contains(&idx) {
+                for idx in action.old_active().clone() {
+                    if !action.target().contains(&idx) {
                         VirtualScroll::remove_child(&mut scroll, idx);
                         rows.remove(&idx);
                     }
                 }
-                for idx in action.target.clone() {
-                    if !action.old_active.contains(&idx) {
+                for idx in action.target().clone() {
+                    if !action.old_active().contains(&idx) {
                         let row = NewWidget::new(Label::new(format!("row {idx}"))).erased();
                         let row_id = row.id();
                         VirtualScroll::add_child(&mut scroll, idx, row);
@@ -292,9 +295,9 @@ mod tests {
     fn harness_with_rows() -> (
         TestHarness<CollectionBodyWidget>,
         WidgetId,
-        HashMap<i64, WidgetId>,
+        HashMap<usize, WidgetId>,
     ) {
-        let scroll = NewWidget::new(VirtualScroll::new(0).with_valid_range(0..100));
+        let scroll = NewWidget::new(VirtualScroll::new(0, 100));
         let body = NewWidget::new(CollectionBodyWidget::new(scroll));
         let mut harness = TestHarness::create_with_size(default_property_set(), body, (200, 400));
         let scroll_id = harness
@@ -379,20 +382,16 @@ mod tests {
         set_tree(&mut harness, &ids, TREE);
         // Leaf (Child A1): Right does nothing here.
         harness.focus_on(Some(ids[&1]));
-        assert!(
-            !harness
-                .process_text_event(arrow_key(NamedKey::ArrowRight))
-                .is_handled()
-        );
+        assert!(!harness
+            .process_text_event(arrow_key(NamedKey::ArrowRight))
+            .is_handled());
         assert_eq!(harness.focused_widget_id(), Some(ids[&1]));
         // Collapsed parent (Parent B): Right expands via the row, not the body,
         // so the body leaves focus put.
         harness.focus_on(Some(ids[&4]));
-        assert!(
-            !harness
-                .process_text_event(arrow_key(NamedKey::ArrowRight))
-                .is_handled()
-        );
+        assert!(!harness
+            .process_text_event(arrow_key(NamedKey::ArrowRight))
+            .is_handled());
         assert_eq!(harness.focused_widget_id(), Some(ids[&4]));
     }
 

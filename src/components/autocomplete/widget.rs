@@ -268,7 +268,7 @@ impl Widget for SuggestionList {
     ) {
         let p = &self.theme.palette;
         let corner = f64::from(self.theme.radius.small);
-        let bg_rect = RoundedRect::from_origin_size(Point::ORIGIN, ctx.border_box_size(), corner);
+        let bg_rect = RoundedRect::from_origin_size(Point::ORIGIN, ctx.border_box().size(), corner);
         painter.fill(bg_rect, p.surface_hi).draw();
         painter
             .stroke(bg_rect, &Stroke::new(LIST_BORDER), p.border_strong)
@@ -2263,7 +2263,7 @@ mod accessibility_tests {
         // window-space center manually instead, matching what a real click
         // on that visible label would resolve to.
         let label_ref = harness.get_widget_with_id(label_id);
-        let label_size = label_ref.ctx().border_box_size();
+        let label_size = label_ref.ctx().border_box().size();
         let label_center = label_ref
             .ctx()
             .to_window(Point::new(label_size.width / 2.0, label_size.height / 2.0));

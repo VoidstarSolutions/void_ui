@@ -726,7 +726,7 @@ impl Widget for ThemedButton {
         _props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
-        let size = ctx.border_box_size();
+        let size = ctx.border_box().size();
         let InteractionState {
             hovered,
             pressed,
@@ -848,12 +848,12 @@ mod tests {
     /// `(button width, child width, child x relative to the button)`.
     fn child_geometry(h: &TestHarness<ThemedButton>) -> (f64, f64, f64) {
         let button_x = h.root_widget().ctx().window_transform().translation().x;
-        let button_w = h.root_widget().ctx().border_box_size().width;
+        let button_w = h.root_widget().ctx().border_box().size().width;
         let child = h.get_widget(CHILD);
         let child_x = child.ctx().window_transform().translation().x;
         (
             button_w,
-            child.ctx().border_box_size().width,
+            child.ctx().border_box().size().width,
             child_x - button_x,
         )
     }
