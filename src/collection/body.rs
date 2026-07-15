@@ -41,6 +41,12 @@ pub(crate) struct CollectionBodyWidget {
     /// [`super::body_view`] so Left/Right can find a row's parent (by depth) or
     /// first child. Empty for a flat (non-tree) collection.
     row_meta: Vec<(WidgetId, TreeRowMeta)>,
+    /// Row ids seen in `VirtualScroll`'s materialized set as of the end of the
+    /// previous [`refresh_row_nav`](Self::refresh_row_nav) call. See that
+    /// method's doc for why this exists: a row `VirtualScroll::add_child`-ed
+    /// during the *current* rebuild isn't safe to touch yet, but by the next
+    /// call it will be.
+    registered_row_ids: Vec<WidgetId>,
 }
 
 impl CollectionBodyWidget {
@@ -48,6 +54,7 @@ impl CollectionBodyWidget {
         Self {
             child: child.to_pod(),
             row_meta: Vec::new(),
+            registered_row_ids: Vec::new(),
         }
     }
 
@@ -70,30 +77,35 @@ impl CollectionBodyWidget {
     /// this widget can't handle Up/Down directly anymore. Called on every
     /// rebuild by `body_view::CollectionBodyView::rebuild`, mirroring
     /// `refresh_tree_row_meta`'s "materialization has caught up" trigger
-    /// point: a momentarily-stale `active_start` mid-transition at worst
-    /// yields a transiently-wrong nav map the next settled rebuild corrects.
+    /// point.
     ///
-    /// # Panics
-    ///
-    /// Unlike `refresh_tree_row_meta` (which reads row metadata from
-    /// `app_state` by computed index and just degrades to a transiently-wrong
-    /// map on a stale index), this function indexes a *live* `VirtualScroll`
-    /// child via [`VirtualScrollWidget::child_mut`], which panics if
-    /// `active_start + k` isn't a currently-materialized index for some row
-    /// `k`. In practice this doesn't happen: the only caller is
-    /// `CollectionBodyView::rebuild`, immediately after the same rebuild pass
-    /// has driven the child's own `rebuild` (the upstream `virtual_scroll`
-    /// View), which always fully and contiguously materializes its target
-    /// range — it never leaves gaps unless a driver deliberately skips
-    /// indices, which this crate's driver doesn't. `VirtualScrollWidget` has no
-    /// non-panicking presence check, so this is a consciously accepted risk
-    /// rather than something guarded in code.
+    /// A row `VirtualScroll::add_child`-ed by the *same* rebuild pass (via
+    /// the child's own `rebuild`, called just before this) is skipped rather
+    /// than touched: masonry only registers freshly added children with its
+    /// mutate arena in the update pass that runs *after* this rebuild
+    /// returns, so [`VirtualScrollWidget::child_mut`] on one would panic
+    /// (`"get_mut: child not found"`) — this is not a stale-index problem
+    /// `active_start` accuracy can fix, it's a pass-ordering one. We detect
+    /// "added this pass" by comparing against the row ids seen at the *end*
+    /// of the previous call: at least one full settle cycle always runs
+    /// between any two `rebuild`s, so anything already in that set from the
+    /// prior call is guaranteed registered by now. Skipped rows keep whatever nav
+    /// target they had before (`None` if brand new) until the next call,
+    /// once they've had a chance to register — the same
+    /// "transiently-wrong-then-self-heals" contract `refresh_tree_row_meta`
+    /// already relies on, just triggered by a different condition.
     pub(crate) fn refresh_row_nav(this: &mut WidgetMut<'_, Self>, active_start: usize) {
         let ids: Vec<WidgetId> = {
             let vs = Self::virtual_scroll_mut(this);
             vs.widget.children_ids().iter().copied().collect()
         };
+        let previously_registered =
+            std::mem::replace(&mut this.widget.registered_row_ids, ids.clone());
         for k in 0..ids.len() {
+            let id = ids[k];
+            if !previously_registered.contains(&id) {
+                continue;
+            }
             let up = k.checked_sub(1).and_then(|j| ids.get(j)).copied();
             let down = ids.get(k + 1).copied();
             let idx = active_start + k;
@@ -409,9 +421,16 @@ mod tests {
 
     /// The core of the fix: after `refresh_row_nav`, pressing `ArrowDown` on a
     /// materialized row moves focus to the next materialized row.
+    ///
+    /// `refresh_row_nav` is called twice: the first call only primes the
+    /// registered-rows cache (these rows were `add_child`-ed by
+    /// `harness_with_clickable_rows`, so they're not yet known-registered
+    /// from *this* function's perspective — see its doc), the second
+    /// actually sets nav targets now that they're confirmed registered.
     #[test]
     fn refresh_row_nav_lets_arrow_down_move_focus_between_materialized_rows() {
         let (mut harness, rows) = harness_with_clickable_rows();
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
         harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
 
         let first = rows[&0];
@@ -427,6 +446,7 @@ mod tests {
     fn refresh_row_nav_lets_arrow_up_move_focus_between_materialized_rows() {
         let (mut harness, rows) = harness_with_clickable_rows();
         harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
 
         let first = rows[&0];
         let second = rows[&1];
@@ -434,6 +454,53 @@ mod tests {
         let handled = harness.process_text_event(arrow_key(NamedKey::ArrowUp));
         assert!(handled.is_handled());
         assert_eq!(harness.focused_widget_id(), Some(first));
+    }
+
+    /// Reproduces #175's regression crash: `refresh_row_nav` must not touch a
+    /// row `VirtualScroll::add_child`-ed in the *same* pass. Masonry only
+    /// registers a freshly added child with its mutate arena in the update
+    /// pass that runs *after* the current rebuild returns, so calling
+    /// `VirtualScrollWidget::child_mut` on one immediately (as
+    /// `body_view::CollectionBodyView::rebuild` used to, by calling
+    /// `refresh_row_nav` right after materializing new rows) panicked with
+    /// `"get_mut: child not found"`. This drives `add_child` and
+    /// `refresh_row_nav` inside a single `edit_root_widget` call, exactly
+    /// mirroring `rebuild`'s ordering, and asserts it doesn't panic.
+    #[test]
+    fn refresh_row_nav_does_not_touch_a_row_added_in_the_same_pass() {
+        let scroll = NewWidget::new(VirtualScroll::new(0, 100));
+        let body = NewWidget::new(CollectionBodyWidget::new(scroll));
+        let mut harness = TestHarness::create_with_size(default_property_set(), body, (200, 400));
+
+        let (action, _id) = harness
+            .pop_action::<VirtualScrollAction>()
+            .expect("initial layout requests the first materialized range");
+        let VirtualScrollAction::Fetch(action) = action else {
+            panic!("expected a Fetch action");
+        };
+
+        harness.edit_root_widget(|mut body| {
+            {
+                let mut scroll = CollectionBodyWidget::virtual_scroll_mut(&mut body);
+                VirtualScroll::will_handle_action(&mut scroll, &action);
+                for idx in action.target().clone() {
+                    let row = NewWidget::new(RowClickable::new(
+                        NewWidget::new(Label::new(format!("row {idx}"))),
+                        false,
+                        &Theme::default(),
+                        None,
+                        false,
+                        None,
+                    ))
+                    .erased();
+                    VirtualScroll::add_child(&mut scroll, idx, row);
+                }
+            }
+            // Must not panic: these rows were just add_child-ed above, in
+            // this same pass, so they aren't registered with masonry's
+            // mutate arena yet.
+            CollectionBodyWidget::refresh_row_nav(&mut body, action.target().start);
+        });
     }
 
     /// Unlike a focused row (which now intercepts Up/Down before
