@@ -1,7 +1,10 @@
-//! Unified virtualized body: a masonry widget that adds Up/Down row
-//! navigation over `VirtualScroll`. The xilem `View`
-//! (`collection_body`) that drives scroll-to-anchor, lazy-load, and
-//! central click routing lives in the sibling `body_view` module.
+//! Unified virtualized body: a masonry widget that adds Left/Right
+//! tree-focus navigation over `VirtualScroll`. Up/Down row-focus navigation
+//! is handled locally by each row instead (see
+//! [`row_click`](super::row_click)'s module docs for why), driven by this
+//! widget's [`refresh_row_nav`](CollectionBodyWidget::refresh_row_nav). The
+//! xilem `View` (`collection_body`) that drives scroll-to-anchor, lazy-load,
+//! and central click routing lives in the sibling `body_view` module.
 
 use masonry::accesskit::Role;
 use masonry::core::keyboard::{Key, KeyState, NamedKey};
@@ -17,19 +20,21 @@ use xilem::masonry::widgets::VirtualScroll as VirtualScrollWidget;
 use super::row_click::{RowClickable, TreeRowMeta};
 use super::single_child;
 
-/// Single-child wrapper around masonry's `VirtualScroll` adding arrow-key
-/// navigation between materialized rows: Up/Down move focus by one row, and —
-/// for expandable (tree) collections — Left/Right move focus to a row's parent
-/// or first child. Expand/collapse itself is handled by the focused row (see
-/// [`RowClickable`](super::row_click::RowClickable)); the cases that reach here
-/// are the focus-movement ones the row can't do because it doesn't know row
-/// order.
+/// Single-child wrapper around masonry's `VirtualScroll` adding tree
+/// keyboard navigation for expandable collections: Left/Right move focus to
+/// a row's parent or first child. (Up/Down row-focus movement is handled
+/// locally by the focused row instead — see
+/// [`RowClickable`](super::row_click::RowClickable) — because `VirtualScroll`
+/// sits between a row and this widget and claims Up/Down via its own
+/// built-in arrow-key scrolling before this widget's `on_text_event` would
+/// run.) Expand/collapse itself is handled by the focused row too; the
+/// cases that reach here are the focus-movement ones a row can't do because
+/// it doesn't know row order.
 ///
 /// Navigation operates over the **materialized** rows (`VirtualScroll` buffers
 /// ~a page beyond the viewport, so adjacent targets are present). A target past
-/// the materialized edge is a no-op — the same behavior as Up/Down. Scrolling
-/// the newly-focused row into view is a deferred, substrate-wide improvement
-/// (covers Up/Down + Left/Right); see issue #136.
+/// the materialized edge is a no-op. Scrolling the newly-focused row into view
+/// is a deferred, substrate-wide improvement; see issue #136.
 pub(crate) struct CollectionBodyWidget {
     child: WidgetPod<VirtualScrollWidget>,
     /// Per-visible-row tree metadata in materialized order, kept in sync by
@@ -147,15 +152,14 @@ impl Widget for CollectionBodyWidget {
         if key.state != KeyState::Down {
             return;
         }
-        // Only Up/Down (always) and Left/Right (tree collections) navigate.
+        // Only Left/Right (tree collections) reach here — Up/Down are
+        // handled locally by the focused row itself
+        // (`RowClickable::on_text_event`), since `VirtualScroll`'s built-in
+        // arrow-key scrolling would otherwise intercept them before they got
+        // this far. See `row_click`'s module docs.
         if !matches!(
             &key.key,
-            Key::Named(
-                NamedKey::ArrowDown
-                    | NamedKey::ArrowUp
-                    | NamedKey::ArrowLeft
-                    | NamedKey::ArrowRight
-            )
+            Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowRight)
         ) {
             return;
         }
@@ -169,17 +173,10 @@ impl Widget for CollectionBodyWidget {
         let Some(pos) = row_ids.iter().position(|&id| id == focused) else {
             return;
         };
-        // Up/Down step by one materialized row; Left/Right do tree focus moves.
-        // Left/Right that don't apply here (a leaf's Right, a depth-0 Left, or a
-        // toggle already handled by the row) yield `None` and are left
-        // unhandled so nothing is swallowed.
+        // Left/Right do tree focus moves. A case that doesn't apply here (a
+        // leaf's Right, a depth-0 Left, or a toggle already handled by the
+        // row) yields `None` and is left unhandled so nothing is swallowed.
         let target: Option<WidgetId> = match &key.key {
-            Key::Named(NamedKey::ArrowDown) => {
-                pos.checked_add(1).and_then(|i| row_ids.get(i)).copied()
-            }
-            Key::Named(NamedKey::ArrowUp) => {
-                pos.checked_sub(1).and_then(|i| row_ids.get(i)).copied()
-            }
             Key::Named(NamedKey::ArrowRight) => self.tree_first_child(focused, &row_ids, pos),
             Key::Named(NamedKey::ArrowLeft) => self.tree_parent(focused),
             _ => None,
@@ -431,56 +428,21 @@ mod tests {
         assert_eq!(harness.focused_widget_id(), Some(first));
     }
 
+    /// Unlike a focused row (which now intercepts Up/Down before
+    /// `VirtualScroll` ever sees them — see `row_click::tests`), nothing
+    /// pre-empts `VirtualScroll` when it is itself the focus target, so its
+    /// own built-in scroll-by-arrow-key handling claims the event. This is
+    /// masonry's native behavior for a directly-focused scroll area, not a
+    /// bug — rows always take focus in practice (`RowClickable::accepts_focus`
+    /// is `true` and it calls `ctx.request_focus()` on press), so this is an
+    /// edge case, not the common path.
     #[test]
-    fn arrow_down_moves_focus_to_next_row() {
-        let (mut harness, _scroll, ids) = harness_with_rows();
-        let first = ids[&0];
-        let second = ids[&1];
-        harness.focus_on(Some(first));
-        let handled = harness.process_text_event(arrow_key(NamedKey::ArrowDown));
-        assert!(handled.is_handled());
-        assert_eq!(harness.focused_widget_id(), Some(second));
-    }
-
-    #[test]
-    fn arrow_up_moves_focus_to_previous_row() {
-        let (mut harness, _scroll, ids) = harness_with_rows();
-        let first = ids[&0];
-        let second = ids[&1];
-        harness.focus_on(Some(second));
-        let handled = harness.process_text_event(arrow_key(NamedKey::ArrowUp));
-        assert!(handled.is_handled());
-        assert_eq!(harness.focused_widget_id(), Some(first));
-    }
-
-    #[test]
-    fn arrow_up_at_first_row_is_a_no_op() {
-        let (mut harness, _scroll, ids) = harness_with_rows();
-        let first = ids[&0];
-        harness.focus_on(Some(first));
-        let handled = harness.process_text_event(arrow_key(NamedKey::ArrowUp));
-        assert!(!handled.is_handled());
-        assert_eq!(harness.focused_widget_id(), Some(first));
-    }
-
-    #[test]
-    fn arrow_down_at_last_materialized_row_is_a_no_op() {
-        let (mut harness, _scroll, ids) = harness_with_rows();
-        let last_idx = ids.keys().copied().max().expect("at least one row");
-        let last = ids[&last_idx];
-        harness.focus_on(Some(last));
-        let handled = harness.process_text_event(arrow_key(NamedKey::ArrowDown));
-        assert!(!handled.is_handled());
-        assert_eq!(harness.focused_widget_id(), Some(last));
-    }
-
-    #[test]
-    fn arrow_keys_on_non_row_focus_are_unhandled() {
+    fn arrow_down_on_non_row_focus_is_handled_by_virtual_scrolls_native_scrolling() {
         let (mut harness, scroll, _rows) = harness_with_rows();
         // Focus the VirtualScroll itself (not one of its row children).
         harness.focus_on(Some(scroll));
         let handled = harness.process_text_event(arrow_key(NamedKey::ArrowDown));
-        assert!(!handled.is_handled());
+        assert!(handled.is_handled());
         assert_eq!(harness.focused_widget_id(), Some(scroll));
     }
 
