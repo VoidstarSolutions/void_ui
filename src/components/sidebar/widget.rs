@@ -1,6 +1,6 @@
 //! Masonry widget for the Tessera sidebar nav item.
 //!
-//! A full-width, left-aligned nav row. When `active`, a 3 px accent bar
+//! A full-width, left-aligned nav row. When `selected`, a 3 px accent bar
 //! is painted on the left edge and the label renders in the full text color.
 //! Pointer state (hover, press) is read from the widget context, matching the
 //! same paint-driven pattern as [`crate::components::button::widget::ThemedButton`].
@@ -35,14 +35,14 @@ const ACCENT_RADIUS: f64 = 1.5;
 /// Themed, interactive sidebar navigation item.
 ///
 /// Owns its child (typically a `Label`) and a [`Theme`] value used to
-/// resolve background and accent colors at paint time. The `active` flag is
+/// resolve background and accent colors at paint time. The `selected` flag is
 /// host-controlled; pointer state (hovered, pressed) is read from the widget
 /// context.
 pub struct ThemedSidebarItem {
     child: WidgetPod<dyn Widget>,
     theme: Theme,
     /// Host-controlled selected-row state.
-    active: bool,
+    selected: bool,
     /// True for the span between a Space/Enter key-down and its matching
     /// key-up (or an intervening focus loss) — the keyboard equivalent of
     /// the pointer-driven `pressed` flag read from the widget context, so
@@ -60,7 +60,7 @@ impl ThemedSidebarItem {
         Self {
             child: child.erased().to_pod(),
             theme: *theme,
-            active: false,
+            selected: false,
             keyboard_pressed: false,
             disabled: false,
         }
@@ -68,8 +68,8 @@ impl ThemedSidebarItem {
 
     /// Marks this item as the currently-selected nav entry.
     #[must_use]
-    pub fn with_active(mut self, active: bool) -> Self {
-        self.active = active;
+    pub fn with_selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
         self
     }
 
@@ -92,10 +92,10 @@ impl ThemedSidebarItem {
         }
     }
 
-    /// Toggles the host-driven `active` flag. Requests a repaint on change.
-    pub fn set_active(this: &mut WidgetMut<'_, Self>, active: bool) {
-        if this.widget.active != active {
-            this.widget.active = active;
+    /// Toggles the host-driven `selected` flag. Requests a repaint on change.
+    pub fn set_selected(this: &mut WidgetMut<'_, Self>, selected: bool) {
+        if this.widget.selected != selected {
+            this.widget.selected = selected;
             this.ctx.request_paint_only();
         }
     }
@@ -124,7 +124,7 @@ impl ThemedSidebarItem {
     /// | default        | transparent  |
     /// | hover          | `surface_2`  |
     /// | pressed        | `surface_hi` |
-    /// | active         | `surface_2`  |
+    /// | selected       | `surface_2`  |
     fn resolve_bg(&self, hovered: bool, pressed: bool) -> Color {
         if self.disabled {
             return Color::TRANSPARENT;
@@ -132,7 +132,7 @@ impl ThemedSidebarItem {
         let p = &self.theme.palette;
         if pressed {
             p.surface_hi
-        } else if self.active || hovered {
+        } else if self.selected || hovered {
             p.surface_2
         } else {
             Color::TRANSPARENT
@@ -294,7 +294,7 @@ impl Widget for ThemedSidebarItem {
             painter.fill(bg_rect, bg).draw();
         }
 
-        if self.active && !self.disabled {
+        if self.selected && !self.disabled {
             let accent = RoundedRect::from_origin_size(
                 Point::ORIGIN,
                 Size::new(ACCENT_WIDTH, size.height),

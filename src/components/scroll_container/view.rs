@@ -84,7 +84,7 @@ impl<V> ScrollContainer<V> {
 
     /// When `true`, the child is guaranteed to be at least as large as the
     /// viewport on each axis.
-    pub fn fill(mut self, v: bool) -> Self {
+    pub fn fill_viewport(mut self, v: bool) -> Self {
         self.fill = v;
         self
     }
@@ -206,5 +206,20 @@ where
         let mut child = ContentClip::child_mut(&mut clip);
         self.child
             .message(view_state, message, child.downcast(), app_state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scroll_container;
+    use crate::Theme;
+    use crate::label;
+
+    #[test]
+    fn fill_viewport_is_the_canonical_builder_name() {
+        let theme = Theme::default();
+        let _ = scroll_container(label("content").render::<(), ()>(&theme))
+            .fill_viewport(true)
+            .render::<(), ()>(&theme);
     }
 }

@@ -72,7 +72,7 @@ fn basic_row<S: DialogDemoHost>(theme: &Theme, open: bool) -> impl WidgetView<S,
                 .render(theme),
             dialog(open, dialog_content::<S>(theme))
                 .show_close_button()
-                .on_dismiss(|s: &mut S| s.as_mut().open = false)
+                .on_close(|s: &mut S| s.as_mut().open = false)
                 .render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)

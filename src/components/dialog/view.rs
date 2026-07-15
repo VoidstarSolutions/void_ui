@@ -7,13 +7,13 @@
 //! use void_ui::components::dialog;
 //! dialog(state.dialog_open, my_content_view)
 //!     .show_close_button()
-//!     .on_dismiss(|s: &mut State| s.dialog_open = false)
+//!     .on_close(|s: &mut State| s.dialog_open = false)
 //!     .render(&theme)
 //! ```
 //!
 //! Unlike `popover`, a dialog's open/closed state is app-owned (there's no
 //! trigger widget to toggle it internally), so [`Dialog::open`] is passed in
-//! and [`Dialog::on_dismiss`] reports both outside-click dismissal and the
+//! and [`Dialog::on_close`] reports both outside-click dismissal and the
 //! optional close button back to app state — mirroring
 //! [`crate::components::alert::Alert::on_close`]'s `CloseCallback` pattern.
 //!
@@ -51,10 +51,13 @@ use crate::overlay::SurfaceStyle;
 use crate::overlay_portal::{OverlayPortal, PortalContentView, PortalPlacement};
 use crate::overlay_scope::root_portal_lookup;
 
-/// Implemented by `()` (no dismiss callback) and by `Fn(&mut State) ->
-/// Action` closures, so [`Dialog::on_dismiss`] is optional without boxing the
+/// Erased close callback, present only when [`Dialog::on_close`] was set.
+type OnClose<State, Action> = Arc<dyn Fn(&mut State) -> Action + Send + Sync>;
+
+/// Implemented by `()` (no close callback) and by `Fn(&mut State) ->
+/// Action` closures, so [`Dialog::on_close`] is optional without boxing the
 /// callback. Mirrors [`crate::components::alert::CloseCallback`].
-pub trait DismissCallback<State, Action>: Send + Sync + 'static {
+pub trait CloseCallback<State, Action>: Send + Sync + 'static {
     /// Whether outside-click dismissal and the close button should be active.
     #[must_use]
     fn enabled() -> bool {
@@ -63,13 +66,13 @@ pub trait DismissCallback<State, Action>: Send + Sync + 'static {
 
     /// Invoke the callback. Only called when [`Self::enabled`] is `true`.
     fn call(&self, _state: &mut State) -> Action {
-        unreachable!("DismissCallback::call on a disabled callback")
+        unreachable!("CloseCallback::call on a disabled callback")
     }
 }
 
-impl<State: 'static, Action: 'static> DismissCallback<State, Action> for () {}
+impl<State: 'static, Action: 'static> CloseCallback<State, Action> for () {}
 
-impl<State, Action, F> DismissCallback<State, Action> for F
+impl<State, Action, F> CloseCallback<State, Action> for F
 where
     F: Fn(&mut State) -> Action + Send + Sync + 'static,
 {
@@ -91,7 +94,7 @@ pub struct Dialog<State, Action, ContentV, D = ()> {
     open: bool,
     content: ContentV,
     show_close_button: bool,
-    on_dismiss: D,
+    on_close: D,
     phantom: PhantomData<fn(State) -> Action>,
 }
 
@@ -114,7 +117,7 @@ where
         open,
         content,
         show_close_button: false,
-        on_dismiss: (),
+        on_close: (),
         phantom: PhantomData,
     }
 }
@@ -127,7 +130,7 @@ where
 {
     /// Report outside-click dismissal and the optional close button (see
     /// [`Self::show_close_button`]) back to app state.
-    pub fn on_dismiss<F>(self, on_dismiss: F) -> Dialog<State, Action, ContentV, F>
+    pub fn on_close<F>(self, on_close: F) -> Dialog<State, Action, ContentV, F>
     where
         F: Fn(&mut State) -> Action + Send + Sync + 'static,
     {
@@ -135,13 +138,13 @@ where
             open: self.open,
             content: self.content,
             show_close_button: self.show_close_button,
-            on_dismiss,
+            on_close,
             phantom: PhantomData,
         }
     }
 
-    /// Show an X close button that invokes [`Self::on_dismiss`] when clicked.
-    /// No-op unless [`Self::on_dismiss`] is also set.
+    /// Show an X close button that invokes [`Self::on_close`] when clicked.
+    /// No-op unless [`Self::on_close`] is also set.
     pub fn show_close_button(mut self) -> Self {
         self.show_close_button = true;
         self
@@ -150,21 +153,24 @@ where
     /// Materialize the xilem view at the supplied theme.
     pub fn render(self, theme: &Theme) -> DialogView<State, Action>
     where
-        D: DismissCallback<State, Action>,
+        D: CloseCallback<State, Action>,
     {
-        let has_dismiss = D::enabled();
-        let on_dismiss = self.on_dismiss;
-        let on_dismiss: Arc<dyn Fn(&mut State) -> Action + Send + Sync> =
-            Arc::new(move |state: &mut State| on_dismiss.call(state));
-
-        let close_button = (self.show_close_button && has_dismiss).then(|| {
-            let on_dismiss = on_dismiss.clone();
-            button(move |state: &mut State| on_dismiss(state))
-                .icon(IconName::X)
-                .variant(ButtonVariant::Text)
-                .accessible_name("Close")
-                .render(theme)
+        let on_close: Option<OnClose<State, Action>> = D::enabled().then(|| {
+            let on_close = self.on_close;
+            Arc::new(move |state: &mut State| on_close.call(state)) as OnClose<State, Action>
         });
+
+        let close_button = self
+            .show_close_button
+            .then(|| on_close.clone())
+            .flatten()
+            .map(|on_close| {
+                button(move |state: &mut State| on_close(state))
+                    .icon(IconName::X)
+                    .variant(ButtonVariant::Text)
+                    .accessible_name("Close")
+                    .render(theme)
+            });
         let header = close_button.map(|close_button| {
             flex_row((close_button,)).main_axis_alignment(MainAxisAlignment::End)
         });
@@ -176,8 +182,7 @@ where
         DialogView {
             open: self.open,
             content,
-            on_dismiss,
-            has_dismiss,
+            on_close,
             theme: *theme,
             phantom: PhantomData,
         }
@@ -191,8 +196,7 @@ where
 pub struct DialogView<State, Action> {
     open: bool,
     content: Arc<PortalContentView<State, Action>>,
-    on_dismiss: Arc<dyn Fn(&mut State) -> Action + Send + Sync>,
-    has_dismiss: bool,
+    on_close: Option<OnClose<State, Action>>,
     theme: Theme,
     phantom: PhantomData<fn(State) -> Action>,
 }
@@ -275,11 +279,11 @@ where
     ) -> MessageResult<Action> {
         // Content messages route through the scope's slot path, never through
         // us; we're only the `DialogDismissed` action source for outside-click
-        // dismissal (the close button, if any, invokes `on_dismiss` directly).
-        match message.take_message::<DialogDismissed>() {
-            Some(_) if self.has_dismiss => MessageResult::Action((self.on_dismiss)(app_state)),
-            Some(_) => MessageResult::Nop,
-            None => MessageResult::Stale,
+        // dismissal (the close button, if any, invokes `on_close` directly).
+        match (message.take_message::<DialogDismissed>(), &self.on_close) {
+            (Some(_), Some(on_close)) => MessageResult::Action(on_close(app_state)),
+            (Some(_), None) => MessageResult::Nop,
+            (None, _) => MessageResult::Stale,
         }
     }
 }

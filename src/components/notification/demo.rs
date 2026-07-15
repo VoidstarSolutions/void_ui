@@ -111,7 +111,7 @@ fn position_row<S: NotificationDemoHost>(
             Box::new(
                 button(move |s: &mut S| s.as_mut().position = position)
                     .label(name)
-                    .active(demo.position == position)
+                    .selected(demo.position == position)
                     .render(theme),
             )
         })

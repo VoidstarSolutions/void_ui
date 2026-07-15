@@ -150,7 +150,7 @@ fn build_toolbar(theme: &Theme, loading: bool) -> impl WidgetView<ListDemo> + us
             } else {
                 "Loading: off"
             })
-            .active(loading)
+            .selected(loading)
             .render(theme),
         crate::components::button::button(|s: &mut ListDemo| s.scroll_to_top())
             .label("Scroll to top")

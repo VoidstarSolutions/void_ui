@@ -14,7 +14,7 @@
 //!     .title("Settings")
 //!     .render(&theme)
 //!
-//! group_box(content).title("Section").outline().render(&theme)
+//! group_box(content).title("Section").border().render(&theme)
 //! ```
 
 use masonry::core::ArcStr;
@@ -136,7 +136,7 @@ impl<V, T> GroupBox<V, T> {
     }
 
     /// Use a bordered outline with rounded corners.
-    pub fn outline(mut self) -> Self {
+    pub fn border(mut self) -> Self {
         self.variant = GroupBoxVariant::Outline;
         self
     }
@@ -146,7 +146,7 @@ impl<V, T> GroupBox<V, T> {
     /// Applies regardless of variant: it fills behind the default
     /// (no-background) variant, replaces the default `surface` fill set by
     /// [`Self::fill`], and adds a fill behind the border drawn by
-    /// [`Self::outline`].
+    /// [`Self::border`].
     pub fn background(mut self, color: Color) -> Self {
         self.background = Some(color);
         self

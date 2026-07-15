@@ -46,12 +46,6 @@ pub fn tooltip<V>(text: impl Into<ArcStr>, child: V) -> Tooltip<V> {
 }
 
 impl<V> Tooltip<V> {
-    /// Sets the hover-idle delay in milliseconds before the tooltip appears.
-    pub fn delay_ms(mut self, ms: u64) -> Self {
-        self.delay = Duration::from_millis(ms);
-        self
-    }
-
     /// Sets the hover-idle delay before the tooltip appears.
     pub fn delay(mut self, delay: Duration) -> Self {
         self.delay = delay;
@@ -149,5 +143,22 @@ where
         let mut child = TooltipHost::child_mut(&mut element);
         self.child
             .message(view_state, message, child.downcast(), app_state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::tooltip;
+    use crate::Theme;
+    use crate::label;
+
+    #[test]
+    fn delay_is_the_canonical_builder_name() {
+        let theme = Theme::default();
+        let _ = tooltip("hint", label("child").render::<(), ()>(&theme))
+            .delay(Duration::from_millis(500))
+            .render::<(), ()>(&theme);
     }
 }

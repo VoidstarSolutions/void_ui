@@ -802,8 +802,8 @@ where
     //     manual sync. Vertical virtualization stays inside the body
     //     (`constrain_vertical` leaves the vertical axis to it).
     //
-    //     #111 fill: enable the portal's fill only when a column actually
-    //     flexes (`has_flex`). It then allocates the content
+    //     #111 fill_viewport: enable the portal's fill only when a column
+    //     actually flexes (`has_flex`). It then allocates the content
     //     `max(intrinsic, viewport)` width (masonry `content_must_fill`), so
     //     when the columns are narrower than the viewport the strips receive
     //     the extra width to distribute across the flex columns (and still
@@ -812,12 +812,13 @@ where
     // Auto-hide the horizontal scrollbar (`OnActivity`) — the app-wide
     // convention every scroll surface uses. The `scroll_container` default is
     // `AlwaysVisible`, which would leave a heavy always-on bar under the grid.
-    // Unlike `.fill` (gated on `has_flex`), this applies to *every* grid: it's
-    // a deliberate chrome change, orthogonal to fill, so a non-flex grid keeps
-    // its exact column layout but no longer carries an always-on bar.
+    // Unlike `.fill_viewport` (gated on `has_flex`), this applies to *every*
+    // grid: it's a deliberate chrome change, orthogonal to fill, so a
+    // non-flex grid keeps its exact column layout but no longer carries an
+    // always-on bar.
     let inner = scroll_container(stack.boxed())
         .constrain_vertical(true)
-        .fill(has_flex)
+        .fill_viewport(has_flex)
         .scroll_bar_visibility(ScrollBarVisibility::OnActivity)
         .render(&theme);
 

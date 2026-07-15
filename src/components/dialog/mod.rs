@@ -6,7 +6,7 @@
 //! use void_ui::components::dialog;
 //! dialog(state.open, my_content_view)
 //!     .show_close_button()
-//!     .on_dismiss(|state: &mut State| state.open = false)
+//!     .on_close(|state: &mut State| state.open = false)
 //!     .render(&theme)
 //! ```
 
