@@ -6,6 +6,8 @@
 //! xilem `View` (`collection_body`) that drives scroll-to-anchor, lazy-load,
 //! and central click routing lives in the sibling `body_view` module.
 
+use std::collections::HashSet;
+
 use masonry::accesskit::Role;
 use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
@@ -99,8 +101,11 @@ impl CollectionBodyWidget {
             let vs = Self::virtual_scroll_mut(this);
             vs.widget.children_ids().iter().copied().collect()
         };
-        let previously_registered =
-            std::mem::replace(&mut this.widget.registered_row_ids, ids.clone());
+        let previously_registered: HashSet<WidgetId> =
+            std::mem::replace(&mut this.widget.registered_row_ids, ids.clone())
+                .into_iter()
+                .collect();
+        let mut vs = Self::virtual_scroll_mut(this);
         for k in 0..ids.len() {
             let id = ids[k];
             if !previously_registered.contains(&id) {
@@ -109,12 +114,9 @@ impl CollectionBodyWidget {
             let up = k.checked_sub(1).and_then(|j| ids.get(j)).copied();
             let down = ids.get(k + 1).copied();
             let idx = active_start + k;
-            {
-                let mut vs = Self::virtual_scroll_mut(this);
-                let mut row = VirtualScrollWidget::child_mut(&mut vs, idx);
-                let mut row = row.downcast::<RowClickable>();
-                RowClickable::set_nav(&mut row, up, down);
-            }
+            let mut row = VirtualScrollWidget::child_mut(&mut vs, idx);
+            let mut row = row.downcast::<RowClickable>();
+            RowClickable::set_nav(&mut row, up, down);
         }
     }
 
