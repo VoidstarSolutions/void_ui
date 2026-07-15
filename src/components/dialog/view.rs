@@ -51,6 +51,9 @@ use crate::overlay::SurfaceStyle;
 use crate::overlay_portal::{OverlayPortal, PortalContentView, PortalPlacement};
 use crate::overlay_scope::root_portal_lookup;
 
+/// Erased close callback, present only when [`Dialog::on_close`] was set.
+type OnClose<State, Action> = Arc<dyn Fn(&mut State) -> Action + Send + Sync>;
+
 /// Implemented by `()` (no close callback) and by `Fn(&mut State) ->
 /// Action` closures, so [`Dialog::on_close`] is optional without boxing the
 /// callback. Mirrors [`crate::components::alert::CloseCallback`].
@@ -152,19 +155,22 @@ where
     where
         D: CloseCallback<State, Action>,
     {
-        let has_close = D::enabled();
-        let on_close = self.on_close;
-        let on_close: Arc<dyn Fn(&mut State) -> Action + Send + Sync> =
-            Arc::new(move |state: &mut State| on_close.call(state));
-
-        let close_button = (self.show_close_button && has_close).then(|| {
-            let on_close = on_close.clone();
-            button(move |state: &mut State| on_close(state))
-                .icon(IconName::X)
-                .variant(ButtonVariant::Text)
-                .accessible_name("Close")
-                .render(theme)
+        let on_close: Option<OnClose<State, Action>> = D::enabled().then(|| {
+            let on_close = self.on_close;
+            Arc::new(move |state: &mut State| on_close.call(state)) as OnClose<State, Action>
         });
+
+        let close_button = self
+            .show_close_button
+            .then(|| on_close.clone())
+            .flatten()
+            .map(|on_close| {
+                button(move |state: &mut State| on_close(state))
+                    .icon(IconName::X)
+                    .variant(ButtonVariant::Text)
+                    .accessible_name("Close")
+                    .render(theme)
+            });
         let header = close_button.map(|close_button| {
             flex_row((close_button,)).main_axis_alignment(MainAxisAlignment::End)
         });
@@ -177,7 +183,6 @@ where
             open: self.open,
             content,
             on_close,
-            has_close,
             theme: *theme,
             phantom: PhantomData,
         }
@@ -191,8 +196,7 @@ where
 pub struct DialogView<State, Action> {
     open: bool,
     content: Arc<PortalContentView<State, Action>>,
-    on_close: Arc<dyn Fn(&mut State) -> Action + Send + Sync>,
-    has_close: bool,
+    on_close: Option<OnClose<State, Action>>,
     theme: Theme,
     phantom: PhantomData<fn(State) -> Action>,
 }
@@ -276,10 +280,10 @@ where
         // Content messages route through the scope's slot path, never through
         // us; we're only the `DialogDismissed` action source for outside-click
         // dismissal (the close button, if any, invokes `on_close` directly).
-        match message.take_message::<DialogDismissed>() {
-            Some(_) if self.has_close => MessageResult::Action((self.on_close)(app_state)),
-            Some(_) => MessageResult::Nop,
-            None => MessageResult::Stale,
+        match (message.take_message::<DialogDismissed>(), &self.on_close) {
+            (Some(_), Some(on_close)) => MessageResult::Action(on_close(app_state)),
+            (Some(_), None) => MessageResult::Nop,
+            (None, _) => MessageResult::Stale,
         }
     }
 }
