@@ -328,6 +328,15 @@ impl CalendarBodyWidget {
             focused_index: None,
         }
     }
+
+    /// Outer inset around the panel's header/weekday/grid content — this
+    /// widget paints its own chrome (see [`Self::paint`]) and, per the
+    /// `BareTrigger` overlay-content contract, must bake in its own padding
+    /// rather than relying on `OverlaySurface` (which only wraps `Trigger`
+    /// placements).
+    fn pad(&self) -> f64 {
+        f64::from(self.theme.density.pad)
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -741,9 +750,10 @@ impl Widget for CalendarBodyWidget {
         };
         let rows = n.div_ceil(cols);
         let grid_h = index_f64(rows) * cell_px;
+        let pad = self.pad();
         match axis {
-            Axis::Horizontal => Length::px(total_w),
-            Axis::Vertical => Length::px(header_h + weekday_h + grid_h),
+            Axis::Horizontal => Length::px(total_w + 2.0 * pad),
+            Axis::Vertical => Length::px(header_h + weekday_h + grid_h + 2.0 * pad),
         }
     }
 
@@ -754,19 +764,20 @@ impl Widget for CalendarBodyWidget {
         let header_h = f64::from(self.theme.density.row_height);
         let btn_w = (total_w / 4.0).max(1.0);
         let btn_size = Size::new(btn_w, header_h);
+        let pad = self.pad();
 
         // Header row: 4 buttons side-by-side.
         ctx.run_layout(&mut self.header_prev, btn_size);
-        ctx.place_child(&mut self.header_prev, Point::ORIGIN);
+        ctx.place_child(&mut self.header_prev, Point::new(pad, pad));
 
         ctx.run_layout(&mut self.header_month, btn_size);
-        ctx.place_child(&mut self.header_month, Point::new(btn_w, 0.0));
+        ctx.place_child(&mut self.header_month, Point::new(pad + btn_w, pad));
 
         ctx.run_layout(&mut self.header_year, btn_size);
-        ctx.place_child(&mut self.header_year, Point::new(btn_w * 2.0, 0.0));
+        ctx.place_child(&mut self.header_year, Point::new(pad + btn_w * 2.0, pad));
 
         ctx.run_layout(&mut self.header_next, btn_size);
-        ctx.place_child(&mut self.header_next, Point::new(btn_w * 3.0, 0.0));
+        ctx.place_child(&mut self.header_next, Point::new(pad + btn_w * 3.0, pad));
 
         // Weekday row: visible (full height) in Day mode, zero-height otherwise.
         let (weekday_h, weekday_cell_h) = if self.nav.view_mode == ViewMode::Day {
@@ -777,15 +788,18 @@ impl Widget for CalendarBodyWidget {
         for (i, pod) in self.weekday_row.iter_mut().enumerate() {
             let cell_size = Size::new(cell_px, weekday_cell_h);
             ctx.run_layout(pod, cell_size);
-            ctx.place_child(pod, Point::new(index_f64(i) * cell_px, header_h));
+            ctx.place_child(
+                pod,
+                Point::new(pad + index_f64(i) * cell_px, pad + header_h),
+            );
         }
 
         // Grid: fills remaining space.
-        let grid_y = header_h + weekday_h;
-        let grid_h = (size.height - grid_y).max(0.0);
+        let grid_y = pad + header_h + weekday_h;
+        let grid_h = (size.height - grid_y - pad).max(0.0);
         let grid_size = Size::new(total_w, grid_h);
         ctx.run_layout(&mut self.grid, grid_size);
-        ctx.place_child(&mut self.grid, Point::new(0.0, grid_y));
+        ctx.place_child(&mut self.grid, Point::new(pad, grid_y));
     }
 
     fn paint(
