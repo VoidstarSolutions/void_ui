@@ -119,8 +119,11 @@ impl Widget for OverlaySurface {
         _props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
-        let rrect =
-            RoundedRect::from_origin_size(Point::ORIGIN, ctx.border_box().size(), self.corner_radius);
+        let rrect = RoundedRect::from_origin_size(
+            Point::ORIGIN,
+            ctx.border_box().size(),
+            self.corner_radius,
+        );
         if self.bg.components[3] > 0.0 {
             painter.fill(rrect, self.bg).draw();
         }

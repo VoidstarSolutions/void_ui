@@ -75,7 +75,7 @@ pub(crate) fn clamp_scroll_index(index: u64, row_count: u64) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::{clamp_scroll_index, ScrollState};
+    use super::{ScrollState, clamp_scroll_index};
 
     #[test]
     fn default_state_has_no_pending_request() {

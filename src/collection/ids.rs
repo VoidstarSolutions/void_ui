@@ -94,7 +94,7 @@ pub(crate) fn visual_range_ids<Item>(
 
 #[cfg(test)]
 mod tests {
-    use super::{nearing_end, visual_range_ids, IdSource};
+    use super::{IdSource, nearing_end, visual_range_ids};
     use std::sync::Arc;
 
     /// Row id == the row value itself, so test slices read naturally:

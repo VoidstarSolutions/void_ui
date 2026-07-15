@@ -382,16 +382,20 @@ mod tests {
         set_tree(&mut harness, &ids, TREE);
         // Leaf (Child A1): Right does nothing here.
         harness.focus_on(Some(ids[&1]));
-        assert!(!harness
-            .process_text_event(arrow_key(NamedKey::ArrowRight))
-            .is_handled());
+        assert!(
+            !harness
+                .process_text_event(arrow_key(NamedKey::ArrowRight))
+                .is_handled()
+        );
         assert_eq!(harness.focused_widget_id(), Some(ids[&1]));
         // Collapsed parent (Parent B): Right expands via the row, not the body,
         // so the body leaves focus put.
         harness.focus_on(Some(ids[&4]));
-        assert!(!harness
-            .process_text_event(arrow_key(NamedKey::ArrowRight))
-            .is_handled());
+        assert!(
+            !harness
+                .process_text_event(arrow_key(NamedKey::ArrowRight))
+                .is_handled()
+        );
         assert_eq!(harness.focused_widget_id(), Some(ids[&4]));
     }
 
