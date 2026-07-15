@@ -62,15 +62,15 @@ impl ScrollState {
 }
 
 /// Clamps a requested scroll index to `0..row_count`, converted to the
-/// `i64` anchor domain masonry's `VirtualScroll` uses (saturating, same
+/// `usize` domain masonry's `VirtualScroll` uses (saturating, same
 /// rationale as `scroll_range_end` in `view.rs`). `None` when the grid
 /// is empty — there is no row to anchor to.
-pub(crate) fn clamp_scroll_index(index: u64, row_count: u64) -> Option<i64> {
+pub(crate) fn clamp_scroll_index(index: u64, row_count: u64) -> Option<usize> {
     if row_count == 0 {
         return None;
     }
     let clamped = index.min(row_count - 1);
-    Some(i64::try_from(clamped).unwrap_or(i64::MAX))
+    Some(usize::try_from(clamped).unwrap_or(usize::MAX))
 }
 
 #[cfg(test)]

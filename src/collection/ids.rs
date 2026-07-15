@@ -40,31 +40,25 @@ pub(crate) fn position_fallback_id(pos: usize) -> u64 {
     u64::try_from(pos).unwrap_or(u64::MAX)
 }
 
-/// `virtual_scroll` range bound: item count (`u64`) → `i64`. Saturates to
-/// `i64::MAX`.
-pub(crate) fn scroll_range_end(item_count: u64) -> i64 {
-    i64::try_from(item_count).unwrap_or(i64::MAX)
-}
-
-/// `virtual_scroll` callback index (`i64`) → slice index (`usize`).
-/// Saturates so a stray negative/oversized index reads as past-the-end.
-pub(crate) fn scroll_idx_to_slice(idx: i64) -> usize {
-    usize::try_from(idx).unwrap_or(usize::MAX)
+/// `virtual_scroll` length bound: item count (`u64`) → `usize`. Saturates
+/// to `usize::MAX`.
+pub(crate) fn scroll_range_end(item_count: u64) -> usize {
+    usize::try_from(item_count).unwrap_or(usize::MAX)
 }
 
 /// Lazy-load trigger predicate: `true` when the active range's end
-/// (`active_end`, the exclusive end of the materialized window in the same
-/// `i64` domain as `scroll_range_end`) is within `threshold` items of the
+/// (`active_end`, the exclusive end of the materialized window, same
+/// `usize` domain as `scroll_range_end`) is within `threshold` items of the
 /// data's end. The body's `message` handler peeks each `VirtualScrollAction`
 /// and fires the host's lazy callback whenever this holds.
 ///
-/// Saturating throughout: `item_count` past `i64::MAX` and an oversized
-/// `threshold` both clamp to `i64::MAX`, and the distance uses
+/// Saturating throughout: `item_count` past `usize::MAX` and an oversized
+/// `threshold` both clamp to `usize::MAX`, and the distance uses
 /// `saturating_sub` so an `active_end` past the (clamped) end reads as
 /// distance 0 — i.e. "at the end", which always triggers.
-pub(crate) fn nearing_end(item_count: u64, active_end: i64, threshold: u64) -> bool {
+pub(crate) fn nearing_end(item_count: u64, active_end: usize, threshold: u64) -> bool {
     let end = scroll_range_end(item_count);
-    let threshold = i64::try_from(threshold).unwrap_or(i64::MAX);
+    let threshold = usize::try_from(threshold).unwrap_or(usize::MAX);
     end.saturating_sub(active_end) <= threshold
 }
 
@@ -177,8 +171,8 @@ mod tests {
 
     #[test]
     fn nearing_end_saturates_for_huge_counts_and_thresholds() {
-        // item_count past i64::MAX clamps to i64::MAX; an active end near it
-        // is still "far" unless the threshold is also huge.
+        // item_count past usize::MAX clamps to usize::MAX; an active end near
+        // it is still "far" unless the threshold is also huge.
         assert!(!nearing_end(u64::MAX, 0, 20));
         assert!(nearing_end(u64::MAX, 0, u64::MAX));
     }

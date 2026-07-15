@@ -499,7 +499,7 @@ where
     /// Supplies the current [`ScrollState`] snapshot. When the
     /// snapshot's generation differs from the one the grid last
     /// applied, the body scrolls so the requested row's top aligns with
-    /// the top of the viewport (masonry's `overwrite_anchor`
+    /// the top of the viewport (masonry's `VirtualScroll::scroll_to`
     /// semantics). The index is a display position in the host's
     /// ordered view — the same domain as [`Self::row_count`] — and is
     /// clamped to the row range; a request against an empty grid is a
@@ -837,11 +837,10 @@ where
 
 // --- MARK: Integer-domain boundaries -----------------------------------
 //
-// Two crates impose integer types on a row's *position*:
-//
-// - `usize` is the native slice-position form (`data.get`, enumerate).
-// - `i64` is forced by xilem's `virtual_scroll`, whose range bound *and*
-//   callback index are `i64`.
+// `usize` is the native slice-position form (`data.get`, enumerate), and
+// also what xilem's `virtual_scroll` uses for both its length bound and
+// callback index — a row's slice position and its `virtual_scroll` index
+// are the same quantity, no translation needed.
 //
 // Separately, a row's **stable id** is a `u64` ([`SelectionState`] is
 // keyed by it). Id and position are *different* quantities now that the
@@ -852,14 +851,12 @@ where
 // id→row by scanning instead. (Column indices are a separate domain,
 // uniformly `usize` — see `filter`/`sort`.)
 //
-// The conversions go through named helpers so the casts aren't scattered.
-// Each saturates an out-of-range value to its type's max; downstream
-// lookups then treat that as "past the end." On 64-bit targets the casts
-// are lossless, but the checked form keeps us correct on 32-bit and
-// satisfies `clippy::pedantic` uniformly.
-
-// The integer-domain converters (`scroll_range_end`, `scroll_idx_to_slice`,
-// `position_fallback_id`) now live in `crate::collection::ids`.
+// The `u64 → usize` conversions (`scroll_range_end`, `position_fallback_id`)
+// go through named helpers in `crate::collection::ids` so the casts aren't
+// scattered. Each saturates an out-of-range value to `usize::MAX`;
+// downstream lookups then treat that as "past the end." On 64-bit targets
+// the casts are lossless, but the checked form keeps us correct on 32-bit
+// and satisfies `clippy::pedantic` uniformly.
 
 // --- MARK: TSV projection ----------------------------------------------
 

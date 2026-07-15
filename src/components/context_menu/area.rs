@@ -141,7 +141,7 @@ impl Widget for ContextMenuArea {
         event: &AccessEvent,
     ) {
         if event.action == Action::ShowContextMenu && !self.open {
-            let size = ctx.border_box_size();
+            let size = ctx.border_box().size();
             self.open_at(ctx, Point::new(size.width / 2.0, size.height / 2.0));
             ctx.set_handled();
         }

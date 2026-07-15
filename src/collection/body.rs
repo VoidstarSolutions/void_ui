@@ -1,7 +1,12 @@
-//! Unified virtualized body: a masonry widget that adds Up/Down row
-//! navigation over `VirtualScroll`. The xilem `View`
-//! (`collection_body`) that drives scroll-to-anchor, lazy-load, and
-//! central click routing lives in the sibling `body_view` module.
+//! Unified virtualized body: a masonry widget that adds Left/Right
+//! tree-focus navigation over `VirtualScroll`. Up/Down row-focus navigation
+//! is handled locally by each row instead (see
+//! [`row_click`](super::row_click)'s module docs for why), driven by this
+//! widget's [`refresh_row_nav`](CollectionBodyWidget::refresh_row_nav). The
+//! xilem `View` (`collection_body`) that drives scroll-to-anchor, lazy-load,
+//! and central click routing lives in the sibling `body_view` module.
+
+use std::collections::HashSet;
 
 use masonry::accesskit::Role;
 use masonry::core::keyboard::{Key, KeyState, NamedKey};
@@ -14,28 +19,36 @@ use masonry::kurbo::{Axis, Size};
 use masonry::layout::{LenReq, Length};
 use xilem::masonry::widgets::VirtualScroll as VirtualScrollWidget;
 
-use super::row_click::TreeRowMeta;
+use super::row_click::{RowClickable, TreeRowMeta};
 use super::single_child;
 
-/// Single-child wrapper around masonry's `VirtualScroll` adding arrow-key
-/// navigation between materialized rows: Up/Down move focus by one row, and —
-/// for expandable (tree) collections — Left/Right move focus to a row's parent
-/// or first child. Expand/collapse itself is handled by the focused row (see
-/// [`RowClickable`](super::row_click::RowClickable)); the cases that reach here
-/// are the focus-movement ones the row can't do because it doesn't know row
-/// order.
+/// Single-child wrapper around masonry's `VirtualScroll` adding tree
+/// keyboard navigation for expandable collections: Left/Right move focus to
+/// a row's parent or first child. (Up/Down row-focus movement is handled
+/// locally by the focused row instead — see
+/// [`RowClickable`](super::row_click::RowClickable) — because `VirtualScroll`
+/// sits between a row and this widget and claims Up/Down via its own
+/// built-in arrow-key scrolling before this widget's `on_text_event` would
+/// run.) Expand/collapse itself is handled by the focused row too; the
+/// cases that reach here are the focus-movement ones a row can't do because
+/// it doesn't know row order.
 ///
 /// Navigation operates over the **materialized** rows (`VirtualScroll` buffers
 /// ~a page beyond the viewport, so adjacent targets are present). A target past
-/// the materialized edge is a no-op — the same behavior as Up/Down. Scrolling
-/// the newly-focused row into view is a deferred, substrate-wide improvement
-/// (covers Up/Down + Left/Right); see issue #136.
+/// the materialized edge is a no-op. Scrolling the newly-focused row into view
+/// is a deferred, substrate-wide improvement; see issue #136.
 pub(crate) struct CollectionBodyWidget {
     child: WidgetPod<VirtualScrollWidget>,
     /// Per-visible-row tree metadata in materialized order, kept in sync by
     /// [`super::body_view`] so Left/Right can find a row's parent (by depth) or
     /// first child. Empty for a flat (non-tree) collection.
     row_meta: Vec<(WidgetId, TreeRowMeta)>,
+    /// Row ids seen in `VirtualScroll`'s materialized set as of the end of the
+    /// previous [`refresh_row_nav`](Self::refresh_row_nav) call. See that
+    /// method's doc for why this exists: a row `VirtualScroll::add_child`-ed
+    /// during the *current* rebuild isn't safe to touch yet, but by the next
+    /// call it will be.
+    registered_row_ids: Vec<WidgetId>,
 }
 
 impl CollectionBodyWidget {
@@ -43,6 +56,7 @@ impl CollectionBodyWidget {
         Self {
             child: child.to_pod(),
             row_meta: Vec::new(),
+            registered_row_ids: Vec::new(),
         }
     }
 
@@ -56,6 +70,54 @@ impl CollectionBodyWidget {
     /// it only affects the next key press, so no repaint/relayout is requested.
     pub(crate) fn set_row_meta(this: &mut WidgetMut<'_, Self>, meta: Vec<(WidgetId, TreeRowMeta)>) {
         this.widget.row_meta = meta;
+    }
+
+    /// Precomputes each visible row's up/down materialized-neighbor
+    /// `WidgetId` and pushes it into the row via [`RowClickable::set_nav`],
+    /// so Up/Down navigation can be handled locally by the focused row
+    /// itself — see [`row_click`](super::row_click)'s module docs for why
+    /// this widget can't handle Up/Down directly anymore. Called on every
+    /// rebuild by `body_view::CollectionBodyView::rebuild`, mirroring
+    /// `refresh_tree_row_meta`'s "materialization has caught up" trigger
+    /// point.
+    ///
+    /// A row `VirtualScroll::add_child`-ed by the *same* rebuild pass (via
+    /// the child's own `rebuild`, called just before this) is skipped rather
+    /// than touched: masonry only registers freshly added children with its
+    /// mutate arena in the update pass that runs *after* this rebuild
+    /// returns, so [`VirtualScrollWidget::child_mut`] on one would panic
+    /// (`"get_mut: child not found"`) — this is not a stale-index problem
+    /// `active_start` accuracy can fix, it's a pass-ordering one. We detect
+    /// "added this pass" by comparing against the row ids seen at the *end*
+    /// of the previous call: at least one full settle cycle always runs
+    /// between any two `rebuild`s, so anything already in that set from the
+    /// prior call is guaranteed registered by now. Skipped rows keep whatever nav
+    /// target they had before (`None` if brand new) until the next call,
+    /// once they've had a chance to register — the same
+    /// "transiently-wrong-then-self-heals" contract `refresh_tree_row_meta`
+    /// already relies on, just triggered by a different condition.
+    pub(crate) fn refresh_row_nav(this: &mut WidgetMut<'_, Self>, active_start: usize) {
+        let ids: Vec<WidgetId> = {
+            let vs = Self::virtual_scroll_mut(this);
+            vs.widget.children_ids().iter().copied().collect()
+        };
+        let previously_registered: HashSet<WidgetId> =
+            std::mem::replace(&mut this.widget.registered_row_ids, ids.clone())
+                .into_iter()
+                .collect();
+        let mut vs = Self::virtual_scroll_mut(this);
+        for k in 0..ids.len() {
+            let id = ids[k];
+            if !previously_registered.contains(&id) {
+                continue;
+            }
+            let up = k.checked_sub(1).and_then(|j| ids.get(j)).copied();
+            let down = ids.get(k + 1).copied();
+            let idx = active_start + k;
+            let mut row = VirtualScrollWidget::child_mut(&mut vs, idx);
+            let mut row = row.downcast::<RowClickable>();
+            RowClickable::set_nav(&mut row, up, down);
+        }
     }
 
     /// The tree metadata for the materialized row with id `id`, if tracked.
@@ -112,15 +174,14 @@ impl Widget for CollectionBodyWidget {
         if key.state != KeyState::Down {
             return;
         }
-        // Only Up/Down (always) and Left/Right (tree collections) navigate.
+        // Only Left/Right (tree collections) reach here — Up/Down are
+        // handled locally by the focused row itself
+        // (`RowClickable::on_text_event`), since `VirtualScroll`'s built-in
+        // arrow-key scrolling would otherwise intercept them before they got
+        // this far. See `row_click`'s module docs.
         if !matches!(
             &key.key,
-            Key::Named(
-                NamedKey::ArrowDown
-                    | NamedKey::ArrowUp
-                    | NamedKey::ArrowLeft
-                    | NamedKey::ArrowRight
-            )
+            Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowRight)
         ) {
             return;
         }
@@ -134,17 +195,10 @@ impl Widget for CollectionBodyWidget {
         let Some(pos) = row_ids.iter().position(|&id| id == focused) else {
             return;
         };
-        // Up/Down step by one materialized row; Left/Right do tree focus moves.
-        // Left/Right that don't apply here (a leaf's Right, a depth-0 Left, or a
-        // toggle already handled by the row) yield `None` and are left
-        // unhandled so nothing is swallowed.
+        // Left/Right do tree focus moves. A case that doesn't apply here (a
+        // leaf's Right, a depth-0 Left, or a toggle already handled by the
+        // row) yields `None` and is left unhandled so nothing is swallowed.
         let target: Option<WidgetId> = match &key.key {
-            Key::Named(NamedKey::ArrowDown) => {
-                pos.checked_add(1).and_then(|i| row_ids.get(i)).copied()
-            }
-            Key::Named(NamedKey::ArrowUp) => {
-                pos.checked_sub(1).and_then(|i| row_ids.get(i)).copied()
-            }
             Key::Named(NamedKey::ArrowRight) => self.tree_first_child(focused, &row_ids, pos),
             Key::Named(NamedKey::ArrowLeft) => self.tree_parent(focused),
             _ => None,
@@ -205,7 +259,8 @@ mod tests {
     use masonry::widgets::Label;
     use xilem::masonry::widgets::{VirtualScroll, VirtualScrollAction};
 
-    use super::{CollectionBodyWidget, TreeRowMeta};
+    use super::{CollectionBodyWidget, RowClickable, TreeRowMeta};
+    use crate::Theme;
 
     /// Builds a [`TextEvent`] for a `Down`-state press of the given named key.
     fn arrow_key(named: NamedKey) -> TextEvent {
@@ -217,8 +272,8 @@ mod tests {
     /// is_expanded)` in ascending-index (materialized) order.
     fn set_tree(
         harness: &mut TestHarness<CollectionBodyWidget>,
-        rows: &HashMap<i64, WidgetId>,
-        layout: &[(i64, u16, bool, bool)],
+        rows: &HashMap<usize, WidgetId>,
+        layout: &[(usize, u16, bool, bool)],
     ) {
         let meta: Vec<(WidgetId, TreeRowMeta)> = layout
             .iter()
@@ -244,7 +299,7 @@ mod tests {
     //   2    Child A2   depth 1, expanded parent
     //   3      GC A2a   depth 2, leaf
     //   4  Parent B     depth 0, collapsed
-    const TREE: &[(i64, u16, bool, bool)] = &[
+    const TREE: &[(usize, u16, bool, bool)] = &[
         (0, 0, true, true),
         (1, 1, false, false),
         (2, 1, true, true),
@@ -257,7 +312,7 @@ mod tests {
     /// recording its [`WidgetId`] keyed by row index.
     fn drive_to_fixpoint(
         harness: &mut TestHarness<CollectionBodyWidget>,
-        rows: &mut HashMap<i64, WidgetId>,
+        rows: &mut HashMap<usize, WidgetId>,
     ) {
         let mut iteration = 0;
         loop {
@@ -266,17 +321,20 @@ mod tests {
             let Some((action, _id)) = harness.pop_action::<VirtualScrollAction>() else {
                 break;
             };
+            let VirtualScrollAction::Fetch(action) = action else {
+                continue;
+            };
             harness.edit_root_widget(|mut body| {
                 let mut scroll = CollectionBodyWidget::virtual_scroll_mut(&mut body);
                 VirtualScroll::will_handle_action(&mut scroll, &action);
-                for idx in action.old_active.clone() {
-                    if !action.target.contains(&idx) {
+                for idx in action.old_active().clone() {
+                    if !action.target().contains(&idx) {
                         VirtualScroll::remove_child(&mut scroll, idx);
                         rows.remove(&idx);
                     }
                 }
-                for idx in action.target.clone() {
-                    if !action.old_active.contains(&idx) {
+                for idx in action.target().clone() {
+                    if !action.old_active().contains(&idx) {
                         let row = NewWidget::new(Label::new(format!("row {idx}"))).erased();
                         let row_id = row.id();
                         VirtualScroll::add_child(&mut scroll, idx, row);
@@ -292,9 +350,9 @@ mod tests {
     fn harness_with_rows() -> (
         TestHarness<CollectionBodyWidget>,
         WidgetId,
-        HashMap<i64, WidgetId>,
+        HashMap<usize, WidgetId>,
     ) {
-        let scroll = NewWidget::new(VirtualScroll::new(0).with_valid_range(0..100));
+        let scroll = NewWidget::new(VirtualScroll::new(0, 100));
         let body = NewWidget::new(CollectionBodyWidget::new(scroll));
         let mut harness = TestHarness::create_with_size(default_property_set(), body, (200, 400));
         let scroll_id = harness
@@ -304,56 +362,164 @@ mod tests {
         (harness, scroll_id, rows)
     }
 
+    /// Like `drive_to_fixpoint`/`harness_with_rows` above, but materializes each
+    /// row as a `RowClickable` (wrapping a `Label`) instead of a bare `Label` —
+    /// needed to exercise `refresh_row_nav`, which pushes targets into
+    /// `RowClickable` specifically.
+    fn drive_to_fixpoint_clickable(
+        harness: &mut TestHarness<CollectionBodyWidget>,
+        rows: &mut HashMap<usize, WidgetId>,
+    ) {
+        let mut iteration = 0;
+        loop {
+            iteration += 1;
+            assert!(iteration <= 1000, "Took too long to reach fixpoint");
+            let Some((action, _id)) = harness.pop_action::<VirtualScrollAction>() else {
+                break;
+            };
+            let VirtualScrollAction::Fetch(action) = action else {
+                continue;
+            };
+            harness.edit_root_widget(|mut body| {
+                let mut scroll = CollectionBodyWidget::virtual_scroll_mut(&mut body);
+                VirtualScroll::will_handle_action(&mut scroll, &action);
+                for idx in action.old_active().clone() {
+                    if !action.target().contains(&idx) {
+                        VirtualScroll::remove_child(&mut scroll, idx);
+                        rows.remove(&idx);
+                    }
+                }
+                for idx in action.target().clone() {
+                    if !action.old_active().contains(&idx) {
+                        let row = NewWidget::new(RowClickable::new(
+                            NewWidget::new(Label::new(format!("row {idx}"))),
+                            false,
+                            &Theme::default(),
+                            None,
+                            false,
+                            None,
+                        ))
+                        .erased();
+                        let row_id = row.id();
+                        VirtualScroll::add_child(&mut scroll, idx, row);
+                        rows.insert(idx, row_id);
+                    }
+                }
+            });
+        }
+    }
+
+    /// Builds a body of materialized `RowClickable` rows and returns the
+    /// harness and a map from row index to row id.
+    fn harness_with_clickable_rows() -> (TestHarness<CollectionBodyWidget>, HashMap<usize, WidgetId>)
+    {
+        let scroll = NewWidget::new(VirtualScroll::new(0, 100));
+        let body = NewWidget::new(CollectionBodyWidget::new(scroll));
+        let mut harness = TestHarness::create_with_size(default_property_set(), body, (200, 400));
+        let mut rows = HashMap::new();
+        drive_to_fixpoint_clickable(&mut harness, &mut rows);
+        (harness, rows)
+    }
+
+    /// The core of the fix: after `refresh_row_nav`, pressing `ArrowDown` on a
+    /// materialized row moves focus to the next materialized row.
+    ///
+    /// `refresh_row_nav` is called twice: the first call only primes the
+    /// registered-rows cache (these rows were `add_child`-ed by
+    /// `harness_with_clickable_rows`, so they're not yet known-registered
+    /// from *this* function's perspective — see its doc), the second
+    /// actually sets nav targets now that they're confirmed registered.
     #[test]
-    fn arrow_down_moves_focus_to_next_row() {
-        let (mut harness, _scroll, ids) = harness_with_rows();
-        let first = ids[&0];
-        let second = ids[&1];
+    fn refresh_row_nav_lets_arrow_down_move_focus_between_materialized_rows() {
+        let (mut harness, rows) = harness_with_clickable_rows();
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
+
+        let first = rows[&0];
+        let second = rows[&1];
         harness.focus_on(Some(first));
         let handled = harness.process_text_event(arrow_key(NamedKey::ArrowDown));
         assert!(handled.is_handled());
         assert_eq!(harness.focused_widget_id(), Some(second));
     }
 
+    /// ...and `ArrowUp` moves it back.
     #[test]
-    fn arrow_up_moves_focus_to_previous_row() {
-        let (mut harness, _scroll, ids) = harness_with_rows();
-        let first = ids[&0];
-        let second = ids[&1];
+    fn refresh_row_nav_lets_arrow_up_move_focus_between_materialized_rows() {
+        let (mut harness, rows) = harness_with_clickable_rows();
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
+
+        let first = rows[&0];
+        let second = rows[&1];
         harness.focus_on(Some(second));
         let handled = harness.process_text_event(arrow_key(NamedKey::ArrowUp));
         assert!(handled.is_handled());
         assert_eq!(harness.focused_widget_id(), Some(first));
     }
 
+    /// Reproduces #175's regression crash: `refresh_row_nav` must not touch a
+    /// row `VirtualScroll::add_child`-ed in the *same* pass. Masonry only
+    /// registers a freshly added child with its mutate arena in the update
+    /// pass that runs *after* the current rebuild returns, so calling
+    /// `VirtualScrollWidget::child_mut` on one immediately (as
+    /// `body_view::CollectionBodyView::rebuild` used to, by calling
+    /// `refresh_row_nav` right after materializing new rows) panicked with
+    /// `"get_mut: child not found"`. This drives `add_child` and
+    /// `refresh_row_nav` inside a single `edit_root_widget` call, exactly
+    /// mirroring `rebuild`'s ordering, and asserts it doesn't panic.
     #[test]
-    fn arrow_up_at_first_row_is_a_no_op() {
-        let (mut harness, _scroll, ids) = harness_with_rows();
-        let first = ids[&0];
-        harness.focus_on(Some(first));
-        let handled = harness.process_text_event(arrow_key(NamedKey::ArrowUp));
-        assert!(!handled.is_handled());
-        assert_eq!(harness.focused_widget_id(), Some(first));
+    fn refresh_row_nav_does_not_touch_a_row_added_in_the_same_pass() {
+        let scroll = NewWidget::new(VirtualScroll::new(0, 100));
+        let body = NewWidget::new(CollectionBodyWidget::new(scroll));
+        let mut harness = TestHarness::create_with_size(default_property_set(), body, (200, 400));
+
+        let (action, _id) = harness
+            .pop_action::<VirtualScrollAction>()
+            .expect("initial layout requests the first materialized range");
+        let VirtualScrollAction::Fetch(action) = action else {
+            panic!("expected a Fetch action");
+        };
+
+        harness.edit_root_widget(|mut body| {
+            {
+                let mut scroll = CollectionBodyWidget::virtual_scroll_mut(&mut body);
+                VirtualScroll::will_handle_action(&mut scroll, &action);
+                for idx in action.target().clone() {
+                    let row = NewWidget::new(RowClickable::new(
+                        NewWidget::new(Label::new(format!("row {idx}"))),
+                        false,
+                        &Theme::default(),
+                        None,
+                        false,
+                        None,
+                    ))
+                    .erased();
+                    VirtualScroll::add_child(&mut scroll, idx, row);
+                }
+            }
+            // Must not panic: these rows were just add_child-ed above, in
+            // this same pass, so they aren't registered with masonry's
+            // mutate arena yet.
+            CollectionBodyWidget::refresh_row_nav(&mut body, action.target().start);
+        });
     }
 
+    /// Unlike a focused row (which now intercepts Up/Down before
+    /// `VirtualScroll` ever sees them — see `row_click::tests`), nothing
+    /// pre-empts `VirtualScroll` when it is itself the focus target, so its
+    /// own built-in scroll-by-arrow-key handling claims the event. This is
+    /// masonry's native behavior for a directly-focused scroll area, not a
+    /// bug — rows always take focus in practice (`RowClickable::accepts_focus`
+    /// is `true` and it calls `ctx.request_focus()` on press), so this is an
+    /// edge case, not the common path.
     #[test]
-    fn arrow_down_at_last_materialized_row_is_a_no_op() {
-        let (mut harness, _scroll, ids) = harness_with_rows();
-        let last_idx = ids.keys().copied().max().expect("at least one row");
-        let last = ids[&last_idx];
-        harness.focus_on(Some(last));
-        let handled = harness.process_text_event(arrow_key(NamedKey::ArrowDown));
-        assert!(!handled.is_handled());
-        assert_eq!(harness.focused_widget_id(), Some(last));
-    }
-
-    #[test]
-    fn arrow_keys_on_non_row_focus_are_unhandled() {
+    fn arrow_down_on_non_row_focus_is_handled_by_virtual_scrolls_native_scrolling() {
         let (mut harness, scroll, _rows) = harness_with_rows();
         // Focus the VirtualScroll itself (not one of its row children).
         harness.focus_on(Some(scroll));
         let handled = harness.process_text_event(arrow_key(NamedKey::ArrowDown));
-        assert!(!handled.is_handled());
+        assert!(handled.is_handled());
         assert_eq!(harness.focused_widget_id(), Some(scroll));
     }
 

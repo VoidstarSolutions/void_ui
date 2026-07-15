@@ -19,7 +19,7 @@ use super::body::CollectionBodyWidget;
 use super::row_click::{LeadingHitZone, RowClickAction, TreeRowMeta, clickable_row};
 use super::{
     IdSource, ItemsFn, OnActivate, ScrollState, SelectionLens, apply_row_activate, apply_row_click,
-    clamp_scroll_index, nearing_end, scroll_idx_to_slice, scroll_range_end,
+    clamp_scroll_index, nearing_end, scroll_range_end,
 };
 use crate::Theme;
 
@@ -139,7 +139,7 @@ where
     // widget across positions.
     let defers_to_children = true;
 
-    let child = virtual_scroll(0..valid_range_end, {
+    let child = virtual_scroll(valid_range_end, {
         let items = Arc::clone(&items);
         let id_source = id_source.clone();
         let selection_lens = selection_lens.clone();
@@ -148,9 +148,7 @@ where
         let on_activate = on_activate.clone();
         let tree_meta = tree_meta.clone();
         let on_toggle = on_toggle.clone();
-        move |state: &mut State, idx: i64| {
-            let pos = scroll_idx_to_slice(idx);
-
+        move |state: &mut State, pos: usize| {
             let data = (*items)(state);
             let id_at_pos = data.get(pos).map(|item| id_source.id_of(pos, item));
             let is_selected = match (selection_lens.as_ref(), id_at_pos) {
@@ -261,7 +259,7 @@ struct CollectionBodyView<V, State, Action> {
 fn refresh_tree_row_meta<State>(
     element: &mut Mut<'_, Pod<CollectionBodyWidget>>,
     depth_at: &DepthAtFn<State>,
-    active_start: i64,
+    active_start: usize,
     app_state: &State,
 ) {
     use masonry::core::Widget as _;
@@ -273,7 +271,7 @@ fn refresh_tree_row_meta<State>(
         .iter()
         .enumerate()
         .filter_map(|(k, &id)| {
-            let pos = usize::try_from(active_start + i64::try_from(k).ok()?).ok()?;
+            let pos = active_start.checked_add(k)?;
             depth_at(app_state, pos).map(|m| (id, m))
         })
         .collect();
@@ -286,7 +284,7 @@ struct CollectionBodyViewState<S> {
     /// Latest active (materialized) index range, captured from the child's
     /// `VirtualScrollAction` in `message` and consumed by the *next* `rebuild`
     /// (once materialization has caught up) to refresh the tree depth map.
-    active_range: std::ops::Range<i64>,
+    active_range: std::ops::Range<usize>,
 }
 
 impl<V, State, Action> ViewMarker for CollectionBodyView<V, State, Action> {}
@@ -324,7 +322,7 @@ where
             view_state.applied_generation = self.scroll.generation();
             if let Some(idx) = clamp_scroll_index(self.scroll.index(), self.item_count) {
                 let mut vs = CollectionBodyWidget::virtual_scroll_mut(&mut element);
-                VirtualScrollWidget::overwrite_anchor(&mut vs, idx);
+                VirtualScrollWidget::scroll_to(&mut vs, idx);
             }
         }
         {
@@ -332,6 +330,10 @@ where
             self.child
                 .rebuild(&prev.child, &mut view_state.child_state, ctx, vs, app_state);
         }
+        // Materialization has now caught up, so refresh each row's Up/Down
+        // nav targets — every collection needs this, not just tree ones
+        // (see `refresh_tree_row_meta` just below for the tree-only case).
+        CollectionBodyWidget::refresh_row_nav(&mut element, view_state.active_range.start);
         // Materialization has now caught up, so refresh the tree depth map for
         // Left/Right nav — read from `app_state`, never from live row widgets.
         if let Some(depth_at) = self.depth_at.as_ref() {
@@ -365,20 +367,26 @@ where
         // maybe_take_message debug-asserts the path is empty, so probing
         // mid-route would panic.
         let mut lazy_action: Option<Action> = None;
-        let mut tree_active: Option<std::ops::Range<i64>> = None;
-        if message.remaining_path().is_empty() && (self.lazy.is_some() || self.depth_at.is_some()) {
+        let mut active_range_update: Option<std::ops::Range<usize>> = None;
+        if message.remaining_path().is_empty() {
             // Peek without consuming (`false`): the `VirtualScrollAction`
             // still routes onward to the child so virtualization handles it.
             message.maybe_take_message::<VirtualScrollAction>(|action| {
-                if let Some(lazy) = self.lazy.as_ref()
-                    && nearing_end(self.item_count, action.target.end, lazy.threshold)
-                {
-                    lazy_action = Some((lazy.callback)(app_state));
-                }
-                // Capture the new active range so we can refresh the tree depth
-                // map once the child has materialized it (below).
-                if self.depth_at.is_some() {
-                    tree_active = Some(action.target.clone());
+                // Only the `Fetch` variant carries a materialized-range change;
+                // `Scroll` (viewport movement within the already-materialized
+                // window) doesn't affect lazy-load, the tree depth map, or
+                // row nav targets.
+                if let VirtualScrollAction::Fetch(fetch) = action {
+                    if let Some(lazy) = self.lazy.as_ref()
+                        && nearing_end(self.item_count, fetch.target().end, lazy.threshold)
+                    {
+                        lazy_action = Some((lazy.callback)(app_state));
+                    }
+                    // Capture the new active range so we can refresh the tree
+                    // depth map and row nav targets once the child has
+                    // materialized it (below) — every collection needs the
+                    // latter, not just tree ones.
+                    active_range_update = Some(fetch.target().clone());
                 }
                 false
             });
@@ -387,10 +395,11 @@ where
         let child_result = self
             .child
             .message(&mut view_state.child_state, message, vs, app_state);
-        // Materialization for `tree_active` is deferred to the next rebuild, so
-        // just remember the range; that rebuild refreshes the tree depth map
-        // once the rows are actually present (reading here would panic).
-        if let Some(active) = tree_active {
+        // Materialization for `active_range_update` is deferred to the next
+        // rebuild, so just remember the range; that rebuild refreshes the
+        // tree depth map and row nav once the rows are actually present
+        // (reading here would panic).
+        if let Some(active) = active_range_update {
             view_state.active_range = active;
         }
         match lazy_action {
@@ -420,7 +429,7 @@ mod tests {
     /// by row index. Mirrors `collection::body`'s test driver.
     fn drive_to_fixpoint(
         harness: &mut TestHarness<CollectionBodyWidget>,
-        rows: &mut HashMap<i64, WidgetId>,
+        rows: &mut HashMap<usize, WidgetId>,
     ) {
         let mut iteration = 0;
         loop {
@@ -429,17 +438,20 @@ mod tests {
             let Some((action, _id)) = harness.pop_action::<VirtualScrollAction>() else {
                 break;
             };
+            let VirtualScrollAction::Fetch(action) = action else {
+                continue;
+            };
             harness.edit_root_widget(|mut body| {
                 let mut scroll = CollectionBodyWidget::virtual_scroll_mut(&mut body);
                 VirtualScroll::will_handle_action(&mut scroll, &action);
-                for idx in action.old_active.clone() {
-                    if !action.target.contains(&idx) {
+                for idx in action.old_active().clone() {
+                    if !action.target().contains(&idx) {
                         VirtualScroll::remove_child(&mut scroll, idx);
                         rows.remove(&idx);
                     }
                 }
-                for idx in action.target.clone() {
-                    if !action.old_active.contains(&idx) {
+                for idx in action.target().clone() {
+                    if !action.old_active().contains(&idx) {
                         let row = NewWidget::new(Label::new(format!("row {idx}"))).erased();
                         let row_id = row.id();
                         VirtualScroll::add_child(&mut scroll, idx, row);
@@ -451,19 +463,17 @@ mod tests {
     }
 
     /// The substrate's scroll-to mechanism: `collection_body`'s `rebuild`
-    /// re-anchors the inner `VirtualScroll` via
-    /// [`VirtualScroll::overwrite_anchor`] with the clamped index whenever
-    /// the `ScrollState` generation changes. This exercises that exact call
-    /// at the widget level (the `rebuild` path drives it identically) and
-    /// asserts the materialized window moves to include the requested row.
+    /// re-anchors the inner `VirtualScroll` via [`VirtualScroll::scroll_to`]
+    /// with the clamped index whenever the `ScrollState` generation changes.
+    /// This exercises that exact call at the widget level (the `rebuild`
+    /// path drives it identically) and asserts the materialized window moves
+    /// to include the requested row.
     #[test]
-    fn overwrite_anchor_moves_the_materialized_window_to_the_target() {
+    fn scroll_to_moves_the_materialized_window_to_the_target() {
         const ITEM_COUNT: u64 = 1000;
         const TARGET: u64 = 900;
 
-        let scroll = NewWidget::new(
-            VirtualScroll::new(0).with_valid_range(0..i64::try_from(ITEM_COUNT).unwrap()),
-        );
+        let scroll = NewWidget::new(VirtualScroll::new(0, usize::try_from(ITEM_COUNT).unwrap()));
         let body = NewWidget::new(CollectionBodyWidget::new(scroll));
         let mut harness = TestHarness::create_with_size(default_property_set(), body, (200, 400));
         let mut rows = HashMap::new();
@@ -472,7 +482,7 @@ mod tests {
         // Initially anchored at row 0; the target near the end is well
         // outside the first materialized window.
         assert!(
-            !rows.contains_key(&i64::try_from(TARGET).unwrap()),
+            !rows.contains_key(&usize::try_from(TARGET).unwrap()),
             "row {TARGET} should be outside the initial window, got {:?}",
             rows.keys().copied().collect::<Vec<_>>()
         );
@@ -482,12 +492,12 @@ mod tests {
         let idx = clamp_scroll_index(TARGET, ITEM_COUNT).expect("non-empty grid");
         harness.edit_root_widget(|mut body| {
             let mut vs = CollectionBodyWidget::virtual_scroll_mut(&mut body);
-            VirtualScroll::overwrite_anchor(&mut vs, idx);
+            VirtualScroll::scroll_to(&mut vs, idx);
         });
         drive_to_fixpoint(&mut harness, &mut rows);
 
         assert!(
-            rows.contains_key(&i64::try_from(TARGET).unwrap()),
+            rows.contains_key(&usize::try_from(TARGET).unwrap()),
             "expected materialized window to include row {TARGET} after re-anchor, got {:?}",
             rows.keys().copied().collect::<Vec<_>>()
         );

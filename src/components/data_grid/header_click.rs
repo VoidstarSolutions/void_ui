@@ -153,7 +153,7 @@ impl Widget for HeaderClickable {
         // before the child label (parent paints first), so the title
         // and sort arrow render on top.
         if ctx.is_hovered() && self.hover_bg.components[3] > 0.0 {
-            let rect = Rect::from_origin_size(Point::ORIGIN, ctx.border_box_size());
+            let rect = Rect::from_origin_size(Point::ORIGIN, ctx.border_box().size());
             painter.fill(rect, self.hover_bg).draw();
         }
     }

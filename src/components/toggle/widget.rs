@@ -339,7 +339,7 @@ impl Widget for ToggleWidget {
         _props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
-        let size = ctx.border_box_size();
+        let size = ctx.border_box().size();
         let InteractionState {
             hovered,
             pressed,

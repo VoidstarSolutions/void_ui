@@ -43,7 +43,7 @@ pub(crate) trait PortalCtx {
     /// The current widget's id (`ctx.widget_id()`).
     fn host_widget_id(&self) -> WidgetId;
     /// The current widget's border box in window coordinates —
-    /// `Rect::from_origin_size(ctx.to_window(Point::ORIGIN), ctx.border_box_size())`.
+    /// `Rect::from_origin_size(ctx.to_window(Point::ORIGIN), ctx.border_box().size())`.
     fn host_anchor_rect_window(&self) -> Rect;
     /// `ctx.mutate_later(target, f)`.
     fn queue_mutate(
@@ -69,7 +69,7 @@ macro_rules! impl_portal_ctx {
             }
 
             fn host_anchor_rect_window(&self) -> Rect {
-                Rect::from_origin_size(self.to_window(Point::ORIGIN), self.border_box_size())
+                Rect::from_origin_size(self.to_window(Point::ORIGIN), self.border_box().size())
             }
 
             fn queue_mutate(

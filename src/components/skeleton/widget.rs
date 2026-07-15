@@ -177,7 +177,7 @@ impl Widget for SkeletonWidget {
         _props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
-        let size = ctx.border_box_size();
+        let size = ctx.border_box().size();
         let radius = if self.circle {
             size.min_side() / 2.0
         } else {
