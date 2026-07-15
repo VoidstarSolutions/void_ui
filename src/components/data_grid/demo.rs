@@ -1628,7 +1628,8 @@ fn build_tree_inner(theme: &Theme, demo: &TreeDemo) -> impl WidgetView<TreeDemo>
     let columns = vec![
         text_column::<TreeRow, TreeDemo, _>("Name", 300.0, CellAlign::Start, |r: &TreeRow| {
             r.name.clone()
-        }),
+        })
+        .flex(1.0),
         text_column::<TreeRow, TreeDemo, _>(
             "Market Value",
             140.0,
