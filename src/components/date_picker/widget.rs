@@ -1029,36 +1029,6 @@ impl Widget for ThemedDatePickerWidget {
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
 
-    // The `ctx.set_focus(grid_id)` call in the `Toggle` arm below (the
-    // task-1-brief.md Step 7 mechanism for moving real keyboard focus onto
-    // the Portal-mode calendar grid when it opens) does not currently work,
-    // confirmed by `opening_portal_mode_picker_moves_real_focus_to_the_grid`
-    // failing with `left: None, right: Some(grid_id)`. Root cause, traced
-    // through masonry's pass system (masonry_core `src/app/render_root.rs`
-    // `run_rewrite_passes` and `src/passes/update.rs`
-    // `run_update_focus_pass`): `self.open_menu(ctx)` → `PortalBinding::open`
-    // → `ctx.queue_mutate(scope_id, ...)` only flips `PortalSlot`'s
-    // `child.visible = true` data flag; the actual un-stash
-    // (`ctx.set_stashed(child, false)`) happens inside `PortalSlot::layout`,
-    // which runs in `run_layout_pass` — *after* `run_update_focus_pass` in
-    // the same rewrite-pass loop iteration. So when `ctx.set_focus(grid_id)`
-    // (called during the action pass, before either of those) reaches
-    // `run_update_focus_pass`, `is_still_interactive(grid_id)` still sees
-    // the grid as stashed from the prior frame and clears
-    // `next_focused_widget` to `None` instead of leaving it
-    // `Some(grid_id)`. Nothing re-arms it in a later loop iteration once the
-    // grid actually un-stashes, so real focus lands on neither the grid nor
-    // the trigger — it goes to `None`. This is the flagged verification
-    // risk from the design spec — the mechanism (set_focus alongside open,
-    // not after the un-stash resolves) needs to change; see
-    // task-1-report.md for the full writeup.
-    #[allow(
-        clippy::too_many_lines,
-        reason = "already at the pedantic limit pre-Task-1; the grid_handle \
-                  focus check this task adds is a handful of unavoidable \
-                  lines for the interface this task introduces, not a sign \
-                  the function needs restructuring as part of this change"
-    )]
     fn on_action(
         &mut self,
         ctx: &mut ActionCtx<'_>,
@@ -1073,14 +1043,6 @@ impl Widget for ThemedDatePickerWidget {
                     self.open = desired;
                     if desired {
                         self.open_menu(ctx);
-                        // KNOWN-BROKEN — see the comment above `on_action`.
-                        if let Some(grid_id) = self
-                            .grid_handle
-                            .as_ref()
-                            .and_then(CalendarGridHandle::widget_id)
-                        {
-                            ctx.set_focus(grid_id);
-                        }
                     } else {
                         self.close_menu(ctx);
                     }
@@ -1193,6 +1155,27 @@ impl Widget for ThemedDatePickerWidget {
         if key.state != KeyState::Down {
             return;
         }
+        // Tab (no Shift): move real focus into the calendar in Portal mode,
+        // so Shift+Tab from there can reach the header row — native Tab
+        // search can't discover the calendar on its own (it's mounted in
+        // the scope's PortalSlot, always registered last for z-ordering;
+        // see the design spec's Context section). InTree mode doesn't need
+        // this: AnchoredOverlay already registers the calendar right after
+        // the trigger, so native Tab already works there today.
+        if key.key == Key::Named(NamedKey::Tab)
+            && !key.modifiers.shift()
+            && self.open
+            && let Hosting::Portal { .. } = &self.hosting
+            && let Some(grid_id) = self
+                .grid_handle
+                .as_ref()
+                .and_then(CalendarGridHandle::widget_id)
+        {
+            ctx.set_focus(grid_id);
+            ctx.set_handled();
+            return;
+        }
+
         // Escape: close the calendar (regardless of whether nav keys work).
         if matches!(&key.key, Key::Named(NamedKey::Escape)) {
             if !self.open {
@@ -1430,18 +1413,41 @@ mod tests {
     }
 
     #[test]
-    fn opening_portal_mode_picker_moves_real_focus_to_the_grid() {
-        let (h, trigger_id, grid_id) = open_portal_picker_for_test();
+    fn tab_after_opening_moves_real_focus_to_the_grid() {
+        let (mut h, _trigger_id, grid_id) = open_portal_picker_for_test();
+        // `_trigger_id` (from `DatePickerHandle`) identifies the outer
+        // composite `ThemedDatePickerWidget`, which does not itself accept
+        // focus — the click that opened the picker gave real focus to the
+        // inner `DatePickerTrigger` sub-widget instead (its own
+        // `ctx.request_focus()` in `on_pointer_event`), which has no handle
+        // exposed to this test module. So this asserts the behavioral claim
+        // directly — real focus did NOT jump onto the grid on open, and
+        // something real still holds it — rather than pinning to an id that
+        // was never the actual focus target.
+        let focused_after_open = h.focused_widget_id();
+        assert_ne!(
+            focused_after_open,
+            Some(grid_id),
+            "opening the picker should NOT auto-move focus onto the grid — the trigger keeps it until Tab is pressed"
+        );
+        assert_ne!(
+            focused_after_open, None,
+            "the trigger should hold real focus after the click that opened the picker"
+        );
+
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
+
         assert_eq!(
             h.focused_widget_id(),
             Some(grid_id),
-            "opening the picker should move real focus onto the calendar grid, not stay on {trigger_id:?}"
+            "Tab, pressed while the trigger holds focus and the calendar is open, should move real focus onto the grid"
         );
     }
 
     #[test]
     fn shift_tab_from_focused_grid_reaches_a_real_header_button() {
         let (mut h, _trigger_id, grid_id) = open_portal_picker_for_test();
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
         assert_eq!(h.focused_widget_id(), Some(grid_id));
 
         h.process_text_event(TextEvent::Keyboard(
@@ -1462,6 +1468,63 @@ mod tests {
         assert_ne!(
             after, None,
             "Shift+Tab should land on a real focusable widget, not nothing"
+        );
+    }
+
+    #[test]
+    fn tab_in_intree_mode_does_not_hit_the_portal_only_branch() {
+        use masonry::core::NewWidget;
+        use masonry::kurbo::Point;
+        use masonry::theme::default_property_set;
+        use xilem::view::PointerButton;
+
+        let theme = Theme::default();
+        let widget = ThemedDatePickerWidget::new(
+            None,
+            ArcStr::from("Pick a date"),
+            "%Y-%m-%d",
+            None,
+            None,
+            false,
+            false,
+            &theme,
+        );
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+
+        // `h.root_id()` is the outer composite `ThemedDatePickerWidget`,
+        // which does not itself accept focus (only the inner
+        // `DatePickerTrigger` sub-widget does) — `h.focus_on` on a
+        // non-accepting id doesn't give it real focus, so a real pointer
+        // press is used instead to match how focus actually gets set in
+        // practice. Deliberately press-only, no release: a full click (as
+        // `open_portal_picker_for_test` uses) completes
+        // `DatePickerTriggerAction::Toggle` and opens the calendar, which
+        // would make its header buttons legitimately reachable by native
+        // Tab (`AnchoredOverlay` un-stashes the overlay while visible) —
+        // correct InTree behavior, but not what this narrow test is
+        // checking. `ClickPhase::Down` alone already calls
+        // `ctx.request_focus()` without completing the click, so this
+        // gives the trigger real focus while leaving the picker closed.
+        h.mouse_move(Point::new(10.0, 10.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        let focused_after_press = h.focused_widget_id();
+        assert_ne!(
+            focused_after_press, None,
+            "pressing on the InTree trigger should give it real focus"
+        );
+
+        // No panic, no incorrect focus jump — the new Tab branch's `Hosting::Portal`
+        // guard should make this a no-op here, falling through to whatever
+        // InTree's existing (unchanged) on_text_event logic already does with Tab
+        // (nothing — Tab was never decoded there either, before or after this plan).
+        // The picker stays closed throughout (no release was ever sent), so
+        // there's no open calendar for native Tab to legitimately reach into.
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
+
+        assert_eq!(
+            h.focused_widget_id(),
+            focused_after_press,
+            "Tab in InTree mode must not be intercepted by the new Portal-only branch"
         );
     }
 }
