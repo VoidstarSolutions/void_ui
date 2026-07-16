@@ -29,11 +29,11 @@ use crate::components::date_picker::calendar_grid::{
     CalendarGridAction, CalendarGridWidget, CellDatum, cell_side,
 };
 use crate::components::date_picker::calendar_math::{
-    WEEKDAY_LABELS, add_months, day_grid, day_in_range, month_in_range, month_label, year_in_range,
-    year_page_of, years_in_page,
+    WEEKDAY_LABELS, add_months, day_grid, day_grid_index_of, day_in_range, month_in_range,
+    month_label, year_in_range, year_page_of, years_in_page,
 };
 use crate::components::item_list::index_f64;
-use chrono::{Datelike, NaiveDate};
+use chrono::{Datelike, Duration, NaiveDate};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public types
@@ -285,6 +285,19 @@ fn scan_for_enabled(
         return Some(start);
     }
     nav_step_skip(start, direction, len, disabled)
+}
+
+/// Day-of-month step for arrow-key cross-month rollover. `None` for keys
+/// with no rollover semantics (Home/End, and anything else routed to
+/// `handle_nav_move`).
+fn day_offset_for(key: CalendarNavKey) -> Option<i64> {
+    match key {
+        CalendarNavKey::Left => Some(-1),
+        CalendarNavKey::Right => Some(1),
+        CalendarNavKey::Up => Some(-7),
+        CalendarNavKey::Down => Some(7),
+        _ => None,
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -566,6 +579,23 @@ impl CalendarBodyWidget {
             CalendarNavKey::Activate => return,
         };
 
+        if new_index.is_none()
+            && this.widget.nav.view_mode == ViewMode::Day
+            && let Some(offset) = day_offset_for(key)
+        {
+            if Self::try_cross_month(this, offset) {
+                return;
+            }
+            // Rollover was attempted (this arrow key has day-offset
+            // semantics) but no reachable cell exists in the adjacent
+            // month — e.g. it's entirely outside [min_date, max_date].
+            // Leave focus where it is instead of falling through to the
+            // generic handling below, which would otherwise clear it and
+            // reintroduce the "arrow key drops focus at the grid boundary"
+            // bug this task exists to fix.
+            return;
+        }
+
         let new_index = new_index.filter(|&i| i < len);
         if new_index == this.widget.focused_index {
             return;
@@ -573,6 +603,71 @@ impl CalendarBodyWidget {
         this.widget.focused_index = new_index;
         let mut grid = this.ctx.get_mut(&mut this.widget.grid);
         CalendarGridWidget::set_focused_index(&mut grid, new_index);
+    }
+
+    /// Rebuilds the Day-view grid for `(y, m)`, locates `target_date` in it,
+    /// and — if the target month is in range and an enabled cell is
+    /// reachable via [`scan_for_enabled`] from `direction` — commits the
+    /// new grid/nav state and lands focus there. Returns `true` on success;
+    /// `false` leaves `this` untouched (out-of-range month, target date not
+    /// found in the rebuilt grid, or no enabled cell reachable in
+    /// `direction`).
+    fn jump_to_date(
+        this: &mut WidgetMut<'_, Self>,
+        y: i32,
+        m: u32,
+        target_date: NaiveDate,
+        direction: isize,
+    ) -> bool {
+        if !month_in_range(y, m, this.widget.min_date, this.widget.max_date) {
+            return false;
+        }
+        let new_grid = day_grid(y, m);
+        let Some(target_index) = day_grid_index_of(&new_grid, target_date) else {
+            return false;
+        };
+        let new_disabled: Vec<bool> = new_grid
+            .iter()
+            .map(|&d| !day_in_range(d, this.widget.min_date, this.widget.max_date))
+            .collect();
+        let Some(landing) =
+            scan_for_enabled(target_index, direction, new_grid.len(), &new_disabled)
+        else {
+            return false;
+        };
+
+        this.widget.nav.current_year = y;
+        this.widget.nav.current_month = m;
+        this.widget.nav.year_page = year_page_of(y);
+        this.widget.nav.day_grid = new_grid;
+        this.widget.focused_index = Some(landing);
+        this.widget
+            .push_grid_and_headers(&mut this.ctx, Some(landing));
+        true
+    }
+
+    /// Attempts to roll Day-view keyboard focus across a month boundary
+    /// when [`Self::handle_nav_move`] finds no reachable cell in the
+    /// current grid. `day_offset` is the arrow key's day step (see
+    /// [`day_offset_for`]): its sign picks both the adjacent month
+    /// (backward for negative, forward for positive) and the fallback scan
+    /// direction. Returns `true` if focus moved.
+    fn try_cross_month(this: &mut WidgetMut<'_, Self>, day_offset: i64) -> bool {
+        let Some(current) = this.widget.focused_index else {
+            return false;
+        };
+        let Some(&reference) = this.widget.nav.day_grid.get(current) else {
+            return false;
+        };
+        let target_date = reference + Duration::days(day_offset);
+        let month_delta = if day_offset < 0 { -1 } else { 1 };
+        let direction: isize = if day_offset < 0 { -1 } else { 1 };
+        let (y, m) = add_months(
+            this.widget.nav.current_year,
+            this.widget.nav.current_month,
+            month_delta,
+        );
+        Self::jump_to_date(this, y, m, target_date, direction)
     }
 
     /// Handles Enter — activates the currently focused cell.
@@ -1135,5 +1230,163 @@ mod tests {
         // out of the `idx < len_isize` loop condition).
         let disabled = [false, false];
         assert_eq!(scan_for_enabled(2, 1, 2, &disabled), None);
+    }
+
+    // ── Cross-month arrow rollover ────────────────────────────────────────────
+
+    #[test]
+    fn rollover_left_crosses_into_previous_month() {
+        let theme = Theme::default();
+        let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
+        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+
+        h.edit_root_widget(|mut wm| {
+            wm.widget.focused_index = Some(0); // grid[0] == 2024-02-25
+            CalendarBodyWidget::handle_nav_key(&mut wm, CalendarNavKey::Left);
+        });
+
+        h.edit_root_widget(|wm| {
+            assert_eq!(wm.widget.nav.current_year, 2024);
+            assert_eq!(wm.widget.nav.current_month, 2);
+            let idx = wm
+                .widget
+                .focused_index
+                .expect("focus should land on a cell");
+            assert_eq!(
+                wm.widget.nav.day_grid[idx],
+                NaiveDate::from_ymd_opt(2024, 2, 24).unwrap()
+            );
+        });
+    }
+
+    #[test]
+    fn rollover_up_crosses_into_previous_month() {
+        let theme = Theme::default();
+        let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
+        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+
+        h.edit_root_widget(|mut wm| {
+            wm.widget.focused_index = Some(0); // grid[0] == 2024-02-25
+            CalendarBodyWidget::handle_nav_key(&mut wm, CalendarNavKey::Up);
+        });
+
+        h.edit_root_widget(|wm| {
+            assert_eq!(wm.widget.nav.current_year, 2024);
+            assert_eq!(wm.widget.nav.current_month, 2);
+            let idx = wm
+                .widget
+                .focused_index
+                .expect("focus should land on a cell");
+            assert_eq!(
+                wm.widget.nav.day_grid[idx],
+                NaiveDate::from_ymd_opt(2024, 2, 18).unwrap()
+            );
+        });
+    }
+
+    #[test]
+    fn rollover_right_crosses_into_next_month() {
+        let theme = Theme::default();
+        let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
+        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+
+        h.edit_root_widget(|mut wm| {
+            wm.widget.focused_index = Some(41); // grid[41] == 2024-04-06
+            CalendarBodyWidget::handle_nav_key(&mut wm, CalendarNavKey::Right);
+        });
+
+        h.edit_root_widget(|wm| {
+            assert_eq!(wm.widget.nav.current_year, 2024);
+            assert_eq!(wm.widget.nav.current_month, 4);
+            let idx = wm
+                .widget
+                .focused_index
+                .expect("focus should land on a cell");
+            assert_eq!(
+                wm.widget.nav.day_grid[idx],
+                NaiveDate::from_ymd_opt(2024, 4, 7).unwrap()
+            );
+        });
+    }
+
+    #[test]
+    fn rollover_down_crosses_into_next_month() {
+        let theme = Theme::default();
+        let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
+        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+
+        h.edit_root_widget(|mut wm| {
+            wm.widget.focused_index = Some(41); // grid[41] == 2024-04-06
+            CalendarBodyWidget::handle_nav_key(&mut wm, CalendarNavKey::Down);
+        });
+
+        h.edit_root_widget(|wm| {
+            assert_eq!(wm.widget.nav.current_year, 2024);
+            assert_eq!(wm.widget.nav.current_month, 4);
+            let idx = wm
+                .widget
+                .focused_index
+                .expect("focus should land on a cell");
+            assert_eq!(
+                wm.widget.nav.day_grid[idx],
+                NaiveDate::from_ymd_opt(2024, 4, 13).unwrap()
+            );
+        });
+    }
+
+    #[test]
+    fn rollover_dead_end_when_adjacent_month_fully_blocked() {
+        let theme = Theme::default();
+        let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
+        let max_date = NaiveDate::from_ymd_opt(2024, 3, 31).unwrap();
+        let widget = CalendarBodyWidget::new(Some(selected), None, Some(max_date), &theme);
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+
+        h.edit_root_widget(|mut wm| {
+            wm.widget.focused_index = Some(35); // grid[35] == 2024-03-31, last row
+            CalendarBodyWidget::handle_nav_key(&mut wm, CalendarNavKey::Down);
+        });
+
+        h.edit_root_widget(|wm| {
+            // April is entirely past max_date, so the whole month is blocked
+            // and the Down press must be a no-op.
+            assert_eq!(wm.widget.nav.current_year, 2024);
+            assert_eq!(wm.widget.nav.current_month, 3);
+            assert_eq!(wm.widget.focused_index, Some(35));
+        });
+    }
+
+    #[test]
+    fn rollover_skips_disabled_landing_cell_to_nearest_enabled() {
+        let theme = Theme::default();
+        let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
+        let min_date = NaiveDate::from_ymd_opt(2024, 4, 9).unwrap();
+        let widget = CalendarBodyWidget::new(Some(selected), Some(min_date), None, &theme);
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+
+        h.edit_root_widget(|mut wm| {
+            wm.widget.focused_index = Some(35); // grid[35] == 2024-03-31, last row
+            CalendarBodyWidget::handle_nav_key(&mut wm, CalendarNavKey::Down);
+        });
+
+        h.edit_root_widget(|wm| {
+            // Target is 2024-04-07 (31 + 7 days), but April 1-8 are disabled
+            // by min_date; the fallback scan (forward, same direction as
+            // Down) must land on the nearest enabled cell: 2024-04-09.
+            assert_eq!(wm.widget.nav.current_year, 2024);
+            assert_eq!(wm.widget.nav.current_month, 4);
+            let idx = wm
+                .widget
+                .focused_index
+                .expect("focus should land on a cell");
+            assert_eq!(
+                wm.widget.nav.day_grid[idx],
+                NaiveDate::from_ymd_opt(2024, 4, 9).unwrap()
+            );
+        });
     }
 }
