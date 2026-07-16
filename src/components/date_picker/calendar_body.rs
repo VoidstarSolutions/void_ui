@@ -271,6 +271,22 @@ fn nav_step_skip_from_before_start(step: isize, len: usize, disabled: &[bool]) -
     None
 }
 
+/// Returns `start` if it's non-disabled, otherwise walks `direction`
+/// (`+1` or `-1`) from `start` via [`nav_step_skip`]. `None` if no
+/// non-disabled cell exists in `[0, len)` from `start` onward in that
+/// direction, or if `start` is already out of bounds.
+fn scan_for_enabled(
+    start: usize,
+    direction: isize,
+    len: usize,
+    disabled: &[bool],
+) -> Option<usize> {
+    if start < len && !disabled[start] {
+        return Some(start);
+    }
+    nav_step_skip(start, direction, len, disabled)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared ctx abstraction (WidgetMut / ActionCtx)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -394,7 +410,7 @@ impl CalendarBodyWidget {
     /// Updates the selected date and refreshes the grid.
     pub(crate) fn set_selected(this: &mut WidgetMut<'_, Self>, selected: Option<NaiveDate>) {
         this.widget.selected = selected;
-        this.widget.push_grid_and_headers(&mut this.ctx);
+        this.widget.push_grid_and_headers(&mut this.ctx, None);
         this.ctx.request_layout();
         this.ctx.request_paint_only();
     }
@@ -407,7 +423,7 @@ impl CalendarBodyWidget {
     ) {
         this.widget.min_date = min;
         this.widget.max_date = max;
-        this.widget.push_grid_and_headers(&mut this.ctx);
+        this.widget.push_grid_and_headers(&mut this.ctx, None);
         this.ctx.request_layout();
         this.ctx.request_paint_only();
     }
@@ -856,7 +872,7 @@ impl CalendarBodyWidget {
             ViewMode::Month => unreachable!("guarded above"),
         }
         self.focused_index = None;
-        self.push_grid_and_headers(ctx);
+        self.push_grid_and_headers(ctx, None);
     }
 
     fn handle_next(&mut self, ctx: &mut ActionCtx<'_>) {
@@ -877,7 +893,7 @@ impl CalendarBodyWidget {
             ViewMode::Month => unreachable!("guarded above"),
         }
         self.focused_index = None;
-        self.push_grid_and_headers(ctx);
+        self.push_grid_and_headers(ctx, None);
     }
 
     fn handle_toggle_month(&mut self, ctx: &mut ActionCtx<'_>) {
@@ -888,7 +904,7 @@ impl CalendarBodyWidget {
             ViewMode::Day
         };
         self.focused_index = None;
-        self.push_grid_and_headers(ctx);
+        self.push_grid_and_headers(ctx, None);
         ctx.request_layout();
     }
 
@@ -899,7 +915,7 @@ impl CalendarBodyWidget {
             ViewMode::Year
         };
         self.focused_index = None;
-        self.push_grid_and_headers(ctx);
+        self.push_grid_and_headers(ctx, None);
         ctx.request_layout();
     }
 
@@ -908,7 +924,7 @@ impl CalendarBodyWidget {
     /// Generic over [`CalendarCtx`] so it runs from both the `ActionCtx`
     /// click path and the `MutateCtx` keyboard path (`Self::set_selected`,
     /// `Self::set_min_max`).
-    fn push_grid_and_headers(&self, ctx: &mut impl CalendarCtx) {
+    fn push_grid_and_headers(&self, ctx: &mut impl CalendarCtx, new_focused_index: Option<usize>) {
         let nav = &self.nav;
         let selected = self.selected;
         let today = self.today;
@@ -941,7 +957,7 @@ impl CalendarBodyWidget {
         ctx.queue_mutate(grid_id, move |mut w| {
             let mut g = w.downcast::<CalendarGridWidget>();
             CalendarGridWidget::set_data(&mut g, new_data, new_cols);
-            CalendarGridWidget::set_focused_index(&mut g, None);
+            CalendarGridWidget::set_focused_index(&mut g, new_focused_index);
         });
 
         // Header month label + disabled state.
@@ -1020,7 +1036,7 @@ impl CalendarBodyWidget {
         widget.nav.view_mode = ViewMode::Day;
         widget.nav.day_grid = day_grid(widget.nav.current_year, month);
         widget.focused_index = None;
-        widget.push_grid_and_headers(ctx);
+        widget.push_grid_and_headers(ctx, None);
         ctx.request_layout();
     }
 
@@ -1036,7 +1052,7 @@ impl CalendarBodyWidget {
         widget.nav.view_mode = ViewMode::Day;
         widget.nav.day_grid = day_grid(year, widget.nav.current_month);
         widget.focused_index = None;
-        widget.push_grid_and_headers(ctx);
+        widget.push_grid_and_headers(ctx, None);
         ctx.request_layout();
     }
 }
@@ -1084,5 +1100,40 @@ mod tests {
             matches!(&action, Some((CalendarBodyAction::DateSelected(d), _)) if *d == date),
             "expected DateSelected({date:?}), got {action:?}"
         );
+    }
+
+    // ── scan_for_enabled ──────────────────────────────────────────────────────
+
+    #[test]
+    fn scan_for_enabled_returns_start_when_already_enabled() {
+        let disabled = [false, true, true];
+        assert_eq!(scan_for_enabled(0, 1, 3, &disabled), Some(0));
+    }
+
+    #[test]
+    fn scan_for_enabled_skips_forward_past_disabled() {
+        let disabled = [true, true, false];
+        assert_eq!(scan_for_enabled(0, 1, 3, &disabled), Some(2));
+    }
+
+    #[test]
+    fn scan_for_enabled_skips_backward_past_disabled() {
+        let disabled = [false, true, true];
+        assert_eq!(scan_for_enabled(2, -1, 3, &disabled), Some(0));
+    }
+
+    #[test]
+    fn scan_for_enabled_none_when_all_disabled() {
+        let disabled = [true, true, true];
+        assert_eq!(scan_for_enabled(0, 1, 3, &disabled), None);
+    }
+
+    #[test]
+    fn scan_for_enabled_out_of_bounds_start_falls_through_to_skip() {
+        // start == len: not enabled (out of bounds), falls through to
+        // nav_step_skip which also immediately fails (idx == len is already
+        // out of the `idx < len_isize` loop condition).
+        let disabled = [false, false];
+        assert_eq!(scan_for_enabled(2, 1, 2, &disabled), None);
     }
 }
