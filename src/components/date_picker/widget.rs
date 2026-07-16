@@ -1491,20 +1491,41 @@ mod tests {
         );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
+        // Actually open the InTree picker via direct `WidgetMut`
+        // manipulation, so `self.open` is genuinely `true` when Tab is
+        // pressed below — the whole point of this test is to exercise the
+        // Tab branch's `Hosting::Portal` guard, which sits *behind* an
+        // `self.open` check in the match. If we never open the picker
+        // (as the original, buggy version of this test did — press-only,
+        // no release, so `self.open` stayed `false` throughout), the
+        // `self.open` check alone already short-circuits the whole guard
+        // and the `Hosting::Portal` clause is never evaluated, making the
+        // test pass identically whether or not that clause exists. This
+        // mirrors `open_menu`'s own `Hosting::InTree` branch (flip `open`,
+        // make the `AnchoredOverlay`'s overlay child visible) without going
+        // through a real click, so a subsequent press below doesn't need to
+        // *also* complete a `Toggle` action that would re-close it.
+        h.edit_root_widget(|mut wm| {
+            wm.widget.open = true;
+            let Hosting::InTree { overlay_host } = &mut wm.widget.hosting else {
+                panic!("expected InTree hosting");
+            };
+            let mut ov = wm.ctx.get_mut(overlay_host);
+            AnchoredOverlay::set_overlay_visible(&mut ov, true);
+        });
+
         // `h.root_id()` is the outer composite `ThemedDatePickerWidget`,
         // which does not itself accept focus (only the inner
         // `DatePickerTrigger` sub-widget does) — `h.focus_on` on a
         // non-accepting id doesn't give it real focus, so a real pointer
         // press is used instead to match how focus actually gets set in
-        // practice. Deliberately press-only, no release: a full click (as
-        // `open_portal_picker_for_test` uses) completes
-        // `DatePickerTriggerAction::Toggle` and opens the calendar, which
-        // would make its header buttons legitimately reachable by native
-        // Tab (`AnchoredOverlay` un-stashes the overlay while visible) —
-        // correct InTree behavior, but not what this narrow test is
-        // checking. `ClickPhase::Down` alone already calls
-        // `ctx.request_focus()` without completing the click, so this
-        // gives the trigger real focus while leaving the picker closed.
+        // practice. Deliberately press-only, no release: a full click
+        // completes `DatePickerTriggerAction::Toggle`, which would
+        // re-toggle (close) the picker we just opened above.
+        // `ClickPhase::Down` alone already calls `ctx.request_focus()`
+        // without completing the click, so this gives the trigger real
+        // focus while leaving `open` (and the now-visible overlay) as we
+        // set it.
         h.mouse_move(Point::new(10.0, 10.0));
         h.mouse_button_press(Some(PointerButton::Primary));
         let focused_after_press = h.focused_widget_id();
@@ -1513,18 +1534,30 @@ mod tests {
             "pressing on the InTree trigger should give it real focus"
         );
 
-        // No panic, no incorrect focus jump — the new Tab branch's `Hosting::Portal`
-        // guard should make this a no-op here, falling through to whatever
-        // InTree's existing (unchanged) on_text_event logic already does with Tab
-        // (nothing — Tab was never decoded there either, before or after this plan).
-        // The picker stays closed throughout (no release was ever sent), so
-        // there's no open calendar for native Tab to legitimately reach into.
+        // With the picker genuinely open, the Tab branch's `self.open` check
+        // now passes, so this is the first time the `Hosting::Portal` guard
+        // is actually evaluated — and it should fail (`InTree`, not
+        // `Portal`), letting the event fall through to whatever InTree's
+        // existing (unchanged) on_text_event logic does with Tab (nothing —
+        // it was never decoded there either, before or after this plan) and
+        // then on to native Tab traversal, which — because `AnchoredOverlay`
+        // registers the now-visible calendar right after the trigger — can
+        // discover it on its own.
         h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
 
-        assert_eq!(
-            h.focused_widget_id(),
-            focused_after_press,
-            "Tab in InTree mode must not be intercepted by the new Portal-only branch"
+        let focused_after_tab = h.focused_widget_id();
+        assert_ne!(
+            focused_after_tab, None,
+            "Tab must not leave focus in an invalid state; if the Portal-only branch had \
+             incorrectly fired here, ctx.set_handled() would have blocked native Tab search \
+             from running at all"
+        );
+        assert_ne!(
+            focused_after_tab, focused_after_press,
+            "Tab, with the InTree picker genuinely open, should move real focus off the \
+             trigger and into the open calendar content via native Tab traversal — proving \
+             the new Portal-only branch's Hosting::Portal guard correctly did not intercept \
+             it here"
         );
     }
 }
