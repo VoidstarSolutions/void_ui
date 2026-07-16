@@ -11,10 +11,11 @@
 //! the user picks a day cell.
 
 use masonry::accesskit::{Node, Role};
+use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
-    AccessCtx, ActionCtx, ArcStr, ChildrenIds, ErasedAction, LayoutCtx, MeasureCtx, MutateCtx,
-    NewWidget, PaintCtx, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty, Update,
-    UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, ActionCtx, ArcStr, ChildrenIds, ErasedAction, EventCtx, LayoutCtx, MeasureCtx,
+    MutateCtx, NewWidget, PaintCtx, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty,
+    TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, RoundedRect, Size, Stroke};
@@ -353,7 +354,7 @@ macro_rules! impl_calendar_ctx {
     )+};
 }
 
-impl_calendar_ctx!(ActionCtx<'_>, MutateCtx<'_>);
+impl_calendar_ctx!(ActionCtx<'_>, MutateCtx<'_>, EventCtx<'_>);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constructor
@@ -504,18 +505,28 @@ impl CalendarBodyWidget {
     /// step back/forward one month; Shift+PageUp/PageDown step back/forward one
     /// year. Enter activates the focused cell (same logic as clicking it).
     pub(crate) fn handle_nav_key(this: &mut WidgetMut<'_, Self>, key: CalendarNavKey) {
+        Self::handle_nav_key_impl(this.widget, &mut this.ctx, key);
+    }
+
+    /// Shared body of [`Self::handle_nav_key`] (the `WidgetMut`-based entry
+    /// point used by `InTree` mode's `mutate_later` dispatch and the whole
+    /// existing keyboard-nav test suite) and `on_text_event` (the new
+    /// `EventCtx`-based entry point used once the grid holds real focus in
+    /// Portal mode). Generic over [`CalendarCtx`] so both callers work
+    /// unchanged.
+    fn handle_nav_key_impl(widget: &mut Self, ctx: &mut impl CalendarCtx, key: CalendarNavKey) {
         match key {
             CalendarNavKey::PrevMonth
             | CalendarNavKey::NextMonth
             | CalendarNavKey::PrevYear
-            | CalendarNavKey::NextYear => Self::handle_nav_page(this, key),
+            | CalendarNavKey::NextYear => Self::handle_nav_page(widget, ctx, key),
             CalendarNavKey::Activate => {
-                let disabled = Self::build_disabled_flags(this);
-                Self::handle_nav_activate(this, &disabled);
+                let disabled = Self::build_disabled_flags(widget);
+                Self::handle_nav_activate(widget, ctx, &disabled);
             }
             _ => {
-                let disabled = Self::build_disabled_flags(this);
-                Self::handle_nav_move(this, key, &disabled);
+                let disabled = Self::build_disabled_flags(widget);
+                Self::handle_nav_move(widget, ctx, key, &disabled);
             }
         }
     }
@@ -523,28 +534,28 @@ impl CalendarBodyWidget {
     /// Builds a flat `disabled` flag array from the current nav state, mirroring
     /// how [`build_day_cells`] / [`build_month_cells`] / [`build_year_cells`]
     /// compute the disabled flag, without borrowing into the child grid widget.
-    fn build_disabled_flags(this: &WidgetMut<'_, Self>) -> Vec<bool> {
-        match this.widget.nav.view_mode {
+    fn build_disabled_flags(widget: &Self) -> Vec<bool> {
+        match widget.nav.view_mode {
             ViewMode::Day => {
-                let dg = this.widget.nav.day_grid;
-                let min_date = this.widget.min_date;
-                let max_date = this.widget.max_date;
+                let dg = widget.nav.day_grid;
+                let min_date = widget.min_date;
+                let max_date = widget.max_date;
                 dg.iter()
                     .map(|&date| !day_in_range(date, min_date, max_date))
                     .collect()
             }
             ViewMode::Month => {
-                let year = this.widget.nav.current_year;
-                let min_date = this.widget.min_date;
-                let max_date = this.widget.max_date;
+                let year = widget.nav.current_year;
+                let min_date = widget.min_date;
+                let max_date = widget.max_date;
                 (1u32..=12)
                     .map(|month| !month_in_range(year, month, min_date, max_date))
                     .collect()
             }
             ViewMode::Year => {
-                let year_page = this.widget.nav.year_page;
-                let min_date = this.widget.min_date;
-                let max_date = this.widget.max_date;
+                let year_page = widget.nav.year_page;
+                let min_date = widget.min_date;
+                let max_date = widget.max_date;
                 years_in_page(year_page)
                     .into_iter()
                     .map(|year| !year_in_range(year, min_date, max_date))
@@ -554,13 +565,18 @@ impl CalendarBodyWidget {
     }
 
     /// Handles arrow/Home/End movement within the grid.
-    fn handle_nav_move(this: &mut WidgetMut<'_, Self>, key: CalendarNavKey, disabled: &[bool]) {
-        let (cols, len) = match this.widget.nav.view_mode {
+    fn handle_nav_move(
+        widget: &mut Self,
+        ctx: &mut impl CalendarCtx,
+        key: CalendarNavKey,
+        disabled: &[bool],
+    ) {
+        let (cols, len) = match widget.nav.view_mode {
             ViewMode::Day => (7usize, 42usize),
             ViewMode::Month => (4, 12),
             ViewMode::Year => (4, 20),
         };
-        let current = this.widget.focused_index;
+        let current = widget.focused_index;
 
         let new_index = match key {
             CalendarNavKey::Left => {
@@ -597,10 +613,10 @@ impl CalendarBodyWidget {
         };
 
         if new_index.is_none()
-            && this.widget.nav.view_mode == ViewMode::Day
+            && widget.nav.view_mode == ViewMode::Day
             && let Some(offset) = day_offset_for(key)
         {
-            Self::try_cross_month(this, offset);
+            Self::try_cross_month(widget, ctx, offset);
             // Rollover was attempted (this arrow key has day-offset
             // semantics) but if no reachable cell exists in the adjacent
             // month — e.g. it's entirely outside [min_date, max_date] —
@@ -611,12 +627,15 @@ impl CalendarBodyWidget {
         }
 
         let new_index = new_index.filter(|&i| i < len);
-        if new_index == this.widget.focused_index {
+        if new_index == widget.focused_index {
             return;
         }
-        this.widget.focused_index = new_index;
-        let mut grid = this.ctx.get_mut(&mut this.widget.grid);
-        CalendarGridWidget::set_focused_index(&mut grid, new_index);
+        widget.focused_index = new_index;
+        let grid_id = widget.grid.id();
+        ctx.queue_mutate(grid_id, move |mut w| {
+            let mut g = w.downcast::<CalendarGridWidget>();
+            CalendarGridWidget::set_focused_index(&mut g, new_index);
+        });
     }
 
     /// Rebuilds the Day-view grid for `(y, m)`, locates `target_date` in it,
@@ -627,13 +646,14 @@ impl CalendarBodyWidget {
     /// found in the rebuilt grid, or no enabled cell reachable in
     /// `direction`).
     fn jump_to_date(
-        this: &mut WidgetMut<'_, Self>,
+        widget: &mut Self,
+        ctx: &mut impl CalendarCtx,
         y: i32,
         m: u32,
         target_date: NaiveDate,
         direction: isize,
     ) -> bool {
-        if !month_in_range(y, m, this.widget.min_date, this.widget.max_date) {
+        if !month_in_range(y, m, widget.min_date, widget.max_date) {
             return false;
         }
         let new_grid = day_grid(y, m);
@@ -642,7 +662,7 @@ impl CalendarBodyWidget {
         };
         let new_disabled: Vec<bool> = new_grid
             .iter()
-            .map(|&d| !day_in_range(d, this.widget.min_date, this.widget.max_date))
+            .map(|&d| !day_in_range(d, widget.min_date, widget.max_date))
             .collect();
         let Some(landing) =
             scan_for_enabled(target_index, direction, new_grid.len(), &new_disabled)
@@ -650,13 +670,12 @@ impl CalendarBodyWidget {
             return false;
         };
 
-        this.widget.nav.current_year = y;
-        this.widget.nav.current_month = m;
-        this.widget.nav.year_page = year_page_of(y);
-        this.widget.nav.day_grid = new_grid;
-        this.widget.focused_index = Some(landing);
-        this.widget
-            .push_grid_and_headers(&mut this.ctx, Some(landing));
+        widget.nav.current_year = y;
+        widget.nav.current_month = m;
+        widget.nav.year_page = year_page_of(y);
+        widget.nav.day_grid = new_grid;
+        widget.focused_index = Some(landing);
+        widget.push_grid_and_headers(ctx, Some(landing));
         true
     }
 
@@ -666,38 +685,37 @@ impl CalendarBodyWidget {
     /// [`day_offset_for`]): its sign picks both the adjacent month
     /// (backward for negative, forward for positive) and the fallback scan
     /// direction. Returns `true` if focus moved.
-    fn try_cross_month(this: &mut WidgetMut<'_, Self>, day_offset: i64) -> bool {
-        let Some(current) = this.widget.focused_index else {
+    fn try_cross_month(widget: &mut Self, ctx: &mut impl CalendarCtx, day_offset: i64) -> bool {
+        let Some(current) = widget.focused_index else {
             return false;
         };
-        let Some(&reference) = this.widget.nav.day_grid.get(current) else {
+        let Some(&reference) = widget.nav.day_grid.get(current) else {
             return false;
         };
         let target_date = reference + Duration::days(day_offset);
         let month_delta = if day_offset < 0 { -1 } else { 1 };
         let direction: isize = if day_offset < 0 { -1 } else { 1 };
         let (y, m) = add_months(
-            this.widget.nav.current_year,
-            this.widget.nav.current_month,
+            widget.nav.current_year,
+            widget.nav.current_month,
             month_delta,
         );
-        Self::jump_to_date(this, y, m, target_date, direction)
+        Self::jump_to_date(widget, ctx, y, m, target_date, direction)
     }
 
     /// Handles PageUp/PageDown (month step) and Shift+PageUp/PageDown (year
     /// step). Day view only — no-op in Month/Year view, matching the
     /// existing guard on [`Self::handle_prev`]/[`Self::handle_next`].
-    fn handle_nav_page(this: &mut WidgetMut<'_, Self>, key: CalendarNavKey) {
-        if this.widget.nav.view_mode != ViewMode::Day {
+    fn handle_nav_page(widget: &mut Self, ctx: &mut impl CalendarCtx, key: CalendarNavKey) {
+        if widget.nav.view_mode != ViewMode::Day {
             return;
         }
 
-        let reference = this
-            .widget
+        let reference = widget
             .focused_index
-            .and_then(|i| this.widget.nav.day_grid.get(i).copied())
-            .or(this.widget.selected)
-            .unwrap_or(this.widget.today);
+            .and_then(|i| widget.nav.day_grid.get(i).copied())
+            .or(widget.selected)
+            .unwrap_or(widget.today);
 
         let month_delta = match key {
             CalendarNavKey::PrevMonth => -1,
@@ -708,18 +726,18 @@ impl CalendarBodyWidget {
         };
         let direction: isize = if month_delta < 0 { -1 } else { 1 };
         let (y, m) = add_months(
-            this.widget.nav.current_year,
-            this.widget.nav.current_month,
+            widget.nav.current_year,
+            widget.nav.current_month,
             month_delta,
         );
         let target_day = reference.day().min(last_day_of_month(y, m).day());
         let target_date = NaiveDate::from_ymd_opt(y, m, target_day).unwrap();
-        Self::jump_to_date(this, y, m, target_date, direction);
+        Self::jump_to_date(widget, ctx, y, m, target_date, direction);
     }
 
     /// Handles Enter — activates the currently focused cell.
-    fn handle_nav_activate(this: &mut WidgetMut<'_, Self>, disabled: &[bool]) {
-        let Some(i) = this.widget.focused_index else {
+    fn handle_nav_activate(widget: &mut Self, ctx: &mut impl CalendarCtx, disabled: &[bool]) {
+        let Some(i) = widget.focused_index else {
             return;
         };
         if disabled.get(i).copied().unwrap_or(true) {
@@ -727,11 +745,11 @@ impl CalendarBodyWidget {
         }
         // Same activation logic as on_action/CalendarGridAction::CellActivated
         // (see `Self::activate_day` et al.), generic over `impl CalendarCtx` so
-        // it runs unchanged from `MutateCtx` here and `ActionCtx` there.
-        match this.widget.nav.view_mode {
-            ViewMode::Day => Self::activate_day(this.widget, &mut this.ctx, i),
-            ViewMode::Month => Self::activate_month(this.widget, &mut this.ctx, i),
-            ViewMode::Year => Self::activate_year(this.widget, &mut this.ctx, i),
+        // it runs unchanged from `MutateCtx`/`ActionCtx`/`EventCtx` alike.
+        match widget.nav.view_mode {
+            ViewMode::Day => Self::activate_day(widget, ctx, i),
+            ViewMode::Month => Self::activate_month(widget, ctx, i),
+            ViewMode::Year => Self::activate_year(widget, ctx, i),
         }
     }
 }
@@ -762,6 +780,48 @@ impl Widget for CalendarBodyWidget {
         if let Update::ChildFocusChanged(_) = event {
             ctx.request_paint_only();
         }
+    }
+
+    /// Handles keyboard navigation once real masonry focus has moved into
+    /// the calendar (Portal mode, after the Tab-interception in
+    /// `ThemedDatePickerWidget::on_text_event` hands focus to the grid — see
+    /// `CalendarGridHandle`). This is an additional path, not a replacement:
+    /// `ThemedDatePickerWidget::on_text_event`'s own arrow/Home/End/Enter/
+    /// PageUp/PageDown/Escape `mutate_later` dispatch (`InTree` mode, and
+    /// Portal mode before any Tab press) is unchanged and unaffected.
+    fn on_text_event(
+        &mut self,
+        ctx: &mut EventCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        event: &TextEvent,
+    ) {
+        let TextEvent::Keyboard(key) = event else {
+            return;
+        };
+        if key.state != KeyState::Down {
+            return;
+        }
+        let nav_key = match &key.key {
+            Key::Named(NamedKey::ArrowUp) => Some(CalendarNavKey::Up),
+            Key::Named(NamedKey::ArrowDown) => Some(CalendarNavKey::Down),
+            Key::Named(NamedKey::ArrowLeft) => Some(CalendarNavKey::Left),
+            Key::Named(NamedKey::ArrowRight) => Some(CalendarNavKey::Right),
+            Key::Named(NamedKey::Home) => Some(CalendarNavKey::Home),
+            Key::Named(NamedKey::End) => Some(CalendarNavKey::End),
+            Key::Named(NamedKey::Enter) => Some(CalendarNavKey::Activate),
+            Key::Named(NamedKey::PageUp) if key.modifiers.shift() => Some(CalendarNavKey::PrevYear),
+            Key::Named(NamedKey::PageUp) => Some(CalendarNavKey::PrevMonth),
+            Key::Named(NamedKey::PageDown) if key.modifiers.shift() => {
+                Some(CalendarNavKey::NextYear)
+            }
+            Key::Named(NamedKey::PageDown) => Some(CalendarNavKey::NextMonth),
+            _ => None,
+        };
+        let Some(nav) = nav_key else {
+            return;
+        };
+        Self::handle_nav_key_impl(self, ctx, nav);
+        ctx.set_handled();
     }
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
@@ -1244,6 +1304,61 @@ mod tests {
         assert!(
             matches!(&action, Some((CalendarBodyAction::DateSelected(d), _)) if *d == date),
             "expected DateSelected({date:?}), got {action:?}"
+        );
+    }
+
+    // ── on_text_event (Portal-mode key handling once real focus is inside) ────
+
+    #[test]
+    fn calendar_body_on_text_event_handles_arrow_right_directly() {
+        let theme = Theme::default();
+        let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
+        let widget = CalendarBodyWidget::new(
+            Some(selected),
+            None,
+            None,
+            &theme,
+            crate::components::date_picker::calendar_grid::CalendarGridHandle::new(),
+        );
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+        let root_id = h.root_id();
+
+        h.edit_root_widget(|wm| {
+            wm.widget.focused_index = Some(0);
+        });
+        h.focus_on(Some(root_id));
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowRight)));
+
+        h.edit_root_widget(|wm| {
+            let idx = wm.widget.focused_index.expect("focus should have moved");
+            assert_ne!(idx, 0, "ArrowRight should move the roving focus index");
+        });
+    }
+
+    #[test]
+    fn calendar_body_on_text_event_handles_enter_directly() {
+        let theme = Theme::default();
+        let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
+        let widget = CalendarBodyWidget::new(
+            Some(selected),
+            None,
+            None,
+            &theme,
+            crate::components::date_picker::calendar_grid::CalendarGridHandle::new(),
+        );
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+        let root_id = h.root_id();
+
+        h.edit_root_widget(|wm| {
+            wm.widget.focused_index = Some(0);
+        });
+        h.focus_on(Some(root_id));
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Enter)));
+
+        let action = h.pop_action::<CalendarBodyAction>();
+        assert!(
+            matches!(&action, Some((CalendarBodyAction::DateSelected(_), _))),
+            "Enter should activate the focused cell and emit DateSelected, got {action:?}"
         );
     }
 
