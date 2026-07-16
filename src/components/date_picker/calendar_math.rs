@@ -86,6 +86,12 @@ pub(crate) fn day_in_range(
     min.is_none_or(|m| date >= m) && max.is_none_or(|m| date <= m)
 }
 
+/// Returns the last calendar date of the given month.
+pub(crate) fn last_day_of_month(year: i32, month: u32) -> NaiveDate {
+    let (next_year, next_month) = add_months(year, month, 1);
+    NaiveDate::from_ymd_opt(next_year, next_month, 1).unwrap() - Duration::days(1)
+}
+
 /// Returns `true` if any day in the given month falls within `[min, max]`.
 /// A month is considered out-of-range only when *every* day in it is excluded.
 pub(crate) fn month_in_range(
@@ -95,9 +101,7 @@ pub(crate) fn month_in_range(
     max: Option<NaiveDate>,
 ) -> bool {
     let first = NaiveDate::from_ymd_opt(year, month, 1).unwrap();
-    // Last day of the month: first day of next month minus one day.
-    let (next_year, next_month) = add_months(year, month, 1);
-    let last = NaiveDate::from_ymd_opt(next_year, next_month, 1).unwrap() - Duration::days(1);
+    let last = last_day_of_month(year, month);
 
     // The month is out of range only if the entire [first, last] interval is
     // excluded — i.e. last < min or first > max.
@@ -290,5 +294,39 @@ mod tests {
     fn year_in_range_fully_after_max() {
         let max = NaiveDate::from_ymd_opt(2023, 12, 31).unwrap();
         assert!(!year_in_range(2024, None, Some(max)));
+    }
+
+    // ── last_day_of_month ─────────────────────────────────────────────────────
+
+    #[test]
+    fn last_day_of_month_basic() {
+        assert_eq!(
+            last_day_of_month(2024, 6),
+            NaiveDate::from_ymd_opt(2024, 6, 30).unwrap()
+        );
+    }
+
+    #[test]
+    fn last_day_of_month_leap_february() {
+        assert_eq!(
+            last_day_of_month(2024, 2),
+            NaiveDate::from_ymd_opt(2024, 2, 29).unwrap()
+        );
+    }
+
+    #[test]
+    fn last_day_of_month_non_leap_february() {
+        assert_eq!(
+            last_day_of_month(2023, 2),
+            NaiveDate::from_ymd_opt(2023, 2, 28).unwrap()
+        );
+    }
+
+    #[test]
+    fn last_day_of_month_december_rollover() {
+        assert_eq!(
+            last_day_of_month(2024, 12),
+            NaiveDate::from_ymd_opt(2024, 12, 31).unwrap()
+        );
     }
 }
