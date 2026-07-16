@@ -12,9 +12,9 @@
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
-    AccessCtx, ActionCtx, ArcStr, ChildrenIds, ErasedAction, LayoutCtx, MeasureCtx, NewWidget,
-    PaintCtx, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty, Update, UpdateCtx, Widget,
-    WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, ActionCtx, ArcStr, ChildrenIds, ErasedAction, LayoutCtx, MeasureCtx, MutateCtx,
+    NewWidget, PaintCtx, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty, Update,
+    UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, RoundedRect, Size, Stroke};
@@ -272,6 +272,53 @@ fn nav_step_skip_from_before_start(step: isize, len: usize, disabled: &[bool]) -
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Shared ctx abstraction (WidgetMut / ActionCtx)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The subset of masonry context capabilities the day/month/year activation
+/// logic needs, shimmed over the ctx types' inherent methods (they share no
+/// trait upstream) so that one implementation of each activation function can
+/// run from both the keyboard path (`MutateCtx`, via
+/// `WidgetMut::handle_nav_key`) and the pointer path (`ActionCtx`, via
+/// `on_action`). Mirrors `overlay::binding::PortalCtx`.
+trait CalendarCtx {
+    /// `ctx.mutate_later(target, f)`.
+    fn queue_mutate(
+        &mut self,
+        target: WidgetId,
+        f: impl FnOnce(WidgetMut<'_, dyn Widget>) + Send + 'static,
+    );
+    /// `ctx.submit_action::<CalendarBodyAction>(CalendarBodyAction::DateSelected(date))`.
+    fn submit_date_selected(&mut self, date: NaiveDate);
+    /// `ctx.request_layout()`.
+    fn request_layout(&mut self);
+}
+
+macro_rules! impl_calendar_ctx {
+    ($($ctx:ty),+ $(,)?) => {$(
+        impl CalendarCtx for $ctx {
+            fn queue_mutate(
+                &mut self,
+                target: WidgetId,
+                f: impl FnOnce(WidgetMut<'_, dyn Widget>) + Send + 'static,
+            ) {
+                self.mutate_later(target, f);
+            }
+
+            fn submit_date_selected(&mut self, date: NaiveDate) {
+                self.submit_action::<CalendarBodyAction>(CalendarBodyAction::DateSelected(date));
+            }
+
+            fn request_layout(&mut self) {
+                self.request_layout();
+            }
+        }
+    )+};
+}
+
+impl_calendar_ctx!(ActionCtx<'_>, MutateCtx<'_>);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Constructor
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -347,7 +394,8 @@ impl CalendarBodyWidget {
     /// Updates the selected date and refreshes the grid.
     pub(crate) fn set_selected(this: &mut WidgetMut<'_, Self>, selected: Option<NaiveDate>) {
         this.widget.selected = selected;
-        Self::refresh_grid(this);
+        this.widget.push_grid_and_headers(&mut this.ctx);
+        this.ctx.request_layout();
         this.ctx.request_paint_only();
     }
 
@@ -359,7 +407,8 @@ impl CalendarBodyWidget {
     ) {
         this.widget.min_date = min;
         this.widget.max_date = max;
-        Self::refresh_grid(this);
+        this.widget.push_grid_and_headers(&mut this.ctx);
+        this.ctx.request_layout();
         this.ctx.request_paint_only();
     }
 
@@ -518,162 +567,14 @@ impl CalendarBodyWidget {
         if disabled.get(i).copied().unwrap_or(true) {
             return;
         }
-        // Dispatch the same logic as on_action/CalendarGridAction::CellActivated
-        // but via MutateCtx.submit_action (available in WidgetMut context).
+        // Same activation logic as on_action/CalendarGridAction::CellActivated
+        // (see `Self::activate_day` et al.), generic over `impl CalendarCtx` so
+        // it runs unchanged from `MutateCtx` here and `ActionCtx` there.
         match this.widget.nav.view_mode {
-            ViewMode::Day => Self::activate_day_nav(this, i),
-            ViewMode::Month => Self::activate_month_nav(this, i),
-            ViewMode::Year => Self::activate_year_nav(this, i),
+            ViewMode::Day => Self::activate_day(this.widget, &mut this.ctx, i),
+            ViewMode::Month => Self::activate_month(this.widget, &mut this.ctx, i),
+            ViewMode::Year => Self::activate_year(this.widget, &mut this.ctx, i),
         }
-    }
-
-    fn activate_day_nav(this: &mut WidgetMut<'_, Self>, i: usize) {
-        let Some(&date) = this.widget.nav.day_grid.get(i) else {
-            return;
-        };
-        if !day_in_range(date, this.widget.min_date, this.widget.max_date) {
-            return;
-        }
-        this.widget.selected = Some(date);
-        this.widget.focused_index = None;
-        this.ctx
-            .submit_action::<CalendarBodyAction>(CalendarBodyAction::DateSelected(date));
-        // Refresh grid to show the new selection immediately.
-        let nav = &this.widget.nav;
-        let selected = this.widget.selected;
-        let today = this.widget.today;
-        let min_date = this.widget.min_date;
-        let max_date = this.widget.max_date;
-        let new_data = build_day_cells(
-            &nav.day_grid,
-            nav.current_month,
-            selected,
-            today,
-            min_date,
-            max_date,
-        );
-        let mut grid = this.ctx.get_mut(&mut this.widget.grid);
-        CalendarGridWidget::set_data(&mut grid, new_data, 7);
-        CalendarGridWidget::set_focused_index(&mut grid, None);
-    }
-
-    fn activate_month_nav(this: &mut WidgetMut<'_, Self>, i: usize) {
-        let month = u32::try_from(i + 1).unwrap_or(1).clamp(1, 12);
-        this.widget.nav.current_month = month;
-        this.widget.nav.view_mode = ViewMode::Day;
-        this.widget.nav.day_grid = day_grid(this.widget.nav.current_year, month);
-        this.widget.focused_index = None;
-        Self::refresh_grid(this);
-        let prev_id = this.widget.header_prev.id();
-        let next_id = this.widget.header_next.id();
-        this.ctx.mutate_later(prev_id, |mut w| {
-            let mut btn = w.downcast::<ThemedButton>();
-            ThemedButton::set_disabled(&mut btn, false);
-        });
-        this.ctx.mutate_later(next_id, |mut w| {
-            let mut btn = w.downcast::<ThemedButton>();
-            ThemedButton::set_disabled(&mut btn, false);
-        });
-        this.ctx.request_layout();
-    }
-
-    fn activate_year_nav(this: &mut WidgetMut<'_, Self>, i: usize) {
-        let years = years_in_page(this.widget.nav.year_page);
-        let Some(&year) = years.get(i) else {
-            return;
-        };
-        this.widget.nav.current_year = year;
-        this.widget.nav.view_mode = ViewMode::Day;
-        this.widget.nav.day_grid = day_grid(year, this.widget.nav.current_month);
-        this.widget.focused_index = None;
-        Self::refresh_grid(this);
-        let prev_id = this.widget.header_prev.id();
-        let next_id = this.widget.header_next.id();
-        this.ctx.mutate_later(prev_id, |mut w| {
-            let mut btn = w.downcast::<ThemedButton>();
-            ThemedButton::set_disabled(&mut btn, false);
-        });
-        this.ctx.mutate_later(next_id, |mut w| {
-            let mut btn = w.downcast::<ThemedButton>();
-            ThemedButton::set_disabled(&mut btn, false);
-        });
-        this.ctx.request_layout();
-    }
-
-    /// Recomputes grid data based on the current nav state and pushes it to
-    /// the child pods. Also updates header button labels and disabled states.
-    fn refresh_grid(this: &mut WidgetMut<'_, Self>) {
-        let nav = &this.widget.nav;
-        let selected = this.widget.selected;
-        let today = this.widget.today;
-        let min_date = this.widget.min_date;
-        let max_date = this.widget.max_date;
-        let view_mode = nav.view_mode;
-        let current_month = nav.current_month;
-        let current_year = nav.current_year;
-        let year_page = nav.year_page;
-        let day_grid_dates = nav.day_grid;
-
-        let (grid_data, cols) = match view_mode {
-            ViewMode::Day => {
-                let data = build_day_cells(
-                    &day_grid_dates,
-                    current_month,
-                    selected,
-                    today,
-                    min_date,
-                    max_date,
-                );
-                (data, 7usize)
-            }
-            ViewMode::Month => {
-                let data = build_month_cells(current_year, selected, min_date, max_date);
-                (data, 4usize)
-            }
-            ViewMode::Year => {
-                let data = build_year_cells(year_page, selected, min_date, max_date);
-                (data, 4usize)
-            }
-        };
-
-        // Push updated data and column count to the grid child.
-        {
-            let mut grid = this.ctx.get_mut(&mut this.widget.grid);
-            CalendarGridWidget::set_data(&mut grid, grid_data, cols);
-        }
-
-        // Update header month button label and disabled state.
-        let month_lbl = header_month_label(&this.widget.nav);
-        let month_disabled = view_mode == ViewMode::Month;
-        {
-            let mut btn = this.ctx.get_mut(&mut this.widget.header_month);
-            ThemedButton::set_disabled(&mut btn, month_disabled);
-            let mut child = ThemedButton::child_mut(&mut btn);
-            let mut lbl = child.downcast::<Label>();
-            Label::set_text(&mut lbl, month_lbl);
-        }
-
-        // Update header year button label.
-        let year_lbl = header_year_label(&this.widget.nav);
-        {
-            let mut btn = this.ctx.get_mut(&mut this.widget.header_year);
-            let mut child = ThemedButton::child_mut(&mut btn);
-            let mut lbl = child.downcast::<Label>();
-            Label::set_text(&mut lbl, year_lbl);
-        }
-
-        // Disable prev/next in Month mode.
-        let nav_disabled = view_mode == ViewMode::Month;
-        {
-            let mut btn = this.ctx.get_mut(&mut this.widget.header_prev);
-            ThemedButton::set_disabled(&mut btn, nav_disabled);
-        }
-        {
-            let mut btn = this.ctx.get_mut(&mut this.widget.header_next);
-            ThemedButton::set_disabled(&mut btn, nav_disabled);
-        }
-
-        this.ctx.request_layout();
     }
 }
 
@@ -903,139 +804,21 @@ impl Widget for CalendarBodyWidget {
 
 impl CalendarBodyWidget {
     /// Dispatches a grid-cell activation to the appropriate mode handler.
+    ///
+    /// Delegates to the same `Self::activate_day`/`activate_month`/
+    /// `activate_year` used by [`Self::handle_nav_activate`] (the Enter-key
+    /// path via `WidgetMut`) — see [`CalendarCtx`]. Only the event-specific
+    /// bookkeeping (`set_handled`, paint/layout requests) differs per path
+    /// and stays here.
     fn handle_cell_activated(&mut self, ctx: &mut ActionCtx<'_>, i: usize) {
         match self.nav.view_mode {
-            ViewMode::Day => self.activate_day_cell(ctx, i),
-            ViewMode::Month => self.activate_month_cell(ctx, i),
-            ViewMode::Year => self.activate_year_cell(ctx, i),
+            ViewMode::Day => {
+                Self::activate_day(self, ctx, i);
+                ctx.request_paint_only();
+            }
+            ViewMode::Month => Self::activate_month(self, ctx, i),
+            ViewMode::Year => Self::activate_year(self, ctx, i),
         }
-    }
-
-    fn activate_day_cell(&mut self, ctx: &mut ActionCtx<'_>, i: usize) {
-        let Some(&date) = self.nav.day_grid.get(i) else {
-            return;
-        };
-        if !day_in_range(date, self.min_date, self.max_date) {
-            return;
-        }
-        self.selected = Some(date);
-        ctx.submit_action::<CalendarBodyAction>(CalendarBodyAction::DateSelected(date));
-        let new_data = build_day_cells(
-            &self.nav.day_grid,
-            self.nav.current_month,
-            self.selected,
-            self.today,
-            self.min_date,
-            self.max_date,
-        );
-        let grid_id = self.grid.id();
-        ctx.mutate_later(grid_id, move |mut w| {
-            let mut g = w.downcast::<CalendarGridWidget>();
-            CalendarGridWidget::set_data(&mut g, new_data, 7);
-        });
-        ctx.set_handled();
-        ctx.request_paint_only();
-    }
-
-    fn activate_month_cell(&mut self, ctx: &mut ActionCtx<'_>, i: usize) {
-        // Cell index 0..11 → month 1..12.
-        let month = u32::try_from(i + 1).unwrap_or(1).clamp(1, 12);
-        self.nav.current_month = month;
-        self.nav.view_mode = ViewMode::Day;
-        self.nav.day_grid = day_grid(self.nav.current_year, month);
-        let new_data = build_day_cells(
-            &self.nav.day_grid,
-            self.nav.current_month,
-            self.selected,
-            self.today,
-            self.min_date,
-            self.max_date,
-        );
-        let grid_id = self.grid.id();
-        ctx.mutate_later(grid_id, move |mut w| {
-            let mut g = w.downcast::<CalendarGridWidget>();
-            CalendarGridWidget::set_data(&mut g, new_data, 7);
-        });
-        let month_lbl = ArcStr::from(month_label(self.nav.current_month));
-        let year_lbl = ArcStr::from(self.nav.current_year.to_string());
-        let month_btn_id = self.header_month.id();
-        let year_btn_id = self.header_year.id();
-        ctx.mutate_later(month_btn_id, move |mut w| {
-            let mut btn = w.downcast::<ThemedButton>();
-            ThemedButton::set_disabled(&mut btn, false);
-            let mut child = ThemedButton::child_mut(&mut btn);
-            let mut lbl = child.downcast::<Label>();
-            Label::set_text(&mut lbl, month_lbl);
-        });
-        ctx.mutate_later(year_btn_id, move |mut w| {
-            let mut btn = w.downcast::<ThemedButton>();
-            let mut child = ThemedButton::child_mut(&mut btn);
-            let mut lbl = child.downcast::<Label>();
-            Label::set_text(&mut lbl, year_lbl);
-        });
-        let prev_id = self.header_prev.id();
-        let next_id = self.header_next.id();
-        ctx.mutate_later(prev_id, |mut w| {
-            let mut btn = w.downcast::<ThemedButton>();
-            ThemedButton::set_disabled(&mut btn, false);
-        });
-        ctx.mutate_later(next_id, |mut w| {
-            let mut btn = w.downcast::<ThemedButton>();
-            ThemedButton::set_disabled(&mut btn, false);
-        });
-        ctx.request_layout();
-        ctx.set_handled();
-    }
-
-    fn activate_year_cell(&mut self, ctx: &mut ActionCtx<'_>, i: usize) {
-        let years = years_in_page(self.nav.year_page);
-        let Some(&year) = years.get(i) else {
-            return;
-        };
-        self.nav.current_year = year;
-        self.nav.view_mode = ViewMode::Day;
-        self.nav.day_grid = day_grid(self.nav.current_year, self.nav.current_month);
-        let new_data = build_day_cells(
-            &self.nav.day_grid,
-            self.nav.current_month,
-            self.selected,
-            self.today,
-            self.min_date,
-            self.max_date,
-        );
-        let grid_id = self.grid.id();
-        ctx.mutate_later(grid_id, move |mut w| {
-            let mut g = w.downcast::<CalendarGridWidget>();
-            CalendarGridWidget::set_data(&mut g, new_data, 7);
-        });
-        let year_lbl = ArcStr::from(year.to_string());
-        let year_btn_id = self.header_year.id();
-        ctx.mutate_later(year_btn_id, move |mut w| {
-            let mut btn = w.downcast::<ThemedButton>();
-            let mut child = ThemedButton::child_mut(&mut btn);
-            let mut lbl = child.downcast::<Label>();
-            Label::set_text(&mut lbl, year_lbl);
-        });
-        let month_lbl = ArcStr::from(month_label(self.nav.current_month));
-        let month_btn_id = self.header_month.id();
-        ctx.mutate_later(month_btn_id, move |mut w| {
-            let mut btn = w.downcast::<ThemedButton>();
-            ThemedButton::set_disabled(&mut btn, false);
-            let mut child = ThemedButton::child_mut(&mut btn);
-            let mut lbl = child.downcast::<Label>();
-            Label::set_text(&mut lbl, month_lbl);
-        });
-        let prev_id = self.header_prev.id();
-        let next_id = self.header_next.id();
-        ctx.mutate_later(prev_id, |mut w| {
-            let mut btn = w.downcast::<ThemedButton>();
-            ThemedButton::set_disabled(&mut btn, false);
-        });
-        ctx.mutate_later(next_id, |mut w| {
-            let mut btn = w.downcast::<ThemedButton>();
-            ThemedButton::set_disabled(&mut btn, false);
-        });
-        ctx.request_layout();
         ctx.set_handled();
     }
 
@@ -1120,8 +903,12 @@ impl CalendarBodyWidget {
         ctx.request_layout();
     }
 
-    /// Pushes updated grid data and header labels to children via `mutate_later`.
-    fn push_grid_and_headers(&self, ctx: &mut ActionCtx<'_>) {
+    /// Pushes updated grid data and header labels to children.
+    ///
+    /// Generic over [`CalendarCtx`] so it runs from both the `ActionCtx`
+    /// click path and the `MutateCtx` keyboard path (`Self::set_selected`,
+    /// `Self::set_min_max`).
+    fn push_grid_and_headers(&self, ctx: &mut impl CalendarCtx) {
         let nav = &self.nav;
         let selected = self.selected;
         let today = self.today;
@@ -1151,7 +938,7 @@ impl CalendarBodyWidget {
         };
 
         let grid_id = self.grid.id();
-        ctx.mutate_later(grid_id, move |mut w| {
+        ctx.queue_mutate(grid_id, move |mut w| {
             let mut g = w.downcast::<CalendarGridWidget>();
             CalendarGridWidget::set_data(&mut g, new_data, new_cols);
             CalendarGridWidget::set_focused_index(&mut g, None);
@@ -1161,7 +948,7 @@ impl CalendarBodyWidget {
         let month_lbl = header_month_label(nav);
         let month_disabled = nav.view_mode == ViewMode::Month;
         let month_btn_id = self.header_month.id();
-        ctx.mutate_later(month_btn_id, move |mut w| {
+        ctx.queue_mutate(month_btn_id, move |mut w| {
             let mut btn = w.downcast::<ThemedButton>();
             ThemedButton::set_disabled(&mut btn, month_disabled);
             let mut child = ThemedButton::child_mut(&mut btn);
@@ -1172,7 +959,7 @@ impl CalendarBodyWidget {
         // Header year label.
         let year_lbl = header_year_label(nav);
         let year_btn_id = self.header_year.id();
-        ctx.mutate_later(year_btn_id, move |mut w| {
+        ctx.queue_mutate(year_btn_id, move |mut w| {
             let mut btn = w.downcast::<ThemedButton>();
             let mut child = ThemedButton::child_mut(&mut btn);
             let mut lbl = child.downcast::<Label>();
@@ -1183,14 +970,74 @@ impl CalendarBodyWidget {
         let nav_disabled = nav.view_mode == ViewMode::Month;
         let prev_id = self.header_prev.id();
         let next_id = self.header_next.id();
-        ctx.mutate_later(prev_id, move |mut w| {
+        ctx.queue_mutate(prev_id, move |mut w| {
             let mut btn = w.downcast::<ThemedButton>();
             ThemedButton::set_disabled(&mut btn, nav_disabled);
         });
-        ctx.mutate_later(next_id, move |mut w| {
+        ctx.queue_mutate(next_id, move |mut w| {
             let mut btn = w.downcast::<ThemedButton>();
             ThemedButton::set_disabled(&mut btn, nav_disabled);
         });
+    }
+
+    /// Activates day cell `i`: selects the date, clears keyboard-roving
+    /// focus, and refreshes the grid. Shared by the click path
+    /// (`Self::handle_cell_activated`) and the Enter-key path
+    /// (`Self::handle_nav_activate`).
+    fn activate_day(widget: &mut Self, ctx: &mut impl CalendarCtx, i: usize) {
+        let Some(&date) = widget.nav.day_grid.get(i) else {
+            return;
+        };
+        if !day_in_range(date, widget.min_date, widget.max_date) {
+            return;
+        }
+        widget.selected = Some(date);
+        widget.focused_index = None;
+        ctx.submit_date_selected(date);
+        let new_data = build_day_cells(
+            &widget.nav.day_grid,
+            widget.nav.current_month,
+            widget.selected,
+            widget.today,
+            widget.min_date,
+            widget.max_date,
+        );
+        let grid_id = widget.grid.id();
+        ctx.queue_mutate(grid_id, move |mut w| {
+            let mut g = w.downcast::<CalendarGridWidget>();
+            CalendarGridWidget::set_data(&mut g, new_data, 7);
+            CalendarGridWidget::set_focused_index(&mut g, None);
+        });
+    }
+
+    /// Activates month cell `i`: switches to that month in Day mode and
+    /// refreshes the grid/headers. Shared by the click path and the
+    /// Enter-key path (see [`Self::activate_day`]).
+    fn activate_month(widget: &mut Self, ctx: &mut impl CalendarCtx, i: usize) {
+        // Cell index 0..11 → month 1..12.
+        let month = u32::try_from(i + 1).unwrap_or(1).clamp(1, 12);
+        widget.nav.current_month = month;
+        widget.nav.view_mode = ViewMode::Day;
+        widget.nav.day_grid = day_grid(widget.nav.current_year, month);
+        widget.focused_index = None;
+        widget.push_grid_and_headers(ctx);
+        ctx.request_layout();
+    }
+
+    /// Activates year cell `i`: switches to that year in Day mode and
+    /// refreshes the grid/headers. Shared by the click path and the
+    /// Enter-key path (see [`Self::activate_day`]).
+    fn activate_year(widget: &mut Self, ctx: &mut impl CalendarCtx, i: usize) {
+        let years = years_in_page(widget.nav.year_page);
+        let Some(&year) = years.get(i) else {
+            return;
+        };
+        widget.nav.current_year = year;
+        widget.nav.view_mode = ViewMode::Day;
+        widget.nav.day_grid = day_grid(year, widget.nav.current_month);
+        widget.focused_index = None;
+        widget.push_grid_and_headers(ctx);
+        ctx.request_layout();
     }
 }
 
