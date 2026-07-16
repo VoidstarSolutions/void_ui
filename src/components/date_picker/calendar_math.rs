@@ -121,6 +121,11 @@ pub(crate) fn year_in_range(year: i32, min: Option<NaiveDate>, max: Option<Naive
     !below_min && !above_max
 }
 
+/// Returns the index of `date` within `grid`, if present.
+pub(crate) fn day_grid_index_of(grid: &[NaiveDate; 42], date: NaiveDate) -> Option<usize> {
+    grid.iter().position(|&d| d == date)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,5 +333,29 @@ mod tests {
             last_day_of_month(2024, 12),
             NaiveDate::from_ymd_opt(2024, 12, 31).unwrap()
         );
+    }
+
+    // ── day_grid_index_of ─────────────────────────────────────────────────────
+
+    #[test]
+    fn day_grid_index_of_finds_known_date() {
+        let grid = day_grid(2024, 3);
+        let date = NaiveDate::from_ymd_opt(2024, 3, 1).unwrap();
+        assert_eq!(day_grid_index_of(&grid, date), Some(5));
+    }
+
+    #[test]
+    fn day_grid_index_of_finds_leading_padding_date() {
+        let grid = day_grid(2024, 3);
+        // grid[0] is 2024-02-25, per day_grid_march_2024_known_values above.
+        let date = NaiveDate::from_ymd_opt(2024, 2, 25).unwrap();
+        assert_eq!(day_grid_index_of(&grid, date), Some(0));
+    }
+
+    #[test]
+    fn day_grid_index_of_missing_date_returns_none() {
+        let grid = day_grid(2024, 3);
+        let date = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+        assert_eq!(day_grid_index_of(&grid, date), None);
     }
 }
