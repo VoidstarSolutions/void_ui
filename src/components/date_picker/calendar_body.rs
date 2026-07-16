@@ -29,8 +29,8 @@ use crate::components::date_picker::calendar_grid::{
     CalendarGridAction, CalendarGridWidget, CellDatum, cell_side,
 };
 use crate::components::date_picker::calendar_math::{
-    WEEKDAY_LABELS, add_months, day_grid, day_grid_index_of, day_in_range, month_in_range,
-    month_label, year_in_range, year_page_of, years_in_page,
+    WEEKDAY_LABELS, add_months, day_grid, day_grid_index_of, day_in_range, last_day_of_month,
+    month_in_range, month_label, year_in_range, year_page_of, years_in_page,
 };
 use crate::components::item_list::index_f64;
 use chrono::{Datelike, Duration, NaiveDate};
@@ -73,6 +73,14 @@ pub(crate) enum CalendarNavKey {
     Home,
     /// End — jump to the last non-disabled cell.
     End,
+    /// Page Up — step back one month (Day view only).
+    PrevMonth,
+    /// Page Down — step forward one month (Day view only).
+    NextMonth,
+    /// Shift+Page Up — step back one year (Day view only).
+    PrevYear,
+    /// Shift+Page Down — step forward one year (Day view only).
+    NextYear,
     /// Enter — activate the focused cell.
     Activate,
 }
@@ -499,11 +507,19 @@ impl CalendarBodyWidget {
     /// month boundaries. Navigating across months via the keyboard is reserved
     /// for a future release.
     pub(crate) fn handle_nav_key(this: &mut WidgetMut<'_, Self>, key: CalendarNavKey) {
-        let disabled = Self::build_disabled_flags(this);
-        if key == CalendarNavKey::Activate {
-            Self::handle_nav_activate(this, &disabled);
-        } else {
-            Self::handle_nav_move(this, key, &disabled);
+        match key {
+            CalendarNavKey::PrevMonth
+            | CalendarNavKey::NextMonth
+            | CalendarNavKey::PrevYear
+            | CalendarNavKey::NextYear => Self::handle_nav_page(this, key),
+            CalendarNavKey::Activate => {
+                let disabled = Self::build_disabled_flags(this);
+                Self::handle_nav_activate(this, &disabled);
+            }
+            _ => {
+                let disabled = Self::build_disabled_flags(this);
+                Self::handle_nav_move(this, key, &disabled);
+            }
         }
     }
 
@@ -575,8 +591,12 @@ impl CalendarBodyWidget {
             }
             CalendarNavKey::Home => disabled.iter().position(|&d| !d),
             CalendarNavKey::End => disabled.iter().rposition(|&d| !d),
-            // Activate is handled by handle_nav_activate, never reaches here.
-            CalendarNavKey::Activate => return,
+            // Activate/Page* are handled elsewhere, never reach here.
+            CalendarNavKey::Activate
+            | CalendarNavKey::PrevMonth
+            | CalendarNavKey::NextMonth
+            | CalendarNavKey::PrevYear
+            | CalendarNavKey::NextYear => return,
         };
 
         if new_index.is_none()
@@ -668,6 +688,39 @@ impl CalendarBodyWidget {
             month_delta,
         );
         Self::jump_to_date(this, y, m, target_date, direction)
+    }
+
+    /// Handles PageUp/PageDown (month step) and Shift+PageUp/PageDown (year
+    /// step). Day view only — no-op in Month/Year view, matching the
+    /// existing guard on [`Self::handle_prev`]/[`Self::handle_next`].
+    fn handle_nav_page(this: &mut WidgetMut<'_, Self>, key: CalendarNavKey) {
+        if this.widget.nav.view_mode != ViewMode::Day {
+            return;
+        }
+
+        let reference = this
+            .widget
+            .focused_index
+            .and_then(|i| this.widget.nav.day_grid.get(i).copied())
+            .or(this.widget.selected)
+            .unwrap_or(this.widget.today);
+
+        let month_delta = match key {
+            CalendarNavKey::PrevMonth => -1,
+            CalendarNavKey::NextMonth => 1,
+            CalendarNavKey::PrevYear => -12,
+            CalendarNavKey::NextYear => 12,
+            _ => return,
+        };
+        let direction: isize = if month_delta < 0 { -1 } else { 1 };
+        let (y, m) = add_months(
+            this.widget.nav.current_year,
+            this.widget.nav.current_month,
+            month_delta,
+        );
+        let target_day = reference.day().min(last_day_of_month(y, m).day());
+        let target_date = NaiveDate::from_ymd_opt(y, m, target_day).unwrap();
+        Self::jump_to_date(this, y, m, target_date, direction);
     }
 
     /// Handles Enter — activates the currently focused cell.
@@ -1387,6 +1440,195 @@ mod tests {
                 wm.widget.nav.day_grid[idx],
                 NaiveDate::from_ymd_opt(2024, 4, 9).unwrap()
             );
+        });
+    }
+
+    // ── PageUp/PageDown month & year jumps ────────────────────────────────────
+
+    #[test]
+    fn page_down_steps_month_preserving_day() {
+        let theme = Theme::default();
+        let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
+        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+
+        h.edit_root_widget(|mut wm| {
+            CalendarBodyWidget::handle_nav_key(&mut wm, CalendarNavKey::NextMonth);
+        });
+
+        h.edit_root_widget(|wm| {
+            assert_eq!(wm.widget.nav.current_year, 2024);
+            assert_eq!(wm.widget.nav.current_month, 4);
+            let idx = wm
+                .widget
+                .focused_index
+                .expect("focus should land on a cell");
+            assert_eq!(
+                wm.widget.nav.day_grid[idx],
+                NaiveDate::from_ymd_opt(2024, 4, 15).unwrap()
+            );
+        });
+    }
+
+    #[test]
+    fn page_up_steps_month_preserving_day() {
+        let theme = Theme::default();
+        let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
+        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+
+        h.edit_root_widget(|mut wm| {
+            CalendarBodyWidget::handle_nav_key(&mut wm, CalendarNavKey::PrevMonth);
+        });
+
+        h.edit_root_widget(|wm| {
+            assert_eq!(wm.widget.nav.current_year, 2024);
+            assert_eq!(wm.widget.nav.current_month, 2);
+            let idx = wm
+                .widget
+                .focused_index
+                .expect("focus should land on a cell");
+            assert_eq!(
+                wm.widget.nav.day_grid[idx],
+                NaiveDate::from_ymd_opt(2024, 2, 15).unwrap()
+            );
+        });
+    }
+
+    #[test]
+    fn page_down_clamps_day_to_shorter_leap_february() {
+        let theme = Theme::default();
+        let selected = NaiveDate::from_ymd_opt(2024, 1, 31).unwrap();
+        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+
+        h.edit_root_widget(|mut wm| {
+            CalendarBodyWidget::handle_nav_key(&mut wm, CalendarNavKey::NextMonth);
+        });
+
+        h.edit_root_widget(|wm| {
+            assert_eq!(wm.widget.nav.current_month, 2);
+            let idx = wm
+                .widget
+                .focused_index
+                .expect("focus should land on a cell");
+            assert_eq!(
+                wm.widget.nav.day_grid[idx],
+                NaiveDate::from_ymd_opt(2024, 2, 29).unwrap()
+            );
+        });
+    }
+
+    #[test]
+    fn page_down_clamps_day_non_leap_year() {
+        let theme = Theme::default();
+        let selected = NaiveDate::from_ymd_opt(2023, 1, 31).unwrap();
+        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+
+        h.edit_root_widget(|mut wm| {
+            CalendarBodyWidget::handle_nav_key(&mut wm, CalendarNavKey::NextMonth);
+        });
+
+        h.edit_root_widget(|wm| {
+            assert_eq!(wm.widget.nav.current_month, 2);
+            let idx = wm
+                .widget
+                .focused_index
+                .expect("focus should land on a cell");
+            assert_eq!(
+                wm.widget.nav.day_grid[idx],
+                NaiveDate::from_ymd_opt(2023, 2, 28).unwrap()
+            );
+        });
+    }
+
+    #[test]
+    fn shift_page_down_steps_year_clamping_feb29_into_non_leap_year() {
+        let theme = Theme::default();
+        let selected = NaiveDate::from_ymd_opt(2024, 2, 29).unwrap();
+        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+
+        h.edit_root_widget(|mut wm| {
+            CalendarBodyWidget::handle_nav_key(&mut wm, CalendarNavKey::NextYear);
+        });
+
+        h.edit_root_widget(|wm| {
+            assert_eq!(wm.widget.nav.current_year, 2025);
+            assert_eq!(wm.widget.nav.current_month, 2);
+            let idx = wm
+                .widget
+                .focused_index
+                .expect("focus should land on a cell");
+            assert_eq!(
+                wm.widget.nav.day_grid[idx],
+                NaiveDate::from_ymd_opt(2025, 2, 28).unwrap()
+            );
+        });
+    }
+
+    #[test]
+    fn shift_page_up_steps_year_preserving_month_day() {
+        let theme = Theme::default();
+        let selected = NaiveDate::from_ymd_opt(2024, 6, 15).unwrap();
+        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+
+        h.edit_root_widget(|mut wm| {
+            CalendarBodyWidget::handle_nav_key(&mut wm, CalendarNavKey::PrevYear);
+        });
+
+        h.edit_root_widget(|wm| {
+            assert_eq!(wm.widget.nav.current_year, 2023);
+            assert_eq!(wm.widget.nav.current_month, 6);
+            let idx = wm
+                .widget
+                .focused_index
+                .expect("focus should land on a cell");
+            assert_eq!(
+                wm.widget.nav.day_grid[idx],
+                NaiveDate::from_ymd_opt(2023, 6, 15).unwrap()
+            );
+        });
+    }
+
+    #[test]
+    fn page_keys_are_noop_in_month_view() {
+        let theme = Theme::default();
+        let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
+        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+
+        h.edit_root_widget(|mut wm| {
+            wm.widget.nav.view_mode = ViewMode::Month;
+            CalendarBodyWidget::handle_nav_key(&mut wm, CalendarNavKey::NextMonth);
+        });
+
+        h.edit_root_widget(|wm| {
+            assert_eq!(wm.widget.nav.view_mode, ViewMode::Month);
+            assert_eq!(wm.widget.nav.current_year, 2024);
+            assert_eq!(wm.widget.nav.current_month, 3);
+            assert_eq!(wm.widget.focused_index, None);
+        });
+    }
+
+    #[test]
+    fn page_keys_are_noop_in_year_view() {
+        let theme = Theme::default();
+        let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
+        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+
+        h.edit_root_widget(|mut wm| {
+            wm.widget.nav.view_mode = ViewMode::Year;
+            CalendarBodyWidget::handle_nav_key(&mut wm, CalendarNavKey::PrevYear);
+        });
+
+        h.edit_root_widget(|wm| {
+            assert_eq!(wm.widget.nav.view_mode, ViewMode::Year);
+            assert_eq!(wm.widget.nav.current_year, 2024);
+            assert_eq!(wm.widget.focused_index, None);
         });
     }
 }

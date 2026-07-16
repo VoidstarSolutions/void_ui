@@ -1167,6 +1167,12 @@ impl Widget for ThemedDatePickerWidget {
             Key::Named(NamedKey::Home) => Some(CalendarNavKey::Home),
             Key::Named(NamedKey::End) => Some(CalendarNavKey::End),
             Key::Named(NamedKey::Enter) => Some(CalendarNavKey::Activate),
+            Key::Named(NamedKey::PageUp) if key.modifiers.shift() => Some(CalendarNavKey::PrevYear),
+            Key::Named(NamedKey::PageUp) => Some(CalendarNavKey::PrevMonth),
+            Key::Named(NamedKey::PageDown) if key.modifiers.shift() => {
+                Some(CalendarNavKey::NextYear)
+            }
+            Key::Named(NamedKey::PageDown) => Some(CalendarNavKey::NextMonth),
             _ => None,
         };
 
