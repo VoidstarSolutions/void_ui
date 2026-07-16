@@ -114,6 +114,7 @@ fn controlled_row(
             date_picker(state.controlled_selected, |s: &mut DatePickerDemo, d| {
                 s.controlled_selected = d;
             })
+            .placeholder("Pick a date")
             .open(state.controlled_open)
             .on_open_change(|s: &mut DatePickerDemo, open| {
                 s.controlled_open = open;

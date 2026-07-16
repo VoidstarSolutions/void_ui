@@ -16,7 +16,7 @@ use masonry::core::{
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, RoundedRect, Size, Stroke};
-use masonry::layout::{LenReq, Length};
+use masonry::layout::{LayoutSize, LenDef, LenReq, Length, SizeDef};
 use masonry::properties::ContentColor;
 use masonry::widgets::{Label, Passthrough};
 
@@ -130,6 +130,17 @@ impl DatePickerTrigger {
     /// Returns the icon square side length (height of the widget).
     fn icon_side(theme: &Theme) -> f64 {
         f64::from(theme.density.row_height) + 2.0 * f64::from(theme.density.pad_v)
+    }
+
+    /// Gap reserved after the text before the box's right edge. The clear
+    /// icon's square column already reads as trailing padding when present,
+    /// so this is only needed without it.
+    fn trailing_pad(theme: &Theme, has_clear_icon: bool) -> f64 {
+        if has_clear_icon {
+            0.0
+        } else {
+            2.0 * f64::from(theme.density.pad_h)
+        }
     }
 }
 
@@ -343,14 +354,31 @@ impl Widget for DatePickerTrigger {
         ctx: &mut MeasureCtx<'_>,
         _props: &PropertiesRef<'_>,
         axis: Axis,
-        _len_req: LenReq,
+        len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        // Fixed height; defer horizontal to the parent (redirect to primary
-        // child so the trigger measures as wide as the overlay host needs it).
         let h = Self::icon_side(&self.theme);
         match axis {
-            Axis::Horizontal => ctx.redirect_measurement(&mut self.icon, axis, cross_length),
+            Axis::Horizontal => {
+                // Icon and clear columns are fixed squares (see `layout`); only
+                // the text needs measuring. Redirecting to the icon alone (as
+                // this used to) left the trigger's natural width equal to the
+                // icon's width, ignoring the text entirely — a `flex_row` or
+                // other content-sized parent would shrink the trigger down to
+                // a bare icon square.
+                let icon_w = h;
+                let clear_w = if self.clear_icon.is_some() { h } else { 0.0 };
+                let trailing_pad = Self::trailing_pad(&self.theme, self.clear_icon.is_some());
+                let context_size = LayoutSize::maybe(Axis::Vertical, Some(Length::px(h)));
+                let text_len = ctx.compute_length(
+                    &mut self.text,
+                    len_req.into(),
+                    context_size,
+                    axis,
+                    Some(Length::px(h)),
+                );
+                Length::px(icon_w + clear_w + trailing_pad + text_len.get())
+            }
             Axis::Vertical => {
                 // Still measure children so their intrinsics are tracked.
                 let _ = ctx.redirect_measurement(&mut self.text, axis, cross_length);
@@ -363,7 +391,10 @@ impl Widget for DatePickerTrigger {
         let h = size.height;
         let icon_w = h; // square column
         let clear_w = if self.clear_icon.is_some() { h } else { 0.0 };
-        let text_w = (size.width - icon_w - clear_w).max(0.0);
+        // The clear icon's square column already reads as trailing padding;
+        // without it, the text would otherwise run flush to the box edge.
+        let trailing_pad = Self::trailing_pad(&self.theme, self.clear_icon.is_some());
+        let text_w = (size.width - icon_w - clear_w - trailing_pad).max(0.0);
 
         // Icons are laid out at their natural glyph size and centered within
         // their square column — running them at the full column size would
@@ -379,10 +410,19 @@ impl Widget for DatePickerTrigger {
             Point::new((icon_w - glyph) * 0.5, (h - glyph) * 0.5),
         );
 
-        // Text (center).
-        let text_size = Size::new(text_w, h);
+        // Text: fills the remaining width (left-aligned within it), but its
+        // height is left to its natural line height and vertically centered —
+        // same reasoning as the icons above.
+        let text_size = ctx.compute_size(
+            &mut self.text,
+            SizeDef::fixed(Size::new(text_w, h)).with_height(LenDef::FitContent(Length::px(h))),
+            Size::new(text_w, h).into(),
+        );
         ctx.run_layout(&mut self.text, text_size);
-        ctx.place_child(&mut self.text, Point::new(icon_w, 0.0));
+        ctx.place_child(
+            &mut self.text,
+            Point::new(icon_w, (h - text_size.height) * 0.5),
+        );
 
         // Clear icon (right, optional).
         if let Some(pod) = &mut self.clear_icon {
