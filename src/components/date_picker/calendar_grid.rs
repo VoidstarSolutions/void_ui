@@ -26,6 +26,15 @@ use crate::components::click::{ClickPhase, primary_click_when};
 use crate::components::item_list::{hit_item, index_f64, to_local};
 use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 
+widget_id_handle!(
+    /// Self-filling handle to a [`CalendarGridWidget`]'s widget id, filled at
+    /// `Update::WidgetAdded`. Given to [`super::widget::ThemedDatePickerWidget`]
+    /// so opening the picker in Portal mode can move real keyboard focus onto
+    /// the grid — see the module docs on why this is needed (Tab traversal
+    /// can't discover portal-mounted content on its own).
+    CalendarGridHandle
+);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Today-dot geometry — fixed chrome, not density-scaled.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -85,6 +94,8 @@ pub(crate) struct CalendarGridWidget {
     focused_index: Option<usize>,
     /// Theme snapshot — copied in on construction and updated by `set_theme`.
     theme: Theme,
+    /// Self-filling handle to this widget's id — see [`CalendarGridHandle`].
+    grid_handle: CalendarGridHandle,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -131,7 +142,12 @@ pub(crate) fn cell_side(theme: &Theme) -> f64 {
 
 impl CalendarGridWidget {
     /// Creates a new grid widget with one `Label` pod per datum.
-    pub(crate) fn new(data: Vec<CellDatum>, cols: usize, theme: &Theme) -> Self {
+    pub(crate) fn new(
+        data: Vec<CellDatum>,
+        cols: usize,
+        theme: &Theme,
+        grid_handle: CalendarGridHandle,
+    ) -> Self {
         let cells = data.iter().map(|d| make_cell(d, theme)).collect();
         Self {
             cells,
@@ -141,6 +157,7 @@ impl CalendarGridWidget {
             hover_index: None,
             focused_index: None,
             theme: *theme,
+            grid_handle,
         }
     }
 
@@ -222,6 +239,9 @@ impl Widget for CalendarGridWidget {
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        if let Update::WidgetAdded = event {
+            self.grid_handle.set(ctx.widget_id());
+        }
         if let Update::FocusChanged(_) | Update::ChildFocusChanged(_) = event {
             ctx.request_paint_only();
         }

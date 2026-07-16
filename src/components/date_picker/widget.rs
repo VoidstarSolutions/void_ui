@@ -26,6 +26,7 @@ use crate::components::click::{ClickPhase, primary_click};
 use crate::components::date_picker::calendar_body::{
     CalendarBodyAction, CalendarBodyWidget, CalendarNavKey,
 };
+use crate::components::date_picker::calendar_grid::CalendarGridHandle;
 use crate::components::icon::{IconName, icon};
 use crate::focus_ring::paint_focus_ring;
 use crate::overlay::OverlayAnchor;
@@ -584,6 +585,11 @@ macro_rules! with_body {
 pub struct ThemedDatePickerWidget {
     hosting: Hosting,
     handle: DatePickerHandle,
+    /// Handle to the portal-mounted calendar grid's widget id, used to move
+    /// real keyboard focus onto it when Portal-mode `Toggle` opens the
+    /// picker. `None` for `InTree` hosting (Tab traversal already reaches
+    /// the in-tree calendar correctly without it).
+    grid_handle: Option<CalendarGridHandle>,
     selected: Option<NaiveDate>,
     placeholder: ArcStr,
     date_format: &'static str,
@@ -635,7 +641,13 @@ impl ThemedDatePickerWidget {
             disabled,
             theme,
         );
-        let body = CalendarBodyWidget::new(selected, min_date, max_date, theme);
+        let body = CalendarBodyWidget::new(
+            selected,
+            min_date,
+            max_date,
+            theme,
+            CalendarGridHandle::new(),
+        );
         let overlay_host = AnchoredOverlay::new(
             NewWidget::new(trigger),
             NewWidget::new(body),
@@ -648,6 +660,7 @@ impl ThemedDatePickerWidget {
                 overlay_host: NewWidget::new(overlay_host).to_pod(),
             },
             handle: DatePickerHandle::new(),
+            grid_handle: None,
             selected,
             placeholder,
             date_format,
@@ -679,6 +692,7 @@ impl ThemedDatePickerWidget {
         handle: DatePickerHandle,
         scope: OverlayScopeHandle,
         key: u64,
+        grid_handle: CalendarGridHandle,
     ) -> Self {
         let display = selected.map_or_else(
             || placeholder.clone(),
@@ -698,6 +712,7 @@ impl ThemedDatePickerWidget {
                 binding: PortalBinding::new(scope, key, date_picker_dismiss_hook),
             },
             handle,
+            grid_handle: Some(grid_handle),
             selected,
             placeholder,
             date_format,
@@ -1014,6 +1029,36 @@ impl Widget for ThemedDatePickerWidget {
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
 
+    // The `ctx.set_focus(grid_id)` call in the `Toggle` arm below (the
+    // task-1-brief.md Step 7 mechanism for moving real keyboard focus onto
+    // the Portal-mode calendar grid when it opens) does not currently work,
+    // confirmed by `opening_portal_mode_picker_moves_real_focus_to_the_grid`
+    // failing with `left: None, right: Some(grid_id)`. Root cause, traced
+    // through masonry's pass system (masonry_core `src/app/render_root.rs`
+    // `run_rewrite_passes` and `src/passes/update.rs`
+    // `run_update_focus_pass`): `self.open_menu(ctx)` → `PortalBinding::open`
+    // → `ctx.queue_mutate(scope_id, ...)` only flips `PortalSlot`'s
+    // `child.visible = true` data flag; the actual un-stash
+    // (`ctx.set_stashed(child, false)`) happens inside `PortalSlot::layout`,
+    // which runs in `run_layout_pass` — *after* `run_update_focus_pass` in
+    // the same rewrite-pass loop iteration. So when `ctx.set_focus(grid_id)`
+    // (called during the action pass, before either of those) reaches
+    // `run_update_focus_pass`, `is_still_interactive(grid_id)` still sees
+    // the grid as stashed from the prior frame and clears
+    // `next_focused_widget` to `None` instead of leaving it
+    // `Some(grid_id)`. Nothing re-arms it in a later loop iteration once the
+    // grid actually un-stashes, so real focus lands on neither the grid nor
+    // the trigger — it goes to `None`. This is the flagged verification
+    // risk from the design spec — the mechanism (set_focus alongside open,
+    // not after the un-stash resolves) needs to change; see
+    // task-1-report.md for the full writeup.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "already at the pedantic limit pre-Task-1; the grid_handle \
+                  focus check this task adds is a handful of unavoidable \
+                  lines for the interface this task introduces, not a sign \
+                  the function needs restructuring as part of this change"
+    )]
     fn on_action(
         &mut self,
         ctx: &mut ActionCtx<'_>,
@@ -1028,6 +1073,14 @@ impl Widget for ThemedDatePickerWidget {
                     self.open = desired;
                     if desired {
                         self.open_menu(ctx);
+                        // KNOWN-BROKEN — see the comment above `on_action`.
+                        if let Some(grid_id) = self
+                            .grid_handle
+                            .as_ref()
+                            .and_then(CalendarGridHandle::widget_id)
+                        {
+                            ctx.set_focus(grid_id);
+                        }
                     } else {
                         self.close_menu(ctx);
                     }
@@ -1292,5 +1345,123 @@ impl Widget for ThemedDatePickerWidget {
             Hosting::InTree { overlay_host } => ChildrenIds::from_slice(&[overlay_host.id()]),
             Hosting::Portal { trigger, .. } => ChildrenIds::from_slice(&[trigger.id()]),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::components::date_picker::calendar_grid::CalendarGridHandle;
+    use masonry::testing::TestHarness;
+
+    /// Builds an `OverlayScope`-rooted harness hosting a Portal-mode
+    /// `ThemedDatePickerWidget` as `content` and its `CalendarBodyWidget` as
+    /// the pre-registered slot child under `key` (mirrors
+    /// `dropdown_button/widget.rs`'s `portal_selection_close_respects_controlled_mode`
+    /// setup), clicks the trigger to open it via the real `on_action` Toggle
+    /// path, and returns `(harness, trigger_id, grid_id)`.
+    fn open_portal_picker_for_test() -> (TestHarness<OverlayScope>, WidgetId, WidgetId) {
+        use masonry::core::NewWidget;
+        use masonry::kurbo::Point;
+        use masonry::layout::AsUnit;
+        use masonry::theme::default_property_set;
+        use xilem::view::PointerButton;
+
+        let theme = Theme::default();
+        let scope_handle = OverlayScopeHandle::new();
+        let trigger_handle = DatePickerHandle::new();
+        let grid_handle = CalendarGridHandle::new();
+        let key = 1;
+
+        let trigger = ThemedDatePickerWidget::new_portal(
+            None,
+            ArcStr::from("Pick a date"),
+            "%Y-%m-%d",
+            None,
+            None,
+            false,
+            false,
+            &theme,
+            trigger_handle.clone(),
+            scope_handle.clone(),
+            key,
+            grid_handle.clone(),
+        )
+        .with_open_state(false, false);
+        let sized = masonry::widgets::SizedBox::new(NewWidget::new(trigger).erased())
+            .width(100.0.px())
+            .height(40.0.px())
+            .prepare();
+        let content =
+            masonry::widgets::Align::new(masonry::layout::UnitPoint::TOP_LEFT, sized.erased())
+                .prepare()
+                .erased();
+        let body = NewWidget::new(CalendarBodyWidget::new(
+            None,
+            None,
+            None,
+            &theme,
+            grid_handle.clone(),
+        ))
+        .erased();
+        let scope = OverlayScope::new(
+            scope_handle,
+            content,
+            vec![(
+                key,
+                body,
+                crate::overlay_portal::PortalPlacement::BareTrigger,
+            )],
+        );
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(scope));
+
+        let trigger_id = trigger_handle
+            .widget_id()
+            .expect("trigger reports its id at Update::WidgetAdded during harness construction");
+        h.mouse_move(Point::new(50.0, 20.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+
+        let grid_id = grid_handle
+            .widget_id()
+            .expect("grid reports its id at Update::WidgetAdded during harness construction");
+
+        (h, trigger_id, grid_id)
+    }
+
+    #[test]
+    fn opening_portal_mode_picker_moves_real_focus_to_the_grid() {
+        let (h, trigger_id, grid_id) = open_portal_picker_for_test();
+        assert_eq!(
+            h.focused_widget_id(),
+            Some(grid_id),
+            "opening the picker should move real focus onto the calendar grid, not stay on {trigger_id:?}"
+        );
+    }
+
+    #[test]
+    fn shift_tab_from_focused_grid_reaches_a_real_header_button() {
+        let (mut h, _trigger_id, grid_id) = open_portal_picker_for_test();
+        assert_eq!(h.focused_widget_id(), Some(grid_id));
+
+        h.process_text_event(TextEvent::Keyboard(
+            masonry::core::keyboard::KeyboardEvent {
+                state: KeyState::Down,
+                key: Key::Named(NamedKey::Tab),
+                modifiers: masonry::core::keyboard::Modifiers::SHIFT,
+                ..Default::default()
+            },
+        ));
+
+        let after = h.focused_widget_id();
+        assert_ne!(
+            after,
+            Some(grid_id),
+            "Shift+Tab should move focus off the grid"
+        );
+        assert_ne!(
+            after, None,
+            "Shift+Tab should land on a real focusable widget, not nothing"
+        );
     }
 }

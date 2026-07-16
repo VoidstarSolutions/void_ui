@@ -34,6 +34,7 @@ use xilem::{Pod, ViewCtx};
 
 use crate::Theme;
 use crate::components::date_picker::calendar_body::{CalendarBodyAction, CalendarBodyWidget};
+use crate::components::date_picker::calendar_grid::CalendarGridHandle;
 use crate::components::date_picker::widget::{
     DatePickerAction, DatePickerHandle, ThemedDatePickerWidget,
 };
@@ -198,6 +199,7 @@ enum PickerBinding<State: 'static, Action: 'static> {
         portal: OverlayPortal<State, Action>,
         key: u64,
         handle: DatePickerHandle,
+        grid_handle: CalendarGridHandle,
     },
     InTree,
 }
@@ -222,11 +224,13 @@ where
         let portal = portal_from_env::<State, Action>(ctx);
         if let Some(portal) = portal {
             let handle = DatePickerHandle::new();
+            let grid_handle = CalendarGridHandle::new();
             let body_view = CalendarBodyView {
                 selected: self.selected,
                 min_date: self.min_date,
                 max_date: self.max_date,
                 picker_handle: handle.clone(),
+                grid_handle: grid_handle.clone(),
                 on_changed: self.on_changed.clone(),
                 theme: self.theme,
             };
@@ -249,6 +253,7 @@ where
                 handle.clone(),
                 portal.scope().clone(),
                 key,
+                grid_handle.clone(),
             )
             .with_open_state(self.open.unwrap_or(false), self.open.is_some());
             let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
@@ -259,6 +264,7 @@ where
                         portal,
                         key,
                         handle,
+                        grid_handle,
                     },
                 },
             )
@@ -329,6 +335,7 @@ where
             portal,
             key,
             handle,
+            grid_handle,
         } = &mut view_state.binding
         {
             // Content rebuild happens when the scope's view diffs the
@@ -345,6 +352,7 @@ where
                     min_date: self.min_date,
                     max_date: self.max_date,
                     picker_handle: handle.clone(),
+                    grid_handle: grid_handle.clone(),
                     on_changed: self.on_changed.clone(),
                     theme: self.theme,
                 };
@@ -406,6 +414,7 @@ pub(crate) struct CalendarBodyView<State, Action> {
     min_date: Option<NaiveDate>,
     max_date: Option<NaiveDate>,
     picker_handle: DatePickerHandle,
+    grid_handle: CalendarGridHandle,
     on_changed: OnChangedFn<State, Action>,
     theme: Theme,
 }
@@ -421,8 +430,13 @@ where
     type ViewState = ();
 
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
-        let widget =
-            CalendarBodyWidget::new(self.selected, self.min_date, self.max_date, &self.theme);
+        let widget = CalendarBodyWidget::new(
+            self.selected,
+            self.min_date,
+            self.max_date,
+            &self.theme,
+            self.grid_handle.clone(),
+        );
         // `CalendarBodyWidget` itself must be the widget registered here —
         // it's the one that calls `ctx.submit_action::<CalendarBodyAction>`.
         // Wrapping it in an extra `Passthrough` first (as a previous version

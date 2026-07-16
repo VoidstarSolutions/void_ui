@@ -26,7 +26,7 @@ use crate::Theme;
 use crate::components::button::ButtonVariant;
 use crate::components::button::widget::ThemedButton;
 use crate::components::date_picker::calendar_grid::{
-    CalendarGridAction, CalendarGridWidget, CellDatum, cell_side,
+    CalendarGridAction, CalendarGridHandle, CalendarGridWidget, CellDatum, cell_side,
 };
 use crate::components::date_picker::calendar_math::{
     WEEKDAY_LABELS, add_months, day_grid, day_grid_index_of, day_in_range, last_day_of_month,
@@ -368,6 +368,7 @@ impl CalendarBodyWidget {
         min_date: Option<NaiveDate>,
         max_date: Option<NaiveDate>,
         theme: &Theme,
+        grid_handle: CalendarGridHandle,
     ) -> Self {
         let today = chrono::Local::now().date_naive();
         let anchor = selected.unwrap_or(today);
@@ -394,7 +395,7 @@ impl CalendarBodyWidget {
         let weekday_row = WEEKDAY_LABELS.map(|label| build_weekday_label(label, theme));
 
         let grid_data = build_day_cells(&dg, current_month, selected, today, min_date, max_date);
-        let grid = WidgetPod::new(CalendarGridWidget::new(grid_data, 7, theme));
+        let grid = WidgetPod::new(CalendarGridWidget::new(grid_data, 7, theme, grid_handle));
 
         Self {
             nav,
@@ -1213,7 +1214,8 @@ mod tests {
     fn clicking_a_day_cell_selects_it_without_panicking() {
         let theme = Theme::default();
         let date = NaiveDate::from_ymd_opt(2024, 6, 15).unwrap();
-        let widget = CalendarBodyWidget::new(Some(date), None, None, &theme);
+        let widget =
+            CalendarBodyWidget::new(Some(date), None, None, &theme, CalendarGridHandle::new());
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
         let dg = day_grid(2024, 6);
@@ -1286,7 +1288,13 @@ mod tests {
     fn rollover_left_crosses_into_previous_month() {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
-        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let widget = CalendarBodyWidget::new(
+            Some(selected),
+            None,
+            None,
+            &theme,
+            CalendarGridHandle::new(),
+        );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
         h.edit_root_widget(|mut wm| {
@@ -1312,7 +1320,13 @@ mod tests {
     fn rollover_up_crosses_into_previous_month() {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
-        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let widget = CalendarBodyWidget::new(
+            Some(selected),
+            None,
+            None,
+            &theme,
+            CalendarGridHandle::new(),
+        );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
         h.edit_root_widget(|mut wm| {
@@ -1338,7 +1352,13 @@ mod tests {
     fn rollover_right_crosses_into_next_month() {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
-        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let widget = CalendarBodyWidget::new(
+            Some(selected),
+            None,
+            None,
+            &theme,
+            CalendarGridHandle::new(),
+        );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
         h.edit_root_widget(|mut wm| {
@@ -1364,7 +1384,13 @@ mod tests {
     fn rollover_down_crosses_into_next_month() {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
-        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let widget = CalendarBodyWidget::new(
+            Some(selected),
+            None,
+            None,
+            &theme,
+            CalendarGridHandle::new(),
+        );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
         h.edit_root_widget(|mut wm| {
@@ -1391,7 +1417,13 @@ mod tests {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
         let max_date = NaiveDate::from_ymd_opt(2024, 3, 31).unwrap();
-        let widget = CalendarBodyWidget::new(Some(selected), None, Some(max_date), &theme);
+        let widget = CalendarBodyWidget::new(
+            Some(selected),
+            None,
+            Some(max_date),
+            &theme,
+            CalendarGridHandle::new(),
+        );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
         h.edit_root_widget(|mut wm| {
@@ -1413,7 +1445,13 @@ mod tests {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
         let min_date = NaiveDate::from_ymd_opt(2024, 4, 9).unwrap();
-        let widget = CalendarBodyWidget::new(Some(selected), Some(min_date), None, &theme);
+        let widget = CalendarBodyWidget::new(
+            Some(selected),
+            Some(min_date),
+            None,
+            &theme,
+            CalendarGridHandle::new(),
+        );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
         h.edit_root_widget(|mut wm| {
@@ -1444,7 +1482,13 @@ mod tests {
     fn page_down_steps_month_preserving_day() {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
-        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let widget = CalendarBodyWidget::new(
+            Some(selected),
+            None,
+            None,
+            &theme,
+            CalendarGridHandle::new(),
+        );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
         h.edit_root_widget(|mut wm| {
@@ -1469,7 +1513,13 @@ mod tests {
     fn page_up_steps_month_preserving_day() {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
-        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let widget = CalendarBodyWidget::new(
+            Some(selected),
+            None,
+            None,
+            &theme,
+            CalendarGridHandle::new(),
+        );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
         h.edit_root_widget(|mut wm| {
@@ -1494,7 +1544,13 @@ mod tests {
     fn page_down_clamps_day_to_shorter_leap_february() {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 1, 31).unwrap();
-        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let widget = CalendarBodyWidget::new(
+            Some(selected),
+            None,
+            None,
+            &theme,
+            CalendarGridHandle::new(),
+        );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
         h.edit_root_widget(|mut wm| {
@@ -1518,7 +1574,13 @@ mod tests {
     fn page_down_clamps_day_non_leap_year() {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2023, 1, 31).unwrap();
-        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let widget = CalendarBodyWidget::new(
+            Some(selected),
+            None,
+            None,
+            &theme,
+            CalendarGridHandle::new(),
+        );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
         h.edit_root_widget(|mut wm| {
@@ -1542,7 +1604,13 @@ mod tests {
     fn shift_page_down_steps_year_clamping_feb29_into_non_leap_year() {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 2, 29).unwrap();
-        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let widget = CalendarBodyWidget::new(
+            Some(selected),
+            None,
+            None,
+            &theme,
+            CalendarGridHandle::new(),
+        );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
         h.edit_root_widget(|mut wm| {
@@ -1567,7 +1635,13 @@ mod tests {
     fn shift_page_up_steps_year_preserving_month_day() {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 6, 15).unwrap();
-        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let widget = CalendarBodyWidget::new(
+            Some(selected),
+            None,
+            None,
+            &theme,
+            CalendarGridHandle::new(),
+        );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
         h.edit_root_widget(|mut wm| {
@@ -1592,7 +1666,13 @@ mod tests {
     fn page_keys_are_noop_in_month_view() {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
-        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let widget = CalendarBodyWidget::new(
+            Some(selected),
+            None,
+            None,
+            &theme,
+            CalendarGridHandle::new(),
+        );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
         h.edit_root_widget(|mut wm| {
@@ -1612,7 +1692,13 @@ mod tests {
     fn page_keys_are_noop_in_year_view() {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
-        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let widget = CalendarBodyWidget::new(
+            Some(selected),
+            None,
+            None,
+            &theme,
+            CalendarGridHandle::new(),
+        );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
         h.edit_root_widget(|mut wm| {
@@ -1633,7 +1719,13 @@ mod tests {
     fn header_month_button_enter_key_switches_to_month_view() {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
-        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let widget = CalendarBodyWidget::new(
+            Some(selected),
+            None,
+            None,
+            &theme,
+            CalendarGridHandle::new(),
+        );
         let month_btn_id = widget.header_month.id();
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
@@ -1650,7 +1742,13 @@ mod tests {
     fn header_year_button_enter_key_switches_to_year_view() {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
-        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let widget = CalendarBodyWidget::new(
+            Some(selected),
+            None,
+            None,
+            &theme,
+            CalendarGridHandle::new(),
+        );
         let year_btn_id = widget.header_year.id();
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
