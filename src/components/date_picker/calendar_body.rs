@@ -1209,6 +1209,8 @@ impl CalendarBodyWidget {
 mod tests {
     use super::*;
     use masonry::core::NewWidget;
+    use masonry::core::TextEvent;
+    use masonry::core::keyboard::{Key, NamedKey};
     use masonry::kurbo::Point;
     use masonry::testing::TestHarness;
     use masonry::theme::default_property_set;
@@ -1629,6 +1631,42 @@ mod tests {
             assert_eq!(wm.widget.nav.view_mode, ViewMode::Year);
             assert_eq!(wm.widget.nav.current_year, 2024);
             assert_eq!(wm.widget.focused_index, None);
+        });
+    }
+
+    // ── Header button keyboard activation ─────────────────────────────────────
+
+    #[test]
+    fn header_month_button_enter_key_switches_to_month_view() {
+        let theme = Theme::default();
+        let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
+        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let month_btn_id = widget.header_month.id();
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+
+        h.focus_on(Some(month_btn_id));
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Enter)));
+        h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
+
+        h.edit_root_widget(|wm| {
+            assert_eq!(wm.widget.nav.view_mode, ViewMode::Month);
+        });
+    }
+
+    #[test]
+    fn header_year_button_enter_key_switches_to_year_view() {
+        let theme = Theme::default();
+        let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
+        let widget = CalendarBodyWidget::new(Some(selected), None, None, &theme);
+        let year_btn_id = widget.header_year.id();
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+
+        h.focus_on(Some(year_btn_id));
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Enter)));
+        h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
+
+        h.edit_root_widget(|wm| {
+            assert_eq!(wm.widget.nav.view_mode, ViewMode::Year);
         });
     }
 }
