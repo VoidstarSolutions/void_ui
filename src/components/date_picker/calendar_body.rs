@@ -497,15 +497,11 @@ impl CalendarBodyWidget {
     /// Routes a keyboard navigation key to the calendar grid.
     ///
     /// Arrow keys move the keyboard-roving focus one cell in the requested
-    /// direction, skipping disabled cells. Home/End jump to the first/last
-    /// non-disabled cell. Enter activates the focused cell (same logic as
-    /// clicking it).
-    ///
-    /// # Known v1 limitation
-    ///
-    /// In Day mode, arrow keys clamp at the grid boundary rather than crossing
-    /// month boundaries. Navigating across months via the keyboard is reserved
-    /// for a future release.
+    /// direction, skipping disabled cells and crossing month boundaries when
+    /// reaching the grid edge (Day view only). Home/End jump to the first/last
+    /// non-disabled cell in the current month. PageUp/PageDown (Day view only)
+    /// step back/forward one month; Shift+PageUp/PageDown step back/forward one
+    /// year. Enter activates the focused cell (same logic as clicking it).
     pub(crate) fn handle_nav_key(this: &mut WidgetMut<'_, Self>, key: CalendarNavKey) {
         match key {
             CalendarNavKey::PrevMonth
@@ -603,16 +599,13 @@ impl CalendarBodyWidget {
             && this.widget.nav.view_mode == ViewMode::Day
             && let Some(offset) = day_offset_for(key)
         {
-            if Self::try_cross_month(this, offset) {
-                return;
-            }
+            Self::try_cross_month(this, offset);
             // Rollover was attempted (this arrow key has day-offset
-            // semantics) but no reachable cell exists in the adjacent
-            // month — e.g. it's entirely outside [min_date, max_date].
-            // Leave focus where it is instead of falling through to the
-            // generic handling below, which would otherwise clear it and
-            // reintroduce the "arrow key drops focus at the grid boundary"
-            // bug this task exists to fix.
+            // semantics) but if no reachable cell exists in the adjacent
+            // month — e.g. it's entirely outside [min_date, max_date] —
+            // focus stays where it was. Either the rollover succeeded and
+            // try_cross_month landed focus in the adjacent month, or it
+            // failed silently and this return keeps focus in place.
             return;
         }
 
