@@ -361,14 +361,23 @@ impl Widget for DatePickerTrigger {
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
         let h = size.height;
-        let icon_w = h; // square
+        let icon_w = h; // square column
         let clear_w = if self.clear_icon.is_some() { h } else { 0.0 };
         let text_w = (size.width - icon_w - clear_w).max(0.0);
 
+        // Icons are laid out at their natural glyph size and centered within
+        // their square column — running them at the full column size would
+        // leave `Label` (which only centers text horizontally, and only when
+        // `text_alignment` is `Center`) pinning the glyph to the top-left.
+        let glyph = f64::from(self.theme.density.ui_font_size);
+        let glyph_size = Size::new(glyph, glyph);
+
         // Calendar icon (left).
-        let icon_size = Size::new(icon_w, h);
-        ctx.run_layout(&mut self.icon, icon_size);
-        ctx.place_child(&mut self.icon, Point::ORIGIN);
+        ctx.run_layout(&mut self.icon, glyph_size);
+        ctx.place_child(
+            &mut self.icon,
+            Point::new((icon_w - glyph) * 0.5, (h - glyph) * 0.5),
+        );
 
         // Text (center).
         let text_size = Size::new(text_w, h);
@@ -377,11 +386,16 @@ impl Widget for DatePickerTrigger {
 
         // Clear icon (right, optional).
         if let Some(pod) = &mut self.clear_icon {
-            let clear_size = Size::new(clear_w, h);
-            ctx.run_layout(pod, clear_size);
+            ctx.run_layout(pod, glyph_size);
             let clear_x = icon_w + text_w;
-            ctx.place_child(pod, Point::new(clear_x, 0.0));
-            self.clear_rect = Some(Rect::from_origin_size(Point::new(clear_x, 0.0), clear_size));
+            ctx.place_child(
+                pod,
+                Point::new(clear_x + (clear_w - glyph) * 0.5, (h - glyph) * 0.5),
+            );
+            self.clear_rect = Some(Rect::from_origin_size(
+                Point::new(clear_x, 0.0),
+                Size::new(clear_w, h),
+            ));
         } else {
             self.clear_rect = None;
         }
