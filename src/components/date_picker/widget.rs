@@ -1154,7 +1154,6 @@ impl Widget for ThemedDatePickerWidget {
                         DatePickerTrigger::set_has_value(&mut trig, true, cleanable);
                     }
                 });
-                ctx.request_focus();
             }
             ctx.submit_action::<Self::Action>(DatePickerAction::DateChanged(Some(date)));
             ctx.submit_action::<Self::Action>(DatePickerAction::OpenChanged(false));

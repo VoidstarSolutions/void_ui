@@ -322,9 +322,11 @@ fn day_offset_for(key: CalendarNavKey) -> Option<i64> {
 /// The subset of masonry context capabilities the day/month/year activation
 /// logic needs, shimmed over the ctx types' inherent methods (they share no
 /// trait upstream) so that one implementation of each activation function can
-/// run from both the keyboard path (`MutateCtx`, via
-/// `WidgetMut::handle_nav_key`) and the pointer path (`ActionCtx`, via
-/// `on_action`). Mirrors `overlay::binding::PortalCtx`.
+/// run from the keyboard path (`MutateCtx`, via `WidgetMut::handle_nav_key`),
+/// the pointer path (`ActionCtx`, via `on_action`), and the in-calendar
+/// keyboard path (`EventCtx`, via `CalendarBodyWidget::on_text_event`, once
+/// real focus has moved into the grid via Tab). Mirrors
+/// `overlay::binding::PortalCtx`.
 trait CalendarCtx {
     /// `ctx.mutate_later(target, f)`.
     fn queue_mutate(
