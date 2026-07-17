@@ -33,6 +33,7 @@ use crate::components::date_picker::calendar_math::{
     WEEKDAY_LABELS, add_months, day_grid, day_grid_index_of, day_in_range, last_day_of_month,
     month_in_range, month_label, year_in_range, year_page_of, years_in_page,
 };
+use crate::components::date_picker::widget::DatePickerHandle;
 use crate::components::item_list::index_f64;
 use chrono::{Datelike, Duration, NaiveDate};
 
@@ -121,6 +122,11 @@ pub(crate) struct CalendarBodyWidget {
     /// [`CalendarNavKey`] events routed from the parent date-picker widget.
     /// `None` when the keyboard focus is not inside the grid.
     focused_index: Option<usize>,
+    /// Handle to the owning [`super::widget::ThemedDatePickerWidget`]'s
+    /// widget id, used to return real masonry focus to the trigger when the
+    /// calendar closes (Enter-select, Escape). `None` for `InTree` hosting
+    /// and in isolated-widget tests — see [`Self::new_with_trigger_handle`].
+    trigger_handle: Option<DatePickerHandle>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -330,9 +336,40 @@ trait CalendarCtx {
     fn submit_date_selected(&mut self, date: NaiveDate);
     /// `ctx.request_layout()`.
     fn request_layout(&mut self);
+    /// Transfers real focus to `target`, if this context supports it and a
+    /// target is given. A documented no-op for `MutateCtx` — masonry only
+    /// exposes `set_focus` on `ActionCtx`/`EventCtx` (confirmed by reading
+    /// `masonry_core/src/core/contexts.rs`), and `MutateCtx`-driven paths
+    /// (`InTree`'s keyboard-Enter path in particular) never need this
+    /// anyway, since `InTree`'s trigger never loses real focus to begin
+    /// with.
+    fn set_focus_to(&mut self, target: Option<WidgetId>);
 }
 
-macro_rules! impl_calendar_ctx {
+impl CalendarCtx for MutateCtx<'_> {
+    fn queue_mutate(
+        &mut self,
+        target: WidgetId,
+        f: impl FnOnce(WidgetMut<'_, dyn Widget>) + Send + 'static,
+    ) {
+        self.mutate_later(target, f);
+    }
+
+    fn submit_date_selected(&mut self, date: NaiveDate) {
+        self.submit_action::<CalendarBodyAction>(CalendarBodyAction::DateSelected(date));
+    }
+
+    fn request_layout(&mut self) {
+        self.request_layout();
+    }
+
+    fn set_focus_to(&mut self, _target: Option<WidgetId>) {
+        // MutateCtx has no set_focus in this masonry version — see the
+        // CalendarCtx::set_focus_to doc comment.
+    }
+}
+
+macro_rules! impl_calendar_ctx_focusable {
     ($($ctx:ty),+ $(,)?) => {$(
         impl CalendarCtx for $ctx {
             fn queue_mutate(
@@ -350,11 +387,17 @@ macro_rules! impl_calendar_ctx {
             fn request_layout(&mut self) {
                 self.request_layout();
             }
+
+            fn set_focus_to(&mut self, target: Option<WidgetId>) {
+                if let Some(id) = target {
+                    self.set_focus(id);
+                }
+            }
         }
     )+};
 }
 
-impl_calendar_ctx!(ActionCtx<'_>, MutateCtx<'_>, EventCtx<'_>);
+impl_calendar_ctx_focusable!(ActionCtx<'_>, EventCtx<'_>);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constructor
@@ -412,7 +455,26 @@ impl CalendarBodyWidget {
             grid,
             theme: *theme,
             focused_index: None,
+            trigger_handle: None,
         }
+    }
+
+    /// Like [`Self::new`], but also wires a trigger-pointing handle so
+    /// closing (Enter-select, Escape) can return real focus to the trigger —
+    /// used by Portal mode only (`InTree`'s trigger never loses focus in the
+    /// first place, so it has nothing to return to).
+    #[must_use]
+    pub(crate) fn new_with_trigger_handle(
+        selected: Option<NaiveDate>,
+        min_date: Option<NaiveDate>,
+        max_date: Option<NaiveDate>,
+        theme: &Theme,
+        grid_handle: CalendarGridHandle,
+        trigger_handle: Option<DatePickerHandle>,
+    ) -> Self {
+        let mut this = Self::new(selected, min_date, max_date, theme, grid_handle);
+        this.trigger_handle = trigger_handle;
+        this
     }
 
     /// Outer inset around the panel's header/weekday/grid content — this
@@ -799,6 +861,21 @@ impl Widget for CalendarBodyWidget {
             return;
         };
         if key.state != KeyState::Down {
+            return;
+        }
+        if matches!(&key.key, Key::Named(NamedKey::Escape)) {
+            if let Some(trigger_id) = self
+                .trigger_handle
+                .as_ref()
+                .and_then(DatePickerHandle::widget_id)
+            {
+                ctx.set_focus_to(Some(trigger_id));
+                ctx.mutate_later(trigger_id, |mut w| {
+                    let mut picker = w.downcast::<crate::components::date_picker::widget::ThemedDatePickerWidget>();
+                    crate::components::date_picker::widget::ThemedDatePickerWidget::close_from_calendar(&mut picker);
+                });
+            }
+            ctx.set_handled();
             return;
         }
         let nav_key = match &key.key {
@@ -1212,6 +1289,12 @@ impl CalendarBodyWidget {
         widget.selected = Some(date);
         widget.focused_index = None;
         ctx.submit_date_selected(date);
+        ctx.set_focus_to(
+            widget
+                .trigger_handle
+                .as_ref()
+                .and_then(DatePickerHandle::widget_id),
+        );
         let new_data = build_day_cells(
             &widget.nav.day_grid,
             widget.nav.current_month,

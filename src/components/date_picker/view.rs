@@ -430,12 +430,13 @@ where
     type ViewState = ();
 
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
-        let widget = CalendarBodyWidget::new(
+        let widget = CalendarBodyWidget::new_with_trigger_handle(
             self.selected,
             self.min_date,
             self.max_date,
             &self.theme,
             self.grid_handle.clone(),
+            Some(self.picker_handle.clone()),
         );
         // `CalendarBodyWidget` itself must be the widget registered here —
         // it's the one that calls `ctx.submit_action::<CalendarBodyAction>`.

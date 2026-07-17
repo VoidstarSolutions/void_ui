@@ -925,6 +925,25 @@ impl ThemedDatePickerWidget {
             .submit_action::<DatePickerAction>(DatePickerAction::OpenChanged(false));
         this.ctx.request_paint_only();
     }
+
+    /// Closes the calendar in response to Escape pressed *inside* it
+    /// (Portal mode only — called via `mutate_later` from
+    /// `CalendarBodyWidget::on_text_event`, since the calendar isn't a
+    /// descendant of the trigger in that mode). Unlike `mark_closed`, this
+    /// must actually hide the portal slot itself — nothing else has done so
+    /// yet, unlike the outside-press-dismiss case `mark_closed` handles.
+    pub(crate) fn close_from_calendar(this: &mut WidgetMut<'_, Self>) {
+        if !this.widget.open {
+            return;
+        }
+        if !this.widget.controlled {
+            this.widget.open = false;
+            this.widget.close_menu(&mut this.ctx);
+        }
+        this.ctx
+            .submit_action::<DatePickerAction>(DatePickerAction::OpenChanged(false));
+        this.ctx.request_paint_only();
+    }
 }
 
 /// Dismiss hook registered with the portal slot (see
@@ -1135,6 +1154,7 @@ impl Widget for ThemedDatePickerWidget {
                         DatePickerTrigger::set_has_value(&mut trig, true, cleanable);
                     }
                 });
+                ctx.request_focus();
             }
             ctx.submit_action::<Self::Action>(DatePickerAction::DateChanged(Some(date)));
             ctx.submit_action::<Self::Action>(DatePickerAction::OpenChanged(false));
@@ -1379,12 +1399,13 @@ mod tests {
             masonry::widgets::Align::new(masonry::layout::UnitPoint::TOP_LEFT, sized.erased())
                 .prepare()
                 .erased();
-        let body = NewWidget::new(CalendarBodyWidget::new(
+        let body = NewWidget::new(CalendarBodyWidget::new_with_trigger_handle(
             None,
             None,
             None,
             &theme,
             grid_handle.clone(),
+            Some(trigger_handle.clone()),
         ))
         .erased();
         let scope = OverlayScope::new(
@@ -1410,6 +1431,47 @@ mod tests {
             .expect("grid reports its id at Update::WidgetAdded during harness construction");
 
         (h, trigger_id, grid_id)
+    }
+
+    #[test]
+    fn selecting_a_day_returns_focus_to_the_trigger() {
+        let (mut h, trigger_id, grid_id) = open_portal_picker_for_test();
+        // Focus stays on the trigger right after opening (per Task 1's
+        // Tab-interception design — there is no auto-focus-on-open). Press
+        // Tab first to move real focus onto the grid, matching how a real
+        // user would reach it before selecting a day via the keyboard.
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
+        assert_eq!(h.focused_widget_id(), Some(grid_id));
+
+        // Seed the roving focus onto a real day cell first — ArrowDown from
+        // no prior focus lands on the first non-disabled cell (unlike
+        // ArrowRight/Left/Up, which need an existing reference cell and
+        // no-op when there isn't one yet).
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowDown)));
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Enter)));
+
+        assert_eq!(
+            h.focused_widget_id(),
+            Some(trigger_id),
+            "Enter-selecting a day should return real focus to the trigger"
+        );
+    }
+
+    #[test]
+    fn escape_in_open_calendar_returns_focus_to_the_trigger() {
+        let (mut h, trigger_id, grid_id) = open_portal_picker_for_test();
+        // Same as above: Tab first to get real focus onto the grid, since
+        // opening alone no longer does this.
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
+        assert_eq!(h.focused_widget_id(), Some(grid_id));
+
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Escape)));
+
+        assert_eq!(
+            h.focused_widget_id(),
+            Some(trigger_id),
+            "Escape while the calendar holds focus should return real focus to the trigger"
+        );
     }
 
     #[test]
