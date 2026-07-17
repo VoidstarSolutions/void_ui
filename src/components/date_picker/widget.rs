@@ -7,12 +7,13 @@
 //! lives in `view.rs` (Task 5). Portal hosting is added in Task 7.
 
 use chrono::NaiveDate;
-use masonry::accesskit::{Node, Role};
+use masonry::accesskit::{Action as AccessKitAction, ActionData, CustomAction, Node, Role};
 use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
-    AccessCtx, ActionCtx, ArcStr, ChildrenIds, ComposeCtx, ErasedAction, EventCtx, LayoutCtx,
-    MeasureCtx, NewWidget, PaintCtx, PointerEvent, PointerUpdate, PropertiesMut, PropertiesRef,
-    RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, AccessEvent, ActionCtx, ArcStr, ChildrenIds, ComposeCtx, ErasedAction, EventCtx,
+    LayoutCtx, MeasureCtx, NewWidget, PaintCtx, PointerEvent, PointerUpdate, PropertiesMut,
+    PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
+    WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, RoundedRect, Size, Stroke};
@@ -28,6 +29,7 @@ use crate::components::date_picker::calendar_body::{
     CalendarBodyAction, CalendarBodyWidget, CalendarNavKey,
 };
 use crate::components::icon::{IconName, icon};
+use crate::components::interaction::is_access_click;
 use crate::focus_ring::paint_focus_ring;
 use crate::overlay::OverlayAnchor;
 use crate::overlay::binding::{self, PortalBinding, PortalCtx, PortalOpenCtx};
@@ -47,6 +49,11 @@ pub(crate) enum DatePickerTriggerAction {
     /// value is set).
     Clear,
 }
+
+/// Stable id for the clear affordance's accesskit custom action, used to
+/// match `AccessEvent::data` in `on_access_event` back to
+/// [`DatePickerTriggerAction::Clear`].
+const CLEAR_CUSTOM_ACTION_ID: i32 = 1;
 
 /// Hand-rolled input-box-style trigger for the date picker.
 ///
@@ -350,6 +357,31 @@ impl Widget for DatePickerTrigger {
         }
     }
 
+    fn on_access_event(
+        &mut self,
+        ctx: &mut EventCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        event: &AccessEvent,
+    ) {
+        if self.disabled {
+            return;
+        }
+        if is_access_click(event) {
+            ctx.submit_action::<Self::Action>(DatePickerTriggerAction::Toggle);
+            ctx.set_handled();
+            return;
+        }
+        if event.action == AccessKitAction::CustomAction
+            && matches!(
+                event.data,
+                Some(ActionData::CustomAction(id)) if id == CLEAR_CUSTOM_ACTION_ID
+            )
+        {
+            ctx.submit_action::<Self::Action>(DatePickerTriggerAction::Clear);
+            ctx.set_handled();
+        }
+    }
+
     fn measure(
         &mut self,
         ctx: &mut MeasureCtx<'_>,
@@ -486,9 +518,16 @@ impl Widget for DatePickerTrigger {
         node: &mut Node,
     ) {
         if !self.disabled {
-            node.add_action(masonry::accesskit::Action::Click);
+            node.add_action(AccessKitAction::Click);
+            if self.clear_icon.is_some() {
+                node.add_action(AccessKitAction::CustomAction);
+                node.push_custom_action(CustomAction {
+                    id: CLEAR_CUSTOM_ACTION_ID,
+                    description: "Clear".into(),
+                });
+            }
         }
-        node.add_action(masonry::accesskit::Action::Expand);
+        node.add_action(AccessKitAction::Expand);
     }
 
     fn children_ids(&self) -> ChildrenIds {
