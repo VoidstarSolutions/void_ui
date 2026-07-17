@@ -423,13 +423,13 @@ impl CalendarBodyWidget {
     /// seeded from `selected`.
     #[must_use]
     pub(crate) fn new(
+        today: NaiveDate,
         selected: Option<NaiveDate>,
         min_date: Option<NaiveDate>,
         max_date: Option<NaiveDate>,
         theme: &Theme,
         header_handle: &CalendarHeaderHandle,
     ) -> Self {
-        let today = chrono::Local::now().date_naive();
         let anchor = selected.unwrap_or(today);
         let current_year = anchor.year();
         let current_month = anchor.month();
@@ -481,6 +481,7 @@ impl CalendarBodyWidget {
     /// first place, so it has nothing to return to).
     #[must_use]
     pub(crate) fn new_with_trigger_handle(
+        today: NaiveDate,
         selected: Option<NaiveDate>,
         min_date: Option<NaiveDate>,
         max_date: Option<NaiveDate>,
@@ -488,7 +489,7 @@ impl CalendarBodyWidget {
         header_handle: &CalendarHeaderHandle,
         trigger_handle: Option<DatePickerHandle>,
     ) -> Self {
-        let mut this = Self::new(selected, min_date, max_date, theme, header_handle);
+        let mut this = Self::new(today, selected, min_date, max_date, theme, header_handle);
         this.trigger_handle = trigger_handle;
         this
     }
@@ -1385,8 +1386,14 @@ mod tests {
     fn clicking_a_day_cell_selects_it_without_panicking() {
         let theme = Theme::default();
         let date = NaiveDate::from_ymd_opt(2024, 6, 15).unwrap();
-        let widget =
-            CalendarBodyWidget::new(Some(date), None, None, &theme, &CalendarHeaderHandle::new());
+        let widget = CalendarBodyWidget::new(
+            date,
+            Some(date),
+            None,
+            None,
+            &theme,
+            &CalendarHeaderHandle::new(),
+        );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
         let dg = day_grid(2024, 6);
@@ -1425,6 +1432,7 @@ mod tests {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
         let widget = CalendarBodyWidget::new(
+            selected,
             Some(selected),
             None,
             None,
@@ -1451,6 +1459,7 @@ mod tests {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
         let widget = CalendarBodyWidget::new(
+            selected,
             Some(selected),
             None,
             None,
@@ -1515,6 +1524,7 @@ mod tests {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
         let widget = CalendarBodyWidget::new(
+            selected,
             Some(selected),
             None,
             None,
@@ -1547,6 +1557,7 @@ mod tests {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
         let widget = CalendarBodyWidget::new(
+            selected,
             Some(selected),
             None,
             None,
@@ -1579,6 +1590,7 @@ mod tests {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
         let widget = CalendarBodyWidget::new(
+            selected,
             Some(selected),
             None,
             None,
@@ -1611,6 +1623,7 @@ mod tests {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
         let widget = CalendarBodyWidget::new(
+            selected,
             Some(selected),
             None,
             None,
@@ -1644,6 +1657,7 @@ mod tests {
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
         let max_date = NaiveDate::from_ymd_opt(2024, 3, 31).unwrap();
         let widget = CalendarBodyWidget::new(
+            selected,
             Some(selected),
             None,
             Some(max_date),
@@ -1672,6 +1686,7 @@ mod tests {
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
         let min_date = NaiveDate::from_ymd_opt(2024, 4, 9).unwrap();
         let widget = CalendarBodyWidget::new(
+            selected,
             Some(selected),
             Some(min_date),
             None,
@@ -1709,6 +1724,7 @@ mod tests {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
         let widget = CalendarBodyWidget::new(
+            selected,
             Some(selected),
             None,
             None,
@@ -1740,6 +1756,7 @@ mod tests {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
         let widget = CalendarBodyWidget::new(
+            selected,
             Some(selected),
             None,
             None,
@@ -1771,6 +1788,7 @@ mod tests {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 1, 31).unwrap();
         let widget = CalendarBodyWidget::new(
+            selected,
             Some(selected),
             None,
             None,
@@ -1801,6 +1819,7 @@ mod tests {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2023, 1, 31).unwrap();
         let widget = CalendarBodyWidget::new(
+            selected,
             Some(selected),
             None,
             None,
@@ -1831,6 +1850,7 @@ mod tests {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 2, 29).unwrap();
         let widget = CalendarBodyWidget::new(
+            selected,
             Some(selected),
             None,
             None,
@@ -1862,6 +1882,7 @@ mod tests {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 6, 15).unwrap();
         let widget = CalendarBodyWidget::new(
+            selected,
             Some(selected),
             None,
             None,
@@ -1893,6 +1914,7 @@ mod tests {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
         let widget = CalendarBodyWidget::new(
+            selected,
             Some(selected),
             None,
             None,
@@ -1919,6 +1941,7 @@ mod tests {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
         let widget = CalendarBodyWidget::new(
+            selected,
             Some(selected),
             None,
             None,
@@ -1946,6 +1969,7 @@ mod tests {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
         let widget = CalendarBodyWidget::new(
+            selected,
             Some(selected),
             None,
             None,
@@ -1969,6 +1993,7 @@ mod tests {
         let theme = Theme::default();
         let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
         let widget = CalendarBodyWidget::new(
+            selected,
             Some(selected),
             None,
             None,

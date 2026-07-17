@@ -645,6 +645,7 @@ impl ThemedDatePickerWidget {
             theme,
         );
         let body = CalendarBodyWidget::new(
+            chrono::Local::now().date_naive(),
             selected,
             min_date,
             max_date,
@@ -1407,6 +1408,7 @@ mod tests {
                 .prepare()
                 .erased();
         let body = NewWidget::new(CalendarBodyWidget::new_with_trigger_handle(
+            chrono::Local::now().date_naive(),
             None,
             None,
             None,

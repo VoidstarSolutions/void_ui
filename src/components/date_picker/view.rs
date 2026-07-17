@@ -431,6 +431,7 @@ where
 
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
         let widget = CalendarBodyWidget::new_with_trigger_handle(
+            chrono::Local::now().date_naive(),
             self.selected,
             self.min_date,
             self.max_date,
