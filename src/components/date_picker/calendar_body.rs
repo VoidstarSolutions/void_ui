@@ -27,7 +27,7 @@ use crate::Theme;
 use crate::components::button::ButtonVariant;
 use crate::components::button::widget::ThemedButton;
 use crate::components::date_picker::calendar_grid::{
-    CalendarGridAction, CalendarGridHandle, CalendarGridWidget, CellDatum, cell_side,
+    CalendarGridAction, CalendarGridWidget, CellDatum, cell_side,
 };
 use crate::components::date_picker::calendar_math::{
     WEEKDAY_LABELS, add_months, day_grid, day_grid_index_of, day_in_range, last_day_of_month,
@@ -36,6 +36,19 @@ use crate::components::date_picker::calendar_math::{
 use crate::components::date_picker::widget::DatePickerHandle;
 use crate::components::item_list::index_f64;
 use chrono::{Datelike, Duration, NaiveDate};
+
+widget_id_handle!(
+    /// Handle to the calendar body's first focusable header button
+    /// (`header_prev`), set synchronously at construction (the id is known
+    /// as soon as the button pod exists — no need to wait for a mount
+    /// event). Given to [`super::widget::ThemedDatePickerWidget`] so opening
+    /// the picker in Portal mode can move real keyboard focus onto the
+    /// header row on Tab — see the module docs on why this is needed (Tab
+    /// traversal can't discover portal-mounted content on its own, and
+    /// natural traversal within the mounted content already reaches the
+    /// grid after the header buttons in document order).
+    CalendarHeaderHandle
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public types
@@ -414,7 +427,7 @@ impl CalendarBodyWidget {
         min_date: Option<NaiveDate>,
         max_date: Option<NaiveDate>,
         theme: &Theme,
-        grid_handle: CalendarGridHandle,
+        header_handle: &CalendarHeaderHandle,
     ) -> Self {
         let today = chrono::Local::now().date_naive();
         let anchor = selected.unwrap_or(today);
@@ -432,6 +445,7 @@ impl CalendarBodyWidget {
         };
 
         let header_prev = build_header_button(ArcStr::from("‹"), theme).to_pod();
+        header_handle.set(header_prev.id());
         let header_month =
             build_header_button(ArcStr::from(month_label(current_month)), theme).to_pod();
         let header_year =
@@ -441,7 +455,7 @@ impl CalendarBodyWidget {
         let weekday_row = WEEKDAY_LABELS.map(|label| build_weekday_label(label, theme));
 
         let grid_data = build_day_cells(&dg, current_month, selected, today, min_date, max_date);
-        let grid = WidgetPod::new(CalendarGridWidget::new(grid_data, 7, theme, grid_handle));
+        let grid = WidgetPod::new(CalendarGridWidget::new(grid_data, 7, theme));
 
         Self {
             nav,
@@ -471,10 +485,10 @@ impl CalendarBodyWidget {
         min_date: Option<NaiveDate>,
         max_date: Option<NaiveDate>,
         theme: &Theme,
-        grid_handle: CalendarGridHandle,
+        header_handle: &CalendarHeaderHandle,
         trigger_handle: Option<DatePickerHandle>,
     ) -> Self {
-        let mut this = Self::new(selected, min_date, max_date, theme, grid_handle);
+        let mut this = Self::new(selected, min_date, max_date, theme, header_handle);
         this.trigger_handle = trigger_handle;
         this
     }
@@ -696,6 +710,14 @@ impl CalendarBodyWidget {
         }
         widget.focused_index = new_index;
         let grid_id = widget.grid.id();
+        if new_index.is_some() {
+            // Grid navigation may be reached with real masonry focus still
+            // on a header button (Tab lands on `header_prev`, not the
+            // grid) — move real focus onto the grid so a subsequent Enter
+            // is unambiguous (activates the roving-focused cell, not
+            // whichever header button last held focus).
+            ctx.set_focus_to(Some(grid_id));
+        }
         ctx.queue_mutate(grid_id, move |mut w| {
             let mut g = w.downcast::<CalendarGridWidget>();
             CalendarGridWidget::set_focused_index(&mut g, new_index);
@@ -739,6 +761,9 @@ impl CalendarBodyWidget {
         widget.nav.year_page = year_page_of(y);
         widget.nav.day_grid = new_grid;
         widget.focused_index = Some(landing);
+        // See the matching comment in `handle_nav_move`: land real focus on
+        // the grid so a subsequent Enter is unambiguous.
+        ctx.set_focus_to(Some(widget.grid.id()));
         widget.push_grid_and_headers(ctx, Some(landing));
         true
     }
@@ -848,8 +873,9 @@ impl Widget for CalendarBodyWidget {
 
     /// Handles keyboard navigation once real masonry focus has moved into
     /// the calendar (Portal mode, after the Tab-interception in
-    /// `ThemedDatePickerWidget::on_text_event` hands focus to the grid — see
-    /// `CalendarGridHandle`). This is an additional path, not a replacement:
+    /// `ThemedDatePickerWidget::on_text_event` hands focus to the header row
+    /// — see `CalendarHeaderHandle`). This is an additional path, not a
+    /// replacement:
     /// `ThemedDatePickerWidget::on_text_event`'s own arrow/Home/End/Enter/
     /// PageUp/PageDown/Escape `mutate_later` dispatch (`InTree` mode, and
     /// Portal mode before any Tab press) is unchanged and unaffected.
@@ -1360,7 +1386,7 @@ mod tests {
         let theme = Theme::default();
         let date = NaiveDate::from_ymd_opt(2024, 6, 15).unwrap();
         let widget =
-            CalendarBodyWidget::new(Some(date), None, None, &theme, CalendarGridHandle::new());
+            CalendarBodyWidget::new(Some(date), None, None, &theme, &CalendarHeaderHandle::new());
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
         let dg = day_grid(2024, 6);
@@ -1403,7 +1429,7 @@ mod tests {
             None,
             None,
             &theme,
-            crate::components::date_picker::calendar_grid::CalendarGridHandle::new(),
+            &CalendarHeaderHandle::new(),
         );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
         let root_id = h.root_id();
@@ -1429,7 +1455,7 @@ mod tests {
             None,
             None,
             &theme,
-            crate::components::date_picker::calendar_grid::CalendarGridHandle::new(),
+            &CalendarHeaderHandle::new(),
         );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
         let root_id = h.root_id();
@@ -1493,7 +1519,7 @@ mod tests {
             None,
             None,
             &theme,
-            CalendarGridHandle::new(),
+            &CalendarHeaderHandle::new(),
         );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
@@ -1525,7 +1551,7 @@ mod tests {
             None,
             None,
             &theme,
-            CalendarGridHandle::new(),
+            &CalendarHeaderHandle::new(),
         );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
@@ -1557,7 +1583,7 @@ mod tests {
             None,
             None,
             &theme,
-            CalendarGridHandle::new(),
+            &CalendarHeaderHandle::new(),
         );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
@@ -1589,7 +1615,7 @@ mod tests {
             None,
             None,
             &theme,
-            CalendarGridHandle::new(),
+            &CalendarHeaderHandle::new(),
         );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
@@ -1622,7 +1648,7 @@ mod tests {
             None,
             Some(max_date),
             &theme,
-            CalendarGridHandle::new(),
+            &CalendarHeaderHandle::new(),
         );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
@@ -1650,7 +1676,7 @@ mod tests {
             Some(min_date),
             None,
             &theme,
-            CalendarGridHandle::new(),
+            &CalendarHeaderHandle::new(),
         );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
@@ -1687,7 +1713,7 @@ mod tests {
             None,
             None,
             &theme,
-            CalendarGridHandle::new(),
+            &CalendarHeaderHandle::new(),
         );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
@@ -1718,7 +1744,7 @@ mod tests {
             None,
             None,
             &theme,
-            CalendarGridHandle::new(),
+            &CalendarHeaderHandle::new(),
         );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
@@ -1749,7 +1775,7 @@ mod tests {
             None,
             None,
             &theme,
-            CalendarGridHandle::new(),
+            &CalendarHeaderHandle::new(),
         );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
@@ -1779,7 +1805,7 @@ mod tests {
             None,
             None,
             &theme,
-            CalendarGridHandle::new(),
+            &CalendarHeaderHandle::new(),
         );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
@@ -1809,7 +1835,7 @@ mod tests {
             None,
             None,
             &theme,
-            CalendarGridHandle::new(),
+            &CalendarHeaderHandle::new(),
         );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
@@ -1840,7 +1866,7 @@ mod tests {
             None,
             None,
             &theme,
-            CalendarGridHandle::new(),
+            &CalendarHeaderHandle::new(),
         );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
@@ -1871,7 +1897,7 @@ mod tests {
             None,
             None,
             &theme,
-            CalendarGridHandle::new(),
+            &CalendarHeaderHandle::new(),
         );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
@@ -1897,7 +1923,7 @@ mod tests {
             None,
             None,
             &theme,
-            CalendarGridHandle::new(),
+            &CalendarHeaderHandle::new(),
         );
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
@@ -1924,7 +1950,7 @@ mod tests {
             None,
             None,
             &theme,
-            CalendarGridHandle::new(),
+            &CalendarHeaderHandle::new(),
         );
         let month_btn_id = widget.header_month.id();
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
@@ -1947,7 +1973,7 @@ mod tests {
             None,
             None,
             &theme,
-            CalendarGridHandle::new(),
+            &CalendarHeaderHandle::new(),
         );
         let year_btn_id = widget.header_year.id();
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));

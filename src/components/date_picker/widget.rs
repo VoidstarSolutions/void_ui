@@ -23,10 +23,10 @@ use masonry::widgets::{Label, Passthrough};
 use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
 use crate::components::click::{ClickPhase, primary_click};
+use crate::components::date_picker::calendar_body::CalendarHeaderHandle;
 use crate::components::date_picker::calendar_body::{
     CalendarBodyAction, CalendarBodyWidget, CalendarNavKey,
 };
-use crate::components::date_picker::calendar_grid::CalendarGridHandle;
 use crate::components::icon::{IconName, icon};
 use crate::focus_ring::paint_focus_ring;
 use crate::overlay::OverlayAnchor;
@@ -585,11 +585,14 @@ macro_rules! with_body {
 pub struct ThemedDatePickerWidget {
     hosting: Hosting,
     handle: DatePickerHandle,
-    /// Handle to the portal-mounted calendar grid's widget id, used to move
-    /// real keyboard focus onto it when Portal-mode `Toggle` opens the
-    /// picker. `None` for `InTree` hosting (Tab traversal already reaches
-    /// the in-tree calendar correctly without it).
-    grid_handle: Option<CalendarGridHandle>,
+    /// Handle to the portal-mounted calendar's first header button
+    /// (`header_prev`), used to move real keyboard focus there when Tab is
+    /// pressed while the picker is open — natural masonry Tab traversal
+    /// then walks forward through the rest of the header row into the grid
+    /// on subsequent Tab presses. `None` for `InTree` hosting (Tab
+    /// traversal already reaches the in-tree calendar correctly without
+    /// it).
+    header_handle: Option<CalendarHeaderHandle>,
     selected: Option<NaiveDate>,
     placeholder: ArcStr,
     date_format: &'static str,
@@ -646,7 +649,7 @@ impl ThemedDatePickerWidget {
             min_date,
             max_date,
             theme,
-            CalendarGridHandle::new(),
+            &CalendarHeaderHandle::new(),
         );
         let overlay_host = AnchoredOverlay::new(
             NewWidget::new(trigger),
@@ -660,7 +663,7 @@ impl ThemedDatePickerWidget {
                 overlay_host: NewWidget::new(overlay_host).to_pod(),
             },
             handle: DatePickerHandle::new(),
-            grid_handle: None,
+            header_handle: None,
             selected,
             placeholder,
             date_format,
@@ -692,7 +695,7 @@ impl ThemedDatePickerWidget {
         handle: DatePickerHandle,
         scope: OverlayScopeHandle,
         key: u64,
-        grid_handle: CalendarGridHandle,
+        header_handle: CalendarHeaderHandle,
     ) -> Self {
         let display = selected.map_or_else(
             || placeholder.clone(),
@@ -712,7 +715,7 @@ impl ThemedDatePickerWidget {
                 binding: PortalBinding::new(scope, key, date_picker_dismiss_hook),
             },
             handle,
-            grid_handle: Some(grid_handle),
+            header_handle: Some(header_handle),
             selected,
             placeholder,
             date_format,
@@ -1174,23 +1177,28 @@ impl Widget for ThemedDatePickerWidget {
         if key.state != KeyState::Down {
             return;
         }
-        // Tab (no Shift): move real focus into the calendar in Portal mode,
-        // so Shift+Tab from there can reach the header row — native Tab
-        // search can't discover the calendar on its own (it's mounted in
-        // the scope's PortalSlot, always registered last for z-ordering;
-        // see the design spec's Context section). InTree mode doesn't need
-        // this: AnchoredOverlay already registers the calendar right after
-        // the trigger, so native Tab already works there today.
+        // Tab (no Shift): move real focus onto the calendar's first header
+        // button in Portal mode — native Tab search can't discover the
+        // calendar on its own (it's mounted in the scope's PortalSlot,
+        // structurally distant from the trigger, not adjacent to it; see
+        // the design spec's Context section). Once focus is on
+        // `header_prev`, natural masonry Tab traversal walks forward
+        // through the rest of the header row (month, year, next) and into
+        // the grid on its own, since `CalendarBodyWidget::children_ids`
+        // already lists them in that reading order — no further
+        // interception is needed for that leg. InTree mode doesn't need any
+        // of this: `AnchoredOverlay` already registers the calendar right
+        // after the trigger, so native Tab already works there today.
         if key.key == Key::Named(NamedKey::Tab)
             && !key.modifiers.shift()
             && self.open
             && let Hosting::Portal { .. } = &self.hosting
-            && let Some(grid_id) = self
-                .grid_handle
+            && let Some(header_id) = self
+                .header_handle
                 .as_ref()
-                .and_then(CalendarGridHandle::widget_id)
+                .and_then(CalendarHeaderHandle::widget_id)
         {
-            ctx.set_focus(grid_id);
+            ctx.set_focus(header_id);
             ctx.set_handled();
             return;
         }
@@ -1353,7 +1361,7 @@ impl Widget for ThemedDatePickerWidget {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::date_picker::calendar_grid::CalendarGridHandle;
+    use crate::components::date_picker::calendar_body::CalendarHeaderHandle;
     use masonry::testing::TestHarness;
 
     /// Builds an `OverlayScope`-rooted harness hosting a Portal-mode
@@ -1361,7 +1369,7 @@ mod tests {
     /// the pre-registered slot child under `key` (mirrors
     /// `dropdown_button/widget.rs`'s `portal_selection_close_respects_controlled_mode`
     /// setup), clicks the trigger to open it via the real `on_action` Toggle
-    /// path, and returns `(harness, trigger_id, grid_id)`.
+    /// path, and returns `(harness, trigger_id, header_id)`.
     fn open_portal_picker_for_test() -> (TestHarness<OverlayScope>, WidgetId, WidgetId) {
         use masonry::core::NewWidget;
         use masonry::kurbo::Point;
@@ -1372,7 +1380,7 @@ mod tests {
         let theme = Theme::default();
         let scope_handle = OverlayScopeHandle::new();
         let trigger_handle = DatePickerHandle::new();
-        let grid_handle = CalendarGridHandle::new();
+        let header_handle = CalendarHeaderHandle::new();
         let key = 1;
 
         let trigger = ThemedDatePickerWidget::new_portal(
@@ -1387,7 +1395,7 @@ mod tests {
             trigger_handle.clone(),
             scope_handle.clone(),
             key,
-            grid_handle.clone(),
+            header_handle.clone(),
         )
         .with_open_state(false, false);
         let sized = masonry::widgets::SizedBox::new(NewWidget::new(trigger).erased())
@@ -1403,7 +1411,7 @@ mod tests {
             None,
             None,
             &theme,
-            grid_handle.clone(),
+            &header_handle,
             Some(trigger_handle.clone()),
         ))
         .erased();
@@ -1425,22 +1433,22 @@ mod tests {
         h.mouse_button_press(Some(PointerButton::Primary));
         h.mouse_button_release(Some(PointerButton::Primary));
 
-        let grid_id = grid_handle
+        let header_id = header_handle
             .widget_id()
             .expect("grid reports its id at Update::WidgetAdded during harness construction");
 
-        (h, trigger_id, grid_id)
+        (h, trigger_id, header_id)
     }
 
     #[test]
     fn selecting_a_day_returns_focus_to_the_trigger() {
-        let (mut h, trigger_id, grid_id) = open_portal_picker_for_test();
+        let (mut h, trigger_id, header_id) = open_portal_picker_for_test();
         // Focus stays on the trigger right after opening (per Task 1's
         // Tab-interception design — there is no auto-focus-on-open). Press
         // Tab first to move real focus onto the grid, matching how a real
         // user would reach it before selecting a day via the keyboard.
         h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
-        assert_eq!(h.focused_widget_id(), Some(grid_id));
+        assert_eq!(h.focused_widget_id(), Some(header_id));
 
         // Seed the roving focus onto a real day cell first — ArrowDown from
         // no prior focus lands on the first non-disabled cell (unlike
@@ -1458,11 +1466,11 @@ mod tests {
 
     #[test]
     fn escape_in_open_calendar_returns_focus_to_the_trigger() {
-        let (mut h, trigger_id, grid_id) = open_portal_picker_for_test();
+        let (mut h, trigger_id, header_id) = open_portal_picker_for_test();
         // Same as above: Tab first to get real focus onto the grid, since
         // opening alone no longer does this.
         h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
-        assert_eq!(h.focused_widget_id(), Some(grid_id));
+        assert_eq!(h.focused_widget_id(), Some(header_id));
 
         h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Escape)));
 
@@ -1474,22 +1482,22 @@ mod tests {
     }
 
     #[test]
-    fn tab_after_opening_moves_real_focus_to_the_grid() {
-        let (mut h, _trigger_id, grid_id) = open_portal_picker_for_test();
+    fn tab_after_opening_moves_real_focus_to_the_header_row() {
+        let (mut h, _trigger_id, header_id) = open_portal_picker_for_test();
         // `_trigger_id` (from `DatePickerHandle`) identifies the outer
         // composite `ThemedDatePickerWidget`, which does not itself accept
         // focus — the click that opened the picker gave real focus to the
         // inner `DatePickerTrigger` sub-widget instead (its own
         // `ctx.request_focus()` in `on_pointer_event`), which has no handle
         // exposed to this test module. So this asserts the behavioral claim
-        // directly — real focus did NOT jump onto the grid on open, and
-        // something real still holds it — rather than pinning to an id that
-        // was never the actual focus target.
+        // directly — real focus did NOT jump onto the header row on open,
+        // and something real still holds it — rather than pinning to an id
+        // that was never the actual focus target.
         let focused_after_open = h.focused_widget_id();
         assert_ne!(
             focused_after_open,
-            Some(grid_id),
-            "opening the picker should NOT auto-move focus onto the grid — the trigger keeps it until Tab is pressed"
+            Some(header_id),
+            "opening the picker should NOT auto-move focus onto the header row — the trigger keeps it until Tab is pressed"
         );
         assert_ne!(
             focused_after_open, None,
@@ -1500,16 +1508,67 @@ mod tests {
 
         assert_eq!(
             h.focused_widget_id(),
-            Some(grid_id),
-            "Tab, pressed while the trigger holds focus and the calendar is open, should move real focus onto the grid"
+            Some(header_id),
+            "Tab, pressed while the trigger holds focus and the calendar is open, should move real focus onto the first header button (header_prev) — matching natural top-to-bottom reading order, not the grid"
         );
     }
 
     #[test]
-    fn shift_tab_from_focused_grid_reaches_a_real_header_button() {
-        let (mut h, _trigger_id, grid_id) = open_portal_picker_for_test();
+    fn tab_from_header_row_walks_forward_into_the_grid() {
+        // Once Tab has moved focus onto `header_prev` (the interception's
+        // job), the remaining hops — through month, year, next, and into
+        // the grid — are *not* intercepted; they rely on native masonry Tab
+        // traversal following `CalendarBodyWidget::children_ids`'s
+        // documented order (prev, month, year, next, weekday labels, grid).
+        // This proves that structural ordering actually holds, rather than
+        // just asserting the single interception hop.
+        let (mut h, _trigger_id, header_id) = open_portal_picker_for_test();
         h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
-        assert_eq!(h.focused_widget_id(), Some(grid_id));
+        assert_eq!(h.focused_widget_id(), Some(header_id));
+
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
+            seen.push(h.focused_widget_id());
+        }
+
+        // month, year, next are each distinct real widgets, and none of
+        // them repeat header_id or each other.
+        for id in &seen[..3] {
+            assert_ne!(*id, Some(header_id));
+            assert_ne!(*id, None);
+        }
+        assert!(
+            seen[..3]
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                == 3,
+            "month/year/next should be three distinct real widgets, not the same one revisited: {seen:?}"
+        );
+
+        let landed_on_grid = seen[3].is_some_and(|id| {
+            h.get_widget_with_id(id)
+                .type_name()
+                .contains("CalendarGridWidget")
+        });
+        assert!(
+            landed_on_grid,
+            "the fourth forward Tab from header_prev should land on CalendarGridWidget: {seen:?}"
+        );
+    }
+
+    #[test]
+    fn shift_tab_from_header_row_leaves_the_header_button() {
+        // `header_prev` is now the Tab-interception's landing target, so
+        // Shift+Tab from it is no longer the primary way to discover the
+        // header row (that's Tab, asserted above). This just confirms
+        // Shift+Tab from the interception's own landing spot doesn't get
+        // silently swallowed — it still lands on a real widget somewhere
+        // (native masonry backward traversal, uninterupted for this leg).
+        let (mut h, _trigger_id, header_id) = open_portal_picker_for_test();
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
+        assert_eq!(h.focused_widget_id(), Some(header_id));
 
         h.process_text_event(TextEvent::Keyboard(
             masonry::core::keyboard::KeyboardEvent {
@@ -1522,13 +1581,8 @@ mod tests {
 
         let after = h.focused_widget_id();
         assert_ne!(
-            after,
-            Some(grid_id),
-            "Shift+Tab should move focus off the grid"
-        );
-        assert_ne!(
             after, None,
-            "Shift+Tab should land on a real focusable widget, not nothing"
+            "Shift+Tab from header_prev should land on a real focusable widget, not nothing"
         );
     }
 
@@ -1682,6 +1736,85 @@ mod tests {
              trigger and into the open calendar content via native Tab traversal — proving \
              the new Portal-only branch's Hosting::Portal guard correctly did not intercept \
              it here"
+        );
+    }
+
+    /// Regression coverage through the *actual* xilem View pipeline —
+    /// `demo::panel(...)` exactly as the gallery composes it (six
+    /// `date_picker`s sharing one `overlay_scope`, wrapped in a
+    /// `scroll_container`) — rather than `open_portal_picker_for_test`'s
+    /// hand-built `OverlayScope::new(...)` widget tree. Added after a live
+    /// report that Tab didn't reach the header row despite the hand-built
+    /// harness's tests passing: the hand-built tree turned out to still be
+    /// faithful (both this test and the hand-built ones now agree), but
+    /// this exercises the real `date_picker()`/`overlay_scope()`/
+    /// `scroll_container()` composition the hand-built harness never
+    /// touches, so a future divergence between the two would be caught
+    /// here.
+    #[test]
+    fn real_view_pipeline_tab_reaches_the_header_row_then_the_grid() {
+        use crate::components::date_picker::demo;
+        use masonry::core::NewWidget;
+        use masonry::testing::TestHarness;
+        use xilem::ViewCtx;
+        use xilem::core::{RawProxy, View};
+        use xilem::view::PointerButton;
+
+        struct S;
+        let mut state = S;
+
+        let theme = crate::theme::Theme::default();
+        let view = demo::panel(&theme);
+
+        let proxy: std::sync::Arc<dyn RawProxy> = crate::test_support::noop_proxy();
+        let runtime = crate::test_support::current_thread_runtime();
+        let mut ctx = ViewCtx::new(proxy, runtime);
+        let (pod, _view_state) = view.build(&mut ctx, &mut state);
+
+        let root = masonry::widgets::Flex::column().with_fixed(pod.new_widget);
+        let mut h = TestHarness::create_with_size(
+            masonry::theme::default_property_set(),
+            NewWidget::new(root),
+            (900, 1400),
+        );
+
+        h.render();
+        let mut trigger_ids = Vec::new();
+        h.inspect_widgets(|w| {
+            if w.type_name().contains("DatePickerTrigger") {
+                trigger_ids.push(w.id());
+            }
+        });
+        let first_trigger = trigger_ids[0];
+
+        h.mouse_click_on(first_trigger, Some(PointerButton::Primary));
+        h.render();
+
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
+        let after_tab = h.focused_widget_id();
+        assert!(
+            after_tab.is_some_and(|id| h
+                .get_widget_with_id(id)
+                .type_name()
+                .contains("ThemedButton")),
+            "Tab from the real gallery panel's first trigger should land on a real header button: {after_tab:?}"
+        );
+
+        // The interception's single hop only reaches `header_prev` (the
+        // first of 4 header buttons); the remaining 3 buttons (month, year,
+        // next) plus the final hop into the grid are all native masonry
+        // traversal — 4 more Tab presses in total.
+        for _ in 0..4 {
+            h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
+        }
+        let after_five_tabs = h.focused_widget_id();
+        assert!(
+            after_five_tabs.is_some_and(|id| h
+                .get_widget_with_id(id)
+                .type_name()
+                .contains("CalendarGridWidget")),
+            "five Tabs total (one interception hop into header_prev, then four native hops \
+             through month/year/next and into the grid) should land on the grid: {after_five_tabs:?}"
         );
     }
 }
