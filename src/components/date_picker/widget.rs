@@ -1535,7 +1535,9 @@ mod tests {
 
     #[test]
     fn intree_mode_tab_from_trigger_still_reaches_calendar_content() {
+        use masonry::kurbo::Point;
         use masonry::theme::default_property_set;
+        use xilem::view::PointerButton;
 
         let theme = Theme::default();
         let widget = ThemedDatePickerWidget::new(
@@ -1548,13 +1550,7 @@ mod tests {
             false,
             &theme,
         );
-        let mut h = TestHarness::create_with_size(
-            default_property_set(),
-            NewWidget::new(widget),
-            (400, 400),
-        );
-        let trigger_id = h.root_id();
-        h.focus_on(Some(trigger_id));
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
 
         h.edit_root_widget(|mut wm| {
             wm.widget.open = true;
@@ -1565,12 +1561,38 @@ mod tests {
             AnchoredOverlay::set_overlay_visible(&mut ov, true);
         });
 
+        // `h.root_id()` is the outer composite `ThemedDatePickerWidget`, which
+        // never overrides `accepts_focus` (only the inner `DatePickerTrigger`
+        // sub-widget does) — `h.focus_on` on a non-accepting id doesn't give
+        // it real focus, so `find_next_focusable` never has a real anchor and
+        // silently degenerates into "first focusable widget in the tree",
+        // which happens to be the trigger regardless of whether Tab can
+        // actually reach the calendar. Mirror
+        // `tab_in_intree_mode_does_not_hit_the_portal_only_branch`'s
+        // technique instead: a real mouse press (deliberately not released,
+        // so `DatePickerTriggerAction::Toggle` never fires and re-closes the
+        // picker we just opened above) gives the trigger genuine focus via
+        // `ClickPhase::Down`'s `ctx.request_focus()`.
+        h.mouse_move(Point::new(10.0, 10.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        let focused_after_press = h.focused_widget_id();
+        assert_ne!(
+            focused_after_press, None,
+            "pressing on the InTree trigger should give it real focus"
+        );
+
         h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
 
+        let focused_after_tab = h.focused_widget_id();
         assert_ne!(
-            h.focused_widget_id(),
-            Some(trigger_id),
-            "Tab from an open InTree-mode picker's trigger should move focus into the calendar"
+            focused_after_tab, None,
+            "Tab from an open InTree-mode picker's trigger should land on a real focusable \
+             widget, not nothing"
+        );
+        assert_ne!(
+            focused_after_tab, focused_after_press,
+            "Tab from an open InTree-mode picker's trigger should move real focus into the \
+             calendar content, not leave it on the trigger"
         );
     }
 
