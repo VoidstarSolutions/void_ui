@@ -1534,6 +1534,47 @@ mod tests {
     }
 
     #[test]
+    fn intree_mode_tab_from_trigger_still_reaches_calendar_content() {
+        use masonry::theme::default_property_set;
+
+        let theme = Theme::default();
+        let widget = ThemedDatePickerWidget::new(
+            None,
+            ArcStr::from("Pick a date"),
+            "%Y-%m-%d",
+            None,
+            None,
+            false,
+            false,
+            &theme,
+        );
+        let mut h = TestHarness::create_with_size(
+            default_property_set(),
+            NewWidget::new(widget),
+            (400, 400),
+        );
+        let trigger_id = h.root_id();
+        h.focus_on(Some(trigger_id));
+
+        h.edit_root_widget(|mut wm| {
+            wm.widget.open = true;
+            let Hosting::InTree { overlay_host } = &mut wm.widget.hosting else {
+                panic!("expected InTree hosting");
+            };
+            let mut ov = wm.ctx.get_mut(overlay_host);
+            AnchoredOverlay::set_overlay_visible(&mut ov, true);
+        });
+
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
+
+        assert_ne!(
+            h.focused_widget_id(),
+            Some(trigger_id),
+            "Tab from an open InTree-mode picker's trigger should move focus into the calendar"
+        );
+    }
+
+    #[test]
     fn tab_in_intree_mode_does_not_hit_the_portal_only_branch() {
         use masonry::core::NewWidget;
         use masonry::kurbo::Point;
