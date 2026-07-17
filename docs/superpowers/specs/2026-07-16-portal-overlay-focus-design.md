@@ -87,11 +87,13 @@ precedent for today) and deserves its own separate design if wanted later.
   today**, in either hosting mode. The trigger's existing key-decode-and-
   `mutate_later` dispatch is untouched.
 - **Tab, pressed while the trigger holds focus and the calendar is open,
-  moves real masonry focus onto the calendar grid** (Portal mode; in
-  `InTree` mode native Tab already reaches it correctly today, so no new
-  interception is needed there — see the `InTree` section). From that
-  focused grid, **Shift+Tab reaches the header row buttons in the correct
-  order** (next → year → month → prev), each independently focusable and
+  moves real masonry focus onto `header_prev`, the first header button**
+  (Portal mode; in `InTree` mode native Tab already reaches it correctly
+  today, so no new interception is needed there — see the `InTree`
+  section), matching natural top-to-bottom reading order rather than
+  jumping into the grid. From `header_prev`, **native forward Tab walks
+  the remaining header buttons in order** (prev → month → year → next)
+  before reaching `CalendarGridWidget`, each independently focusable and
   keyboard-activatable via Enter/Space (confirmed already working once
   real focus reaches them, by the existing
   `header_month_button_enter_key_switches_to_month_view` /
