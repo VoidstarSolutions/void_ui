@@ -159,6 +159,9 @@ impl Widget for CalendarCell {
         node: &mut Node,
     ) {
         node.set_selected(self.selected);
+        if !self.disabled {
+            node.add_action(masonry::accesskit::Action::Click);
+        }
     }
 
     fn children_ids(&self) -> ChildrenIds {
