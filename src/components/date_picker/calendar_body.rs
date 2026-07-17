@@ -815,11 +815,7 @@ impl CalendarBodyWidget {
             _ => return,
         };
         let direction: isize = if month_delta < 0 { -1 } else { 1 };
-        let (y, m) = add_months(
-            widget.nav.current_year,
-            widget.nav.current_month,
-            month_delta,
-        );
+        let (y, m) = add_months(reference.year(), reference.month(), month_delta);
         let target_day = reference.day().min(last_day_of_month(y, m).day());
         let target_date = NaiveDate::from_ymd_opt(y, m, target_day).unwrap();
         Self::jump_to_date(widget, ctx, y, m, target_date, direction);
@@ -1841,6 +1837,43 @@ mod tests {
             assert_eq!(
                 wm.widget.nav.day_grid[idx],
                 NaiveDate::from_ymd_opt(2023, 2, 28).unwrap()
+            );
+        });
+    }
+
+    #[test]
+    fn page_down_from_focused_leading_padding_cell_steps_from_reference_month() {
+        // Focus a leading-padding cell (2024-02-25, shown in the March 2024
+        // grid) and page forward. The target month must derive from the
+        // focused reference date (February), not the displayed grid month
+        // (March) — landing on 2024-03-25, not 2024-04-25.
+        let theme = Theme::default();
+        let selected = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap();
+        let widget = CalendarBodyWidget::new(
+            selected,
+            Some(selected),
+            None,
+            None,
+            &theme,
+            &CalendarHeaderHandle::new(),
+        );
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+
+        h.edit_root_widget(|mut wm| {
+            wm.widget.focused_index = Some(0); // grid[0] == 2024-02-25
+            CalendarBodyWidget::handle_nav_key(&mut wm, CalendarNavKey::NextMonth);
+        });
+
+        h.edit_root_widget(|wm| {
+            assert_eq!(wm.widget.nav.current_year, 2024);
+            assert_eq!(wm.widget.nav.current_month, 3);
+            let idx = wm
+                .widget
+                .focused_index
+                .expect("focus should land on a cell");
+            assert_eq!(
+                wm.widget.nav.day_grid[idx],
+                NaiveDate::from_ymd_opt(2024, 3, 25).unwrap()
             );
         });
     }

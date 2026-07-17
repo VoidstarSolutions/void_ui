@@ -143,10 +143,13 @@ New `handle_nav_page` function in `calendar_body.rs`, called from
 
 1. Resolve a reference date: focused cell's date if `focused_index` is
    `Some`, else `self.selected`, else `self.today`.
-2. Compute the target `(year, month)`:
-   - `PrevMonth`/`NextMonth`: `add_months(current_year, current_month, ∓1)`.
-   - `PrevYear`/`NextYear`: `add_months(current_year, current_month, ∓12)`
-     (equivalent to `(current_year ∓ 1, current_month)`, reusing
+2. Compute the target `(year, month)` from the reference date's own
+   year/month (not the displayed grid's `current_year`/`current_month` —
+   these differ when focus sits on a leading/trailing padding cell from an
+   adjacent month):
+   - `PrevMonth`/`NextMonth`: `add_months(reference.year(), reference.month(), ∓1)`.
+   - `PrevYear`/`NextYear`: `add_months(reference.year(), reference.month(), ∓12)`
+     (equivalent to `(reference.year() ∓ 1, reference.month())`, reusing
      `add_months` rather than a new year-stepping helper).
 3. Clamp the reference date's day-of-month into the target month via
    `day.min(last_day_of_month(target_year, target_month).day())`, forming
