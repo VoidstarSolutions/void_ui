@@ -231,8 +231,8 @@ where
                 max_date: self.max_date,
                 picker_handle: handle.clone(),
                 header_handle: header_handle.clone(),
-                on_changed: self.on_changed.clone(),
                 theme: self.theme,
+                phantom: PhantomData,
             };
             let content: Arc<PortalContentView<State, Action>> = Arc::new(body_view);
             let key = portal.register(
@@ -353,8 +353,8 @@ where
                     max_date: self.max_date,
                     picker_handle: handle.clone(),
                     header_handle: header_handle.clone(),
-                    on_changed: self.on_changed.clone(),
                     theme: self.theme,
+                    phantom: PhantomData,
                 };
                 let content: Arc<PortalContentView<State, Action>> = Arc::new(body_view);
                 portal.update(
@@ -404,19 +404,22 @@ where
 
 /// The content view registered with the scope's [`OverlayPortal`] for a
 /// portal-mode date picker — wraps [`CalendarBodyWidget`] and, on day
-/// selection, both calls the `on_changed` callback (producing `Action`) and
-/// notifies the owning [`ThemedDatePickerWidget`] (via [`DatePickerHandle`])
-/// to close the picker and update the trigger display. The calendar body is not
-/// a descendant of the picker in this mode, so normal action bubbling never
-/// reaches `ThemedDatePickerWidget::on_action`.
+/// selection, notifies the owning [`ThemedDatePickerWidget`] (via
+/// [`DatePickerHandle`]) to close the picker and update the trigger display.
+/// The calendar body is not a descendant of the picker in this mode, so
+/// normal action bubbling never reaches `ThemedDatePickerWidget::on_action`;
+/// instead `ThemedDatePickerWidget::close_for_selection` submits the picker's
+/// own `DateChanged`/`OpenChanged` actions, which `DatePickerView::message`
+/// turns into `on_changed`/`on_open_change` calls. This view must not also
+/// call `on_changed` itself, or the host would see the selection twice.
 pub(crate) struct CalendarBodyView<State, Action> {
     selected: Option<NaiveDate>,
     min_date: Option<NaiveDate>,
     max_date: Option<NaiveDate>,
     picker_handle: DatePickerHandle,
     header_handle: CalendarHeaderHandle,
-    on_changed: OnChangedFn<State, Action>,
     theme: Theme,
+    phantom: PhantomData<fn(State) -> Action>,
 }
 
 impl<State, Action> ViewMarker for CalendarBodyView<State, Action> {}
@@ -485,21 +488,25 @@ where
         (): &mut Self::ViewState,
         message: &mut MessageCtx,
         mut element: Mut<'_, Self::Element>,
-        app_state: &mut State,
+        _app_state: &mut State,
     ) -> MessageResult<Action> {
         match message.take_message::<CalendarBodyAction>() {
             Some(boxed) => {
                 let CalendarBodyAction::DateSelected(date) = *boxed;
                 // Back-channel to the picker widget to close it and update the
                 // trigger text — the calendar body is not a descendant of the
-                // picker in portal mode, so normal action bubbling won't reach it.
+                // picker in portal mode, so normal action bubbling won't reach
+                // it. `close_for_selection` submits the picker's own
+                // `DateChanged`/`OpenChanged` actions, which
+                // `DatePickerView::message` turns into `on_changed`; calling
+                // `on_changed` here too would fire it twice per selection.
                 if let Some(picker_id) = self.picker_handle.widget_id() {
                     element.ctx.mutate_later(picker_id, move |mut w| {
                         let mut picker = w.downcast::<ThemedDatePickerWidget>();
                         ThemedDatePickerWidget::close_for_selection(&mut picker, date);
                     });
                 }
-                MessageResult::Action((self.on_changed)(app_state, Some(date)))
+                MessageResult::Nop
             }
             None => MessageResult::Stale,
         }
