@@ -189,6 +189,7 @@ fn main_pane(focused: ComponentKind, theme: &Theme) -> Box<AnyWidgetView<State>>
             Box::new(void_ui::components::context_menu::demo::panel(theme))
         }
         ComponentKind::DataGrid => Box::new(void_ui::components::data_grid::demo::panel(theme)),
+        ComponentKind::DatePicker => Box::new(void_ui::components::date_picker::demo::panel(theme)),
         ComponentKind::Dialog => Box::new(void_ui::components::dialog::demo::panel(theme)),
         ComponentKind::DropdownButton => {
             Box::new(void_ui::components::dropdown_button::demo::panel(theme))

@@ -32,6 +32,7 @@ license = "LicenseRef-Proprietary"
 publish = false
 
 [dependencies]
+chrono = "0.4"
 lucide-icons = "1.17.0"
 masonry = { workspace = true }
 tracing = { workspace = true }
