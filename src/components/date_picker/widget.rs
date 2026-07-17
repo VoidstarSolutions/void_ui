@@ -1014,7 +1014,11 @@ impl Widget for ThemedDatePickerWidget {
                 ctx.set_disabled(self.disabled);
                 self.handle.set(ctx.widget_id());
                 if self.open {
-                    self.open_menu(ctx);
+                    if self.disabled {
+                        self.open = false;
+                    } else {
+                        self.open_menu(ctx);
+                    }
                 }
             }
             // The trigger is the actual focus target, so we react to

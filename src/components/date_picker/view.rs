@@ -316,7 +316,8 @@ where
         if self.max_date != prev.max_date {
             ThemedDatePickerWidget::set_max_date(&mut element, self.max_date);
         }
-        if self.disabled != prev.disabled {
+        let disabled_changed = self.disabled != prev.disabled;
+        if disabled_changed {
             ThemedDatePickerWidget::set_disabled(&mut element, self.disabled);
         }
         if self.cleanable != prev.cleanable {
@@ -325,8 +326,12 @@ where
         if self.open.is_some() != prev.open.is_some() {
             ThemedDatePickerWidget::set_controlled(&mut element, self.open.is_some());
         }
+        // Also resync when `disabled` changes: a controlled open request that
+        // arrived while disabled (or was force-closed by disabling) can leave
+        // the widget's actual open state behind what `self.open` says, with
+        // no change in `self.open` itself to trigger the sync below.
         if let Some(open) = self.open
-            && prev.open != Some(open)
+            && (disabled_changed || prev.open != Some(open))
         {
             ThemedDatePickerWidget::set_open(&mut element, open);
         }
