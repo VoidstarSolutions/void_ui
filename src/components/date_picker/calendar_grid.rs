@@ -1,19 +1,24 @@
 //! Generic N-cell grid masonry widget for the date picker.
 //!
 //! [`CalendarGridWidget`] renders an arbitrary flat list of cells in a fixed
-//! column grid. Each cell is a `Label` child pod for accessibility; backgrounds
-//! (selection fill, hover fill, today dot, focus ring) are drawn directly by
-//! the parent `paint` pass. The widget does not own calendar logic — it only
-//! knows about cells, colors, and interaction state.
+//! column grid. Each cell is a [`CalendarCell`] child pod, which wraps a
+//! `Label` and exposes it to accessibility as `Role::GridCell` with the
+//! cell's `selected`/`disabled` state (mirrors `TabItemNode` in
+//! `components::tabs::widget`). Backgrounds (selection fill, hover fill,
+//! today dot, focus ring) are drawn directly by the parent `paint` pass, and
+//! the parent also owns all interaction — pointer hit-testing, hover, click,
+//! and roving keyboard focus — the cell pod is a passive accessibility/visual
+//! wrapper. The widget does not own calendar logic — it only knows about
+//! cells, colors, and interaction state.
 //!
 //! Used by `CalendarBodyWidget` for day grids (7 columns × 6 rows), month
 //! grids (3 × 4), and year grids (4 × 5).
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
-    AccessCtx, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, PaintCtx, PointerEvent,
-    PointerUpdate, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty, Update, UpdateCtx,
-    Widget, WidgetMut, WidgetPod,
+    AccessCtx, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NoAction, PaintCtx,
+    PointerEvent, PointerUpdate, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty, Update,
+    UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Circle, Insets, Point, Rect, RoundedRect, Size, Vec2};
@@ -22,6 +27,7 @@ use masonry::properties::ContentColor;
 use masonry::widgets::Label;
 
 use crate::Theme;
+use crate::collection::single_child;
 use crate::components::click::{ClickPhase, primary_click_when};
 use crate::components::item_list::{hit_item, index_f64, to_local};
 use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
@@ -65,14 +71,110 @@ pub(crate) enum CalendarGridAction {
     CellActivated(usize),
 }
 
+/// Wraps a cell's `Label` content, exposing it to accessibility as
+/// `Role::GridCell` with the cell's `selected`/`disabled` state.
+///
+/// [`CalendarGridWidget`] still owns all interaction (pointer hit-testing,
+/// hover, click, roving keyboard focus) and painting (selection fill, focus
+/// ring, today dot) — this wrapper only makes that already-existing state
+/// legible to assistive tech. It never accepts pointer input or real focus
+/// itself, so it can't intercept anything the parent already handles.
+/// Mirrors `TabItemNode` (`components::tabs::widget`), the same
+/// composite-widget pattern for a single-focus-stop, roving-selection
+/// control.
+struct CalendarCell {
+    child: WidgetPod<Label>,
+    selected: bool,
+    disabled: bool,
+}
+
+impl CalendarCell {
+    fn new(datum: &CellDatum, theme: &Theme) -> Self {
+        let mut lbl = Label::new(datum.label.clone())
+            .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
+            .prepare();
+        lbl.properties
+            .insert(ContentColor::new(text_color_for(datum, theme)));
+        Self {
+            child: lbl.to_pod(),
+            selected: datum.selected,
+            disabled: datum.disabled,
+        }
+    }
+
+    /// Mutable access to the wrapped `Label`, for [`CalendarGridWidget::set_theme`].
+    fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, Label> {
+        this.ctx.get_mut(&mut this.widget.child)
+    }
+}
+
+impl Widget for CalendarCell {
+    type Action = NoAction;
+
+    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
+        ctx.register_child(&mut self.child);
+    }
+
+    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        // `new` only sets the widget-internal field; without this the first
+        // build leaves masonry's `is_disabled()` out of sync, and the
+        // accessibility pass's own `node.set_disabled()` (driven by
+        // `ctx.is_disabled()`) would never fire.
+        if matches!(event, Update::WidgetAdded) {
+            ctx.set_disabled(self.disabled);
+        }
+    }
+
+    fn measure(
+        &mut self,
+        ctx: &mut MeasureCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        axis: Axis,
+        len_req: LenReq,
+        cross_length: Option<Length>,
+    ) -> Length {
+        single_child::measure(ctx, &mut self.child, axis, len_req, cross_length)
+    }
+
+    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
+        single_child::layout(ctx, &mut self.child, size);
+    }
+
+    fn paint(
+        &mut self,
+        _ctx: &mut PaintCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        _painter: &mut Painter<'_>,
+    ) {
+    }
+
+    fn accessibility_role(&self) -> Role {
+        Role::GridCell
+    }
+
+    fn accessibility(
+        &mut self,
+        _ctx: &mut AccessCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        node: &mut Node,
+    ) {
+        node.set_selected(self.selected);
+    }
+
+    fn children_ids(&self) -> ChildrenIds {
+        single_child::children_ids(&self.child)
+    }
+}
+
 /// Generic N-cell grid masonry widget.
 ///
 /// Renders a flat list of `N` cells in a fixed `cols`-column grid. The number
 /// of rows is `ceil(N / cols)`. All cells are square; the side length is
 /// `theme.density.row_height + theme.density.pad_v`.
 pub(crate) struct CalendarGridWidget {
-    /// One `Label` pod per cell — used for accessibility and text rendering.
-    cells: Vec<WidgetPod<Label>>,
+    /// One [`CalendarCell`] pod per cell — wraps the cell's `Label` and
+    /// exposes accessibility state (see [`CalendarCell`]).
+    cells: Vec<WidgetPod<CalendarCell>>,
     /// Parallel metadata for each cell.
     data: Vec<CellDatum>,
     /// Number of columns in the grid.
@@ -108,14 +210,9 @@ fn text_color_for(datum: &CellDatum, theme: &Theme) -> masonry::peniko::Color {
     }
 }
 
-/// Builds a single `Label` pod for `datum`, styled with `theme`.
-fn make_cell(datum: &CellDatum, theme: &Theme) -> WidgetPod<Label> {
-    let mut lbl = Label::new(datum.label.clone())
-        .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
-        .prepare();
-    lbl.properties
-        .insert(ContentColor::new(text_color_for(datum, theme)));
-    lbl.to_pod()
+/// Builds a single [`CalendarCell`] pod for `datum`, styled with `theme`.
+fn make_cell(datum: &CellDatum, theme: &Theme) -> WidgetPod<CalendarCell> {
+    WidgetPod::new(CalendarCell::new(datum, theme))
 }
 
 /// Computes the side length (width = height) of a calendar cell from density
@@ -130,7 +227,7 @@ pub(crate) fn cell_side(theme: &Theme) -> f64 {
 // ─────────────────────────────────────────────────────────────────────────────
 
 impl CalendarGridWidget {
-    /// Creates a new grid widget with one `Label` pod per datum.
+    /// Creates a new grid widget with one [`CalendarCell`] pod per datum.
     pub(crate) fn new(data: Vec<CellDatum>, cols: usize, theme: &Theme) -> Self {
         let cells = data.iter().map(|d| make_cell(d, theme)).collect();
         Self {
@@ -185,10 +282,11 @@ impl CalendarGridWidget {
             return;
         }
         this.widget.theme = *theme;
-        // Push updated colors to each label pod.
+        // Push updated colors to each cell's label.
         for (pod, datum) in this.widget.cells.iter_mut().zip(this.widget.data.iter()) {
             let color = text_color_for(datum, theme);
-            let mut lbl = this.ctx.get_mut(pod);
+            let mut cell = this.ctx.get_mut(pod);
+            let mut lbl = CalendarCell::child_mut(&mut cell);
             lbl.insert_prop(ContentColor::new(color));
             Label::insert_style(
                 &mut lbl,
@@ -392,8 +490,9 @@ impl Widget for CalendarGridWidget {
         _props: &PropertiesRef<'_>,
         _node: &mut Node,
     ) {
-        // Child Label pods declare themselves as GridCell / option nodes.
-        // Minimal parent node — row/column counts could be set here.
+        // Each child `CalendarCell` declares itself as a `Role::GridCell`
+        // with its own selected/disabled state. Minimal parent node — row/
+        // column counts could be set here.
     }
 
     fn children_ids(&self) -> ChildrenIds {
