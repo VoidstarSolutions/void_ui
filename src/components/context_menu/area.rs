@@ -924,4 +924,122 @@ mod tests {
             "an outside press must dismiss the portal-mounted menu via context_menu_dismiss_hook"
         );
     }
+
+    /// Regression test for #77 itself: the menu must be hit-tested (and
+    /// therefore painted) above a sibling registered *after* the
+    /// context-menu area, not just above the area's own descendants.
+    ///
+    /// Before this port, the menu was an in-tree descendant of the area, so
+    /// its paint order was tied to the area's own position among its
+    /// siblings — a panel painted after the area (even one that never
+    /// touches the area's own subtree) would cover it. The portal-mounted
+    /// menu can't be shadowed that way: it always paints last within the
+    /// scope, regardless of where the area sits among its own siblings.
+    ///
+    /// Built by hand (mirroring `portal_scope_harness`) with the area
+    /// wrapped in a `ZStack` alongside a later, opaque, pointer-consuming
+    /// sibling that covers the window's bottom two-thirds — overlapping the
+    /// menu's second row but not the point used to open it.
+    #[test]
+    fn portal_mode_menu_is_hit_tested_above_a_later_registered_sibling() {
+        use masonry::core::CollectionWidget;
+        use masonry::layout::{AsUnit, UnitPoint};
+        use masonry::testing::{ModularWidget, TestHarness};
+        use masonry::theme::default_property_set;
+        use masonry::widgets::{Label, SizedBox, ZStack};
+        use xilem::view::PointerButton;
+
+        let theme = Theme::default();
+        let key = 5;
+        let scope_handle = OverlayScopeHandle::new();
+
+        let inner = SizedBox::new(Label::new("area").prepare().erased())
+            .width(200.0.px())
+            .height(120.0.px())
+            .prepare()
+            .erased();
+        let area =
+            ContextMenuArea::new_portal(inner, ContextMenuHandle::new(), scope_handle.clone(), key);
+
+        // Opaque and pointer-consuming — a stand-in for "a panel painted
+        // after the area." Sized/aligned to cover the window from y=56 down
+        // to the bottom edge: below the (40, 30) point we right-click to
+        // open the menu, but squarely under the menu's second row (measured
+        // at (40,30)-(138,82) for this two-row panel, i.e. row 1 spans
+        // roughly y=56..82).
+        let sibling_probe = ModularWidget::new(())
+            .accepts_pointer_interaction(true)
+            .pointer_event_fn(|(), ctx, _props, event| {
+                if matches!(event, PointerEvent::Down(_)) {
+                    ctx.set_handled();
+                }
+            });
+        let sibling = SizedBox::new(sibling_probe.prepare().erased())
+            .width(400.0.px())
+            .height(344.0.px())
+            .prepare()
+            .erased();
+
+        let content = ZStack::new()
+            .with(NewWidget::new(area).erased(), UnitPoint::TOP_LEFT)
+            .with(sibling, UnitPoint::BOTTOM_LEFT)
+            .prepare()
+            .erased();
+
+        let menu = MenuPanel::new(
+            vec![portal_test_row(0, "Copy"), portal_test_row(1, "Paste")],
+            &theme,
+        )
+        .hosted();
+        let menu = Passthrough::new(NewWidget::new(menu).erased());
+        let scope = OverlayScope::new(
+            scope_handle,
+            content,
+            vec![(
+                key,
+                NewWidget::new(menu).erased(),
+                PortalPlacement::BareTrigger,
+            )],
+        );
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(scope));
+
+        // The area is the ZStack's first (index 0) child — unlike
+        // `portal_scope_harness`'s scenes, `content` here is the `ZStack`,
+        // not the area directly, so `with_portal_area` (which downcasts
+        // straight to `ContextMenuArea`) doesn't apply; reach through the
+        // `ZStack` by index instead.
+        let area_open = |h: &mut TestHarness<OverlayScope>| {
+            h.edit_root_widget(|mut wm| {
+                let mut content = OverlayScope::content_mut(&mut wm);
+                let mut zstack = content.downcast::<ZStack>();
+                let mut area = CollectionWidget::get_mut(&mut zstack, 0);
+                area.downcast::<ContextMenuArea>().widget.open
+            })
+        };
+
+        h.mouse_move(Point::new(40.0, 30.0));
+        h.mouse_button_press(Some(PointerButton::Secondary));
+        h.mouse_button_release(Some(PointerButton::Secondary));
+        assert!(
+            area_open(&mut h),
+            "right-click must still open the area even with a sibling stacked on top of \
+             the window's lower region"
+        );
+
+        // (60, 65) sits inside row 1 ("Paste") of the placed menu and inside
+        // the sibling's covered region (y >= 56) — the exact overlap the fix
+        // is supposed to resolve.
+        h.mouse_move(Point::new(60.0, 65.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+
+        let (action, _) = h.pop_action::<MenuAction>().expect(
+            "a click over the menu's second row must reach it — if the later-registered \
+             sibling painted on top, it would swallow this click and no MenuAction would fire",
+        );
+        assert!(
+            matches!(action, MenuAction::Selected(1)),
+            "the click must select the menu's second row (\"Paste\"), got {action:?}"
+        );
+    }
 }
