@@ -9,8 +9,8 @@ order — so it paints in tree order and can be occluded by later siblings
 above everything is table-stakes, so this is the component's main open
 limitation.
 
-#41's own spike found this wasn't plumbing: decoupling the menu into the
-portal breaks close-on-select and Escape, because the menu's single
+Issue #41's own spike found this wasn't plumbing: decoupling the menu into
+the portal breaks close-on-select and Escape, because the menu's single
 `MenuAction` bubbles to the generic scope, not the trigger, and a masonry
 widget can only emit its one declared action type — it can't also emit a
 generic "dismiss me" the scope understands. The spike was reverted rather
@@ -27,9 +27,9 @@ and `date_picker` all already register `BareTrigger` content and drive it
 through `PortalBinding`/`DismissHook` — confirmed by reading
 `dropdown_button/view.rs` and `dropdown_button/widget.rs`'s `Hosting`
 enum, `PortalBinding`, and `dropdown_dismiss_hook`. So the open question
-#77 posed to the team — whether `PortalPlacement` needs a new variant for
-"anchored + bare" — is already answered: `BareTrigger` *is* that
-combination. What's left is porting `context_menu_area` onto the same
+issue #77 posed to the team — whether `PortalPlacement` needs a new
+variant for "anchored + bare" — is already answered: `BareTrigger` *is*
+that combination. What's left is porting `context_menu_area` onto the same
 proven pattern, plus two gaps porting exposes that the existing consumers
 don't hit:
 
