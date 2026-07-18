@@ -22,15 +22,20 @@
 //! nesting depth — route back to the right callback.
 
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use masonry::core::{ArcStr, NewWidget};
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
-use super::area::{ContextMenuAction, ContextMenuArea};
+use super::area::{
+    ContextMenuAction, ContextMenuArea, ContextMenuHandle, context_menu_dismiss_hook,
+};
 use super::widget::{MenuAction, MenuPanel, MenuRowSpec};
 use crate::Theme;
 use crate::components::icon::IconName;
+use crate::overlay::SurfaceStyle;
+use crate::overlay_portal::{OverlayPortal, PortalContentView, PortalPlacement, portal_from_env};
 
 type SelectCallback<State, Action> = Box<dyn Fn(&mut State) -> Action + Send + Sync>;
 
@@ -450,7 +455,7 @@ where
         ContextMenuAreaView {
             content: self.content,
             rows,
-            callbacks,
+            callbacks: Arc::new(callbacks),
             theme: *theme,
             phantom: PhantomData,
         }
@@ -462,12 +467,33 @@ where
 pub struct ContextMenuAreaView<V, State, Action> {
     content: V,
     rows: Vec<MenuRowSpec>,
-    callbacks: Vec<Option<SelectCallback<State, Action>>>,
+    callbacks: Arc<Vec<Option<SelectCallback<State, Action>>>>,
     theme: Theme,
     phantom: PhantomData<fn(State) -> Action>,
 }
 
 impl<V, State, Action> ViewMarker for ContextMenuAreaView<V, State, Action> {}
+
+/// Where this area's menu is bound: the nearest scope's portal (registered
+/// by key; the scope's view mounts/rebuilds it), or in-tree under our own
+/// `ContextMenuArea` (fallback, handled entirely by the widget). Mirrors
+/// `dropdown_button::view::MenuBinding`.
+enum MenuBinding<State: 'static, Action: 'static> {
+    Portal {
+        portal: OverlayPortal<State, Action>,
+        key: u64,
+        handle: ContextMenuHandle,
+    },
+    InTree,
+}
+
+/// View state for `ContextMenuAreaView`: the wrapped content's own view
+/// state, plus the menu binding (see [`MenuBinding`]).
+#[doc(hidden)]
+pub struct ContextMenuAreaViewState<CVS, State: 'static, Action: 'static> {
+    content: CVS,
+    binding: MenuBinding<State, Action>,
+}
 
 impl<V, State, Action> View<State, Action, ViewCtx> for ContextMenuAreaView<V, State, Action>
 where
@@ -476,18 +502,56 @@ where
     V: WidgetView<State, Action>,
 {
     type Element = Pod<ContextMenuArea>;
-    type ViewState = V::ViewState;
+    type ViewState = ContextMenuAreaViewState<V::ViewState, State, Action>;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let (content_pod, content_vs) = self.content.build(ctx, app_state);
-        // Host-driven: the area owns focus and forwards keys, so the menu
-        // doesn't grab focus on click.
-        let menu = MenuPanel::new(self.rows.iter().cloned(), &self.theme).hosted();
-        let widget = ContextMenuArea::new(content_pod.new_widget.erased(), NewWidget::new(menu));
-        // Register as an action source so the area's `ContextMenuAction` routes
-        // to this view's `message`.
-        let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
-        (element, content_vs)
+        if let Some(portal) = portal_from_env::<State, Action>(ctx) {
+            let handle = ContextMenuHandle::new();
+            let content_view = ContextMenuContentView {
+                rows: self.rows.clone(),
+                callbacks: self.callbacks.clone(),
+                handle: handle.clone(),
+                theme: self.theme,
+            };
+            let registered: Arc<PortalContentView<State, Action>> = Arc::new(content_view);
+            let key = portal.register(
+                registered,
+                &self.theme,
+                PortalPlacement::BareTrigger,
+                SurfaceStyle::Popover,
+            );
+            let widget = ContextMenuArea::new_portal(
+                content_pod.new_widget.erased(),
+                handle.clone(),
+                portal.scope().clone(),
+                key,
+            );
+            let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
+            (
+                element,
+                ContextMenuAreaViewState {
+                    content: content_vs,
+                    binding: MenuBinding::Portal {
+                        portal,
+                        key,
+                        handle,
+                    },
+                },
+            )
+        } else {
+            let menu = MenuPanel::new(self.rows.iter().cloned(), &self.theme).hosted();
+            let widget =
+                ContextMenuArea::new(content_pod.new_widget.erased(), NewWidget::new(menu));
+            let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
+            (
+                element,
+                ContextMenuAreaViewState {
+                    content: content_vs,
+                    binding: MenuBinding::InTree,
+                },
+            )
+        }
     }
 
     fn rebuild(
@@ -502,19 +566,54 @@ where
             let mut content = ContextMenuArea::content_mut(&mut element);
             self.content.rebuild(
                 &prev.content,
-                view_state,
+                &mut view_state.content,
                 ctx,
                 content.downcast(),
                 app_state,
             );
         }
-        if self.theme != prev.theme {
-            let mut menu = ContextMenuArea::menu_mut(&mut element);
-            MenuPanel::set_theme(&mut menu, &self.theme);
-        }
-        if self.rows != prev.rows {
-            let mut menu = ContextMenuArea::menu_mut(&mut element);
-            MenuPanel::set_rows(&mut menu, self.rows.iter().cloned());
+        match &mut view_state.binding {
+            MenuBinding::InTree => {
+                if self.theme != prev.theme
+                    && let Some(mut menu) = ContextMenuArea::menu_mut(&mut element)
+                {
+                    MenuPanel::set_theme(&mut menu, &self.theme);
+                }
+                if self.rows != prev.rows
+                    && let Some(mut menu) = ContextMenuArea::menu_mut(&mut element)
+                {
+                    MenuPanel::set_rows(&mut menu, self.rows.iter().cloned());
+                }
+            }
+            MenuBinding::Portal {
+                portal,
+                key,
+                handle,
+            } => {
+                // Content rebuild happens when the scope's view diffs the
+                // registry (after our subtree's rebuild returns) — we only
+                // refresh the registered view value here, mirroring
+                // `DropdownButtonView::rebuild`'s `MenuBinding::Portal` arm.
+                if self.rows != prev.rows
+                    || self.theme != prev.theme
+                    || !Arc::ptr_eq(&self.callbacks, &prev.callbacks)
+                {
+                    let content_view = ContextMenuContentView {
+                        rows: self.rows.clone(),
+                        callbacks: self.callbacks.clone(),
+                        handle: handle.clone(),
+                        theme: self.theme,
+                    };
+                    let registered: Arc<PortalContentView<State, Action>> = Arc::new(content_view);
+                    portal.update(
+                        *key,
+                        registered,
+                        &self.theme,
+                        PortalPlacement::BareTrigger,
+                        SurfaceStyle::Popover,
+                    );
+                }
+            }
         }
     }
 
@@ -526,7 +625,11 @@ where
     ) {
         {
             let mut content = ContextMenuArea::content_mut(&mut element);
-            self.content.teardown(view_state, ctx, content.downcast());
+            self.content
+                .teardown(&mut view_state.content, ctx, content.downcast());
+        }
+        if let MenuBinding::Portal { portal, key, .. } = &mut view_state.binding {
+            portal.deregister(*key);
         }
         ctx.teardown_action_source(element);
     }
@@ -543,8 +646,94 @@ where
             dispatch_selection(&self.callbacks, index, app_state)
         } else {
             let mut content = ContextMenuArea::content_mut(&mut element);
-            self.content
-                .message(view_state, message, content.downcast(), app_state)
+            self.content.message(
+                &mut view_state.content,
+                message,
+                content.downcast(),
+                app_state,
+            )
+        }
+    }
+}
+
+/// The content view registered with the scope's [`OverlayPortal`] for a
+/// portal-mode context menu — wraps [`MenuPanel`] and, on selection or
+/// dismissal, notifies the owning [`ContextMenuArea`] (via
+/// [`ContextMenuHandle`]) to close, reusing [`context_menu_dismiss_hook`]
+/// directly since context menu has no host-controlled open state to gate
+/// (unlike `dropdown_button::view::MenuContentView`, which must split
+/// `close_for_selection` from `mark_closed` for exactly that reason). The
+/// menu is not a descendant of the area in this mode, so normal action
+/// bubbling never reaches `ContextMenuArea::on_action`.
+struct ContextMenuContentView<State, Action> {
+    rows: Vec<MenuRowSpec>,
+    callbacks: Arc<Vec<Option<SelectCallback<State, Action>>>>,
+    handle: ContextMenuHandle,
+    theme: Theme,
+}
+
+impl<State, Action> ViewMarker for ContextMenuContentView<State, Action> {}
+
+impl<State, Action> View<State, Action, ViewCtx> for ContextMenuContentView<State, Action>
+where
+    State: 'static,
+    Action: 'static,
+{
+    type Element = Pod<MenuPanel>;
+    type ViewState = ();
+
+    fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
+        let widget = MenuPanel::new(self.rows.iter().cloned(), &self.theme).hosted();
+        let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
+        (element, ())
+    }
+
+    fn rebuild(
+        &self,
+        prev: &Self,
+        (): &mut Self::ViewState,
+        _ctx: &mut ViewCtx,
+        mut element: Mut<'_, Self::Element>,
+        _app_state: &mut State,
+    ) {
+        if self.theme != prev.theme {
+            MenuPanel::set_theme(&mut element, &self.theme);
+        }
+        if self.rows != prev.rows {
+            MenuPanel::set_rows(&mut element, self.rows.iter().cloned());
+        }
+    }
+
+    fn teardown(
+        &self,
+        (): &mut Self::ViewState,
+        ctx: &mut ViewCtx,
+        element: Mut<'_, Self::Element>,
+    ) {
+        ctx.teardown_action_source(element);
+    }
+
+    fn message(
+        &self,
+        (): &mut Self::ViewState,
+        message: &mut MessageCtx,
+        mut element: Mut<'_, Self::Element>,
+        app_state: &mut State,
+    ) -> MessageResult<Action> {
+        match message.take_message::<MenuAction>().map(|a| *a) {
+            Some(MenuAction::Selected(index)) => {
+                if let Some(area_id) = self.handle.widget_id() {
+                    element.ctx.mutate_later(area_id, context_menu_dismiss_hook);
+                }
+                dispatch_selection(&self.callbacks, index, app_state)
+            }
+            Some(MenuAction::Dismissed) => {
+                if let Some(area_id) = self.handle.widget_id() {
+                    element.ctx.mutate_later(area_id, context_menu_dismiss_hook);
+                }
+                MessageResult::Nop
+            }
+            None => MessageResult::Stale,
         }
     }
 }

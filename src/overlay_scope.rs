@@ -1174,6 +1174,83 @@ mod tests {
         });
     }
 
+    /// `set_portal_visible_converts_window_rect_and_shows_the_slot_child`
+    /// above only proves the conversion is a no-op when the scope happens to
+    /// sit at the window origin (root of the harness). Real hosts nest the
+    /// scope inside other layout (see the module doc's "wrap your root, or
+    /// each independent region"), so this pins down the case that actually
+    /// exercises `MutateCtx::to_local`: the scope offset 15px right, 30px
+    /// down from the window origin. A trigger rect pushed in window
+    /// coordinates at `scope_origin + (10,10,110,40)` must still resolve to
+    /// the *same* scope-local placement, (10, 44), as the origin case —
+    /// proving the conversion subtracts the scope's real window transform
+    /// rather than assuming (0, 0).
+    #[test]
+    fn set_portal_visible_converts_window_rect_when_the_scope_is_offset_in_the_window() {
+        let key = 3;
+        let content = masonry::widgets::Label::new("content").prepare().erased();
+        let popover = masonry::widgets::Label::new("popover").prepare().erased();
+        let scope = OverlayScope::new(
+            OverlayScopeHandle::new(),
+            content,
+            vec![(key, popover, PortalPlacement::Trigger)],
+        );
+        let scope_widget = NewWidget::new(scope);
+        let scope_id = scope_widget.id();
+        // Pinned to an explicit size (not `with_fixed` alone) so the scope —
+        // and thus its portal slot, sized to match — is big enough to hold
+        // the trigger rect and popover without `PortalSlot::layout`'s
+        // on-screen clamp (which bounds placement to the slot's own size,
+        // not the window) kicking in and masking the conversion under test.
+        let sized_scope = masonry::widgets::SizedBox::new(scope_widget)
+            .size(Length::px(200.0), Length::px(200.0));
+        let column = masonry::widgets::Flex::column()
+            .with_fixed_spacer(Length::px(30.0))
+            .with_fixed(NewWidget::new(sized_scope));
+        let row = masonry::widgets::Flex::row()
+            .with_fixed_spacer(Length::px(15.0))
+            .with_fixed(NewWidget::new(column));
+        let mut harness = TestHarness::create_with_size(
+            masonry::theme::default_property_set(),
+            NewWidget::new(row),
+            (400, 400),
+        );
+
+        let scope_origin = harness
+            .get_widget_with_id(scope_id)
+            .ctx()
+            .to_window(Point::ZERO);
+        assert_ne!(
+            scope_origin,
+            Point::ZERO,
+            "test setup must actually offset the scope in the window"
+        );
+
+        let window_rect = Rect::new(10.0, 10.0, 110.0, 40.0) + scope_origin.to_vec2();
+        harness.edit_widget_with_id(scope_id, |mut wm| {
+            let mut scope = wm.downcast::<OverlayScope>();
+            OverlayScope::set_portal_visible(
+                &mut scope,
+                key,
+                true,
+                PortalVisibility {
+                    owner: None,
+                    rect: window_rect,
+                    anchor: OverlayAnchor::BottomStart,
+                    gap: 4.0,
+                },
+            );
+        });
+        harness.mouse_move(masonry::kurbo::Point::ZERO);
+        harness.edit_widget_with_id(scope_id, |mut wm| {
+            let mut scope = wm.downcast::<OverlayScope>();
+            let slot = OverlayScope::portal_slot_mut(&mut scope);
+            let placed = slot.widget.placed_rect(key).expect("child placed");
+            assert!((placed.x0 - 10.0).abs() < 1e-6, "x0 = {}", placed.x0);
+            assert!((placed.y0 - 44.0).abs() < 1e-6, "y0 = {}", placed.y0);
+        });
+    }
+
     #[test]
     fn set_portal_visible_centers_a_viewport_quarter_child_in_the_scope() {
         let key = 3;

@@ -31,8 +31,25 @@ use masonry::core::{
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Size};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
+use masonry::widgets::Passthrough;
 
 use super::widget::{MenuAction, MenuPanel, menu_key_from};
+use crate::overlay::binding::{PortalBinding, PortalCtx};
+use crate::overlay_portal::PortalSlot;
+use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
+
+widget_id_handle!(
+    /// Self-filling handle to a [`ContextMenuArea`]'s widget id, filled at
+    /// `Update::WidgetAdded` — mirrors
+    /// `dropdown_button::widget::DropdownButtonHandle`.
+    ///
+    /// Given to a portal-mounted `ContextMenuContentView`
+    /// (`super::view`) so a selection or dismissal can `mutate_later` back
+    /// into the area: in portal mode the menu is not a descendant of the
+    /// area, so normal action bubbling never reaches
+    /// [`ContextMenuArea::on_action`].
+    ContextMenuHandle
+);
 
 /// Action emitted when the user selects the menu row at index `0` (its position
 /// in the original item list — same indexing as [`MenuAction::Selected`]).
@@ -42,21 +59,59 @@ pub enum ContextMenuAction {
     ItemSelected(usize),
 }
 
+/// How this area mounts its menu: permanently in-tree (fallback, no scope
+/// ancestor), or portal-mounted in the nearest scope's `PortalSlot` (the
+/// menu is a view child of the *scope*; we only hold the binding). Mirrors
+/// `dropdown_button::widget::Hosting`.
+enum Hosting {
+    InTree { menu: WidgetPod<MenuPanel> },
+    Portal { binding: PortalBinding },
+}
+
 /// Wraps `content` and opens a [`MenuPanel`] at the cursor on right-click.
 pub struct ContextMenuArea {
     content: WidgetPod<dyn Widget>,
-    menu: WidgetPod<MenuPanel>,
+    hosting: Hosting,
+    handle: ContextMenuHandle,
     open: bool,
     /// Cursor point (local coords) where the menu was opened.
     cursor: Point,
 }
 
 impl ContextMenuArea {
+    /// In-tree constructor (fallback, no scope ancestor): the menu is a
+    /// direct descendant, shown/hidden via `open`/`layout`.
     #[must_use]
     pub fn new(content: NewWidget<dyn Widget>, menu: NewWidget<MenuPanel>) -> Self {
         Self {
             content: content.to_pod(),
-            menu: menu.to_pod(),
+            hosting: Hosting::InTree {
+                menu: menu.to_pod(),
+            },
+            handle: ContextMenuHandle::new(),
+            open: false,
+            cursor: Point::ZERO,
+        }
+    }
+
+    /// Portal-mode constructor: the menu lives in the scope's slot under
+    /// `key`, registered by the view layer as a `ContextMenuContentView`; we
+    /// host only `content`. `handle` is filled at `Update::WidgetAdded` and
+    /// given to the registered content view. Mirrors
+    /// `ThemedDropdownButton::new_portal`.
+    #[must_use]
+    pub(crate) fn new_portal(
+        content: NewWidget<dyn Widget>,
+        handle: ContextMenuHandle,
+        scope: OverlayScopeHandle,
+        key: u64,
+    ) -> Self {
+        Self {
+            content: content.to_pod(),
+            hosting: Hosting::Portal {
+                binding: PortalBinding::new(scope, key, context_menu_dismiss_hook),
+            },
+            handle,
             open: false,
             cursor: Point::ZERO,
         }
@@ -67,9 +122,15 @@ impl ContextMenuArea {
         this.ctx.get_mut(&mut this.widget.content)
     }
 
-    /// Mutable access to the menu child for the view layer (theme/rows refresh).
-    pub fn menu_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, MenuPanel> {
-        this.ctx.get_mut(&mut this.widget.menu)
+    /// Mutable access to the in-tree menu child for the view layer's
+    /// theme/rows refresh. `None` in portal mode — there the registered
+    /// `ContextMenuContentView` is refreshed via `OverlayPortal::update`
+    /// instead (see `super::view`).
+    pub fn menu_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> Option<WidgetMut<'t, MenuPanel>> {
+        match &mut this.widget.hosting {
+            Hosting::InTree { menu } => Some(this.ctx.get_mut(menu)),
+            Hosting::Portal { .. } => None,
+        }
     }
 
     fn to_local(ctx: &EventCtx<'_>, window_pos: Point) -> Point {
@@ -77,18 +138,67 @@ impl ContextMenuArea {
         window_pos - origin.to_vec2()
     }
 
-    /// Open the menu at `cursor` (local coords) and take focus — shared by the
-    /// right-click handler and the accessibility `ShowContextMenu` invoke.
+    /// Open the menu at `cursor` (local coords) and take focus — shared by
+    /// the right-click handler and the accessibility `ShowContextMenu`
+    /// invoke.
     fn open_at(&mut self, ctx: &mut EventCtx<'_>, cursor: Point) {
         self.cursor = cursor;
         self.open = true;
         ctx.request_focus();
         ctx.request_layout();
         ctx.request_paint_only();
+        if let Hosting::Portal { binding } = &mut self.hosting {
+            let window_point = ctx.to_window(cursor);
+            binding.open_at_point(ctx, window_point);
+        }
     }
 
-    /// Place the menu's top-left at `cursor`, shifted back inside `container`
-    /// when it would overflow the right/bottom edge.
+    /// Close the portal-mounted menu, if hosted that way — in-tree mode
+    /// needs nothing beyond `self.open = false` (checked directly by
+    /// `layout`), so this is a no-op there.
+    fn close_menu(&mut self, ctx: &mut impl PortalCtx) {
+        if let Hosting::Portal { binding } = &mut self.hosting {
+            binding.close(ctx);
+        }
+    }
+
+    /// Mutate the currently-hosted `MenuPanel`, regardless of hosting mode —
+    /// `mutate_child_later` for the in-tree child, or a `mutate_later` reach
+    /// into the scope's portal slot by key for the portal-mounted one (the
+    /// same `Passthrough`-erasure downcast every portal content view needs;
+    /// see `ThemedDropdownButton::set_highlight`).
+    fn mutate_menu(
+        &mut self,
+        ctx: &mut EventCtx<'_>,
+        f: impl FnOnce(&mut WidgetMut<'_, MenuPanel>) + Send + 'static,
+    ) {
+        match &mut self.hosting {
+            Hosting::InTree { menu } => {
+                ctx.mutate_child_later(menu, move |mut w| f(&mut w));
+            }
+            Hosting::Portal { binding } => {
+                let Some(scope_id) = binding.scope_widget_id() else {
+                    return;
+                };
+                let key = binding.key();
+                ctx.mutate_later(scope_id, move |mut w| {
+                    let mut scope = w.downcast::<OverlayScope>();
+                    let mut slot = OverlayScope::portal_slot_mut(&mut scope);
+                    if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
+                        let mut pass = child.downcast::<Passthrough>();
+                        let mut menu = Passthrough::child_mut(&mut pass);
+                        let mut menu = menu.downcast::<MenuPanel>();
+                        f(&mut menu);
+                    }
+                });
+            }
+        }
+    }
+
+    /// Place the menu's top-left at `cursor`, shifted back inside
+    /// `container` when it would overflow the right/bottom edge. In-tree
+    /// only — portal mode gets the equivalent clamp generically from
+    /// `PortalSlot::layout` (see Task 1).
     fn clamp(cursor: Point, menu: Size, container: Size) -> Point {
         let x = if cursor.x + menu.width > container.width {
             (container.width - menu.width).max(0.0)
@@ -101,6 +211,33 @@ impl ContextMenuArea {
             cursor.y
         };
         Point::new(x.max(0.0), y.max(0.0))
+    }
+}
+
+/// Close the menu after the scope's `PortalSlot::dismiss_outside` hid a
+/// portal-mounted context menu on an outside press (see
+/// `crate::overlay_portal::DismissHook`). Also reused directly by
+/// `ContextMenuContentView::message` (see `super::view`) for the
+/// selection/Escape close path — unlike `dropdown_button`, `ContextMenuArea`
+/// has no host-controlled `open` prop, so both paths share this one
+/// unconditional close.
+pub(crate) fn context_menu_dismiss_hook(mut w: WidgetMut<'_, dyn Widget>) {
+    let mut area = w.downcast::<ContextMenuArea>();
+    ContextMenuArea::mark_closed(&mut area);
+}
+
+impl ContextMenuArea {
+    /// Sync `open` after an external close notification (outside-press
+    /// dismissal via [`context_menu_dismiss_hook`], or a portal-mounted
+    /// selection/Escape via `ContextMenuContentView::message`). No-op if
+    /// already closed.
+    pub(crate) fn mark_closed(this: &mut WidgetMut<'_, Self>) {
+        if this.widget.open {
+            this.widget.open = false;
+            this.widget.close_menu(&mut this.ctx);
+            this.ctx.request_layout();
+            this.ctx.request_paint_only();
+        }
     }
 }
 
@@ -170,19 +307,21 @@ impl Widget for ContextMenuArea {
         // on in tab order (WAI-ARIA menu pattern). The child's Dismissed action
         // bubbles to `on_action`, which clears `open`.
         if matches!(key.key, Key::Named(NamedKey::Tab)) {
-            ctx.mutate_child_later(&mut self.menu, |mut w| {
-                MenuPanel::dismiss(&mut w);
-            });
+            self.mutate_menu(ctx, MenuPanel::dismiss);
             return;
         }
         if let Some(menu_key) = menu_key_from(&key.key) {
-            ctx.mutate_child_later(&mut self.menu, move |mut w| {
-                MenuPanel::handle_menu_key(&mut w, menu_key);
-            });
+            self.mutate_menu(ctx, move |w| MenuPanel::handle_menu_key(w, menu_key));
             ctx.set_handled();
         }
     }
 
+    /// Only reachable in `Hosting::InTree` — there the menu is our
+    /// descendant, so its `MenuAction` bubbles here. In `Hosting::Portal`
+    /// the menu lives in the scope's slot instead; its `MenuAction` is
+    /// handled by `super::view::ContextMenuContentView::message`, which
+    /// notifies us via `mark_closed` through `mutate_later` instead of
+    /// bubbling.
     fn on_action(
         &mut self,
         ctx: &mut ActionCtx<'_>,
@@ -212,29 +351,38 @@ impl Widget for ContextMenuArea {
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        // We hold focus while open and forward keys into the menu; the menu is
-        // built non-self-focusing (`hosted`) so clicking it doesn't steal our
-        // focus. So `FocusChanged(false)` only fires for a genuine click
-        // outside — the "click outside to dismiss" path. Also close if stashed
-        // mid-open (a tab/panel hid us).
-        let should_close = matches!(
-            event,
-            Update::FocusChanged(false) | Update::StashedChanged(true)
-        );
-        if should_close && self.open {
-            self.open = false;
-            ctx.request_layout();
-            ctx.request_paint_only();
+        match event {
+            Update::WidgetAdded => {
+                self.handle.set(ctx.widget_id());
+            }
+            // We hold focus while open and forward keys into the menu; the
+            // menu is built non-self-focusing (`hosted`) so clicking it
+            // doesn't steal our focus. So `FocusChanged(false)` only fires
+            // for a genuine click outside — the "click outside to dismiss"
+            // path. Also close if stashed mid-open (a tab/panel hid us).
+            Update::FocusChanged(false) | Update::StashedChanged(true) if self.open => {
+                self.open = false;
+                self.close_menu(ctx);
+                ctx.request_layout();
+                ctx.request_paint_only();
+            }
+            _ => {}
         }
     }
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        // Registration order is paint order: content first, menu last so the
-        // open menu paints on top of the content.
+        // Registration order is paint order: content first, then the
+        // in-tree menu (if any) so it paints on top. Portal mode registers
+        // only `content` here — the menu lives in the scope's slot instead,
+        // painted above everything in the scope regardless of sibling order
+        // (see `overlay_scope.rs`'s module doc — this is the actual fix for
+        // #77).
         ctx.register_child(&mut self.content);
-        ctx.register_child(&mut self.menu);
+        if let Hosting::InTree { menu } = &mut self.hosting {
+            ctx.register_child(menu);
+        }
     }
 
     fn measure(
@@ -261,15 +409,17 @@ impl Widget for ContextMenuArea {
         ctx.place_child(&mut self.content, Point::ORIGIN);
         ctx.derive_baselines(&self.content);
 
-        if self.open {
-            ctx.set_stashed(&mut self.menu, false);
-            // Snug to intrinsic content size — see `AnchoredOverlay::layout`.
-            let menu_size = ctx.compute_size(&mut self.menu, SizeDef::MIN, size.into());
-            ctx.run_layout(&mut self.menu, menu_size);
-            let placed = Self::clamp(self.cursor, menu_size, size);
-            ctx.place_child(&mut self.menu, placed);
-        } else {
-            ctx.set_stashed(&mut self.menu, true);
+        if let Hosting::InTree { menu } = &mut self.hosting {
+            if self.open {
+                ctx.set_stashed(menu, false);
+                // Snug to intrinsic content size — see `AnchoredOverlay::layout`.
+                let menu_size = ctx.compute_size(menu, SizeDef::MIN, size.into());
+                ctx.run_layout(menu, menu_size);
+                let placed = Self::clamp(self.cursor, menu_size, size);
+                ctx.place_child(menu, placed);
+            } else {
+                ctx.set_stashed(menu, true);
+            }
         }
     }
 
@@ -301,7 +451,10 @@ impl Widget for ContextMenuArea {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.content.id(), self.menu.id()])
+        match &self.hosting {
+            Hosting::InTree { menu } => ChildrenIds::from_slice(&[self.content.id(), menu.id()]),
+            Hosting::Portal { .. } => ChildrenIds::from_slice(&[self.content.id()]),
+        }
     }
 
     /// Focusable only while open, so the area isn't a tab stop at rest but can
@@ -578,6 +731,315 @@ mod tests {
             node.data().is_expanded(),
             Some(true),
             "aria-expanded reflects the open menu"
+        );
+    }
+
+    // --- Portal-mode tests ---
+
+    use crate::Theme;
+    use crate::components::context_menu::widget::MenuRowSpec;
+    use crate::overlay_portal::PortalPlacement;
+    use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
+
+    fn portal_test_row(id: usize, label: &str) -> MenuRowSpec {
+        MenuRowSpec::Action {
+            id,
+            label: label.into(),
+            subtitle: None,
+            icon: None,
+            shortcut: None,
+            checked: None,
+            disabled: false,
+        }
+    }
+
+    /// Builds a scope whose `content` is a portal-mode `ContextMenuArea`
+    /// (200×120 inner filler) and whose `portal_children` holds the matching
+    /// `MenuPanel`, registered by hand at `key` exactly as the view layer
+    /// would register it via `ContextMenuContentView` (see Task 3) — but
+    /// without going through the view layer, mirroring
+    /// `dropdown_button::widget::tests::portal_selection_close_respects_controlled_mode`.
+    fn portal_scope_harness(key: u64) -> (masonry::testing::TestHarness<OverlayScope>, Theme) {
+        use masonry::core::NewWidget;
+        use masonry::layout::AsUnit;
+        use masonry::testing::TestHarness;
+        use masonry::theme::default_property_set;
+        use masonry::widgets::{Label, SizedBox};
+
+        let theme = Theme::default();
+        let inner = SizedBox::new(Label::new("area").prepare().erased())
+            .width(200.0.px())
+            .height(120.0.px())
+            .prepare()
+            .erased();
+        let scope_handle = OverlayScopeHandle::new();
+        let area =
+            ContextMenuArea::new_portal(inner, ContextMenuHandle::new(), scope_handle.clone(), key);
+        let content = NewWidget::new(area).erased();
+        let menu = MenuPanel::new(
+            vec![portal_test_row(0, "Copy"), portal_test_row(1, "Paste")],
+            &theme,
+        )
+        .hosted();
+        // Matches what the view layer produces (`ContextMenuContentView` is
+        // typed to a `Pod<Passthrough>` element — see
+        // `overlay_scope.rs::wrap_portal_content`), and what `mutate_menu`'s
+        // `Hosting::Portal` branch expects to downcast through. Mirrors
+        // `autocomplete::widget::tests`' identical hand-built harness.
+        let menu = Passthrough::new(NewWidget::new(menu).erased());
+        let scope = OverlayScope::new(
+            scope_handle,
+            content,
+            vec![(
+                key,
+                NewWidget::new(menu).erased(),
+                PortalPlacement::BareTrigger,
+            )],
+        );
+        let harness = TestHarness::create(default_property_set(), NewWidget::new(scope));
+        (harness, theme)
+    }
+
+    fn with_portal_area<R>(
+        h: &mut masonry::testing::TestHarness<OverlayScope>,
+        f: impl FnOnce(&mut WidgetMut<'_, ContextMenuArea>) -> R,
+    ) -> R {
+        h.edit_root_widget(|mut wm| {
+            let mut content = OverlayScope::content_mut(&mut wm);
+            let mut area = content.downcast::<ContextMenuArea>();
+            f(&mut area)
+        })
+    }
+
+    #[test]
+    fn portal_mode_right_click_marks_the_slot_child_visible_at_the_cursor() {
+        use xilem::view::PointerButton;
+
+        let (mut h, _theme) = portal_scope_harness(5);
+
+        h.mouse_move(Point::new(40.0, 30.0));
+        h.mouse_button_press(Some(PointerButton::Secondary));
+        h.mouse_button_release(Some(PointerButton::Secondary));
+
+        assert!(
+            with_portal_area(&mut h, |a| a.widget.open),
+            "right-click must open the area in portal mode too"
+        );
+        h.edit_root_widget(|mut wm| {
+            let slot = OverlayScope::portal_slot_mut(&mut wm);
+            let placed = slot
+                .widget
+                .placed_rect(5)
+                .expect("slot child must be visible and placed after the right-click");
+            assert!(
+                (placed.x0 - 40.0).abs() < 1e-9 && (placed.y0 - 30.0).abs() < 1e-9,
+                "menu top-left must land exactly on the cursor point, got {placed:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn portal_mode_right_click_near_the_edge_clamps_the_menu_on_screen() {
+        use xilem::view::PointerButton;
+
+        let (mut h, _theme) = portal_scope_harness(5);
+
+        h.mouse_move(Point::new(395.0, 395.0));
+        h.mouse_button_press(Some(PointerButton::Secondary));
+        h.mouse_button_release(Some(PointerButton::Secondary));
+
+        h.edit_root_widget(|mut wm| {
+            let slot = OverlayScope::portal_slot_mut(&mut wm);
+            let placed = slot
+                .widget
+                .placed_rect(5)
+                .expect("slot child must be placed");
+            assert!(
+                placed.x1 <= 400.0 + 1e-9,
+                "menu must not overflow the right edge, got {placed:?}"
+            );
+            assert!(
+                placed.y1 <= 400.0 + 1e-9,
+                "menu must not overflow the bottom edge, got {placed:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn portal_mode_keyboard_selection_reaches_the_slot_mounted_panel() {
+        use masonry::core::TextEvent;
+        use masonry::core::keyboard::{Key, NamedKey};
+        use xilem::view::PointerButton;
+
+        let (mut h, _theme) = portal_scope_harness(5);
+
+        h.mouse_move(Point::new(40.0, 30.0));
+        h.mouse_button_press(Some(PointerButton::Secondary));
+        h.mouse_button_release(Some(PointerButton::Secondary));
+        assert!(with_portal_area(&mut h, |a| a.widget.open));
+
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowDown)));
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Enter)));
+
+        let (action, _) = h
+            .pop_action::<MenuAction>()
+            .expect("ArrowDown+Enter, forwarded into the slot-mounted panel, must select a row");
+        assert!(
+            matches!(action, MenuAction::Selected(0)),
+            "ArrowDown then Enter selects the first row, got {action:?}"
+        );
+
+        // In production this notification comes from
+        // `ContextMenuContentView::message` via `mutate_later` (Task 3);
+        // exercised directly here since that view doesn't exist without
+        // going through the full xilem View layer.
+        with_portal_area(&mut h, ContextMenuArea::mark_closed);
+        assert!(
+            !with_portal_area(&mut h, |a| a.widget.open),
+            "mark_closed must close the area"
+        );
+    }
+
+    #[test]
+    fn portal_mode_outside_click_dismisses_via_the_scope() {
+        use xilem::view::PointerButton;
+
+        let (mut h, _theme) = portal_scope_harness(5);
+
+        h.mouse_move(Point::new(40.0, 30.0));
+        h.mouse_button_press(Some(PointerButton::Secondary));
+        h.mouse_button_release(Some(PointerButton::Secondary));
+        assert!(with_portal_area(&mut h, |a| a.widget.open));
+
+        // A left-click far from the menu's placed rect (near (40,30)) bubbles
+        // through the scope's own pointer handling, which calls
+        // `PortalSlot::dismiss_outside` and notifies us via
+        // `context_menu_dismiss_hook`.
+        h.mouse_move(Point::new(390.0, 390.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+
+        assert!(
+            !with_portal_area(&mut h, |a| a.widget.open),
+            "an outside press must dismiss the portal-mounted menu via context_menu_dismiss_hook"
+        );
+    }
+
+    /// Regression test for #77 itself: the menu must be hit-tested (and
+    /// therefore painted) above a sibling registered *after* the
+    /// context-menu area, not just above the area's own descendants.
+    ///
+    /// Before this port, the menu was an in-tree descendant of the area, so
+    /// its paint order was tied to the area's own position among its
+    /// siblings — a panel painted after the area (even one that never
+    /// touches the area's own subtree) would cover it. The portal-mounted
+    /// menu can't be shadowed that way: it always paints last within the
+    /// scope, regardless of where the area sits among its own siblings.
+    ///
+    /// Built by hand (mirroring `portal_scope_harness`) with the area
+    /// wrapped in a `ZStack` alongside a later, opaque, pointer-consuming
+    /// sibling that covers the window's bottom two-thirds — overlapping the
+    /// menu's second row but not the point used to open it.
+    #[test]
+    fn portal_mode_menu_is_hit_tested_above_a_later_registered_sibling() {
+        use masonry::core::CollectionWidget;
+        use masonry::layout::{AsUnit, UnitPoint};
+        use masonry::testing::{ModularWidget, TestHarness};
+        use masonry::theme::default_property_set;
+        use masonry::widgets::{Label, SizedBox, ZStack};
+        use xilem::view::PointerButton;
+
+        let theme = Theme::default();
+        let key = 5;
+        let scope_handle = OverlayScopeHandle::new();
+
+        let inner = SizedBox::new(Label::new("area").prepare().erased())
+            .width(200.0.px())
+            .height(120.0.px())
+            .prepare()
+            .erased();
+        let area =
+            ContextMenuArea::new_portal(inner, ContextMenuHandle::new(), scope_handle.clone(), key);
+
+        // Opaque and pointer-consuming — a stand-in for "a panel painted
+        // after the area." Sized/aligned to cover the window from y=56 down
+        // to the bottom edge: below the (40, 30) point we right-click to
+        // open the menu, but squarely under the menu's second row (measured
+        // at (40,30)-(138,82) for this two-row panel, i.e. row 1 spans
+        // roughly y=56..82).
+        let sibling_probe = ModularWidget::new(())
+            .accepts_pointer_interaction(true)
+            .pointer_event_fn(|(), ctx, _props, event| {
+                if matches!(event, PointerEvent::Down(_)) {
+                    ctx.set_handled();
+                }
+            });
+        let sibling = SizedBox::new(sibling_probe.prepare().erased())
+            .width(400.0.px())
+            .height(344.0.px())
+            .prepare()
+            .erased();
+
+        let content = ZStack::new()
+            .with(NewWidget::new(area).erased(), UnitPoint::TOP_LEFT)
+            .with(sibling, UnitPoint::BOTTOM_LEFT)
+            .prepare()
+            .erased();
+
+        let menu = MenuPanel::new(
+            vec![portal_test_row(0, "Copy"), portal_test_row(1, "Paste")],
+            &theme,
+        )
+        .hosted();
+        let menu = Passthrough::new(NewWidget::new(menu).erased());
+        let scope = OverlayScope::new(
+            scope_handle,
+            content,
+            vec![(
+                key,
+                NewWidget::new(menu).erased(),
+                PortalPlacement::BareTrigger,
+            )],
+        );
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(scope));
+
+        // The area is the ZStack's first (index 0) child — unlike
+        // `portal_scope_harness`'s scenes, `content` here is the `ZStack`,
+        // not the area directly, so `with_portal_area` (which downcasts
+        // straight to `ContextMenuArea`) doesn't apply; reach through the
+        // `ZStack` by index instead.
+        let area_open = |h: &mut TestHarness<OverlayScope>| {
+            h.edit_root_widget(|mut wm| {
+                let mut content = OverlayScope::content_mut(&mut wm);
+                let mut zstack = content.downcast::<ZStack>();
+                let mut area = CollectionWidget::get_mut(&mut zstack, 0);
+                area.downcast::<ContextMenuArea>().widget.open
+            })
+        };
+
+        h.mouse_move(Point::new(40.0, 30.0));
+        h.mouse_button_press(Some(PointerButton::Secondary));
+        h.mouse_button_release(Some(PointerButton::Secondary));
+        assert!(
+            area_open(&mut h),
+            "right-click must still open the area even with a sibling stacked on top of \
+             the window's lower region"
+        );
+
+        // (60, 65) sits inside row 1 ("Paste") of the placed menu and inside
+        // the sibling's covered region (y >= 56) — the exact overlap the fix
+        // is supposed to resolve.
+        h.mouse_move(Point::new(60.0, 65.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+
+        let (action, _) = h.pop_action::<MenuAction>().expect(
+            "a click over the menu's second row must reach it — if the later-registered \
+             sibling painted on top, it would swallow this click and no MenuAction would fire",
+        );
+        assert!(
+            matches!(action, MenuAction::Selected(1)),
+            "the click must select the menu's second row (\"Paste\"), got {action:?}"
         );
     }
 }
