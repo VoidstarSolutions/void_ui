@@ -683,6 +683,25 @@ impl Widget for PortalSlot {
                         | OverlayAnchor::TopEnd => Point::new(offset.x, offset.y - child.gap),
                         OverlayAnchor::ViewportQuarter => offset,
                     };
+                    // Shift back on screen when the anchor placement would
+                    // push content past the slot's own edge — e.g. a trigger
+                    // near the window's right/bottom edge. `ViewportQuarter`
+                    // (dialogs) is exempt: it deliberately centers and may
+                    // overflow symmetrically when content is larger than the
+                    // viewport (see `overlay/anchor.rs`'s
+                    // `viewport_quarter_overflows_symmetrically_when_content_is_larger`).
+                    let offset = if child.anchor == OverlayAnchor::ViewportQuarter {
+                        offset
+                    } else {
+                        Point::new(
+                            offset
+                                .x
+                                .clamp(0.0, (size.width - child_size.width).max(0.0)),
+                            offset
+                                .y
+                                .clamp(0.0, (size.height - child_size.height).max(0.0)),
+                        )
+                    };
                     ctx.place_child(&mut child.widget, offset);
                     child.placed = Rect::from_origin_size(offset, child_size);
                 }
@@ -1055,6 +1074,62 @@ mod tests {
             // BottomStart: x flush with placement left, y = placement bottom + gap.
             assert!((placed.x0 - 10.0).abs() < 1e-9);
             assert!((placed.y0 - 44.0).abs() < 1e-9);
+        });
+    }
+
+    #[test]
+    fn set_visible_clamps_a_bottom_start_child_that_would_overflow_the_bottom_edge() {
+        let (mut harness, key) = slot_with_one_tall_narrow_child();
+        // TallNarrow content is 20×100; the harness is the default 400×400
+        // window. A trigger near the bottom edge pushes BottomStart content
+        // past y=400 unless clamped.
+        let placement = Rect::new(10.0, 350.0, 30.0, 360.0); // 20×10 trigger at (10,350)
+        harness.edit_root_widget(|mut wm| {
+            PortalSlot::set_visible(
+                &mut wm,
+                key,
+                true,
+                PortalVisibility {
+                    owner: None,
+                    rect: placement,
+                    anchor: OverlayAnchor::BottomStart,
+                    gap: 4.0,
+                },
+            );
+        });
+        harness.edit_root_widget(|wm| {
+            let placed = wm.widget.children[0].placed;
+            // Unclamped this would be y0 = 364 (360 + gap), overflowing the
+            // 400-tall window down to y=464. Clamped, it's shifted up flush
+            // with the bottom edge.
+            assert!((placed.y0 - 300.0).abs() < 1e-9, "y0 was {}", placed.y0);
+            assert!((placed.y1 - 400.0).abs() < 1e-9, "y1 was {}", placed.y1);
+        });
+    }
+
+    #[test]
+    fn set_visible_clamps_a_bottom_end_child_that_would_overflow_the_right_edge() {
+        let (mut harness, key) = slot_with_one_tall_narrow_child();
+        // Trigger near the right edge; BottomEnd right-aligns content to the
+        // trigger's right edge, which pushes the 20-wide content past x=400
+        // unless clamped.
+        let placement = Rect::new(390.0, 10.0, 410.0, 20.0); // 20×10 trigger at (390,10)
+        harness.edit_root_widget(|mut wm| {
+            PortalSlot::set_visible(
+                &mut wm,
+                key,
+                true,
+                PortalVisibility {
+                    owner: None,
+                    rect: placement,
+                    anchor: OverlayAnchor::BottomEnd,
+                    gap: 0.0,
+                },
+            );
+        });
+        harness.edit_root_widget(|wm| {
+            let placed = wm.widget.children[0].placed;
+            assert!((placed.x1 - 400.0).abs() < 1e-9, "x1 was {}", placed.x1);
         });
     }
 
