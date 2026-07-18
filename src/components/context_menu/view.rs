@@ -641,7 +641,6 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        let _ = &view_state.binding;
         if let Some(action) = message.take_message::<ContextMenuAction>() {
             let ContextMenuAction::ItemSelected(index) = *action;
             dispatch_selection(&self.callbacks, index, app_state)
