@@ -508,12 +508,14 @@ where
                 app_state,
             );
         }
-        if self.theme != prev.theme {
-            let mut menu = ContextMenuArea::menu_mut(&mut element);
+        if self.theme != prev.theme
+            && let Some(mut menu) = ContextMenuArea::menu_mut(&mut element)
+        {
             MenuPanel::set_theme(&mut menu, &self.theme);
         }
-        if self.rows != prev.rows {
-            let mut menu = ContextMenuArea::menu_mut(&mut element);
+        if self.rows != prev.rows
+            && let Some(mut menu) = ContextMenuArea::menu_mut(&mut element)
+        {
             MenuPanel::set_rows(&mut menu, self.rows.iter().cloned());
         }
     }

@@ -31,7 +31,7 @@
 use masonry::core::{
     ActionCtx, ComposeCtx, EventCtx, MutateCtx, UpdateCtx, Widget, WidgetId, WidgetMut,
 };
-use masonry::kurbo::{Point, Rect};
+use masonry::kurbo::{Point, Rect, Size};
 
 use crate::overlay::OverlayAnchor;
 use crate::overlay_portal::{DismissHook, PortalOwner, PortalVisibility};
@@ -152,18 +152,20 @@ impl PortalBinding {
         self.scope.widget_id()
     }
 
-    /// Shared body of [`Self::open`] and [`Self::refresh`]: queue the
-    /// "visible" push with the host's current window-space anchor rect.
-    /// Returns whether it was queued (`false` when the scope isn't mounted
-    /// yet), so `open` knows whether to also arm the re-anchor loop.
-    fn push_visible(&mut self, ctx: &mut impl PortalCtx, anchor: OverlayAnchor, gap: f64) -> bool {
+    /// Shared body of [`Self::open`], [`Self::refresh`], and
+    /// [`Self::open_at_point`]: queue the "visible" push with an explicit
+    /// window-space anchor rect. Returns whether it was queued (`false` when
+    /// the scope isn't mounted yet), so `open`/`open_at_point` know whether
+    /// to also arm the re-anchor loop.
+    fn push_visible_rect(
+        &mut self,
+        ctx: &mut impl PortalCtx,
+        rect: Rect,
+        anchor: OverlayAnchor,
+        gap: f64,
+    ) -> bool {
         let Some(scope_id) = self.scope.widget_id() else {
             return false;
-        };
-        let rect = if anchor.has_trigger() {
-            ctx.host_anchor_rect_window()
-        } else {
-            Rect::ZERO
         };
         self.last_anchor_rect_window = Some(rect);
         self.last_anchor = anchor;
@@ -190,6 +192,19 @@ impl PortalBinding {
         true
     }
 
+    /// Push "visible" with the host's current window-space anchor rect —
+    /// derives the rect from `ctx` (the trigger widget's own border box);
+    /// see [`Self::push_visible_rect`] for the cursor-anchored equivalent
+    /// [`Self::open_at_point`] uses instead.
+    fn push_visible(&mut self, ctx: &mut impl PortalCtx, anchor: OverlayAnchor, gap: f64) -> bool {
+        let rect = if anchor.has_trigger() {
+            ctx.host_anchor_rect_window()
+        } else {
+            Rect::ZERO
+        };
+        self.push_visible_rect(ctx, rect, anchor, gap)
+    }
+
     /// Push "visible" with the host's current window-space anchor rect, and
     /// arm the per-frame re-anchor loop. Anchors without a trigger (see
     /// [`OverlayAnchor::has_trigger`]; currently just `ViewportQuarter`,
@@ -201,6 +216,24 @@ impl PortalBinding {
         if self.push_visible(ctx, anchor, gap) && anchor.has_trigger() {
             ctx.arm_reanchor_loop();
         }
+    }
+
+    /// Open at a fixed window-space point (e.g. a right-click's cursor
+    /// location) instead of tracking a host widget's box. Never arms the
+    /// re-anchor loop: the point is captured once and — unlike a trigger
+    /// widget's box, which can move as an ancestor scrolls — never needs
+    /// re-deriving (see
+    /// `docs/superpowers/specs/2026-07-17-context-menu-portal-zorder-design.md`,
+    /// Decision 2). `OverlayAnchor::BottomStart` on a zero-size rect resolves
+    /// `child_offset` to exactly `window_point` before `PortalSlot::layout`'s
+    /// viewport clamp shifts it back on-screen if needed.
+    pub(crate) fn open_at_point(&mut self, ctx: &mut impl PortalCtx, window_point: Point) {
+        self.push_visible_rect(
+            ctx,
+            Rect::from_origin_size(window_point, Size::ZERO),
+            OverlayAnchor::BottomStart,
+            0.0,
+        );
     }
 
     /// Re-push the visibility payload for an already-open child whose
