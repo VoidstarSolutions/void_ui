@@ -124,15 +124,20 @@ impl ThemedSidebarItem {
     /// | default        | transparent  |
     /// | hover          | `surface_2`  |
     /// | pressed        | `surface_hi` |
-    /// | selected       | `surface_2`  |
+    /// | selected       | `surface_hi` |
+    ///
+    /// `selected` and `hover` resolve to distinct fills (rather than sharing
+    /// one) because they're independent per-row widget states: hovering one
+    /// row while a different row is selected must not make the two
+    /// indistinguishable.
     fn resolve_bg(&self, hovered: bool, pressed: bool) -> Color {
         if self.disabled {
             return Color::TRANSPARENT;
         }
         let p = &self.theme.palette;
-        if pressed {
+        if pressed || self.selected {
             p.surface_hi
-        } else if self.selected || hovered {
+        } else if hovered {
             p.surface_2
         } else {
             Color::TRANSPARENT
@@ -364,6 +369,32 @@ mod tests {
     fn harness() -> TestHarness<ThemedSidebarItem> {
         let widget = ThemedSidebarItem::new(NewWidget::new(Label::new("Nav")), &Theme::dark());
         TestHarness::create_with_size(default_property_set(), NewWidget::new(widget), (160, 28))
+    }
+
+    #[test]
+    fn selected_and_hovered_resolve_to_different_fills() {
+        // Regression for #95: a selected row and a separately-hovered row
+        // are different widget instances, so `resolve_bg` must not give
+        // them the same fill or the two become visually indistinguishable.
+        let theme = Theme::dark();
+        let selected =
+            ThemedSidebarItem::new(NewWidget::new(Label::new("A")), &theme).with_selected(true);
+        let hovered_unselected = ThemedSidebarItem::new(NewWidget::new(Label::new("B")), &theme);
+
+        let selected_bg = selected.resolve_bg(false, false);
+        let hovered_bg = hovered_unselected.resolve_bg(true, false);
+
+        assert_ne!(selected_bg, hovered_bg);
+        assert_eq!(selected_bg, theme.palette.surface_hi);
+        assert_eq!(hovered_bg, theme.palette.surface_2);
+    }
+
+    #[test]
+    fn pressed_takes_priority_over_selected() {
+        let theme = Theme::dark();
+        let widget =
+            ThemedSidebarItem::new(NewWidget::new(Label::new("A")), &theme).with_selected(true);
+        assert_eq!(widget.resolve_bg(true, true), theme.palette.surface_hi);
     }
 
     #[test]
