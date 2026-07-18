@@ -594,7 +594,10 @@ where
                 // registry (after our subtree's rebuild returns) — we only
                 // refresh the registered view value here, mirroring
                 // `DropdownButtonView::rebuild`'s `MenuBinding::Portal` arm.
-                if self.rows != prev.rows || self.theme != prev.theme {
+                if self.rows != prev.rows
+                    || self.theme != prev.theme
+                    || !Arc::ptr_eq(&self.callbacks, &prev.callbacks)
+                {
                     let content_view = ContextMenuContentView {
                         rows: self.rows.clone(),
                         callbacks: self.callbacks.clone(),
