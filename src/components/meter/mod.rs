@@ -20,4 +20,4 @@ pub mod demo;
 mod view;
 pub(super) mod widget;
 
-pub use view::MeterFill;
+pub use view::{Meter, MeterFill, MeterView, meter};
