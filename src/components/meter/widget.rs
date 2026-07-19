@@ -70,12 +70,19 @@ pub struct MeterWidget {
 }
 
 impl MeterWidget {
-    /// Sets the fill fraction, clamped to `0.0..=1.0`. Requests a repaint on change.
+    /// Sets the fill fraction, clamped to `0.0..=1.0`. Requests a repaint
+    /// *and* an accessibility update on change — unlike the other setters
+    /// below, `fraction` also drives `numeric_value` in [`accessibility`],
+    /// so `request_paint_only` alone (which explicitly skips the
+    /// accessibility pass) would leave assistive tech reporting a stale
+    /// value after every update.
+    ///
+    /// [`accessibility`]: masonry::core::Widget::accessibility
     pub(super) fn set_fraction(this: &mut WidgetMut<'_, Self>, fraction: f64) {
         let fraction = fraction.clamp(0.0, 1.0);
         if (this.widget.fraction - fraction).abs() > f64::EPSILON {
             this.widget.fraction = fraction;
-            this.ctx.request_paint_only();
+            this.ctx.request_render();
         }
     }
 
@@ -206,6 +213,7 @@ impl Widget for MeterWidget {
 
 #[cfg(test)]
 mod tests {
+    use masonry::accesskit::Role;
     use masonry::core::NewWidget;
     use masonry::kurbo::Point;
     use masonry::peniko::color::DynamicColor;
@@ -319,5 +327,40 @@ mod tests {
         let g = fill_gradient(200.0, 0.4, MeterFill::Solid(color));
         assert_eq!(g.stops.0[0].color, DynamicColor::from_alpha_color(color));
         assert_eq!(g.stops.0[1].color, DynamicColor::from_alpha_color(color));
+    }
+
+    /// The accessibility node reports the clamped fraction as
+    /// `numeric_value`, with a fixed `0.0..=1.0` range, and uses
+    /// `Role::ProgressIndicator` — the values assistive tech relies on to
+    /// announce progress correctly.
+    #[test]
+    fn accessibility_node_reports_role_and_fraction() {
+        let mut h = TestHarness::create_with_size(
+            default_property_set(),
+            NewWidget::new(widget(0.3, MeterFill::Solid(Color::from_rgb8(0, 0, 0)))),
+            (160, 20),
+        );
+        h.redraw();
+        let node = h.access_node(h.root_id()).expect("node exists");
+        assert_eq!(node.role(), Role::ProgressIndicator);
+        assert_eq!(node.numeric_value(), Some(0.3));
+        assert_eq!(node.min_numeric_value(), Some(0.0));
+        assert_eq!(node.max_numeric_value(), Some(1.0));
+    }
+
+    /// `set_fraction`'s clamp is reflected in the accessibility node too —
+    /// `numeric_value` must never report an out-of-range value, since it's
+    /// read from the same clamped field `paint` uses.
+    #[test]
+    fn accessibility_node_reports_clamped_fraction() {
+        let mut h = TestHarness::create_with_size(
+            default_property_set(),
+            NewWidget::new(widget(0.5, MeterFill::Solid(Color::from_rgb8(0, 0, 0)))),
+            (160, 20),
+        );
+        h.edit_root_widget(|mut wm| MeterWidget::set_fraction(&mut wm, 1.5));
+        h.redraw();
+        let node = h.access_node(h.root_id()).expect("node exists");
+        assert_eq!(node.numeric_value(), Some(1.0));
     }
 }
