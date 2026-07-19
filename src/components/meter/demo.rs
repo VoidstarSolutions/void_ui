@@ -54,16 +54,28 @@ fn gradient_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     })
 }
 
-/// A trailing readout composed alongside the bar — there's no built-in
-/// label, so a value like "72%" is just a sibling in the same row.
-fn labeled_row_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
+/// `.percent_label()` derives its text from the fraction itself — it can
+/// never drift out of sync the way a hand-typed literal could.
+fn percent_label_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
+    with_source!(theme, {
+        meter(0.72)
+            .fill_gradient(theme.palette.green, theme.palette.coral)
+            .percent_label()
+            .width(220.0)
+            .render(theme)
+    })
+}
+
+/// For any non-percentage text (a letter grade, here), there's no built-in
+/// label — compose one by hand alongside the bar in a `flex_row`.
+fn custom_label_row_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     with_source!(theme, {
         flex_row((
-            meter(0.72)
+            meter(0.85)
                 .fill_gradient(theme.palette.green, theme.palette.coral)
                 .width(220.0)
                 .render(theme),
-            label("72%").render(theme),
+            label("A-").render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(8.0))
@@ -80,8 +92,8 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
             .render(theme),
         label(
             "Track + fill primitive for a 0.0..=1.0 fraction \u{2014} a solid \
-             or two-stop gradient fill. No built-in label; compose a \
-             trailing readout alongside it with flex_row.",
+             or two-stop gradient fill. .percent_label() derives a \"NN%\" \
+             readout from the fraction; anything else composes by hand.",
         )
         .color(theme.palette.text_muted)
         .multiline(true)
@@ -97,8 +109,10 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
             solid_section(theme),
             section_header("Heat-tinted gradient fill", theme),
             gradient_section(theme),
-            section_header("With a trailing readout", theme),
-            labeled_row_section(theme),
+            section_header("With .percent_label()", theme),
+            percent_label_section(theme),
+            section_header("With a custom label (composed by hand)", theme),
+            custom_label_row_section(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .gap(Length::px(16.0)),

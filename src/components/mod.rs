@@ -91,7 +91,7 @@ pub use input::{
 };
 pub use label::{Label, LabelAlignment, label};
 pub use list::{List, list};
-pub use meter::{Meter, MeterFill, MeterView, meter};
+pub use meter::{Meter, MeterFill, meter};
 pub use notification::{
     DEFAULT_NOTIFICATION_WIDTH, DEFAULT_TIMEOUT, Notification, NotificationLayerView,
     NotificationPosition, OnClose, notification, notification_layer, notification_overlay,

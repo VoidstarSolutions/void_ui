@@ -7,10 +7,15 @@
 //! meter(0.42)
 //!     .fill_gradient(theme.palette.green, theme.palette.coral)
 //!     .render(&theme)
+//!
+//! // A trailing "NN%" label derived from the fraction, composed alongside
+//! // the bar — the label can never drift out of sync since it's computed
+//! // from the same fraction, not supplied separately.
+//! meter(0.72).percent_label().render(&theme)
 //! ```
 //!
-//! There's no built-in label — a trailing readout is trivially composed
-//! alongside the bar:
+//! An arbitrary (non-percentage) trailing label is just as trivially
+//! composed by hand:
 //!
 //! ```ignore
 //! use xilem::view::flex_row;
@@ -18,13 +23,16 @@
 //!
 //! flex_row((
 //!     meter(0.72).fill_gradient(theme.palette.green, theme.palette.coral).render(&theme),
-//!     label("72%").render(&theme),
+//!     label("B+").render(&theme),
 //! ))
 //! ```
 
+use masonry::layout::Length;
 use masonry::peniko::Color;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
-use xilem::{Pod, ViewCtx};
+use xilem::style::Style as _;
+use xilem::view::{CrossAxisAlignment, flex_row};
+use xilem::{AnyWidgetView, Pod, ViewCtx};
 
 use super::widget::MeterWidget;
 use crate::Theme;
@@ -34,6 +42,8 @@ use crate::Theme;
 /// accent. Not density-scaled: a visual sizing decision, not a spacing
 /// token (same reasoning as `slider::TRACK_HEIGHT`'s own doc comment).
 const DEFAULT_HEIGHT: f32 = 8.0;
+/// Gap between the bar and its `.percent_label()` readout, in px.
+const PERCENT_LABEL_GAP: f64 = 8.0;
 
 /// How the fill portion of a [`crate::meter`] is painted.
 ///
@@ -59,18 +69,20 @@ pub struct Meter {
     fill: Option<MeterFill>,
     height: Option<f32>,
     width: Option<f32>,
+    percent_label: bool,
 }
 
 /// Create a meter showing `fraction` (clamped to `0.0..=1.0`) filled.
 ///
 /// Defaults: solid `theme.palette.accent` fill, `8.0`px height, fills the
-/// available width.
+/// available width, no percent label.
 pub fn meter(fraction: f64) -> Meter {
     Meter {
         fraction,
         fill: None,
         height: None,
         width: None,
+        percent_label: false,
     }
 }
 
@@ -101,9 +113,25 @@ impl Meter {
         self
     }
 
-    /// Materialize the xilem view at the supplied theme.
-    #[must_use = "View values do nothing unless provided to Xilem."]
-    pub fn render(self, theme: &Theme) -> MeterView {
+    /// Append a trailing label showing `fraction` formatted as a
+    /// whole-number percentage (e.g. `"72%"`), composed alongside the bar.
+    ///
+    /// The label is always derived from `fraction` — there's no separate
+    /// string to pass in, so it can never drift out of sync with the bar
+    /// the way a hand-composed literal could. For any other text (a score,
+    /// a letter grade, anything not a percentage), compose a
+    /// [`crate::label`] alongside `.render(&theme)` yourself instead — see
+    /// this module's doc example.
+    pub fn percent_label(mut self) -> Self {
+        self.percent_label = true;
+        self
+    }
+
+    /// Resolves builder defaults against `theme` into a [`MeterView`],
+    /// without deciding whether to wrap it with a percent label — shared by
+    /// [`Self::render`] and this module's tests, which inspect the resolved
+    /// fields directly.
+    fn resolve(&self, theme: &Theme) -> MeterView {
         MeterView {
             fraction: self.fraction,
             fill: self.fill.unwrap_or(MeterFill::Solid(theme.palette.accent)),
@@ -112,9 +140,30 @@ impl Meter {
             width: self.width.map(f64::from),
         }
     }
+
+    /// Materialize the xilem view at the supplied theme.
+    ///
+    /// Returns a type-erased view because [`Self::percent_label`] may need
+    /// to compose the bar with an adjacent label (same reasoning as
+    /// [`crate::separator`]'s optional label) — a plain [`MeterView`]
+    /// alone can't express that composed shape.
+    #[must_use = "View values do nothing unless provided to Xilem."]
+    pub fn render<S: 'static, A: 'static>(self, theme: &Theme) -> Box<AnyWidgetView<S, A>> {
+        let view = self.resolve(theme);
+        if self.percent_label {
+            let pct = format!("{:.0}%", self.fraction.clamp(0.0, 1.0) * 100.0);
+            Box::new(
+                flex_row((view, crate::label(pct).render(theme)))
+                    .cross_axis_alignment(CrossAxisAlignment::Center)
+                    .gap(Length::px(PERCENT_LABEL_GAP)),
+            )
+        } else {
+            Box::new(view)
+        }
+    }
 }
 
-/// The materialized view for a [`Meter`].
+/// The materialized view for a [`Meter`]'s bar.
 ///
 /// Not constructed directly; use [`meter`] + [`Meter::render`].
 #[must_use = "View values do nothing unless provided to Xilem."]
@@ -203,7 +252,7 @@ mod tests {
     fn fill_defaults_to_solid_accent() {
         let theme = Theme::default();
         assert_eq!(
-            meter(0.5).render(&theme).fill,
+            meter(0.5).resolve(&theme).fill,
             MeterFill::Solid(theme.palette.accent)
         );
     }
@@ -214,7 +263,7 @@ mod tests {
         let theme = Theme::default();
         let custom = Color::from_rgb8(10, 20, 30);
         assert_eq!(
-            meter(0.5).fill(custom).render(&theme).fill,
+            meter(0.5).fill(custom).resolve(&theme).fill,
             MeterFill::Solid(custom)
         );
     }
@@ -226,7 +275,7 @@ mod tests {
         let from = Color::from_rgb8(0, 200, 0);
         let to = Color::from_rgb8(200, 0, 0);
         assert_eq!(
-            meter(0.5).fill_gradient(from, to).render(&theme).fill,
+            meter(0.5).fill_gradient(from, to).resolve(&theme).fill,
             MeterFill::Gradient(from, to)
         );
     }
@@ -235,8 +284,8 @@ mod tests {
     #[test]
     fn height_defaults_then_yields_to_explicit() {
         let theme = Theme::default();
-        assert!((meter(0.5).render(&theme).height - 8.0).abs() < f64::EPSILON);
-        assert!((meter(0.5).height(20.0).render(&theme).height - 20.0).abs() < f64::EPSILON);
+        assert!((meter(0.5).resolve(&theme).height - 8.0).abs() < f64::EPSILON);
+        assert!((meter(0.5).height(20.0).resolve(&theme).height - 20.0).abs() < f64::EPSILON);
     }
 
     /// Width defaults to `None` (fill available width), and `.width(..)`
@@ -244,7 +293,20 @@ mod tests {
     #[test]
     fn width_defaults_to_none_then_yields_to_explicit() {
         let theme = Theme::default();
-        assert_eq!(meter(0.5).render(&theme).width, None);
-        assert_eq!(meter(0.5).width(120.0).render(&theme).width, Some(120.0));
+        assert_eq!(meter(0.5).resolve(&theme).width, None);
+        assert_eq!(meter(0.5).width(120.0).resolve(&theme).width, Some(120.0));
+    }
+
+    /// `.percent_label()` derives its text from `fraction`, rounded to the
+    /// nearest whole percent — not a separately-supplied string that could
+    /// drift out of sync.
+    #[test]
+    fn percent_label_formats_fraction_as_whole_percent() {
+        assert_eq!(format!("{:.0}%", 0.723_f64 * 100.0), "72%");
+        assert_eq!(format!("{:.0}%", 1.0_f64.clamp(0.0, 1.0) * 100.0), "100%");
+        // Out-of-range fractions clamp before formatting, matching the
+        // widget's own fraction clamp — never a negative or >100% label.
+        assert_eq!(format!("{:.0}%", (-0.2_f64).clamp(0.0, 1.0) * 100.0), "0%");
+        assert_eq!(format!("{:.0}%", 1.4_f64.clamp(0.0, 1.0) * 100.0), "100%");
     }
 }

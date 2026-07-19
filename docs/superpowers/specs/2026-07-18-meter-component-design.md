@@ -18,6 +18,26 @@ primitive described below, minus every "Label"-tagged decision, field, and
 test — those sections are kept below as the historical record of why the
 overlay design was chosen originally, not as the current state of the code.
 
+A follow-up request then asked whether the demo's "72%" label was actually
+derived from the meter's fraction (it wasn't — `meter(0.72)` and
+`label("72%")` were two independent literals that merely matched). In
+response, `Meter::percent_label()` was added: a builder flag that, at
+`render()` time, formats `fraction` as a whole-number percentage and
+composes it in a `flex_row` alongside the bar — so the label can never
+drift out of sync the way a hand-typed string could. This reintroduces a
+"composed with a label" path, but structurally different from the removed
+centered-overlay one: it lives entirely in `view.rs` (no widget-level
+child, no accessibility change to `MeterWidget`) and follows `separator`'s
+existing precedent of an optional label composed via type-erased
+`Box<AnyWidgetView<S, A>>`. Consequently `Meter::render` is no longer
+non-generic — it now always returns `Box<AnyWidgetView<S, A>>` (boxing the
+plain-bar case too, for a single return type), and `MeterView` is no
+longer part of the public API (removed from `components::mod`/`lib.rs`'s
+re-exports, mirroring `SeparatorLineView` never being exported either) —
+nothing external can construct or name it anymore, since nothing returns
+it directly. Any other label text (non-percentage) is still composed by
+hand exactly as before.
+
 ## Context
 
 Issue #107. `citadel-ui`'s trade dashboard renders a SCORE column as a
