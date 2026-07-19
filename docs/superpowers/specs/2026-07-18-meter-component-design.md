@@ -38,6 +38,41 @@ nothing external can construct or name it anymore, since nothing returns
 it directly. Any other label text (non-percentage) is still composed by
 hand exactly as before.
 
+A final follow-up asked whether `meter` could use masonry/xilem's native
+gradient support instead of hand-rolled geometry, while keeping the
+full-track-anchored visual behavior (Decision 1) unchanged. Reading
+masonry's own source (pinned rev `c5950bc`) surfaced two directly relevant
+things: (1) `masonry_core::core::widget_paint::paint_background` — the
+same helper `sized_box` and masonry's built-in `ProgressBar` widget use
+internally to paint a `Background`/`CornerRadius`/`BorderWidth` value
+without hand-writing `RoundedRect` math; and (2) `ProgressBar`'s own
+`paint()`, which fills a *single* `peniko::Gradient` spanning its *entire*
+bar width, with a hard transition to fully transparent at `progress`, so
+its already-painted background shows through beyond that point — the
+exact "full-track-anchored, revealed progressively" shape Decision 1
+describes, already shipped natively, just for a single flat color rather
+than a two-stop gradient.
+
+`MeterWidget::pre_paint` now calls `paint_background` directly (with a
+`Background::Color`/`CornerRadius` we construct from `self.track_color`/
+`self.height` — not from the ambient property stack, since void_ui's
+custom widgets read `Theme` as a value rather than through
+`PropertySet`/`PropertyArena`; see `button/widget.rs`'s doc comment) in
+place of the former hand-rolled `RoundedRect::from_origin_size` + manual
+fill. `MeterWidget::paint` now builds one gradient across the whole track
+via a new `fill_gradient` helper — `[(0, from), (fraction, boundary_color),
+(fraction, TRANSPARENT), (1, TRANSPARENT)]`, where `boundary_color =
+from.lerp(to, fraction, ..)` is exactly the color an unclipped two-stop
+gradient would show at that position — instead of constructing a
+separately-sized, independently-rounded smaller "fill rect." This is
+mathematically identical to the old approach for the visible portion (same
+color at every x up to the fill point) but has one visible side effect:
+the fill's leading edge is now a flat cutoff rather than an independently
+rounded smaller capsule, matching real `ProgressBar`'s look rather than the
+previous "pill within a pill" shape. `MeterFill`, `Meter`'s builder API,
+and `view.rs`/`demo.rs` are all unchanged — this redesign is confined
+entirely to `widget.rs`'s internals.
+
 ## Context
 
 Issue #107. `citadel-ui`'s trade dashboard renders a SCORE column as a
