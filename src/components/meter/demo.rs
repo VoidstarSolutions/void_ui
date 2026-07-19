@@ -25,7 +25,7 @@ fn solid_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
             meter(0.6).width(220.0).render(theme),
             meter(1.0).width(220.0).render(theme),
         ))
-        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(10.0))
     })
 }
@@ -49,7 +49,7 @@ fn gradient_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
                 .width(220.0)
                 .render(theme),
         ))
-        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(10.0))
     })
 }
