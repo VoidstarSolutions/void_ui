@@ -199,6 +199,7 @@ fn main_pane(focused: ComponentKind, theme: &Theme) -> Box<AnyWidgetView<State>>
         ComponentKind::Input => Box::new(void_ui::components::input::demo::panel(theme)),
         ComponentKind::Label => Box::new(void_ui::components::label::demo::panel(theme)),
         ComponentKind::List => Box::new(void_ui::components::list::demo::panel(theme)),
+        ComponentKind::Meter => Box::new(void_ui::components::meter::demo::panel(theme)),
         ComponentKind::Notification => {
             Box::new(void_ui::components::notification::demo::panel(theme))
         }
