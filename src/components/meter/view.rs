@@ -6,14 +6,23 @@
 //! meter(0.72).render(&theme)
 //! meter(0.42)
 //!     .fill_gradient(theme.palette.green, theme.palette.coral)
-//!     .label("42%")
 //!     .render(&theme)
 //! ```
+//!
+//! There's no built-in label — a trailing readout is trivially composed
+//! alongside the bar:
+//!
+//! ```ignore
+//! use xilem::view::flex_row;
+//! use void_ui::{label, meter};
+//!
+//! flex_row((
+//!     meter(0.72).fill_gradient(theme.palette.green, theme.palette.coral).render(&theme),
+//!     label("72%").render(&theme),
+//! ))
+//! ```
 
-use masonry::core::{ArcStr, NewWidget, StyleProperty, Widget as _};
 use masonry::peniko::Color;
-use masonry::properties::ContentColor;
-use masonry::widgets::Label;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx};
 
@@ -48,20 +57,18 @@ pub enum MeterFill {
 pub struct Meter {
     fraction: f64,
     fill: Option<MeterFill>,
-    label: Option<ArcStr>,
     height: Option<f32>,
     width: Option<f32>,
 }
 
 /// Create a meter showing `fraction` (clamped to `0.0..=1.0`) filled.
 ///
-/// Defaults: solid `theme.palette.accent` fill, no label, `8.0`px height,
-/// fills the available width.
+/// Defaults: solid `theme.palette.accent` fill, `8.0`px height, fills the
+/// available width.
 pub fn meter(fraction: f64) -> Meter {
     Meter {
         fraction,
         fill: None,
-        label: None,
         height: None,
         width: None,
     }
@@ -79,14 +86,6 @@ impl Meter {
     /// is actually filled. Overrides any previous [`Self::fill`] call.
     pub fn fill_gradient(mut self, from: Color, to: Color) -> Self {
         self.fill = Some(MeterFill::Gradient(from, to));
-        self
-    }
-
-    /// Add a centered overlay label. The caller controls the exact text —
-    /// `void_ui` doesn't assume percentage formatting, since the fraction
-    /// could mean anything (score, pass-rate, rung distribution).
-    pub fn label(mut self, text: impl Into<ArcStr>) -> Self {
-        self.label = Some(text.into());
         self
     }
 
@@ -109,22 +108,10 @@ impl Meter {
             fraction: self.fraction,
             fill: self.fill.unwrap_or(MeterFill::Solid(theme.palette.accent)),
             track_color: theme.palette.surface_2,
-            label_text: self.label,
-            label_color: theme.palette.text,
-            label_font_size: theme.density.ui_font_size,
             height: f64::from(self.height.unwrap_or(DEFAULT_HEIGHT)),
             width: self.width.map(f64::from),
         }
     }
-}
-
-/// Builds a `Label` child styled for a meter's centered overlay text.
-fn build_label(text: &ArcStr, color: Color, font_size: f32) -> NewWidget<Label> {
-    let mut label = Label::new(text.clone())
-        .with_style(StyleProperty::FontSize(font_size))
-        .prepare();
-    label.properties.insert(ContentColor::new(color));
-    label
 }
 
 /// The materialized view for a [`Meter`].
@@ -135,9 +122,6 @@ pub struct MeterView {
     pub(super) fraction: f64,
     pub(super) fill: MeterFill,
     pub(super) track_color: Color,
-    pub(super) label_text: Option<ArcStr>,
-    pub(super) label_color: Color,
-    pub(super) label_font_size: f32,
     pub(super) height: f64,
     pub(super) width: Option<f64>,
 }
@@ -149,10 +133,6 @@ impl<S: 'static, A: 'static> View<S, A, ViewCtx> for MeterView {
     type ViewState = ();
 
     fn build(&self, ctx: &mut ViewCtx, _: &mut S) -> (Self::Element, Self::ViewState) {
-        let label = self
-            .label_text
-            .as_ref()
-            .map(|text| build_label(text, self.label_color, self.label_font_size).to_pod());
         (
             ctx.create_pod(MeterWidget {
                 fraction: self.fraction.clamp(0.0, 1.0),
@@ -160,8 +140,6 @@ impl<S: 'static, A: 'static> View<S, A, ViewCtx> for MeterView {
                 track_color: self.track_color,
                 height: self.height,
                 width: self.width,
-                label,
-                label_text: self.label_text.clone(),
             }),
             (),
         )
@@ -190,19 +168,6 @@ impl<S: 'static, A: 'static> View<S, A, ViewCtx> for MeterView {
         }
         if self.width != prev.width {
             MeterWidget::set_width(&mut element, self.width);
-        }
-        if self.label_text != prev.label_text
-            || self.label_color != prev.label_color
-            || (self.label_font_size - prev.label_font_size).abs() > f32::EPSILON
-        {
-            match &self.label_text {
-                Some(text) => MeterWidget::attach_label(
-                    &mut element,
-                    build_label(text, self.label_color, self.label_font_size),
-                    text.clone(),
-                ),
-                None => MeterWidget::detach_label(&mut element),
-            }
         }
     }
 
@@ -281,16 +246,5 @@ mod tests {
         let theme = Theme::default();
         assert_eq!(meter(0.5).render(&theme).width, None);
         assert_eq!(meter(0.5).width(120.0).render(&theme).width, Some(120.0));
-    }
-
-    /// No label by default; `.label(..)` sets the caller-supplied text verbatim.
-    #[test]
-    fn label_defaults_to_none_then_yields_to_explicit() {
-        let theme = Theme::default();
-        assert_eq!(meter(0.5).render(&theme).label_text, None);
-        assert_eq!(
-            meter(0.5).label("72%").render(&theme).label_text.as_deref(),
-            Some("72%")
-        );
     }
 }

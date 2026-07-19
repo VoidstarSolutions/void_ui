@@ -1,5 +1,23 @@
 # `meter`: track + heat-tinted fill component
 
+## Addendum (post-implementation): built-in label removed
+
+After this spec was implemented and reviewed (see the implementation plan
+and its progress ledger), the user asked to move the label from a centered
+overlay to trailing text after the bar. Trailing-placement was already
+identified during the original design conversation (see "Label placement"
+in the Decisions below) as the one case that's trivially composable by the
+caller via `flex_row((meter(...).render(theme), label(text).render(theme)))`
+— it was exactly the case the team chose *not* to build in, precisely
+because the centered-overlay case was the one that couldn't be replicated
+externally. With the requirement now trailing rather than centered, that
+tradeoff no longer favors a built-in feature, so `Meter::label`,
+`MeterWidget`'s label child, and all associated accessibility/layout code
+were removed rather than repositioned. `meter` is now purely the track+fill
+primitive described below, minus every "Label"-tagged decision, field, and
+test — those sections are kept below as the historical record of why the
+overlay design was chosen originally, not as the current state of the code.
+
 ## Context
 
 Issue #107. `citadel-ui`'s trade dashboard renders a SCORE column as a

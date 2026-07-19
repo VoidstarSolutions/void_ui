@@ -54,14 +54,19 @@ fn gradient_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     })
 }
 
-fn label_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
+/// A trailing readout composed alongside the bar — there's no built-in
+/// label, so a value like "72%" is just a sibling in the same row.
+fn labeled_row_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     with_source!(theme, {
-        flex_row((meter(0.72)
-            .fill_gradient(theme.palette.green, theme.palette.coral)
-            .label("72%")
-            .width(220.0)
-            .render(theme),))
+        flex_row((
+            meter(0.72)
+                .fill_gradient(theme.palette.green, theme.palette.coral)
+                .width(220.0)
+                .render(theme),
+            label("72%").render(theme),
+        ))
         .cross_axis_alignment(CrossAxisAlignment::Center)
+        .gap(Length::px(8.0))
     })
 }
 
@@ -75,7 +80,8 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
             .render(theme),
         label(
             "Track + fill primitive for a 0.0..=1.0 fraction \u{2014} a solid \
-             or two-stop gradient fill, with an optional centered label.",
+             or two-stop gradient fill. No built-in label; compose a \
+             trailing readout alongside it with flex_row.",
         )
         .color(theme.palette.text_muted)
         .multiline(true)
@@ -91,8 +97,8 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
             solid_section(theme),
             section_header("Heat-tinted gradient fill", theme),
             gradient_section(theme),
-            section_header("With a centered label", theme),
-            label_section(theme),
+            section_header("With a trailing readout", theme),
+            labeled_row_section(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .gap(Length::px(16.0)),
