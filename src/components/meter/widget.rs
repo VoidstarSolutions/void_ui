@@ -5,13 +5,14 @@
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
-    AccessCtx, ChildrenIds, LayoutCtx, MeasureCtx, NoAction, PaintCtx, PropertiesRef, RegisterCtx,
-    UpdateCtx, Widget, WidgetMut,
+    AccessCtx, ArcStr, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
+    PropertiesRef, RegisterCtx, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, RoundedRect, Size};
-use masonry::layout::{LenReq, Length};
+use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use masonry::peniko::{Color, Gradient};
+use masonry::widgets::Label;
 
 use super::view::MeterFill;
 
@@ -30,6 +31,12 @@ pub struct MeterWidget {
     pub(super) track_color: Color,
     pub(super) height: f64,
     pub(super) width: Option<f64>,
+    /// Centered overlay text, if any.
+    pub(super) label: Option<WidgetPod<Label>>,
+    /// The raw text behind `label`, kept alongside the built child so
+    /// `accessibility` can hand it to `node.set_value` without reading text
+    /// back out of a `Label` widget.
+    pub(super) label_text: Option<ArcStr>,
 }
 
 impl MeterWidget {
@@ -74,23 +81,56 @@ impl MeterWidget {
             this.ctx.request_layout();
         }
     }
+
+    /// Replaces the centered label. Removes any existing label first.
+    pub(super) fn attach_label(
+        this: &mut WidgetMut<'_, Self>,
+        label: NewWidget<Label>,
+        text: ArcStr,
+    ) {
+        if let Some(old) = this.widget.label.take() {
+            this.ctx.remove_child(old);
+        }
+        this.widget.label = Some(label.to_pod());
+        this.widget.label_text = Some(text);
+        this.ctx.children_changed();
+        this.ctx.request_layout();
+    }
+
+    /// Removes the label, if present.
+    pub(super) fn detach_label(this: &mut WidgetMut<'_, Self>) {
+        if let Some(old) = this.widget.label.take() {
+            this.ctx.remove_child(old);
+            this.widget.label_text = None;
+            this.ctx.children_changed();
+            this.ctx.request_layout();
+        }
+    }
 }
 
 impl Widget for MeterWidget {
     type Action = NoAction;
 
-    fn register_children(&mut self, _ctx: &mut RegisterCtx<'_>) {}
+    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
+        if let Some(label) = &mut self.label {
+            ctx.register_child(label);
+        }
+    }
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
 
     fn measure(
         &mut self,
-        _ctx: &mut MeasureCtx<'_>,
+        ctx: &mut MeasureCtx<'_>,
         _props: &PropertiesRef<'_>,
         axis: Axis,
         len_req: LenReq,
-        _cross_length: Option<Length>,
+        cross_length: Option<Length>,
     ) -> Length {
+        if let Some(label) = &mut self.label {
+            let context_size = LayoutSize::maybe(axis.cross(), cross_length);
+            let _ = ctx.compute_length(label, len_req.into(), context_size, axis, cross_length);
+        }
         match axis {
             Axis::Horizontal => match self.width {
                 Some(w) => Length::px(w),
@@ -104,7 +144,15 @@ impl Widget for MeterWidget {
         }
     }
 
-    fn layout(&mut self, _ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, _size: Size) {}
+    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
+        if let Some(label) = &mut self.label {
+            let label_size = ctx.compute_size(label, SizeDef::fit(size), size.into());
+            ctx.run_layout(label, label_size);
+            let x = ((size.width - label_size.width) * 0.5).max(0.0);
+            let y = ((size.height - label_size.height) * 0.5).max(0.0);
+            ctx.place_child(label, Point::new(x, y));
+        }
+    }
 
     fn paint(
         &mut self,
@@ -151,20 +199,27 @@ impl Widget for MeterWidget {
         node.set_numeric_value(self.fraction);
         node.set_min_numeric_value(0.0);
         node.set_max_numeric_value(1.0);
+        if let Some(text) = &self.label_text {
+            node.set_value(text.to_string());
+        }
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[])
+        match &self.label {
+            Some(label) => ChildrenIds::from_slice(&[label.id()]),
+            None => ChildrenIds::from_slice(&[]),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use masonry::core::NewWidget;
+    use masonry::core::{NewWidget, Widget};
     use masonry::kurbo::Point;
     use masonry::peniko::{Color, GradientKind};
     use masonry::testing::TestHarness;
     use masonry::theme::default_property_set;
+    use masonry::widgets::Label;
 
     use super::{MeterFill, MeterWidget, full_track_gradient};
 
@@ -175,6 +230,8 @@ mod tests {
             track_color: Color::from_rgb8(60, 60, 60),
             height: 8.0,
             width: Some(160.0),
+            label: None,
+            label_text: None,
         }
     }
 
@@ -230,5 +287,59 @@ mod tests {
             }
             other => panic!("expected a linear gradient, got {other:?}"),
         }
+    }
+
+    use masonry::core::StyleProperty;
+    use masonry::properties::ContentColor;
+
+    fn label_widget(text: &str) -> MeterWidget {
+        let mut lbl = Label::new(text)
+            .with_style(StyleProperty::FontSize(12.0))
+            .prepare();
+        lbl.properties
+            .insert(ContentColor::new(Color::from_rgb8(240, 240, 240)));
+        let mut w = widget(0.5, MeterFill::Solid(Color::from_rgb8(0, 200, 120)));
+        w.label = Some(lbl.to_pod());
+        w.label_text = Some("72%".into());
+        w
+    }
+
+    /// A meter with a label mounts and paints without panicking (exercises
+    /// the child measure/layout/paint path added in this task).
+    #[test]
+    fn label_mounts_and_paints_without_panicking() {
+        let mut h = TestHarness::create_with_size(
+            default_property_set(),
+            NewWidget::new(label_widget("72%")),
+            (160, 20),
+        );
+        h.redraw();
+    }
+
+    /// The label's text is exposed to assistive tech as the node's value —
+    /// domain-agnostic (works for "72%", "B+", whatever the caller means).
+    #[test]
+    fn label_text_is_exposed_as_accessibility_value() {
+        let mut h = TestHarness::create_with_size(
+            default_property_set(),
+            NewWidget::new(label_widget("72%")),
+            (160, 20),
+        );
+        h.redraw();
+        let node = h.access_node(h.root_id()).expect("node exists");
+        assert_eq!(node.value(), Some("72%".to_string()));
+    }
+
+    /// No label attached means no accessibility value is set at all.
+    #[test]
+    fn no_label_means_no_accessibility_value() {
+        let mut h = TestHarness::create_with_size(
+            default_property_set(),
+            NewWidget::new(widget(0.5, MeterFill::Solid(Color::from_rgb8(0, 200, 120)))),
+            (160, 20),
+        );
+        h.redraw();
+        let node = h.access_node(h.root_id()).expect("node exists");
+        assert_eq!(node.value(), None);
     }
 }
