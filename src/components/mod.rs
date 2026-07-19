@@ -37,6 +37,7 @@ pub(crate) mod interaction;
 pub(crate) mod item_list;
 pub mod label;
 pub mod list;
+pub mod meter;
 pub mod notification;
 pub mod popover;
 pub mod radio;
@@ -90,6 +91,7 @@ pub use input::{
 };
 pub use label::{Label, LabelAlignment, label};
 pub use list::{List, list};
+pub use meter::{Meter, MeterFill, meter};
 pub use notification::{
     DEFAULT_NOTIFICATION_WIDTH, DEFAULT_TIMEOUT, Notification, NotificationLayerView,
     NotificationPosition, OnClose, notification, notification_layer, notification_overlay,
@@ -147,6 +149,7 @@ pub enum ComponentKind {
     Input,
     Label,
     List,
+    Meter,
     Notification,
     Popover,
     Radio,
@@ -191,6 +194,7 @@ impl ComponentKind {
             Self::Input => "Input",
             Self::Label => "Label",
             Self::List => "List",
+            Self::Meter => "Meter",
             Self::Notification => "Notification",
             Self::Popover => "Popover",
             Self::Radio => "Radio",
@@ -235,6 +239,7 @@ impl ComponentKind {
             Self::Input,
             Self::Label,
             Self::List,
+            Self::Meter,
             Self::Notification,
             Self::Popover,
             Self::Radio,
