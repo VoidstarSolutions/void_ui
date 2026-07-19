@@ -37,6 +37,7 @@ pub(crate) mod interaction;
 pub(crate) mod item_list;
 pub mod label;
 pub mod list;
+pub mod meter;
 pub mod notification;
 pub mod popover;
 pub mod radio;
