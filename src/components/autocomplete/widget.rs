@@ -12,6 +12,8 @@
 //!   `SuggestionSelected` actions from its descendants and re-emits the single
 //!   public [`AutocompleteAction::TextChanged`] that the view layer consumes.
 
+use std::sync::{Arc, Mutex};
+
 use masonry::accesskit::{HasPopup, Node, Role};
 use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
@@ -1104,6 +1106,33 @@ pub(crate) struct AutocompleteWidget {
     /// Escape can close the dropdown via [`Self::mark_closed`] regardless of
     /// hosting mode (in portal mode there's no ancestor path back here).
     handle: AutocompleteHandle,
+    /// Latest requested population for the portal-mounted `SuggestionList`,
+    /// shared with every queued `mutate_later` closure that would apply one.
+    ///
+    /// Several call sites (`open_on_focus`, `handle_text_changed`,
+    /// `set_contents`, `set_all_suggestions`) can each independently decide
+    /// the list needs repopulating — and since the portal-mounted list lives
+    /// outside this widget's own subtree, the only way to reach it is a
+    /// deferred `mutate_later` callback. Masonry drains *all* callbacks
+    /// queued during one input/action pass before it runs the
+    /// `register_children` pass that actually commits new children into the
+    /// widget arena (see `run_rewrite_passes`) — so if two of these call
+    /// sites fire from the same pass (e.g. accepting a suggestion narrows
+    /// the host's suggestion set, pushing a fresh `set_all_suggestions` call
+    /// in the same rebuild `select_suggestion` triggered), the second
+    /// callback's `remove_child` loop can end up trying to remove
+    /// `WidgetPod`s the first callback only just created — which are not
+    /// yet arena children at all, panicking with "`remove_child`: child not
+    /// found".
+    ///
+    /// Every call site writes its desired items here (last write wins) and
+    /// queues a closure that reads via `.take()` instead of capturing items
+    /// by value. Whichever closure actually runs first consumes the latest
+    /// value and applies it exactly once; any other closures queued in the
+    /// same pass find `None` and no-op. This guarantees at most one
+    /// remove-then-recreate cycle ever happens per settle batch, regardless
+    /// of how many call sites decided a repopulation was needed.
+    portal_pending_items: Arc<Mutex<Option<Vec<ArcStr>>>>,
 }
 
 impl AutocompleteWidget {
@@ -1205,6 +1234,7 @@ impl AutocompleteWidget {
             theme: *theme,
             listbox_handle,
             handle,
+            portal_pending_items: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -1247,6 +1277,7 @@ impl AutocompleteWidget {
             theme,
             listbox_handle,
             handle,
+            portal_pending_items: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -1287,8 +1318,12 @@ impl AutocompleteWidget {
             Hosting::Portal { binding, .. } => {
                 let scope_id = binding.scope_widget_id().expect("checked is_ready above");
                 let key = binding.key();
-                let items = self.filtered.clone();
+                *self.portal_pending_items.lock().unwrap() = Some(self.filtered.clone());
+                let pending = Arc::clone(&self.portal_pending_items);
                 ctx.mutate_later(scope_id, move |mut w| {
+                    let Some(items) = pending.lock().unwrap().take() else {
+                        return;
+                    };
                     let mut scope = w.downcast::<OverlayScope>();
                     with_portal_list(&mut scope, key, |list| {
                         SuggestionList::set_items(list, items);
@@ -1339,8 +1374,12 @@ impl AutocompleteWidget {
             Hosting::Portal { binding, .. } => {
                 if let Some(scope_id) = binding.scope_widget_id() {
                     let key = binding.key();
-                    let items = self.filtered.clone();
+                    *self.portal_pending_items.lock().unwrap() = Some(self.filtered.clone());
+                    let pending = Arc::clone(&self.portal_pending_items);
                     ctx.mutate_later(scope_id, move |mut w| {
+                        let Some(items) = pending.lock().unwrap().take() else {
+                            return;
+                        };
                         let mut scope = w.downcast::<OverlayScope>();
                         with_portal_list(&mut scope, key, |list| {
                             SuggestionList::set_items(list, items);
@@ -1469,8 +1508,12 @@ impl AutocompleteWidget {
                 }
                 if let Some(scope_id) = binding.scope_widget_id() {
                     let key = binding.key();
-                    let items = filtered.clone();
+                    *this.widget.portal_pending_items.lock().unwrap() = Some(filtered.clone());
+                    let pending = Arc::clone(&this.widget.portal_pending_items);
                     this.ctx.mutate_later(scope_id, move |mut w| {
+                        let Some(items) = pending.lock().unwrap().take() else {
+                            return;
+                        };
                         let mut scope = w.downcast::<OverlayScope>();
                         with_portal_list(&mut scope, key, |list| {
                             SuggestionList::set_items(list, items);
@@ -1522,8 +1565,12 @@ impl AutocompleteWidget {
             Hosting::Portal { binding, .. } => {
                 if let Some(scope_id) = binding.scope_widget_id() {
                     let key = binding.key();
-                    let items = filtered.clone();
+                    *this.widget.portal_pending_items.lock().unwrap() = Some(filtered.clone());
+                    let pending = Arc::clone(&this.widget.portal_pending_items);
                     this.ctx.mutate_later(scope_id, move |mut w| {
+                        let Some(items) = pending.lock().unwrap().take() else {
+                            return;
+                        };
                         let mut scope = w.downcast::<OverlayScope>();
                         with_portal_list(&mut scope, key, |list| {
                             SuggestionList::set_items(list, items);
@@ -2952,5 +2999,55 @@ mod accessibility_tests {
             .expect("accepting a suggestion should report the change");
         let AutocompleteAction::TextChanged(text) = action;
         assert_eq!(text, "Apple");
+    }
+
+    /// Reproduces a real crash confirmed live: two calls that each want to
+    /// repopulate the portal-mounted suggestion list, issued back-to-back
+    /// before masonry has run a `register_children` pass in between (i.e.
+    /// both `mutate_later` callbacks queued into the same drain batch — see
+    /// `run_rewrite_passes` in `masonry_core`, which drains *all* queued
+    /// callbacks before committing new children to the widget arena).
+    ///
+    /// Before the `portal_pending_items` fix, the second call's
+    /// `remove_child` loop would operate on `WidgetPod`s the first call had
+    /// only just created — not yet arena children — panicking with
+    /// "`remove_child`: child not found". This drives that exact scenario
+    /// directly (two `set_all_suggestions` calls inside one
+    /// `edit_widget_with_id` closure, so both queue before either runs)
+    /// rather than depending on a specific UI interaction sequence to
+    /// trigger it.
+    #[test]
+    fn two_suggestion_repopulations_in_one_pass_do_not_panic() {
+        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit_portal();
+
+        harness.focus_on(Some(text_area_id));
+        harness.render();
+
+        // Both lists must differ from the initial `["Apple", "Banana",
+        // "Cherry"]` (and from each other) — `set_all_suggestions` no-ops on
+        // an unchanged list, which would defeat the point of queuing two
+        // real repopulations.
+        let first: Vec<ArcStr> = ["Apple", "Banana", "Cherry", "Date"]
+            .into_iter()
+            .map(ArcStr::from)
+            .collect();
+        let second: Vec<ArcStr> = ["Banana", "Cherry"].into_iter().map(ArcStr::from).collect();
+        harness.edit_widget_with_id(autocomplete_id, |mut w| {
+            let mut autocomplete = w.downcast::<AutocompleteWidget>();
+            AutocompleteWidget::set_all_suggestions(&mut autocomplete, first);
+            AutocompleteWidget::set_all_suggestions(&mut autocomplete, second);
+        });
+        harness.render();
+
+        let mut option_count = 0;
+        harness.inspect_widgets(|w| {
+            if w.accessibility_role() == Role::ListBoxOption {
+                option_count += 1;
+            }
+        });
+        assert_eq!(
+            option_count, 2,
+            "only the second (latest) population should be applied"
+        );
     }
 }
