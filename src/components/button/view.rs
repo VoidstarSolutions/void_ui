@@ -1,4 +1,4 @@
-//! Tessera `.tb-btn` button — interactive, theme-driven.
+//! Themed button — interactive, theme-driven.
 //!
 //! Wraps [`super::widget::ThemedButton`] in a xilem [`View`]. Pointer state
 //! (hover, press) is tracked by the masonry widget; the `selected` flag is the

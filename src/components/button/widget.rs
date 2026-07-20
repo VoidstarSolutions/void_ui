@@ -1,4 +1,4 @@
-//! Masonry widget that owns the Tessera `.tb-btn` state machine.
+//! Masonry widget that owns the button's pointer state machine.
 //!
 //! The widget tracks pointer hover, press, and focus through masonry's widget
 //! context, then paints background + border itself from a `Theme` it holds.
@@ -62,7 +62,7 @@ const ICON_GAP: f64 = 5.0;
 pub struct ThemedButton {
     child: WidgetPod<dyn Widget>,
     theme: Theme,
-    /// Host-controlled toggle — Tessera's `.tb-btn.active`.
+    /// Host-controlled toggle — the selected/active visual state.
     selected: bool,
     /// When true, all interaction is suppressed and colors are muted.
     disabled: bool,
