@@ -23,9 +23,9 @@ pub use typography::{FontStack, Typography};
 pub struct Radii {
     /// Compact form controls — checkbox boxes. 3px.
     pub tiny: f32,
-    /// `--radius` — cards, pills, buttons. 6px.
+    /// Cards, pills, buttons. 6px.
     pub small: f32,
-    /// `--radius-lg` — large surfaces, dialogs. 10px.
+    /// Large surfaces, dialogs. 10px.
     pub large: f32,
 }
 
