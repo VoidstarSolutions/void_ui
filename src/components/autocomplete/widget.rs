@@ -1282,6 +1282,25 @@ impl AutocompleteWidget {
     }
 }
 
+/// Latest-write into a [`AutocompleteWidget::portal_pending_items`] slot;
+/// see that field's doc comment for why this exists. A free function (rather
+/// than a `&self` method) so call sites can pass `&self.portal_pending_items`
+/// alongside a live `&mut self.hosting` borrow without conflict.
+fn set_portal_pending_items(pending: &Mutex<Option<Vec<ArcStr>>>, items: Vec<ArcStr>) {
+    *pending
+        .lock()
+        .expect("portal_pending_items mutex should not be poisoned") = Some(items);
+}
+
+/// Reads and clears `pending`; see
+/// [`AutocompleteWidget::portal_pending_items`] for why this exists.
+fn take_portal_pending_items(pending: &Mutex<Option<Vec<ArcStr>>>) -> Option<Vec<ArcStr>> {
+    pending
+        .lock()
+        .expect("portal_pending_items mutex should not be poisoned")
+        .take()
+}
+
 // --- MARK: INTERNAL HELPERS
 impl AutocompleteWidget {
     fn open_on_focus(&mut self, ctx: &mut UpdateCtx<'_>) {
@@ -1318,10 +1337,10 @@ impl AutocompleteWidget {
             Hosting::Portal { binding, .. } => {
                 let scope_id = binding.scope_widget_id().expect("checked is_ready above");
                 let key = binding.key();
-                *self.portal_pending_items.lock().unwrap() = Some(self.filtered.clone());
+                set_portal_pending_items(&self.portal_pending_items, self.filtered.clone());
                 let pending = Arc::clone(&self.portal_pending_items);
                 ctx.mutate_later(scope_id, move |mut w| {
-                    let Some(items) = pending.lock().unwrap().take() else {
+                    let Some(items) = take_portal_pending_items(&pending) else {
                         return;
                     };
                     let mut scope = w.downcast::<OverlayScope>();
@@ -1374,10 +1393,10 @@ impl AutocompleteWidget {
             Hosting::Portal { binding, .. } => {
                 if let Some(scope_id) = binding.scope_widget_id() {
                     let key = binding.key();
-                    *self.portal_pending_items.lock().unwrap() = Some(self.filtered.clone());
+                    set_portal_pending_items(&self.portal_pending_items, self.filtered.clone());
                     let pending = Arc::clone(&self.portal_pending_items);
                     ctx.mutate_later(scope_id, move |mut w| {
-                        let Some(items) = pending.lock().unwrap().take() else {
+                        let Some(items) = take_portal_pending_items(&pending) else {
                             return;
                         };
                         let mut scope = w.downcast::<OverlayScope>();
@@ -1508,10 +1527,10 @@ impl AutocompleteWidget {
                 }
                 if let Some(scope_id) = binding.scope_widget_id() {
                     let key = binding.key();
-                    *this.widget.portal_pending_items.lock().unwrap() = Some(filtered.clone());
+                    set_portal_pending_items(&this.widget.portal_pending_items, filtered.clone());
                     let pending = Arc::clone(&this.widget.portal_pending_items);
                     this.ctx.mutate_later(scope_id, move |mut w| {
-                        let Some(items) = pending.lock().unwrap().take() else {
+                        let Some(items) = take_portal_pending_items(&pending) else {
                             return;
                         };
                         let mut scope = w.downcast::<OverlayScope>();
@@ -1565,10 +1584,10 @@ impl AutocompleteWidget {
             Hosting::Portal { binding, .. } => {
                 if let Some(scope_id) = binding.scope_widget_id() {
                     let key = binding.key();
-                    *this.widget.portal_pending_items.lock().unwrap() = Some(filtered.clone());
+                    set_portal_pending_items(&this.widget.portal_pending_items, filtered.clone());
                     let pending = Arc::clone(&this.widget.portal_pending_items);
                     this.ctx.mutate_later(scope_id, move |mut w| {
-                        let Some(items) = pending.lock().unwrap().take() else {
+                        let Some(items) = take_portal_pending_items(&pending) else {
                             return;
                         };
                         let mut scope = w.downcast::<OverlayScope>();
