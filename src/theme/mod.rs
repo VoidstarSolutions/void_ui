@@ -1,13 +1,9 @@
-//! Tessera-derived design tokens for `void_ui` components.
+//! Design tokens for `void_ui` components.
 //!
 //! A [`Theme`] bundles a [`Palette`], a [`Density`], a [`Typography`], and
 //! [`Radii`]. Components read the theme they need at render time; the host
 //! application owns the live `Theme` value and swaps it (dark/light,
 //! density step) by replacing it in state.
-//!
-//! The token names mirror the CSS custom properties in the Tessera source
-//! one-to-one. When the design source moves a token, the rename is
-//! mechanical here.
 
 mod code_palette;
 pub mod color;
@@ -21,7 +17,7 @@ pub use density::Density;
 pub use palette::Palette;
 pub use typography::{FontStack, Typography};
 
-/// Corner radii — Tessera's `--radius` / `--radius-lg`, plus a `tiny` step
+/// Corner radii — small and large surface radii, plus a `tiny` step
 /// for compact form controls.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Radii {
@@ -57,10 +53,10 @@ impl Default for Radii {
 /// its own — the palette field is the source of truth for colors.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ThemeVariant {
-    /// Tessera's `data-theme="dark"`.
+    /// The dark theme variant.
     #[default]
     Dark,
-    /// Tessera's `data-theme="light"`.
+    /// The light theme variant.
     Light,
 }
 
@@ -76,7 +72,7 @@ pub struct Theme {
 }
 
 impl Theme {
-    /// Tessera's dark default at balanced density.
+    /// The dark variant at balanced density.
     #[must_use]
     pub fn dark() -> Self {
         Self {
@@ -89,7 +85,7 @@ impl Theme {
         }
     }
 
-    /// Tessera's light variant at balanced density.
+    /// The light variant at balanced density.
     #[must_use]
     pub fn light() -> Self {
         Self {
