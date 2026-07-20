@@ -18,8 +18,9 @@ use masonry::accesskit::{HasPopup, Node, Role};
 use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
     AccessCtx, ActionCtx, ArcStr, ChildrenIds, ComposeCtx, ErasedAction, EventCtx, LayoutCtx,
-    MeasureCtx, NewWidget, NoAction, PaintCtx, PropertiesMut, PropertiesRef, RegisterCtx,
-    StyleProperty, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    MeasureCtx, MutateCtx, NewWidget, NoAction, PaintCtx, PropertiesMut, PropertiesRef,
+    RegisterCtx, StyleProperty, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
+    WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, RoundedRect, Size, Stroke};
@@ -1301,6 +1302,75 @@ fn take_portal_pending_items(pending: &Mutex<Option<Vec<ArcStr>>>) -> Option<Vec
         .take()
 }
 
+/// The context types `queue_portal_repopulation` is called from: `UpdateCtx`
+/// (`open_on_focus`), `ActionCtx` (`handle_text_changed`), and `MutateCtx`
+/// (`set_contents`/`set_all_suggestions`, via `WidgetMut::ctx`). masonry gives
+/// each an inherent `mutate_later`, not a shared trait, so this just forwards
+/// to whichever one the caller has.
+trait QueuesMutateLater {
+    fn queue_mutate_later(
+        &mut self,
+        target: WidgetId,
+        f: impl FnOnce(WidgetMut<'_, dyn Widget>) + Send + 'static,
+    );
+}
+
+impl QueuesMutateLater for UpdateCtx<'_> {
+    fn queue_mutate_later(
+        &mut self,
+        target: WidgetId,
+        f: impl FnOnce(WidgetMut<'_, dyn Widget>) + Send + 'static,
+    ) {
+        self.mutate_later(target, f);
+    }
+}
+
+impl QueuesMutateLater for ActionCtx<'_> {
+    fn queue_mutate_later(
+        &mut self,
+        target: WidgetId,
+        f: impl FnOnce(WidgetMut<'_, dyn Widget>) + Send + 'static,
+    ) {
+        self.mutate_later(target, f);
+    }
+}
+
+impl QueuesMutateLater for MutateCtx<'_> {
+    fn queue_mutate_later(
+        &mut self,
+        target: WidgetId,
+        f: impl FnOnce(WidgetMut<'_, dyn Widget>) + Send + 'static,
+    ) {
+        self.mutate_later(target, f);
+    }
+}
+
+/// Stores `items` in `pending` and queues a `mutate_later` on `scope_id` that
+/// drains the slot and pushes whatever's left into the portal-mounted
+/// `SuggestionList` for `key`. Shared by every call site that repopulates the
+/// portal-mode list — see [`AutocompleteWidget::portal_pending_items`] for why
+/// the store-then-drain indirection (rather than moving `items` directly into
+/// the closure) is needed.
+fn queue_portal_repopulation(
+    ctx: &mut impl QueuesMutateLater,
+    pending: &Arc<Mutex<Option<Vec<ArcStr>>>>,
+    scope_id: WidgetId,
+    key: u64,
+    items: Vec<ArcStr>,
+) {
+    set_portal_pending_items(pending, items);
+    let pending = Arc::clone(pending);
+    ctx.queue_mutate_later(scope_id, move |mut w| {
+        let Some(items) = take_portal_pending_items(&pending) else {
+            return;
+        };
+        let mut scope = w.downcast::<OverlayScope>();
+        with_portal_list(&mut scope, key, |list| {
+            SuggestionList::set_items(list, items);
+        });
+    });
+}
+
 // --- MARK: INTERNAL HELPERS
 impl AutocompleteWidget {
     fn open_on_focus(&mut self, ctx: &mut UpdateCtx<'_>) {
@@ -1337,17 +1407,13 @@ impl AutocompleteWidget {
             Hosting::Portal { binding, .. } => {
                 let scope_id = binding.scope_widget_id().expect("checked is_ready above");
                 let key = binding.key();
-                set_portal_pending_items(&self.portal_pending_items, self.filtered.clone());
-                let pending = Arc::clone(&self.portal_pending_items);
-                ctx.mutate_later(scope_id, move |mut w| {
-                    let Some(items) = take_portal_pending_items(&pending) else {
-                        return;
-                    };
-                    let mut scope = w.downcast::<OverlayScope>();
-                    with_portal_list(&mut scope, key, |list| {
-                        SuggestionList::set_items(list, items);
-                    });
-                });
+                queue_portal_repopulation(
+                    ctx,
+                    &self.portal_pending_items,
+                    scope_id,
+                    key,
+                    self.filtered.clone(),
+                );
                 // Items were queued first; mutate callbacks run in submission
                 // order, so the visibility push below observes the fresh items.
                 binding.open(ctx, OverlayAnchor::BottomStart, OVERLAY_GAP_PX);
@@ -1393,17 +1459,13 @@ impl AutocompleteWidget {
             Hosting::Portal { binding, .. } => {
                 if let Some(scope_id) = binding.scope_widget_id() {
                     let key = binding.key();
-                    set_portal_pending_items(&self.portal_pending_items, self.filtered.clone());
-                    let pending = Arc::clone(&self.portal_pending_items);
-                    ctx.mutate_later(scope_id, move |mut w| {
-                        let Some(items) = take_portal_pending_items(&pending) else {
-                            return;
-                        };
-                        let mut scope = w.downcast::<OverlayScope>();
-                        with_portal_list(&mut scope, key, |list| {
-                            SuggestionList::set_items(list, items);
-                        });
-                    });
+                    queue_portal_repopulation(
+                        ctx,
+                        &self.portal_pending_items,
+                        scope_id,
+                        key,
+                        self.filtered.clone(),
+                    );
                     if open_changed {
                         if should_open {
                             binding.open(ctx, OverlayAnchor::BottomStart, OVERLAY_GAP_PX);
@@ -1527,17 +1589,13 @@ impl AutocompleteWidget {
                 }
                 if let Some(scope_id) = binding.scope_widget_id() {
                     let key = binding.key();
-                    set_portal_pending_items(&this.widget.portal_pending_items, filtered.clone());
-                    let pending = Arc::clone(&this.widget.portal_pending_items);
-                    this.ctx.mutate_later(scope_id, move |mut w| {
-                        let Some(items) = take_portal_pending_items(&pending) else {
-                            return;
-                        };
-                        let mut scope = w.downcast::<OverlayScope>();
-                        with_portal_list(&mut scope, key, |list| {
-                            SuggestionList::set_items(list, items);
-                        });
-                    });
+                    queue_portal_repopulation(
+                        &mut this.ctx,
+                        &this.widget.portal_pending_items,
+                        scope_id,
+                        key,
+                        filtered.clone(),
+                    );
                 }
             }
         }
@@ -1584,17 +1642,13 @@ impl AutocompleteWidget {
             Hosting::Portal { binding, .. } => {
                 if let Some(scope_id) = binding.scope_widget_id() {
                     let key = binding.key();
-                    set_portal_pending_items(&this.widget.portal_pending_items, filtered.clone());
-                    let pending = Arc::clone(&this.widget.portal_pending_items);
-                    this.ctx.mutate_later(scope_id, move |mut w| {
-                        let Some(items) = take_portal_pending_items(&pending) else {
-                            return;
-                        };
-                        let mut scope = w.downcast::<OverlayScope>();
-                        with_portal_list(&mut scope, key, |list| {
-                            SuggestionList::set_items(list, items);
-                        });
-                    });
+                    queue_portal_repopulation(
+                        &mut this.ctx,
+                        &this.widget.portal_pending_items,
+                        scope_id,
+                        key,
+                        filtered.clone(),
+                    );
                 }
             }
         }
