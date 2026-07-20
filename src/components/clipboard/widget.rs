@@ -12,7 +12,6 @@
 
 use std::borrow::Cow;
 
-use lucide_icons::Icon as LucideIcon;
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
     AccessCtx, ArcStr, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
@@ -26,8 +25,8 @@ use masonry::parley::{FontFamily, FontFamilyName};
 use masonry::properties::ContentColor;
 use masonry::widgets::Label;
 
-use crate::Theme;
 use crate::anim;
+use crate::{IconName, Theme};
 
 /// Seconds the check icon is shown before reverting to the copy icon — a
 /// duration, not spacing, so it doesn't scale with density.
@@ -35,9 +34,9 @@ const COPIED_DURATION: f64 = 1.5;
 
 fn make_icon(copied: bool, theme: &Theme) -> NewWidget<Label> {
     let (lucide, color) = if copied {
-        (LucideIcon::Check, theme.palette.accent)
+        (IconName::Check, theme.palette.accent)
     } else {
-        (LucideIcon::Copy, theme.palette.text_muted)
+        (IconName::Copy, theme.palette.text_muted)
     };
     let ch = char::from(lucide);
     let mut lbl = Label::new(ArcStr::from(String::from(ch)))
@@ -108,9 +107,9 @@ impl ClipboardWidget {
             this.widget.copied = copied;
             this.widget.copied_t = 0.0;
             let (lucide, color) = if copied {
-                (LucideIcon::Check, this.widget.theme.palette.accent)
+                (IconName::Check, this.widget.theme.palette.accent)
             } else {
-                (LucideIcon::Copy, this.widget.theme.palette.text_muted)
+                (IconName::Copy, this.widget.theme.palette.text_muted)
             };
             let new_char = ArcStr::from(String::from(char::from(lucide)));
             {
@@ -141,7 +140,7 @@ impl Widget for ClipboardWidget {
             if self.copied_t >= COPIED_DURATION {
                 self.copied = false;
                 self.copied_t = 0.0;
-                let new_char = ArcStr::from(String::from(char::from(LucideIcon::Copy)));
+                let new_char = ArcStr::from(String::from(char::from(IconName::Copy)));
                 let color = self.theme.palette.text_muted;
                 ctx.mutate_child_later(&mut self.icon, move |mut icon| {
                     Label::set_text(&mut icon, new_char);

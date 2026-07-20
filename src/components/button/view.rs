@@ -14,7 +14,6 @@
 
 use std::marker::PhantomData;
 
-use lucide_icons::Icon as LucideIcon;
 use masonry::core::{ArcStr, StyleProperty, Widget as _};
 use masonry::kurbo::RoundedRectRadii;
 use masonry::properties::ContentColor;
@@ -25,8 +24,8 @@ use xilem::{Pod, ViewCtx};
 
 use super::ButtonVariant;
 use super::widget::ThemedButton;
-use crate::Theme;
 use crate::components::spinner::widget::SpinnerWidget;
+use crate::{IconName, Theme};
 
 /// Builder for an interactive themed button.
 ///
@@ -42,8 +41,8 @@ pub struct Button<F> {
     disabled: bool,
     loading: bool,
     variant: ButtonVariant,
-    icon: Option<LucideIcon>,
-    trailing_icon: Option<LucideIcon>,
+    icon: Option<IconName>,
+    trailing_icon: Option<IconName>,
     corners: Option<RoundedRectRadii>,
     tint: Option<AlphaColor<Srgb>>,
     callback: F,
@@ -104,13 +103,13 @@ impl<F> Button<F> {
     }
 
     /// Attach a leading icon from the Lucide icon set.
-    pub fn icon(mut self, name: LucideIcon) -> Self {
+    pub fn icon(mut self, name: IconName) -> Self {
         self.icon = Some(name);
         self
     }
 
     /// Attach a trailing icon from the Lucide icon set (e.g. a dropdown caret).
-    pub fn trailing_icon(mut self, name: LucideIcon) -> Self {
+    pub fn trailing_icon(mut self, name: IconName) -> Self {
         self.trailing_icon = Some(name);
         self
     }
@@ -176,8 +175,8 @@ pub struct ButtonView<F, State, Action> {
     disabled: bool,
     loading: bool,
     variant: ButtonVariant,
-    icon: Option<LucideIcon>,
-    trailing_icon: Option<LucideIcon>,
+    icon: Option<IconName>,
+    trailing_icon: Option<IconName>,
     corners: Option<RoundedRectRadii>,
     tint: Option<AlphaColor<Srgb>>,
     theme: Theme,

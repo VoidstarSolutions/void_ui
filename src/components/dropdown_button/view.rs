@@ -22,7 +22,6 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use lucide_icons::Icon as LucideIcon;
 use masonry::core::ArcStr;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx};
@@ -31,10 +30,10 @@ use super::menu_layer::{MenuContent, MenuItemSelected};
 use super::widget::{
     DropdownButtonAction, DropdownButtonConfig, DropdownButtonHandle, ThemedDropdownButton,
 };
-use crate::Theme;
 use crate::components::button::ButtonVariant;
 use crate::overlay::SurfaceStyle;
 use crate::overlay_portal::{OverlayPortal, PortalContentView, PortalPlacement, portal_from_env};
+use crate::{IconName, Theme};
 
 type ItemCallback<State, Action> = Box<dyn Fn(&mut State) -> Action + Send + Sync>;
 
@@ -48,7 +47,7 @@ type OpenChangeFn<State, Action> = Arc<dyn Fn(&mut State, bool) -> Action + Send
 #[must_use = "DropdownButton does nothing until rendered with .render(&theme)"]
 pub struct DropdownButton<State, Action> {
     label: ArcStr,
-    icon: Option<LucideIcon>,
+    icon: Option<IconName>,
     items: Vec<(ArcStr, ItemCallback<State, Action>)>,
     variant: ButtonVariant,
     disabled: bool,
@@ -94,7 +93,7 @@ where
     }
 
     /// Attach a leading icon from the Lucide icon set.
-    pub fn icon(mut self, name: LucideIcon) -> Self {
+    pub fn icon(mut self, name: IconName) -> Self {
         self.icon = Some(name);
         self
     }
@@ -152,7 +151,7 @@ where
 #[must_use = "View values do nothing unless provided to Xilem."]
 pub struct DropdownButtonView<State, Action> {
     label: ArcStr,
-    icon: Option<LucideIcon>,
+    icon: Option<IconName>,
     items: Arc<Vec<(ArcStr, ItemCallback<State, Action>)>>,
     item_labels: Vec<ArcStr>,
     variant: ButtonVariant,
