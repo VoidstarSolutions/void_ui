@@ -1,6 +1,6 @@
 //! Color helpers used by the `void_ui` theme.
 //!
-//! The Tessera design source is authored in OKLCH (`oklch(l c h / a)`).
+//! Theme colors are authored in OKLCH (`oklch(l c h / a)`).
 //! Linebender's `color` crate (re-exported through `masonry::peniko::color`)
 //! converts that to sRGB for us; these wrappers exist so palette tables read
 //! the same shape as the CSS — `oklch(0.74, 0.090, 195.0)` — without

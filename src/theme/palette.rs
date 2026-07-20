@@ -1,8 +1,7 @@
-//! Tessera-derived color palette.
+//! Color palette for `void_ui` themes.
 //!
-//! Field names mirror the CSS custom-property names in `styles.css`
-//! (`--bg`, `--surface-2`, `--teal-soft`, etc.) so swapping a token in the
-//! design source maps to one rename here.
+//! Field names describe role and shade (`bg`, `surface_2`, `teal_soft`)
+//! rather than referencing any external stylesheet.
 
 use masonry::peniko::Color;
 
@@ -92,7 +91,7 @@ pub struct Palette {
 }
 
 impl Palette {
-    /// Dark variant — Tessera's default `data-theme="dark"`.
+    /// Dark variant — the default theme.
     #[must_use]
     pub fn dark() -> Self {
         let teal = oklch(0.74, 0.090, 195.0);
@@ -169,7 +168,7 @@ impl Palette {
         }
     }
 
-    /// Light variant — Tessera's `data-theme="light"`.
+    /// Light variant.
     #[must_use]
     pub fn light() -> Self {
         let teal = oklch(0.55, 0.085, 195.0);

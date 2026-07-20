@@ -1,4 +1,4 @@
-//! Tessera-styled widget components built on the xilem/masonry primitives.
+//! Themed widget components built on the xilem/masonry primitives.
 //!
 //! Each component is a small builder that resolves to a `WidgetView` at the
 //! supplied [`Theme`](crate::Theme). The pattern is intentionally explicit:

@@ -1,5 +1,5 @@
-//! Layout density — three predefined steps mirroring Tessera's
-//! `data-density` attribute (`compact` / `balanced` / `airy`).
+//! Layout density — three predefined steps (`compact` / `balanced` /
+//! `airy`).
 //!
 //! Density carries the sizes that scale together when a user picks a
 //! density step: surface padding (`pad`), control font size
@@ -48,7 +48,7 @@ pub struct Density {
 }
 
 impl Density {
-    /// `data-density="compact"`.
+    /// The compact density step.
     #[must_use]
     pub const fn compact() -> Self {
         Self {
@@ -65,7 +65,7 @@ impl Density {
         }
     }
 
-    /// `data-density="balanced"` — Tessera's default.
+    /// The default density step.
     #[must_use]
     pub const fn balanced() -> Self {
         Self {
@@ -82,7 +82,7 @@ impl Density {
         }
     }
 
-    /// `data-density="airy"`.
+    /// The airy density step.
     #[must_use]
     pub const fn airy() -> Self {
         Self {

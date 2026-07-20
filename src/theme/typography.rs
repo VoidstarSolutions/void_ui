@@ -1,9 +1,10 @@
 //! Font stacks and the small type-size scale shared by `void_ui` components.
 //!
-//! Tessera ships with Geist / Geist Mono and a CSS fallback chain. We don't
-//! load fonts here — the host application is responsible for registering
-//! Geist with the masonry font collection if it wants it. The fallback
-//! chain still applies: if Geist isn't present, parley walks the list.
+//! The default stack is Geist / Geist Mono with a CSS-style fallback
+//! chain. We don't load fonts here — the host application is responsible
+//! for registering Geist with the masonry font collection if it wants it.
+//! The fallback chain still applies: if Geist isn't present, parley walks
+//! the list.
 
 /// Ordered family stack — first match wins, otherwise fall through.
 ///
@@ -24,14 +25,14 @@ impl FontStack {
 
 /// The two font stacks (sans / mono) plus a tiny type scale.
 ///
-/// Body / caption sizes are *not* density-driven — they're the fixed
-/// reference sizes from Tessera. Density only moves the UI-control font
-/// size, which lives on [`super::Density`].
+/// Body / caption sizes are *not* density-driven — they're fixed
+/// reference sizes. Density only moves the UI-control font size, which
+/// lives on [`super::Density`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Typography {
     pub sans: FontStack,
     pub mono: FontStack,
-    /// Body / paragraph size, in px. Tessera `body { font-size: 13px }`.
+    /// Body / paragraph size, in px. 13px by default.
     pub size_body: f32,
     /// Caption / label / chip size, in px. Used for axis labels,
     /// pin-rail labels, legend, meta-tags.
@@ -57,7 +58,7 @@ const MONO: FontStack = FontStack::new(&[
 ]);
 
 impl Typography {
-    /// Tessera default — Geist / Geist Mono with the documented fallbacks.
+    /// The default stack — Geist / Geist Mono with the documented fallbacks.
     #[must_use]
     pub const fn default_stack() -> Self {
         Self {

@@ -1,4 +1,4 @@
-//! Masonry widget for the Tessera sidebar nav item.
+//! Masonry widget for the sidebar nav item.
 //!
 //! A full-width, left-aligned nav row. When `selected`, a 3 px accent bar
 //! is painted on the left edge and the label renders in the full text color.

@@ -1,4 +1,4 @@
-//! Tessera `.tb-btn` button component.
+//! Themed button component.
 //!
 //! The xilem [`Button`] builder lives in [`view`]; the masonry widget that
 //! owns the pointer state machine lives in [`widget`]. The widget is
@@ -18,7 +18,7 @@ pub use view::{Button, ButtonView, button};
 /// colors are resolved from the theme palette.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ButtonVariant {
-    /// Neutral — the default Tessera `.tb-btn` style.
+    /// Neutral — the default button style.
     #[default]
     Default,
     /// Destructive action — danger accent tones on hover and active.

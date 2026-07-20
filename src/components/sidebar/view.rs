@@ -1,4 +1,4 @@
-//! Tessera sidebar navigation item — interactive, theme-driven.
+//! Sidebar navigation item — interactive, theme-driven.
 //!
 //! Wraps [`super::widget::ThemedSidebarItem`] in a xilem [`View`]. Pointer
 //! state (hover, press) is tracked by the masonry widget; the `selected` flag

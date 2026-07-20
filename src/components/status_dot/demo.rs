@@ -88,7 +88,7 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
         flex_col((
             title_block,
             crate::separator().render(theme),
-            section_header("Default (8px)", theme),
+            section_header("Default (density-driven)", theme),
             default_section(theme),
             section_header("Custom sizes", theme),
             size_section(theme),

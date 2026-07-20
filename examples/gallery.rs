@@ -123,7 +123,7 @@ fn topbar(theme_panel_open: bool, theme: &Theme) -> impl WidgetView<State> + use
         .text_size(16.0)
         .color(theme.palette.text)
         .render(theme);
-    let subtitle = label("Tessera-styled widget library")
+    let subtitle = label("A themeable Masonry/xilem widget library")
         .text_size(theme.typography.size_caption)
         .color(theme.palette.text_faint)
         .render(theme);

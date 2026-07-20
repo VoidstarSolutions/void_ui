@@ -20,11 +20,18 @@ use xilem::WidgetView;
 use xilem::style::Style as _;
 use xilem::view::sized_box;
 
-use crate::{Theme, label};
+use crate::{Density, Theme, label};
 
-/// Default diameter in px, matching the size `citadel-ui`'s hand-rolled
-/// version used at every call site.
-const DEFAULT_SIZE: f32 = 8.0;
+/// Diameter in px when no explicit [`StatusDot::size`] override is given.
+///
+/// Derived from `density.control` — the same token `radio` and `slider`
+/// use for their glyph diameter — using a `4/7` ratio chosen so Balanced
+/// density reproduces the library's original fixed 8px default exactly
+/// (`14.0 * 4.0 / 7.0 == 8.0`), matching how every other token in
+/// `density.rs` was calibrated against its pre-token constant.
+fn default_size(density: &Density) -> f32 {
+    density.control * 4.0 / 7.0
+}
 
 /// Builder for a small themed status indicator dot.
 ///
@@ -38,13 +45,15 @@ pub struct StatusDot {
 
 /// Create a status dot filled with `color`.
 ///
-/// Defaults to an 8px diameter; override with [`StatusDot::size`].
+/// Defaults to a density-driven diameter (8px at Balanced density);
+/// override with [`StatusDot::size`].
 pub fn status_dot(color: Color) -> StatusDot {
     StatusDot { color, size: None }
 }
 
 impl StatusDot {
-    /// Override the dot's diameter in px. Defaults to `8.0`.
+    /// Override the dot's diameter in px. Defaults to a density-driven
+    /// value (8px at Balanced density).
     pub fn size(mut self, size: f32) -> Self {
         self.size = Some(size);
         self
@@ -60,12 +69,46 @@ impl StatusDot {
         State: 'static,
         Action: 'static,
     {
-        let size_px = f64::from(self.size.unwrap_or(DEFAULT_SIZE));
+        let size_px = f64::from(self.size.unwrap_or_else(|| default_size(&theme.density)));
         let size = Length::px(size_px);
         sized_box(label("").render(theme))
             .fixed_width(size)
             .fixed_height(size)
             .background_color(self.color)
             .corner_radius(Length::px(size_px / 2.0))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Density, default_size};
+
+    /// Balanced density must reproduce the library's original hardcoded
+    /// 8px default exactly, matching how every other token in
+    /// `density.rs` was calibrated against its pre-token constant.
+    #[test]
+    fn balanced_density_matches_legacy_8px_default() {
+        let size = default_size(&Density::balanced());
+        assert!(
+            (size - 8.0).abs() < f32::EPSILON,
+            "expected 8.0, got {size}"
+        );
+    }
+
+    /// The default scales with density like every other density-driven
+    /// size in the library.
+    #[test]
+    fn default_size_is_monotonic_across_density_steps() {
+        let compact = default_size(&Density::compact());
+        let balanced = default_size(&Density::balanced());
+        let airy = default_size(&Density::airy());
+        assert!(
+            compact < balanced,
+            "compact ({compact}) must be < balanced ({balanced})"
+        );
+        assert!(
+            balanced < airy,
+            "balanced ({balanced}) must be < airy ({airy})"
+        );
     }
 }
