@@ -197,7 +197,7 @@ pub use column::{
     CellAlign, ColumnDef, ColumnId, RowComparator, RowFilter, colored_text_column,
     optional_text_column, text_column,
 };
-pub use column_strip::{ColumnResize, ColumnStrip, SeparatorStyle};
+pub use column_strip::{ColumnResize, ColumnSeparatorStyle, ColumnStrip};
 pub use copy_shortcut::CopyOnShortcut;
 pub use expand::ExpansionState;
 pub use filter::{FilterState, filtered_indices};
