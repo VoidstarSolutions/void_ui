@@ -1,6 +1,6 @@
 //! Context menu demo panel used by the void-ui gallery.
 //!
-//! Shows the [`MenuPanel`](super::widget::MenuPanel) two ways: rendered inline
+//! Shows the `MenuPanel` two ways: rendered inline
 //! (row rendering, hover, separators, disabled, click-to-select), and as a
 //! right-click [`context_menu_area`] that pops the menu at the cursor.
 

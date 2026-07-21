@@ -204,7 +204,7 @@ where
 ///
 /// Not constructed directly; use [`Autocomplete::render`].
 #[must_use = "View values do nothing unless provided to Xilem."]
-pub(crate) struct AutocompleteView<State, Action> {
+pub struct AutocompleteView<State, Action> {
     contents: String,
     placeholder: ArcStr,
     suggestions: Arc<Vec<ArcStr>>,
@@ -230,7 +230,7 @@ enum ViewBinding<State: 'static, Action: 'static> {
 }
 
 /// View state for `AutocompleteView`.
-pub(crate) struct AutocompleteViewState<State: 'static, Action: 'static> {
+pub struct AutocompleteViewState<State: 'static, Action: 'static> {
     binding: ViewBinding<State, Action>,
 }
 

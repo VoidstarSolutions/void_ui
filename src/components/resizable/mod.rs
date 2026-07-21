@@ -19,7 +19,7 @@
 #[cfg(feature = "gallery")]
 pub mod demo;
 mod view;
-pub mod widget;
+mod widget;
 
 pub use view::{
     Resizable, ResizablePanel, ResizablePanels, ResizablePanelsView, ResizableView, h_resizable,

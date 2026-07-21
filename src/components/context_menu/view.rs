@@ -3,8 +3,7 @@
 //! [`menu`] starts a builder; [`item`] builds a single command row. Items carry
 //! their `on_select` callback, separators are added with [`Menu::separator`],
 //! and [`Menu::render`] materializes a [`MenuView`] that drives the
-//! [`MenuPanel`](super::widget::MenuPanel) widget. Selecting an enabled row
-//! fires that row's callback.
+//! `MenuPanel` widget. Selecting an enabled row fires that row's callback.
 //!
 //! ```ignore
 //! use void_ui::components::context_menu::{menu, item};
@@ -657,7 +656,7 @@ where
 }
 
 /// The content view registered with the scope's [`OverlayPortal`] for a
-/// portal-mode context menu — wraps [`MenuPanel`] and, on selection or
+/// portal-mode context menu — wraps `MenuPanel` and, on selection or
 /// dismissal, notifies the owning [`ContextMenuArea`] (via
 /// [`ContextMenuHandle`]) to close, reusing [`context_menu_dismiss_hook`]
 /// directly since context menu has no host-controlled open state to gate

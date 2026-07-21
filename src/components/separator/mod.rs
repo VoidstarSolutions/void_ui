@@ -18,6 +18,6 @@
 #[cfg(feature = "gallery")]
 pub mod demo;
 mod view;
-pub(super) mod widget;
+mod widget;
 
 pub use view::{Orientation, Separator, SeparatorStyle, separator};

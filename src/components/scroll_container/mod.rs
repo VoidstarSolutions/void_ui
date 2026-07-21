@@ -3,7 +3,6 @@
 #[cfg(feature = "gallery")]
 pub mod demo;
 mod view;
-pub mod widget;
+pub(crate) mod widget;
 
 pub use view::{ScrollBarVisibility, ScrollContainer, ScrollContainerView, scroll_container};
-pub use widget::ScrollView;

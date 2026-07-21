@@ -1,4 +1,4 @@
-//! `ContextMenuArea` — wraps arbitrary content and pops a [`MenuPanel`] at the
+//! `ContextMenuArea` — wraps arbitrary content and pops a `MenuPanel` at the
 //! cursor on secondary (right) click.
 //!
 //! Hosting strategy mirrors `dropdown_button`'s in-tree fallback: the menu is a
@@ -7,12 +7,12 @@
 //! the menu lives in our subtree:
 //!
 //! - **Keyboard + focus**: we request focus on ourselves on open and own roving
-//!   arrow navigation, pushing the highlight into the [`MenuPanel`] (which just
+//!   arrow navigation, pushing the highlight into the `MenuPanel` (which just
 //!   paints it) — mirroring how `ThemedDropdownButton` drives its menu. The
 //!   menu isn't focusable here, so clicking it doesn't move focus; a click
 //!   *outside* clears ours, which is the "click outside to dismiss" path
 //!   ([`Update::FocusChanged(false)`](masonry::core::Update)). Escape closes.
-//! - **Selection**: a pointer click in the menu emits [`MenuAction::Selected`],
+//! - **Selection**: a pointer click in the menu emits `MenuAction::Selected`,
 //!   which bubbles to our [`Widget::on_action`]; keyboard activation we handle
 //!   directly. Either way we close and re-emit a [`ContextMenuAction::ItemSelected`].
 //!
@@ -52,7 +52,7 @@ widget_id_handle!(
 );
 
 /// Action emitted when the user selects the menu row at index `0` (its position
-/// in the original item list — same indexing as [`MenuAction::Selected`]).
+/// in the original item list — same indexing as `MenuAction::Selected`).
 #[derive(Debug)]
 pub enum ContextMenuAction {
     /// The row at this index was selected.
@@ -68,7 +68,7 @@ enum Hosting {
     Portal { binding: PortalBinding },
 }
 
-/// Wraps `content` and opens a [`MenuPanel`] at the cursor on right-click.
+/// Wraps `content` and opens a `MenuPanel` at the cursor on right-click.
 pub struct ContextMenuArea {
     content: WidgetPod<dyn Widget>,
     hosting: Hosting,

@@ -1,6 +1,6 @@
 //! Context menu — a rich, theme-driven menu surface.
 //!
-//! A [`MenuPanel`](widget::MenuPanel) widget renders a list of rows — command
+//! A `MenuPanel` widget renders a list of rows — command
 //! actions (with optional leading icon, keyboard-shortcut text, checkable state,
 //! sub-title, and disabled state), separators, muted section headers, and
 //! hover-open submenus. Build it with [`menu`] / [`item`] / [`submenu`] and
@@ -23,11 +23,10 @@ pub mod area;
 pub mod demo;
 pub(crate) mod item_node;
 mod view;
-pub mod widget;
+mod widget;
 
 pub use area::{ContextMenuAction, ContextMenuArea};
 pub use view::{
     ContextMenuAreaBuilder, ContextMenuAreaView, Menu, MenuItem, MenuView, Submenu,
     context_menu_area, item, menu, submenu,
 };
-pub use widget::{MenuAction, MenuPanel, MenuRowSpec};

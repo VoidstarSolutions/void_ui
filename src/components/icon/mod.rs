@@ -21,7 +21,7 @@
 #[cfg(feature = "gallery")]
 pub mod demo;
 mod view;
-pub mod widget;
+mod widget;
 
 pub use lucide_icons::Icon as IconName;
 pub use view::{Icon, disclosure_chevron, disclosure_icon, icon};

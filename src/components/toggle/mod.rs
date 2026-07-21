@@ -7,14 +7,14 @@
 //!     .render(&theme)
 //! ```
 
-pub mod view;
-pub mod widget;
+mod view;
+mod widget;
 
 #[cfg(feature = "gallery")]
 pub mod demo;
 
 pub use view::{Toggle, ToggleView, toggle};
 
-/// Action emitted by [`ToggleWidget`](widget::ToggleWidget) on activation.
+/// Action emitted by `ToggleWidget` on activation.
 #[derive(Debug, Clone)]
 pub struct TogglePress;

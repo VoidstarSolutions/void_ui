@@ -31,7 +31,7 @@
 //! [`header_click::HeaderClickable`] (emits a plain click on a column
 //! header to emit a sort-cycle request).
 //!
-//! Entry points: [`view::data_grid`] for the xilem view,
+//! Entry points: [`data_grid`] for the xilem view,
 //! [`column::ColumnDef`] for the per-column contract,
 //! [`SelectionState`] for the selection model,
 //! [`sort::SortState`] for the sort model,
@@ -187,7 +187,7 @@ pub mod expand;
 pub mod filter;
 pub mod header_click;
 pub mod sort;
-pub mod view;
+mod view;
 pub mod width;
 
 pub use crate::collection::ScrollState;

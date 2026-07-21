@@ -4,7 +4,7 @@
 //! list, paints the row background/accent/focus chrome behind each item, and
 //! hit-tests pointer events against each item's placed rect — emitting
 //! [`SidebarNavSelected`] directly rather than registering per-item action
-//! sources (mirrors [`crate::components::tabs::widget::TabsWidget`]).
+//! sources (mirrors `crate::components::tabs::widget::TabsWidget`).
 //!
 //! Each item's content is wrapped in [`SidebarNavItemNode`], which exposes it
 //! to accessibility as `Role::ListBoxOption` with `selected`/position state
