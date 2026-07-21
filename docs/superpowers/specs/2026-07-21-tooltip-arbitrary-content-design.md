@@ -89,13 +89,14 @@ the same hover-idle / keyboard-focus-idle state machine
 popup* changes:
 
 - **Show** (idle threshold elapsed, from either the hover or the
-  keyboard-focus arming path): `binding.open_at_point(ctx, last_cursor_pos_window
-  + CURSOR_OFFSET)`. `PortalBinding::open_at_point` already exists for
-  exactly this shape (built for `context_menu`'s cursor-anchored popup) — no
-  new binding API needed. Both the hover path and the keyboard-focus path
-  already converge on "an anchor point in window coordinates" today (focus
-  explicitly computes the child's bottom-left corner via `ctx.to_window`), so
-  one call site covers both, same as today.
+  keyboard-focus arming path):
+  `binding.open_at_point(ctx, last_cursor_pos_window + CURSOR_OFFSET)`.
+  `PortalBinding::open_at_point` already exists for exactly this shape (built
+  for `context_menu`'s cursor-anchored popup) — no new binding API needed.
+  Both the hover path and the keyboard-focus path already converge on "an
+  anchor point in window coordinates" today (focus explicitly computes the
+  child's bottom-left corner via `ctx.to_window`), so one call site covers
+  both, same as today.
 - **Hide**: `binding.close(ctx)`, called from the same three places that
   clear state today — a pointer `Move` while currently visible,
   `HoveredChanged(false)` / `ChildHoveredChanged(false)`, and
