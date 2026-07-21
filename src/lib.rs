@@ -87,17 +87,17 @@ pub use components::{
     SidebarItemView, SidebarNav, SidebarNavItem, SidebarNavView, SidebarPanel, SidebarPanelView,
     Skeleton, SkeletonAnimation, SkeletonShape, SkeletonView, Slider, SliderView, SortDirection,
     SortState, Spinner, SpinnerView, StatusDot, Submenu, TabItem, Tabs, TabsVariant, TabsView,
-    TitleState, Toggle, TogglePress, ToggleView, TokenKind, TokenSpan, Tooltip, TooltipView,
-    WithTitle, alert, autocomplete, badge, breadcrumb, button, button_group, card, checkbox,
-    clickable_row, clipboard, collapsible, colored_text_column, content_button, context_menu_area,
-    currency_input, data_grid, date_picker, dialog, disclosure_chevron, disclosure_icon,
-    dropdown_button, filtered_indices, format_currency, format_mask, group_box, h_resizable,
-    h_resizable_panels, icon, input, label, list, masked_input, menu, meter, notification,
-    notification_layer, notification_overlay, notification_stack, number_input,
+    TitleState, Toggle, TogglePress, ToggleView, TokenKind, TokenSpan, Tooltip, TooltipRow,
+    TooltipView, WithTitle, alert, autocomplete, badge, breadcrumb, button, button_group, card,
+    checkbox, clickable_row, clipboard, collapsible, colored_text_column, content_button,
+    context_menu_area, currency_input, data_grid, date_picker, dialog, disclosure_chevron,
+    disclosure_icon, dropdown_button, filtered_indices, format_currency, format_mask, group_box,
+    h_resizable, h_resizable_panels, icon, input, label, list, masked_input, menu, meter,
+    notification, notification_layer, notification_overlay, notification_stack, number_input,
     optional_text_column, pill, popover, radio, range_slider, read_only_text, scroll_container,
     segment, separator, sidebar_item, sidebar_nav, sidebar_panel, skeleton, slider, sort_indices,
     spinner, status_dot, submenu, tabs, text_column, toggle, toggle_button_group, tooltip,
-    v_resizable, v_resizable_panels,
+    tooltip_rows, v_resizable, v_resizable_panels,
 };
 
 /// `components::context_menu::item`, renamed at the root so a glob import of
@@ -145,8 +145,8 @@ mod root_export_tests {
             SidebarPanelView, Skeleton, SkeletonAnimation, SkeletonShape, SkeletonView, Slider,
             SliderView, SortDirection, SortState, Spinner, SpinnerView, StatusDot, Submenu,
             TabItem, Tabs, TabsVariant, TabsView, TitleState, Toggle, TogglePress, ToggleView,
-            TokenKind, TokenSpan, Tooltip, TooltipView, WithTitle, alert, autocomplete, badge,
-            breadcrumb, button, button_group, card, checkbox, clickable_row, clipboard,
+            TokenKind, TokenSpan, Tooltip, TooltipRow, TooltipView, WithTitle, alert, autocomplete,
+            badge, breadcrumb, button, button_group, card, checkbox, clickable_row, clipboard,
             collapsible, colored_text_column, content_button, context_menu_area, currency_input,
             data_grid, date_picker, dialog, disclosure_chevron, disclosure_icon, dropdown_button,
             filtered_indices, format_currency, format_mask, group_box, h_resizable,
@@ -155,7 +155,7 @@ mod root_export_tests {
             number_input, optional_text_column, pill, popover, radio, range_slider, read_only_text,
             scroll_container, segment, separator, sidebar_item, sidebar_nav, sidebar_panel,
             skeleton, slider, sort_indices, spinner, status_dot, submenu, tabs, text_column,
-            toggle, toggle_button_group, tooltip, v_resizable, v_resizable_panels,
+            toggle, toggle_button_group, tooltip, tooltip_rows, v_resizable, v_resizable_panels,
         };
 
         // Exercise a sample of builder fns so a root name that resolves to

@@ -28,10 +28,14 @@ use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Size, Vec2};
 use masonry::layers::Tooltip as TooltipLayer;
 use masonry::layout::{LenReq, Length};
-use masonry::properties::{Background, BorderColor, BorderWidth, ContentColor, Padding};
+use masonry::properties::types::CrossAxisAlignment;
+use masonry::properties::{
+    Background, BorderColor, BorderWidth, ContentColor, CornerRadius, Gap, Padding,
+};
 use masonry::util::Instant;
-use masonry::widgets::Label;
+use masonry::widgets::{Flex, Label, SizedBox};
 
+use super::view::{TooltipContent, TooltipRow};
 use crate::Theme;
 
 /// Offset of the tooltip layer from the cursor: slightly right, well below
@@ -41,6 +45,15 @@ const CURSOR_OFFSET: Vec2 = Vec2::new(12.0, 20.0);
 const BORDER_WIDTH: Length = Length::const_px(1.0);
 /// Padding inside the tooltip surface around the label.
 const PADDING: Length = Length::const_px(6.0);
+/// Diameter of a rows-tooltip legend dot, matching the sidebar's own
+/// status-dot size so the legend reads as the same visual language.
+const ROW_DOT_SIZE: Length = Length::const_px(8.0);
+/// Corner radius that turns a [`ROW_DOT_SIZE`] square into a circle.
+const ROW_DOT_RADIUS: Length = Length::const_px(4.0);
+/// Gap between a row's dot and its label.
+const ROW_DOT_LABEL_GAP: Length = Length::const_px(6.0);
+/// Vertical gap between rows in a rows-style tooltip.
+const ROW_LINE_GAP: Length = Length::const_px(4.0);
 
 /// Hosts a child widget and creates a tooltip layer on hover-idle.
 ///
@@ -54,7 +67,7 @@ const PADDING: Length = Length::const_px(6.0);
 /// period starts cleanly on re-entry.
 pub struct TooltipHost {
     child: WidgetPod<dyn Widget>,
-    text: ArcStr,
+    content: TooltipContent,
     theme: Theme,
     delay: Duration,
     last_pointer_move: Option<Instant>,
@@ -69,15 +82,15 @@ pub struct TooltipHost {
 impl TooltipHost {
     /// Creates a new tooltip host wrapping `child`.
     #[must_use]
-    pub fn new(
+    pub(crate) fn new(
         child: NewWidget<impl Widget + ?Sized>,
-        text: ArcStr,
+        content: TooltipContent,
         theme: &Theme,
         delay: Duration,
     ) -> Self {
         Self {
             child: child.erased().to_pod(),
-            text,
+            content,
             theme: *theme,
             delay,
             last_pointer_move: None,
@@ -96,9 +109,9 @@ impl TooltipHost {
         }
     }
 
-    /// Replaces the tooltip text shown on the layer.
-    pub fn set_text(this: &mut WidgetMut<'_, Self>, text: ArcStr) {
-        this.widget.text = text;
+    /// Replaces the tooltip content shown on the layer.
+    pub(crate) fn set_content(this: &mut WidgetMut<'_, Self>, content: TooltipContent) {
+        this.widget.content = content;
         this.ctx.request_accessibility_update();
     }
 
@@ -119,14 +132,12 @@ impl TooltipHost {
     /// Properties are applied per-instance because the theme may have
     /// changed since the last presentation.
     fn build_layer(&self) -> NewWidget<TooltipLayer> {
-        let mut label = Label::new(self.text.clone())
-            .with_style(StyleProperty::FontSize(self.theme.typography.size_body))
-            .prepare();
-        label
-            .properties
-            .insert(ContentColor::new(self.theme.palette.text));
+        let surface = match &self.content {
+            TooltipContent::Text(text) => self.build_text_surface(text),
+            TooltipContent::Rows(rows) => self.build_rows_surface(rows),
+        };
 
-        let mut tooltip = NewWidget::new(TooltipLayer::new(label));
+        let mut tooltip = NewWidget::new(TooltipLayer::new(surface));
         tooltip.properties.insert(BorderWidth::all(BORDER_WIDTH));
         tooltip
             .properties
@@ -136,6 +147,67 @@ impl TooltipHost {
             .insert(Background::Color(self.theme.palette.surface_hi));
         tooltip.properties.insert(Padding::all(PADDING));
         tooltip
+    }
+
+    /// A single line of text, styled to match the tooltip surface.
+    fn build_text_surface(&self, text: &ArcStr) -> NewWidget<dyn Widget> {
+        let mut label = Label::new(text.clone())
+            .with_style(StyleProperty::FontSize(self.theme.typography.size_body))
+            .prepare();
+        label
+            .properties
+            .insert(ContentColor::new(self.theme.palette.text));
+        label.erased()
+    }
+
+    /// A vertical list of dot+label rows, e.g. a status-colour legend —
+    /// each row is the same coloured-dot shape the sidebar uses for its own
+    /// status dots, so the legend reads as the same visual language as the
+    /// thing it explains.
+    fn build_rows_surface(&self, rows: &[TooltipRow]) -> NewWidget<dyn Widget> {
+        let mut column = Flex::column().cross_axis_alignment(CrossAxisAlignment::Start);
+        for row in rows {
+            let mut dot = SizedBox::empty()
+                .width(ROW_DOT_SIZE)
+                .height(ROW_DOT_SIZE)
+                .prepare();
+            dot.properties.insert(Background::Color(row.color));
+            dot.properties.insert(CornerRadius::all(ROW_DOT_RADIUS));
+
+            let mut label = Label::new(row.label.clone())
+                .with_style(StyleProperty::FontSize(self.theme.typography.size_body))
+                .prepare();
+            label
+                .properties
+                .insert(ContentColor::new(self.theme.palette.text));
+
+            let mut line = Flex::row()
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_fixed(dot.erased())
+                .with_fixed(label.erased())
+                .prepare();
+            line.properties.insert(Gap::new(ROW_DOT_LABEL_GAP));
+
+            column = column.with_fixed(line.erased());
+        }
+        let mut column = column.prepare();
+        column.properties.insert(Gap::new(ROW_LINE_GAP));
+        column.erased()
+    }
+
+    /// Flattened text used for the accessibility description and the
+    /// window layer's debug tag. A rows tooltip loses its colour coding in
+    /// this form (screen readers don't convey colour anyway), but keeps the
+    /// row labels in order.
+    fn description(&self) -> String {
+        match &self.content {
+            TooltipContent::Text(text) => text.to_string(),
+            TooltipContent::Rows(rows) => rows
+                .iter()
+                .map(|row| row.label.as_ref())
+                .collect::<Vec<_>>()
+                .join(", "),
+        }
     }
 }
 
@@ -178,7 +250,7 @@ impl Widget for TooltipHost {
                 let layer_id = layer.id();
                 let pos = self.last_cursor_pos + CURSOR_OFFSET;
                 ctx.create_layer::<TooltipLayer>(
-                    LayerType::Tooltip(self.text.to_string()),
+                    LayerType::Tooltip(self.description()),
                     layer,
                     pos,
                 );
@@ -285,7 +357,7 @@ impl Widget for TooltipHost {
         // Exposes the tooltip text to assistive tech regardless of whether
         // the layer is currently shown, mirroring the alt-text pattern used
         // by `Image`/`Canvas`/`Svg`.
-        node.set_description(&*self.text);
+        node.set_description(self.description());
     }
 
     fn children_ids(&self) -> ChildrenIds {
@@ -315,7 +387,12 @@ mod tests {
         ))
         .erased();
         let child_id = child.id();
-        let widget = TooltipHost::new(child, "Tip text".into(), &theme, delay);
+        let widget = TooltipHost::new(
+            child,
+            TooltipContent::Text("Tip text".into()),
+            &theme,
+            delay,
+        );
         let h = TestHarness::create(default_property_set(), NewWidget::new(widget));
         (h, child_id)
     }
@@ -330,11 +407,11 @@ mod tests {
     }
 
     #[test]
-    fn set_text_updates_accessibility_description() {
+    fn set_content_updates_accessibility_description() {
         let (mut h, _) = harness(Duration::from_millis(300));
 
         h.edit_root_widget(|mut wm| {
-            TooltipHost::set_text(&mut wm, "New text".into());
+            TooltipHost::set_content(&mut wm, TooltipContent::Text("New text".into()));
         });
         h.redraw();
 
@@ -375,7 +452,12 @@ mod tests {
     fn label_harness(delay: Duration) -> TestHarness<TooltipHost> {
         let theme = Theme::dark();
         let child = NewWidget::new(Label::new("plain")).erased();
-        let widget = TooltipHost::new(child, "Tip text".into(), &theme, delay);
+        let widget = TooltipHost::new(
+            child,
+            TooltipContent::Text("Tip text".into()),
+            &theme,
+            delay,
+        );
         TestHarness::create(default_property_set(), NewWidget::new(widget))
     }
 
@@ -435,5 +517,50 @@ mod tests {
             0,
             "leaving the host must remove the visible tooltip layer"
         );
+    }
+
+    /// A rows tooltip's accessibility description joins row labels in order —
+    /// screen readers get the same information as a text tooltip, just
+    /// without the colour coding a sighted user gets from the dots.
+    #[test]
+    fn rows_tooltip_description_joins_labels_in_order() {
+        let theme = Theme::dark();
+        let child = NewWidget::new(Label::new("plain")).erased();
+        let rows = vec![
+            TooltipRow::new(masonry::peniko::Color::from_rgb8(34, 197, 94), "Ready"),
+            TooltipRow::new(masonry::peniko::Color::from_rgb8(239, 68, 68), "Error"),
+        ];
+        let widget = TooltipHost::new(
+            child,
+            TooltipContent::Rows(rows),
+            &theme,
+            Duration::from_millis(300),
+        );
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+        h.redraw();
+
+        let node = h.access_node(h.root_id()).expect("node exists");
+        assert_eq!(node.description(), Some("Ready, Error".to_string()));
+    }
+
+    /// A rows tooltip must pop the same overlay layer a text tooltip does —
+    /// the richer content shape doesn't change the hover/show mechanics.
+    #[test]
+    fn rows_tooltip_shows_layer_after_delay() {
+        let theme = Theme::dark();
+        let child = NewWidget::new(Label::new("plain")).erased();
+        let rows = vec![TooltipRow::new(
+            masonry::peniko::Color::from_rgb8(34, 197, 94),
+            "Ready",
+        )];
+        let widget = TooltipHost::new(child, TooltipContent::Rows(rows), &theme, Duration::ZERO);
+        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
+        let root = h.root_id();
+
+        h.mouse_move_to(root);
+        h.animate_ms(1);
+
+        assert!(h.edit_root_widget(|wm| wm.widget.layer_id.is_some()));
+        assert_eq!(visible_overlay_layers(&mut h), 1);
     }
 }

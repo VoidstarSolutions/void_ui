@@ -17,4 +17,4 @@ pub mod demo;
 mod view;
 mod widget;
 
-pub use view::{DEFAULT_DELAY_MS, Tooltip, TooltipView, tooltip};
+pub use view::{DEFAULT_DELAY_MS, Tooltip, TooltipRow, TooltipView, tooltip, tooltip_rows};

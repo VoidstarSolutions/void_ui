@@ -13,6 +13,7 @@ use std::marker::PhantomData;
 use std::time::Duration;
 
 use masonry::core::ArcStr;
+use masonry::peniko::Color;
 use xilem_masonry::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem_masonry::{Pod, ViewCtx, WidgetView};
 
@@ -22,24 +23,68 @@ use crate::Theme;
 /// Default hover-idle delay before the tooltip appears.
 pub const DEFAULT_DELAY_MS: u64 = 300;
 
+/// One row of a [`tooltip_rows`] tooltip: a small filled dot in `color`
+/// followed by `label`, e.g. one entry of a status-colour legend ("Ready"
+/// beside a green dot).
+#[derive(Clone, PartialEq)]
+pub struct TooltipRow {
+    pub(super) color: Color,
+    pub(super) label: ArcStr,
+}
+
+impl TooltipRow {
+    /// Creates a legend row: `color` renders as a small filled dot, `label`
+    /// as text beside it.
+    pub fn new(color: Color, label: impl Into<ArcStr>) -> Self {
+        Self {
+            color,
+            label: label.into(),
+        }
+    }
+}
+
+/// What a [`Tooltip`] shows on its popped-up surface: either a single line
+/// of text, or a vertical list of colour-coded [`TooltipRow`]s (e.g. a
+/// status legend). `void_ui`'s tooltip layer can't host arbitrary child
+/// views (see [`super::widget`]'s module docs), so rows are the one
+/// richer shape it renders directly.
+#[derive(Clone, PartialEq)]
+pub(crate) enum TooltipContent {
+    Text(ArcStr),
+    Rows(Vec<TooltipRow>),
+}
+
 /// Builder for a hover-driven tooltip wrapping an inner view.
 ///
-/// Created with [`tooltip`]. Returns a xilem `WidgetView` via [`Self::render`].
+/// Created with [`tooltip`] or [`tooltip_rows`]. Returns a xilem `WidgetView`
+/// via [`Self::render`].
 #[must_use = "Tooltip does nothing until rendered with .render(&theme)"]
 pub struct Tooltip<V> {
-    text: ArcStr,
+    content: TooltipContent,
     child: V,
     delay: Duration,
 }
 
-/// Wraps `child` with hover-driven tooltip behavior.
+/// Wraps `child` with hover-driven tooltip behavior showing a single line
+/// of `text`.
 ///
 /// The tooltip surface appears after the pointer has been idle over the
 /// child for the configured delay (default 300 ms). It dismisses itself on
 /// the next pointer activity.
 pub fn tooltip<V>(text: impl Into<ArcStr>, child: V) -> Tooltip<V> {
     Tooltip {
-        text: text.into(),
+        content: TooltipContent::Text(text.into()),
+        child,
+        delay: Duration::from_millis(DEFAULT_DELAY_MS),
+    }
+}
+
+/// Wraps `child` with hover-driven tooltip behavior showing a vertical list
+/// of colour-coded [`TooltipRow`]s (e.g. a status-colour legend) instead of
+/// a single line of text. Otherwise identical to [`tooltip`].
+pub fn tooltip_rows<V>(rows: Vec<TooltipRow>, child: V) -> Tooltip<V> {
+    Tooltip {
+        content: TooltipContent::Rows(rows),
         child,
         delay: Duration::from_millis(DEFAULT_DELAY_MS),
     }
@@ -60,7 +105,7 @@ impl<V> Tooltip<V> {
         V: WidgetView<State, Action>,
     {
         TooltipView {
-            text: self.text,
+            content: self.content,
             child: self.child,
             delay: self.delay,
             theme: *theme,
@@ -72,7 +117,7 @@ impl<V> Tooltip<V> {
 /// The materialized [`View`] backing a [`Tooltip`].
 #[must_use = "View values do nothing unless provided to Xilem."]
 pub struct TooltipView<V, State, Action> {
-    text: ArcStr,
+    content: TooltipContent,
     child: V,
     delay: Duration,
     theme: Theme,
@@ -94,7 +139,7 @@ where
         let (child_pod, child_state) = self.child.build(ctx, app_state);
         let widget = TooltipHost::new(
             child_pod.new_widget.erased(),
-            self.text.clone(),
+            self.content.clone(),
             &self.theme,
             self.delay,
         );
@@ -112,8 +157,8 @@ where
         if self.theme != prev.theme {
             TooltipHost::set_theme(&mut element, &self.theme);
         }
-        if self.text != prev.text {
-            TooltipHost::set_text(&mut element, self.text.clone());
+        if self.content != prev.content {
+            TooltipHost::set_content(&mut element, self.content.clone());
         }
         if self.delay != prev.delay {
             TooltipHost::set_delay(&mut element, self.delay);
