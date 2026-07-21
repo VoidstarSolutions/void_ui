@@ -42,10 +42,16 @@ a clear build-time panic, the same tradeoff dialog already made.
 ## API surface
 
 ```rust
-pub fn tooltip<ChildV, ContentV>(content: ContentV, child: ChildV) -> Tooltip<ChildV, ContentV>
-where
-    ContentV: WidgetView<State, Action>,
-    ChildV: WidgetView<State, Action>;
+pub fn tooltip<ChildV, ContentV>(content: ContentV, child: ChildV) -> Tooltip<ChildV, ContentV>;
+
+impl<ChildV, ContentV> Tooltip<ChildV, ContentV> {
+    pub fn render<State, Action>(self, theme: &Theme) -> TooltipView<ChildV, State, Action>
+    where
+        State: 'static,
+        Action: 'static,
+        ChildV: WidgetView<State, Action>,
+        ContentV: WidgetView<State, Action>;
+}
 ```
 
 One builder. `content` is the popup content, composed the normal void_ui way:
