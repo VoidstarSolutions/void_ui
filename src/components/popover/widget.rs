@@ -65,10 +65,10 @@ fn surface_gap(theme: &Theme) -> Length {
     Length::px(f64::from(theme.density.pad) / 3.0)
 }
 
-/// Action emitted by [`PopoverHost`] whenever its open state changes — or,
+/// Action emitted by `PopoverHost` whenever its open state changes — or,
 /// in controlled mode, whenever the user *requests* a change (the widget
 /// does not self-toggle then; the host applies the new state via
-/// [`PopoverHost::set_open`], typically by updating the `.open(bool)` prop).
+/// `PopoverHost::set_open`, typically by updating the `.open(bool)` prop).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PopoverOpenChanged(pub bool);
 

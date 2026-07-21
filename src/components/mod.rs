@@ -11,6 +11,30 @@
 //! Theme is passed at the render boundary rather than stored on each
 //! component value so that swapping themes is a single state change in
 //! the host, not a tree walk.
+//!
+//! ## Export surface (issue #164)
+//!
+//! Every component follows the same rule for what reaches this module
+//! (and from here, the crate root):
+//!
+//! 1. The builder and its materialized `View` type (`Foo`, `FooView`) are
+//!    always `pub` and re-exported to the root.
+//! 2. Any other type a component's public API forces a caller to name —
+//!    config/style enums, constants, and action/marker types referenced by
+//!    a builder's generic bounds or a view's `message()` contract
+//!    (`CloseCallback`, `TogglePress`, `PopoverOpenChanged`,
+//!    `DEFAULT_DELAY_MS`, `MIN_PANEL_SIZE`, ...) — is `pub` and re-exported
+//!    to the root too, regardless of whether it happens to live in that
+//!    component's `view.rs` or `widget.rs`.
+//! 3. Masonry `Widget` struct implementations (`ThemedButton`,
+//!    `CheckboxWidget`, `MenuPanel`, ...) are crate-internal. The struct
+//!    itself stays `pub struct` (so `View::Element = Pod<Foo>` type-checks
+//!    — see `spinner`), but its containing `mod widget;` is `pub(crate)`
+//!    only when another component genuinely imports from it, else fully
+//!    private. These never reach this module or the crate root.
+//! 4. `mod view;` is always private — nothing outside a component needs
+//!    the raw module path, since every type callers need is re-exported
+//!    through the component's own `mod.rs`.
 
 pub(crate) mod access_wrap;
 pub mod alert;
@@ -53,8 +77,8 @@ pub mod tabs;
 pub mod toggle;
 pub mod tooltip;
 
-pub use alert::{Alert, AlertVariant, alert};
-pub use autocomplete::{Autocomplete, autocomplete};
+pub use alert::{Alert, AlertVariant, CloseCallback, alert};
+pub use autocomplete::{Autocomplete, AutocompleteAction, AutocompleteView, autocomplete};
 pub use badge::{Badge, badge, pill};
 pub use breadcrumb::{Breadcrumb, BreadcrumbSegment, breadcrumb, segment};
 pub use button::{
@@ -62,7 +86,7 @@ pub use button::{
 };
 pub use button_group::{ButtonGroup, button_group, toggle_button_group};
 pub use card::{Card, card};
-pub use checkbox::{Checkbox, CheckboxView, checkbox};
+pub use checkbox::{Checkbox, CheckboxPress, CheckboxView, checkbox};
 pub use clipboard::{Clipboard, ClipboardView, clipboard};
 pub use code_view::{
     Highlighter, ReadOnlyText, ReadOnlyTextView, RustHighlighter, TokenKind, TokenSpan,
@@ -94,10 +118,10 @@ pub use list::{List, list};
 pub use meter::{Meter, MeterFill, meter};
 pub use notification::{
     DEFAULT_NOTIFICATION_WIDTH, DEFAULT_TIMEOUT, Notification, NotificationLayerView,
-    NotificationPosition, OnClose, notification, notification_layer, notification_overlay,
-    notification_stack,
+    NotificationPosition, NotificationView, OnClose, notification, notification_layer,
+    notification_overlay, notification_stack,
 };
-pub use popover::{Popover, PopoverAnchor, PopoverHost, PopoverOpenChanged, PopoverView, popover};
+pub use popover::{Popover, PopoverAnchor, PopoverOpenChanged, PopoverView, popover};
 pub use radio::{Radio, RadioView, radio};
 pub use resizable::{
     MIN_PANEL_SIZE, Resizable, ResizablePanel, ResizablePanels, ResizablePanelsView, ResizableView,
@@ -116,8 +140,8 @@ pub use slider::{RangeSlider, RangeSliderView, Slider, SliderView, range_slider,
 pub use spinner::{Spinner, SpinnerView, spinner};
 pub use status_dot::{StatusDot, status_dot};
 pub use tabs::{TabItem, Tabs, TabsVariant, TabsView, tabs};
-pub use toggle::{Toggle, ToggleView, toggle};
-pub use tooltip::{Tooltip, TooltipView, tooltip};
+pub use toggle::{Toggle, TogglePress, ToggleView, toggle};
+pub use tooltip::{DEFAULT_DELAY_MS, Tooltip, TooltipView, tooltip};
 
 /// One entry per component the gallery exposes.
 ///

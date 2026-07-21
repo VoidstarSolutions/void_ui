@@ -3,7 +3,7 @@
 //! A full-width, left-aligned nav row. When `selected`, a 3 px accent bar
 //! is painted on the left edge and the label renders in the full text color.
 //! Pointer state (hover, press) is read from the widget context, matching the
-//! same paint-driven pattern as [`crate::components::button::widget::ThemedButton`].
+//! same paint-driven pattern as `crate::components::button::widget::ThemedButton`.
 //!
 //! Emits [`ButtonPress`] on primary-pointer release inside the widget and on
 //! Space / Enter while focused.

@@ -543,7 +543,7 @@ impl Widget for DatePickerTrigger {
 // ThemedDatePickerWidget
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Action type emitted by [`ThemedDatePickerWidget`].
+/// Action type emitted by `ThemedDatePickerWidget`.
 #[derive(Debug)]
 pub enum DatePickerAction {
     /// The selected date changed (or was cleared: `None`).

@@ -7,11 +7,8 @@
 //! in-progress region.
 //!
 //! Pass `Axis::Horizontal` to get a horizontal slide (used by
-//! [`ThemedSidebarPanel`]) or `Axis::Vertical` for a vertical slide (used by
-//! [`CollapsibleWidget`]).
-//!
-//! [`ThemedSidebarPanel`]: crate::components::sidebar::panel_widget::ThemedSidebarPanel
-//! [`CollapsibleWidget`]: crate::components::collapsible::widget::CollapsibleWidget
+//! `ThemedSidebarPanel`) or `Axis::Vertical` for a vertical slide (used by
+//! `CollapsibleWidget`).
 
 use std::any::TypeId;
 
@@ -32,13 +29,10 @@ const SLIDE_MILLIS: f32 = 250.0;
 
 /// Clips its child to an animated extent on one axis.
 ///
-/// Created by [`ThemedSidebarPanel`] (horizontal) and [`CollapsibleWidget`]
+/// Created by `ThemedSidebarPanel` (horizontal) and `CollapsibleWidget`
 /// (vertical). Public so the access-path methods `panel_mut` →
 /// [`AnimatedClip::child_mut`] and `body_mut` → [`AnimatedClip::child_mut`]
 /// are nameable outside the crate.
-///
-/// [`ThemedSidebarPanel`]: crate::components::sidebar::panel_widget::ThemedSidebarPanel
-/// [`CollapsibleWidget`]: crate::components::collapsible::widget::CollapsibleWidget
 pub struct AnimatedClip<W: Widget + ?Sized> {
     child: WidgetPod<W>,
     /// Axis to animate: `Horizontal` slides width, `Vertical` slides height.

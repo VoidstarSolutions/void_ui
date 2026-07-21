@@ -3,7 +3,7 @@
 #[cfg(feature = "gallery")]
 pub mod demo;
 mod view;
-pub mod widget;
+mod widget;
 
 pub use view::{RangeSlider, RangeSliderView, Slider, SliderView, range_slider, slider};
 
@@ -19,7 +19,7 @@ pub enum SliderValue {
     Range(f64, f64),
 }
 
-/// Action emitted by [`widget::SliderWidget`] with the slider's new value.
+/// Action emitted by `SliderWidget` with the slider's new value.
 ///
 /// Fired continuously while a thumb is dragged or a key is held, on
 /// click-to-jump within the track, and on accessibility `SetValue` /

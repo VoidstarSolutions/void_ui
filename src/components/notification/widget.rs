@@ -4,7 +4,7 @@
 //! Pure passthrough wrapper — `measure`/`layout`/`paint` delegate entirely to
 //! `child` — plus an `Instant`/`Duration` timer driven by
 //! `request_anim_frame()`, modeled on
-//! [`crate::components::tooltip::widget::TooltipHost`]'s hover-idle timer
+//! `crate::components::tooltip::widget::TooltipHost`'s hover-idle timer
 //! (minus the `Layer` machinery, which `Notification` doesn't need).
 
 use std::time::Duration;

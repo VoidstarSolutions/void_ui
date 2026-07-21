@@ -1,15 +1,16 @@
 //! Themed button component.
 //!
-//! The xilem [`Button`] builder lives in [`view`]; the masonry widget that
-//! owns the pointer state machine lives in [`widget`]. The widget is
-//! exposed publicly so the [`ButtonView`]'s public `Element` associated
-//! type can name it without leaking a private type through the public API.
+//! The xilem [`Button`] builder lives in `view`; the masonry widget that
+//! owns the pointer state machine lives in `widget`. `widget` is
+//! `pub(crate)` — not fully private — because several other components
+//! (tooltip, `date_picker`, `dropdown_button`, popover, clipboard) host a
+//! `ThemedButton` directly.
 
 mod content;
 #[cfg(feature = "gallery")]
 pub mod demo;
 mod view;
-pub mod widget;
+pub(crate) mod widget;
 
 pub use content::{ContentButton, ContentButtonView, content_button};
 pub use view::{Button, ButtonView, button};

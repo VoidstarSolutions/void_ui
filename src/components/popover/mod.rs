@@ -13,10 +13,10 @@
 #[cfg(feature = "gallery")]
 pub mod demo;
 mod view;
-pub mod widget;
+mod widget;
 
 pub use view::{Popover, PopoverView, popover};
-pub use widget::{PopoverHost, PopoverOpenChanged};
+pub use widget::PopoverOpenChanged;
 
 /// Compatibility alias for the pre-consolidation name of
 /// [`crate::overlay::OverlayAnchor`]. Prefer `OverlayAnchor` in new code.

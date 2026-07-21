@@ -20,6 +20,6 @@
 #[cfg(feature = "gallery")]
 pub mod demo;
 mod view;
-pub(super) mod widget;
+mod widget;
 
 pub use view::{Meter, MeterFill, meter};

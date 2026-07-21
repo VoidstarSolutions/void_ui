@@ -1,4 +1,4 @@
-//! `ThemedDropdownButton` — a [`crate::components::button::widget::ThemedButton`]
+//! `ThemedDropdownButton` — a `crate::components::button::widget::ThemedButton`
 //! trigger (with a trailing chevron) that opens a floating menu on click.
 //!
 //! Composes a real `ThemedButton` as its trigger and delegates all
@@ -9,7 +9,7 @@
 //! submits a single `ButtonPress` for the whole surface, same as it would for
 //! a plain action button.
 //!
-//! Two hosting modes, mirroring [`crate::components::popover::widget::PopoverHost`]:
+//! Two hosting modes, mirroring `crate::components::popover::widget::PopoverHost`:
 //!
 //! - **Portal** (scope ancestor present): the menu is registered as a
 //!   [`super::view::MenuContentView`] in the scope's [`crate::overlay_portal::OverlayPortal`]

@@ -22,7 +22,6 @@
 pub mod demo;
 pub(crate) mod menu_layer;
 mod view;
-pub mod widget;
+mod widget;
 
 pub use view::{DropdownButton, DropdownButtonView, dropdown_button};
-pub use widget::ThemedDropdownButton;

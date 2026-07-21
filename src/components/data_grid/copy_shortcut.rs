@@ -4,7 +4,7 @@
 //! This is an internal building block for [`super::data_grid`]. The widget
 //! holds **no** payload: on Ctrl/Cmd+C it submits a [`CopyRequested`]
 //! action, and the xilem view
-//! ([`CopyOnShortcutView`](super::view)) computes the TSV projection of the
+//! (`CopyOnShortcutView`) computes the TSV projection of the
 //! *current* selection on receipt and writes it to the platform clipboard
 //! via `set_clipboard` (available on the `WidgetMut`'s `MutateCtx`).
 //!

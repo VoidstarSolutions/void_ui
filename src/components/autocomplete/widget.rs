@@ -74,10 +74,10 @@ pub(crate) struct SuggestionSelected(pub ArcStr);
 // AutocompleteAction
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Public action type emitted by [`AutocompleteWidget`] to its view layer.
-/// Carries the new text string (either typed or selected from the list).
+/// Action emitted by `AutocompleteWidget` to its view layer. Carries the
+/// new text string (either typed or selected from the list).
 #[derive(Debug)]
-pub(crate) enum AutocompleteAction {
+pub enum AutocompleteAction {
     TextChanged(String),
 }
 
@@ -1068,7 +1068,7 @@ pub(crate) struct AutocompleteConfig {
 ///
 /// Intercepts actions from descendants and re-emits
 /// [`AutocompleteAction::TextChanged`] for the view layer.
-pub(crate) struct AutocompleteWidget {
+pub struct AutocompleteWidget {
     hosting: Hosting,
     all_suggestions: Vec<ArcStr>,
     /// Lower-case mirror of [`Self::all_suggestions`], pre-computed at

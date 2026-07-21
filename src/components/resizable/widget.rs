@@ -44,8 +44,8 @@ const HANDLE_THICKNESS: f64 = 1.0;
 /// center — a hit-target dimension that must not shrink at compact density.
 const GRAB_HALF: f64 = 8.0;
 /// Structural minimum panel size in pixels, used as a collapse-prevention floor;
-/// callers may set per-panel minimums via [`ResizableWidget::set_min_sizes`]/
-/// [`ResizableWidget::set_max_sizes`], which are layered on top of this floor.
+/// callers may set per-panel minimums via `ResizableWidget::set_min_sizes`/
+/// `ResizableWidget::set_max_sizes`, which are layered on top of this floor.
 pub const MIN_PANEL_SIZE: f64 = 40.0;
 /// Pixel adjustment to a panel pair's split point per arrow-key press, for
 /// keyboard nudging once a handle is focused.
