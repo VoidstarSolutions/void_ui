@@ -75,3 +75,51 @@ impl<V> Card<V> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use xilem::ViewCtx;
+    use xilem::core::View;
+
+    use super::card;
+    use crate::{Theme, label, test_support};
+
+    #[derive(Default)]
+    struct AppState;
+
+    #[test]
+    fn defaults_to_no_border_and_no_background_override() {
+        let c = card(());
+        assert!(!c.border);
+        assert!(c.background.is_none());
+    }
+
+    #[test]
+    fn border_and_background_set_the_expected_fields() {
+        let theme = Theme::default();
+        let c = card(()).border().background(theme.palette.accent);
+        assert!(c.border);
+        assert_eq!(c.background, Some(theme.palette.accent));
+    }
+
+    #[test]
+    fn bordered_and_borderless_cards_build_without_panicking() {
+        let theme = Theme::default();
+        let mut ctx = ViewCtx::new(
+            test_support::noop_proxy(),
+            test_support::current_thread_runtime(),
+        );
+        let mut state = AppState;
+
+        let content = label("content").render::<AppState, ()>(&theme);
+        let _ = card(content)
+            .render::<AppState, ()>(&theme)
+            .build(&mut ctx, &mut state);
+
+        let content = label("content").render::<AppState, ()>(&theme);
+        let _ = card(content)
+            .border()
+            .render::<AppState, ()>(&theme)
+            .build(&mut ctx, &mut state);
+    }
+}

@@ -81,7 +81,44 @@ impl StatusDot {
 
 #[cfg(test)]
 mod tests {
-    use super::{Density, default_size};
+    use xilem::ViewCtx;
+    use xilem::core::View;
+
+    use super::{Density, default_size, status_dot};
+    use crate::{Theme, test_support};
+
+    #[derive(Default)]
+    struct AppState;
+
+    #[test]
+    fn defaults_to_no_size_override() {
+        let d = status_dot(Theme::default().palette.accent);
+        assert!(d.size.is_none());
+    }
+
+    #[test]
+    fn size_overrides_the_default() {
+        let d = status_dot(Theme::default().palette.accent).size(10.0);
+        assert_eq!(d.size, Some(10.0));
+    }
+
+    #[test]
+    fn default_and_sized_dots_build_without_panicking() {
+        let theme = Theme::default();
+        let mut ctx = ViewCtx::new(
+            test_support::noop_proxy(),
+            test_support::current_thread_runtime(),
+        );
+        let mut state = AppState;
+
+        let _ = status_dot(theme.palette.green)
+            .render::<AppState, ()>(&theme)
+            .build(&mut ctx, &mut state);
+        let _ = status_dot(theme.palette.coral)
+            .size(10.0)
+            .render::<AppState, ()>(&theme)
+            .build(&mut ctx, &mut state);
+    }
 
     /// Balanced density must reproduce the library's original hardcoded
     /// 8px default exactly, matching how every other token in

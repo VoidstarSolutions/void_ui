@@ -153,3 +153,68 @@ impl Widget for SpinnerWidget {
         ChildrenIds::from_slice(&[])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use masonry::core::NewWidget;
+    use masonry::peniko::Color;
+    use masonry::testing::TestHarness;
+
+    use super::SpinnerWidget;
+
+    fn harness() -> TestHarness<SpinnerWidget> {
+        TestHarness::create(
+            masonry::theme::default_property_set(),
+            NewWidget::new(SpinnerWidget::new(Color::BLACK, 16.0)),
+        )
+    }
+
+    #[test]
+    fn set_color_updates_the_field_when_it_changes() {
+        let mut h = harness();
+        h.edit_root_widget(|mut wm| {
+            SpinnerWidget::set_color(&mut wm, Color::WHITE);
+            assert_eq!(wm.widget.color, Color::WHITE);
+        });
+    }
+
+    #[test]
+    fn set_size_updates_the_field_when_it_changes() {
+        let mut h = harness();
+        h.edit_root_widget(|mut wm| {
+            SpinnerWidget::set_size(&mut wm, 32.0);
+            assert!((wm.widget.size - 32.0).abs() < f64::EPSILON);
+        });
+    }
+
+    #[test]
+    fn set_size_is_a_no_op_within_epsilon() {
+        let mut h = harness();
+        h.edit_root_widget(|mut wm| {
+            SpinnerWidget::set_size(&mut wm, 16.0);
+            assert!((wm.widget.size - 16.0).abs() < f64::EPSILON);
+        });
+    }
+
+    #[test]
+    fn rotation_phase_advances_and_wraps_within_zero_one() {
+        let mut h = harness();
+        h.edit_root_widget(|wm| {
+            assert!((wm.widget.t - 0.0).abs() < f64::EPSILON);
+        });
+
+        // 16.7ms (~1/60s) is a plausible single-frame interval; the phase
+        // should advance but stay well under a full turn.
+        h.animate_ms(17);
+        h.edit_root_widget(|wm| {
+            assert!(wm.widget.t > 0.0 && wm.widget.t < 1.0);
+        });
+
+        // Many frames' worth of elapsed time must wrap back into [0, 1)
+        // rather than growing unbounded.
+        h.animate_ms(10_000);
+        h.edit_root_widget(|wm| {
+            assert!((0.0..1.0).contains(&wm.widget.t));
+        });
+    }
+}

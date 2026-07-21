@@ -143,3 +143,51 @@ impl Widget for DialogHost {
         ChildrenIds::from_slice(&[])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use masonry::accesskit::Role;
+    use masonry::core::{NewWidget, Widget};
+    use masonry::testing::TestHarness;
+
+    use super::DialogHost;
+    use crate::overlay_scope::OverlayScopeHandle;
+
+    fn harness(open: bool) -> TestHarness<DialogHost> {
+        TestHarness::create(
+            masonry::theme::default_property_set(),
+            NewWidget::new(DialogHost::new(OverlayScopeHandle::new(), 0, open)),
+        )
+    }
+
+    #[test]
+    fn a_closed_dialog_mounts_without_a_scope_ancestor() {
+        // `WidgetAdded` only pushes visibility when `open` — this is what
+        // lets a closed dialog mount before its `overlay_scope` ancestor is
+        // ready (see `push_visibility`'s debug_assert). An open dialog would
+        // hit that assert here since there's no real scope behind the handle.
+        let _ = harness(false);
+    }
+
+    #[test]
+    fn set_open_is_a_no_op_when_unchanged() {
+        let mut h = harness(false);
+        h.edit_root_widget(|mut wm| {
+            // Same value as construction — must return before calling
+            // `push_visibility`, which would otherwise hit the
+            // "scope must be mounted" debug_assert against this bare handle.
+            DialogHost::set_open(&mut wm, false);
+            assert!(!wm.widget.open);
+        });
+    }
+
+    #[test]
+    fn is_a_generic_container_with_no_children() {
+        let h = harness(false);
+        assert!(h.root_widget().children().is_empty());
+        assert_eq!(
+            DialogHost::new(OverlayScopeHandle::new(), 0, false).accessibility_role(),
+            Role::GenericContainer
+        );
+    }
+}

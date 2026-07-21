@@ -106,3 +106,53 @@ impl Badge {
             .corner_radius(radius)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use xilem::ViewCtx;
+    use xilem::core::View;
+
+    use super::{Shape, badge, pill};
+    use crate::{AlertVariant, Theme, test_support};
+
+    #[derive(Default)]
+    struct AppState;
+
+    #[test]
+    fn badge_defaults_to_default_variant_and_rounded_shape() {
+        let b = badge("Draft");
+        assert_eq!(b.variant, AlertVariant::Default);
+        assert_eq!(b.shape, Shape::Rounded);
+    }
+
+    #[test]
+    fn pill_defaults_to_pill_shape() {
+        let p = pill("Active");
+        assert_eq!(p.variant, AlertVariant::Default);
+        assert_eq!(p.shape, Shape::Pill);
+    }
+
+    #[test]
+    fn variant_overrides_the_default() {
+        let b = badge("x").variant(AlertVariant::Success);
+        assert_eq!(b.variant, AlertVariant::Success);
+    }
+
+    #[test]
+    fn badge_and_pill_build_without_panicking() {
+        let theme = Theme::default();
+        let mut ctx = ViewCtx::new(
+            test_support::noop_proxy(),
+            test_support::current_thread_runtime(),
+        );
+        let mut state = AppState;
+
+        let _ = badge("Draft")
+            .render::<AppState, ()>(&theme)
+            .build(&mut ctx, &mut state);
+        let _ = pill("Active")
+            .variant(AlertVariant::Success)
+            .render::<AppState, ()>(&theme)
+            .build(&mut ctx, &mut state);
+    }
+}

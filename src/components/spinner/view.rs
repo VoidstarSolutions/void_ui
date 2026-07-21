@@ -114,3 +114,50 @@ impl<S: 'static, A: 'static> View<S, A, ViewCtx> for SpinnerView<S, A> {
         MessageResult::Stale
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use xilem::ViewCtx;
+    use xilem::core::View;
+
+    use super::spinner;
+    use crate::{Theme, test_support};
+
+    #[derive(Default)]
+    struct AppState;
+
+    #[test]
+    fn defaults_to_theme_muted_color_and_ui_font_size() {
+        let theme = Theme::default();
+        let v = spinner().render::<AppState, ()>(&theme);
+        assert_eq!(v.color, theme.palette.text_muted);
+        assert!((v.size - f64::from(theme.density.ui_font_size)).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn overrides_apply_to_the_rendered_view() {
+        let theme = Theme::default();
+        let v = spinner()
+            .color(theme.palette.accent)
+            .size(24.0)
+            .render::<AppState, ()>(&theme);
+        assert_eq!(v.color, theme.palette.accent);
+        assert!((v.size - 24.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn spinner_builds_without_panicking() {
+        let theme = Theme::default();
+        let mut ctx = ViewCtx::new(
+            test_support::noop_proxy(),
+            test_support::current_thread_runtime(),
+        );
+        let mut state = AppState;
+
+        let _ = spinner()
+            .color(theme.palette.accent)
+            .size(24.0)
+            .render::<AppState, ()>(&theme)
+            .build(&mut ctx, &mut state);
+    }
+}
