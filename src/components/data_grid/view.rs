@@ -34,7 +34,7 @@ use xilem::view::{
 use xilem::{AnyWidgetView, Pod, ViewCtx};
 
 use super::column::{CellAlign, CellRenderer, ColumnDef, ColumnId, TextProjector};
-use super::column_strip::{SeparatorStyle, column_strip};
+use super::column_strip::{ColumnSeparatorStyle, column_strip};
 use super::copy_shortcut::{CopyOnShortcut, CopyRequested};
 use super::expand::{disclosure_hit_width, disclosure_toggle, tree_indent_step};
 use super::filter::FilterState;
@@ -1220,7 +1220,7 @@ where
         .flex_weights(Arc::clone(&flex_weights));
     // Move (don't clone) the resize callback: this is its only use.
     if let Some(width_change) = width_change {
-        let style = SeparatorStyle {
+        let style = ColumnSeparatorStyle {
             line: theme.palette.border,
             active: theme.palette.accent,
         };

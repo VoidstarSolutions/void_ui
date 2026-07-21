@@ -78,7 +78,7 @@ struct ColumnDrag {
 
 /// Colors for the resizable strip's column separators.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SeparatorStyle {
+pub struct ColumnSeparatorStyle {
     /// Idle separator line color.
     pub line: Color,
     /// Separator color while its boundary is hovered or dragged.
@@ -98,7 +98,7 @@ pub struct ColumnStrip {
     /// at each column's trailing edge, draws a separator there, and emits
     /// [`ColumnResize`] on drag. The style is the separator's colors.
     /// `None` ⇒ a plain, non-resizable strip (body/filter rows).
-    separators: Option<SeparatorStyle>,
+    separators: Option<ColumnSeparatorStyle>,
     /// Active boundary drag, if any.
     drag: Option<ColumnDrag>,
     /// Column boundary currently hovered (within [`GRAB_ZONE`]); drives
@@ -154,7 +154,7 @@ impl ColumnStrip {
     /// at each column's trailing edge and emits [`ColumnResize`] when one
     /// is dragged.
     #[must_use]
-    pub fn resizable(mut self, style: SeparatorStyle) -> Self {
+    pub fn resizable(mut self, style: ColumnSeparatorStyle) -> Self {
         self.separators = Some(style);
         self
     }
@@ -621,7 +621,7 @@ pub struct ColumnStripView<Seq, State, Action = ()> {
     cells: Seq,
     /// Resize config: separator style + on-resize callback. `None` ⇒ a
     /// plain, non-resizable strip.
-    resize: Option<(SeparatorStyle, ResizeCb<State, Action>)>,
+    resize: Option<(ColumnSeparatorStyle, ResizeCb<State, Action>)>,
     phantom: PhantomData<fn() -> (State, Action)>,
 }
 
@@ -666,7 +666,7 @@ impl<Seq, State, Action> ColumnStripView<Seq, State, Action> {
     /// new_width)` while a boundary is dragged. The strip owns the grab
     /// zones itself (no overlay), so cell content keeps its own hover and
     /// clicks.
-    pub fn resizable<F>(mut self, style: SeparatorStyle, on_resize: F) -> Self
+    pub fn resizable<F>(mut self, style: ColumnSeparatorStyle, on_resize: F) -> Self
     where
         F: Fn(&mut State, usize, f64) -> Action + Send + Sync + 'static,
     {
