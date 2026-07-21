@@ -146,3 +146,64 @@ impl Widget for SeparatorWidget {
         ChildrenIds::from_slice(&[])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use masonry::core::NewWidget;
+    use masonry::peniko::Color;
+    use masonry::testing::TestHarness;
+
+    use super::SeparatorWidget;
+    use crate::components::separator::view::{Orientation, SeparatorStyle};
+
+    fn widget() -> SeparatorWidget {
+        SeparatorWidget {
+            orientation: Orientation::Horizontal,
+            style: SeparatorStyle::Solid,
+            color: Color::BLACK,
+        }
+    }
+
+    fn harness() -> TestHarness<SeparatorWidget> {
+        TestHarness::create(
+            masonry::theme::default_property_set(),
+            NewWidget::new(widget()),
+        )
+    }
+
+    #[test]
+    fn set_color_updates_the_field_when_it_changes() {
+        let mut h = harness();
+        h.edit_root_widget(|mut wm| {
+            SeparatorWidget::set_color(&mut wm, Color::WHITE);
+            assert_eq!(wm.widget.color, Color::WHITE);
+        });
+    }
+
+    #[test]
+    fn set_color_is_a_no_op_for_the_same_color() {
+        let mut h = harness();
+        h.edit_root_widget(|mut wm| {
+            SeparatorWidget::set_color(&mut wm, Color::BLACK);
+            assert_eq!(wm.widget.color, Color::BLACK);
+        });
+    }
+
+    #[test]
+    fn set_style_updates_the_field_when_it_changes() {
+        let mut h = harness();
+        h.edit_root_widget(|mut wm| {
+            SeparatorWidget::set_style(&mut wm, SeparatorStyle::Dashed);
+            assert_eq!(wm.widget.style, SeparatorStyle::Dashed);
+        });
+    }
+
+    #[test]
+    fn set_orientation_updates_the_field_when_it_changes() {
+        let mut h = harness();
+        h.edit_root_widget(|mut wm| {
+            SeparatorWidget::set_orientation(&mut wm, Orientation::Vertical);
+            assert_eq!(wm.widget.orientation, Orientation::Vertical);
+        });
+    }
+}

@@ -181,3 +181,73 @@ impl Label {
 fn mask(text: &str) -> ArcStr {
     ArcStr::from("•".repeat(text.chars().count()))
 }
+
+#[cfg(test)]
+mod tests {
+    use xilem::ViewCtx;
+    use xilem::core::View;
+
+    use super::{label, mask};
+    use crate::{Theme, test_support};
+
+    #[derive(Default)]
+    struct AppState;
+
+    #[test]
+    fn mask_replaces_every_char_with_a_bullet_preserving_length() {
+        assert_eq!(mask("hunter2").as_ref(), "•••••••");
+        assert_eq!(mask("").as_ref(), "");
+    }
+
+    #[test]
+    fn mask_counts_unicode_scalars_not_bytes() {
+        // "café" is 4 chars but 5 bytes (é is 2 bytes in UTF-8) — masking
+        // must produce 4 bullets, not 5.
+        assert_eq!(mask("café").chars().count(), 4);
+    }
+
+    #[test]
+    fn defaults_have_no_secondary_text_and_are_single_line() {
+        let l = label("hello");
+        assert!(l.secondary.is_none());
+        assert!(!l.multiline);
+        assert!(!l.masked);
+    }
+
+    #[test]
+    fn builder_methods_set_the_expected_fields() {
+        let l = label("hello")
+            .secondary("world")
+            .multiline(true)
+            .masked(true);
+        assert_eq!(l.secondary.as_deref(), Some("world"));
+        assert!(l.multiline);
+        assert!(l.masked);
+    }
+
+    #[test]
+    fn plain_secondary_masked_and_multiline_labels_build_without_panicking() {
+        let theme = Theme::default();
+        let mut ctx = ViewCtx::new(
+            test_support::noop_proxy(),
+            test_support::current_thread_runtime(),
+        );
+        let mut state = AppState;
+
+        let _ = label("plain")
+            .render::<AppState, ()>(&theme)
+            .build(&mut ctx, &mut state);
+        let _ = label("main")
+            .secondary("secondary")
+            .render::<AppState, ()>(&theme)
+            .build(&mut ctx, &mut state);
+        let _ = label("secret")
+            .masked(true)
+            .render::<AppState, ()>(&theme)
+            .build(&mut ctx, &mut state);
+        let _ = label("wraps")
+            .multiline(true)
+            .render::<AppState, ()>(&theme)
+            .build(&mut ctx, &mut state);
+    }
+}

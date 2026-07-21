@@ -174,3 +174,96 @@ impl<F> ButtonGroup<F> {
         view
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use xilem::ViewCtx;
+    use xilem::core::View;
+
+    use super::{button_group, position_corners, toggle_button_group};
+    use crate::{Theme, test_support};
+
+    #[derive(Default)]
+    struct AppState;
+
+    #[test]
+    fn only_the_outer_edges_of_a_horizontal_group_are_rounded() {
+        let r = 4.0;
+        let first = position_corners(0, 3, false, r);
+        assert_eq!((first.top_left, first.bottom_left), (r, r));
+        assert_eq!((first.top_right, first.bottom_right), (0.0, 0.0));
+
+        let middle = position_corners(1, 3, false, r);
+        assert_eq!(
+            (
+                middle.top_left,
+                middle.top_right,
+                middle.bottom_right,
+                middle.bottom_left
+            ),
+            (0.0, 0.0, 0.0, 0.0)
+        );
+
+        let last = position_corners(2, 3, false, r);
+        assert_eq!((last.top_right, last.bottom_right), (r, r));
+        assert_eq!((last.top_left, last.bottom_left), (0.0, 0.0));
+    }
+
+    #[test]
+    fn only_the_outer_edges_of_a_vertical_group_are_rounded() {
+        let r = 4.0;
+        let first = position_corners(0, 2, true, r);
+        assert_eq!((first.top_left, first.top_right), (r, r));
+        assert_eq!((first.bottom_left, first.bottom_right), (0.0, 0.0));
+
+        let last = position_corners(1, 2, true, r);
+        assert_eq!((last.bottom_left, last.bottom_right), (r, r));
+        assert_eq!((last.top_left, last.top_right), (0.0, 0.0));
+    }
+
+    #[test]
+    fn a_single_item_group_rounds_all_four_corners() {
+        let r = 4.0;
+        let only = position_corners(0, 1, false, r);
+        assert_eq!(
+            (
+                only.top_left,
+                only.top_right,
+                only.bottom_right,
+                only.bottom_left
+            ),
+            (r, r, r, r)
+        );
+    }
+
+    #[test]
+    fn toggle_button_group_marks_the_given_index_selected() {
+        let group = toggle_button_group(["A", "B"], 1, |_: &mut AppState, _i: usize| ());
+        assert_eq!(group.selected, Some(1));
+    }
+
+    #[test]
+    fn button_group_has_no_selection() {
+        let group = button_group(["A", "B"], |_: &mut AppState, _i: usize| ());
+        assert_eq!(group.selected, None);
+    }
+
+    #[test]
+    fn horizontal_and_vertical_groups_build_without_panicking() {
+        let theme = Theme::default();
+        let mut ctx = ViewCtx::new(
+            test_support::noop_proxy(),
+            test_support::current_thread_runtime(),
+        );
+        let mut state = AppState;
+
+        let _ = button_group(["Cut", "Copy", "Paste"], |_: &mut AppState, _i| ())
+            .render(&theme)
+            .build(&mut ctx, &mut state);
+        let _ = toggle_button_group(["Day", "Week"], 0, |_: &mut AppState, _i| ())
+            .vertical()
+            .disabled(true)
+            .render(&theme)
+            .build(&mut ctx, &mut state);
+    }
+}

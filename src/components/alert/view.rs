@@ -258,8 +258,14 @@ impl<C> Alert<C> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AlertVariant, IconName};
-    use crate::Theme;
+    use xilem::ViewCtx;
+    use xilem::core::View;
+
+    use super::{AlertVariant, IconName, alert};
+    use crate::{Theme, test_support};
+
+    #[derive(Default)]
+    struct AppState;
 
     /// [`IconName`] (= `lucide_icons::Icon`) doesn't implement `PartialEq`,
     /// but does convert to a unique `char`, so compare icons via that.
@@ -315,5 +321,59 @@ mod tests {
                 icon_char(Some(IconName::CircleX))
             );
         }
+    }
+
+    #[test]
+    fn no_icon_overrides_a_variant_default_icon() {
+        let a = alert("msg").variant(AlertVariant::Error).no_icon();
+        assert!(!a.show_icon);
+    }
+
+    #[test]
+    fn icon_overrides_the_variant_default() {
+        let a = alert("msg")
+            .variant(AlertVariant::Error)
+            .icon(IconName::Bell);
+        assert_eq!(icon_char(a.icon), icon_char(Some(IconName::Bell)));
+    }
+
+    #[test]
+    fn banner_sets_the_flag() {
+        let a = alert("msg").banner();
+        assert!(a.banner);
+    }
+
+    #[test]
+    fn plain_titled_bannered_and_dismissible_alerts_build_without_panicking() {
+        let theme = Theme::default();
+        let mut ctx = ViewCtx::new(
+            test_support::noop_proxy(),
+            test_support::current_thread_runtime(),
+        );
+        let mut state = AppState;
+
+        let _ = alert("Plain message")
+            .render::<AppState, ()>(&theme)
+            .build(&mut ctx, &mut state);
+        let _ = alert("Titled")
+            .variant(AlertVariant::Warning)
+            .title("Heads up")
+            .render::<AppState, ()>(&theme)
+            .build(&mut ctx, &mut state);
+        let _ = alert("Banner")
+            .variant(AlertVariant::Info)
+            .banner()
+            .render::<AppState, ()>(&theme)
+            .build(&mut ctx, &mut state);
+        let _ = alert("Dismissible")
+            .variant(AlertVariant::Error)
+            .on_close(|_: &mut AppState| ())
+            .render::<AppState, ()>(&theme)
+            .build(&mut ctx, &mut state);
+        let _ = alert("No icon")
+            .variant(AlertVariant::Success)
+            .no_icon()
+            .render::<AppState, ()>(&theme)
+            .build(&mut ctx, &mut state);
     }
 }

@@ -132,3 +132,60 @@ impl<State, Action> Breadcrumb<State, Action> {
         access_wrap::annotate(trail, AccessAnnotation::Navigation)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use xilem::ViewCtx;
+    use xilem::core::View;
+
+    use super::{breadcrumb, segment};
+    use crate::{Theme, test_support};
+
+    #[derive(Default)]
+    struct AppState;
+
+    #[test]
+    fn empty_trail_builds_without_panicking() {
+        let theme = Theme::default();
+        let mut ctx = ViewCtx::new(
+            test_support::noop_proxy(),
+            test_support::current_thread_runtime(),
+        );
+        let mut state = AppState;
+
+        let _ = breadcrumb::<AppState, ()>()
+            .render(&theme)
+            .build(&mut ctx, &mut state);
+    }
+
+    #[test]
+    fn trail_with_ancestor_and_current_segments_builds_without_panicking() {
+        let theme = Theme::default();
+        let mut ctx = ViewCtx::new(
+            test_support::noop_proxy(),
+            test_support::current_thread_runtime(),
+        );
+        let mut state = AppState;
+
+        let trail = breadcrumb()
+            .segment(segment("Home").on_select(|_: &mut AppState| ()))
+            .segment(segment("Section").on_select(|_: &mut AppState| ()))
+            .segment(segment("Current"));
+        let _ = trail.render(&theme).build(&mut ctx, &mut state);
+    }
+
+    #[test]
+    fn single_segment_trail_builds_without_a_leading_chevron() {
+        // Only segments after the first get a chevron separator; a lone
+        // segment must build cleanly with none.
+        let theme = Theme::default();
+        let mut ctx = ViewCtx::new(
+            test_support::noop_proxy(),
+            test_support::current_thread_runtime(),
+        );
+        let mut state = AppState;
+
+        let trail = breadcrumb().segment(segment::<AppState, ()>("Only"));
+        let _ = trail.render(&theme).build(&mut ctx, &mut state);
+    }
+}

@@ -152,7 +152,7 @@ impl Icon {
 mod tests {
     use xilem::WidgetView;
 
-    use super::{IconName, disclosure_chevron, disclosure_icon};
+    use super::{IconName, disclosure_chevron, disclosure_icon, icon};
     use crate::Theme;
 
     /// The disclosure mapping is the single source of truth shared by the
@@ -181,5 +181,33 @@ mod tests {
         let theme = Theme::default();
         assert_widget_view(&disclosure_chevron::<(), ()>(true, &theme));
         assert_widget_view(&disclosure_chevron::<(), ()>(false, &theme));
+    }
+
+    #[test]
+    fn defaults_to_no_color_or_size_override_and_not_decorative() {
+        let i = icon(IconName::Bell);
+        assert!(i.color.is_none());
+        assert!(i.size.is_none());
+        assert!(!i.decorative);
+    }
+
+    #[test]
+    fn builder_methods_set_the_expected_fields() {
+        let theme = Theme::default();
+        let i = icon(IconName::Bell)
+            .color(theme.palette.accent)
+            .size(20.0)
+            .decorative();
+        assert_eq!(i.color, Some(theme.palette.accent));
+        assert_eq!(i.size, Some(20.0));
+        assert!(i.decorative);
+    }
+
+    #[test]
+    fn plain_and_decorative_icons_build_a_view() {
+        fn assert_widget_view<V: WidgetView<(), ()>>(_: &V) {}
+        let theme = Theme::default();
+        assert_widget_view(&icon(IconName::Bell).render::<(), ()>(&theme));
+        assert_widget_view(&icon(IconName::Bell).decorative().render::<(), ()>(&theme));
     }
 }

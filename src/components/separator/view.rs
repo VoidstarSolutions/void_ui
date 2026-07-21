@@ -174,3 +174,67 @@ impl<S: 'static, A: 'static> View<S, A, ViewCtx> for SeparatorLineView {
         MessageResult::Stale
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use xilem::ViewCtx;
+    use xilem::core::View;
+
+    use super::{Orientation, SeparatorStyle, separator};
+    use crate::{Theme, test_support};
+
+    #[derive(Default)]
+    struct AppState;
+
+    #[test]
+    fn defaults_to_horizontal_solid_no_color_or_label_override() {
+        let s = separator();
+        assert_eq!(s.orientation, Orientation::Horizontal);
+        assert_eq!(s.style, SeparatorStyle::Solid);
+        assert!(s.color.is_none());
+        assert!(s.label.is_none());
+    }
+
+    #[test]
+    fn builder_methods_set_the_expected_fields() {
+        let theme = Theme::default();
+        let s = separator()
+            .vertical()
+            .dashed()
+            .color(theme.palette.accent)
+            .label("Section");
+        assert_eq!(s.orientation, Orientation::Vertical);
+        assert_eq!(s.style, SeparatorStyle::Dashed);
+        assert_eq!(s.color, Some(theme.palette.accent));
+        assert_eq!(s.label.as_deref(), Some("Section"));
+    }
+
+    #[test]
+    fn plain_labeled_vertical_and_dashed_separators_build_without_panicking() {
+        let theme = Theme::default();
+        let mut ctx = ViewCtx::new(
+            test_support::noop_proxy(),
+            test_support::current_thread_runtime(),
+        );
+        let mut state = AppState;
+
+        let _ = separator()
+            .render::<AppState, ()>(&theme)
+            .build(&mut ctx, &mut state);
+        let _ = separator()
+            .vertical()
+            .dashed()
+            .color(theme.palette.accent)
+            .render::<AppState, ()>(&theme)
+            .build(&mut ctx, &mut state);
+        let _ = separator()
+            .label("Section")
+            .render::<AppState, ()>(&theme)
+            .build(&mut ctx, &mut state);
+        let _ = separator()
+            .vertical()
+            .label("Section")
+            .render::<AppState, ()>(&theme)
+            .build(&mut ctx, &mut state);
+    }
+}

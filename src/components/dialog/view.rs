@@ -293,7 +293,7 @@ mod tests {
     use xilem::ViewCtx;
     use xilem::core::View;
 
-    use super::dialog;
+    use super::{CloseCallback, dialog};
     use crate::Theme;
     use crate::label::label;
     use crate::overlay_scope::overlay_scope;
@@ -318,5 +318,78 @@ mod tests {
         let mut ctx = ViewCtx::new(proxy, runtime);
         let mut state = AppState;
         let _ = scope.build(&mut ctx, &mut state);
+    }
+
+    #[test]
+    fn closed_show_close_button_and_on_close_combinations_all_build() {
+        let theme = Theme::default();
+        let mut ctx = ViewCtx::new(
+            test_support::noop_proxy(),
+            test_support::current_thread_runtime(),
+        );
+        let mut state = AppState;
+
+        // Closed on mount.
+        let content = label("content").render::<AppState, ()>(&theme);
+        let scope = overlay_scope(dialog(false, content).render(&theme));
+        let _ = scope.build(&mut ctx, &mut state);
+
+        // `show_close_button` with no `on_close`: `CloseCallback::enabled()`
+        // is `false` for `()`, so the button is a no-op per the doc comment
+        // on `show_close_button` — must still build cleanly.
+        let content = label("content").render::<AppState, ()>(&theme);
+        let scope = overlay_scope(dialog(true, content).show_close_button().render(&theme));
+        let _ = scope.build(&mut ctx, &mut state);
+
+        // `on_close` without `show_close_button`: outside-click dismissal
+        // wired, no header.
+        let content = label("content").render::<AppState, ()>(&theme);
+        let scope = overlay_scope(
+            dialog(true, content)
+                .on_close(|_: &mut AppState| ())
+                .render(&theme),
+        );
+        let _ = scope.build(&mut ctx, &mut state);
+
+        // Both set: header with a close button that invokes `on_close`.
+        let content = label("content").render::<AppState, ()>(&theme);
+        let scope = overlay_scope(
+            dialog(true, content)
+                .show_close_button()
+                .on_close(|_: &mut AppState| ())
+                .render(&theme),
+        );
+        let _ = scope.build(&mut ctx, &mut state);
+    }
+
+    #[test]
+    fn show_close_button_sets_the_builder_flag() {
+        let theme = Theme::default();
+        let content = label("content").render::<AppState, ()>(&theme);
+        let d = dialog(true, content).show_close_button();
+        assert!(d.show_close_button);
+    }
+
+    fn assert_enabled<State: 'static, Action: 'static, D: CloseCallback<State, Action>>(
+        expected: bool,
+    ) {
+        assert_eq!(D::enabled(), expected);
+    }
+
+    #[test]
+    fn no_close_callback_is_disabled() {
+        assert_enabled::<AppState, (), ()>(false);
+    }
+
+    #[test]
+    fn a_close_callback_closure_is_enabled() {
+        assert_enabled::<AppState, (), fn(&mut AppState)>(true);
+    }
+
+    #[test]
+    #[should_panic(expected = "CloseCallback::call on a disabled callback")]
+    fn calling_the_disabled_callback_panics() {
+        let mut state = AppState;
+        let _: () = <() as CloseCallback<AppState, ()>>::call(&(), &mut state);
     }
 }

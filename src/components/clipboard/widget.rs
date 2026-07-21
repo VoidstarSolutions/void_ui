@@ -216,3 +216,84 @@ impl Widget for ClipboardWidget {
         false
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use masonry::core::NewWidget;
+    use masonry::testing::TestHarness;
+
+    use super::ClipboardWidget;
+    use crate::Theme;
+
+    fn harness() -> TestHarness<ClipboardWidget> {
+        TestHarness::create(
+            masonry::theme::default_property_set(),
+            NewWidget::new(ClipboardWidget::new(&Theme::default())),
+        )
+    }
+
+    #[test]
+    fn starts_uncopied() {
+        let mut h = harness();
+        h.edit_root_widget(|wm| {
+            assert!(!wm.widget.copied);
+        });
+    }
+
+    #[test]
+    fn set_copied_true_flips_state() {
+        let mut h = harness();
+        h.edit_root_widget(|mut wm| {
+            ClipboardWidget::set_copied(&mut wm, true);
+            assert!(wm.widget.copied);
+        });
+    }
+
+    #[test]
+    fn set_copied_false_cancels_immediately() {
+        let mut h = harness();
+        h.edit_root_widget(|mut wm| {
+            ClipboardWidget::set_copied(&mut wm, true);
+            ClipboardWidget::set_copied(&mut wm, false);
+            assert!(!wm.widget.copied);
+        });
+    }
+
+    #[test]
+    fn copied_state_reverts_automatically_after_the_feedback_duration() {
+        let mut h = harness();
+        h.edit_root_widget(|mut wm| {
+            ClipboardWidget::set_copied(&mut wm, true);
+        });
+
+        h.animate_ms(1600);
+
+        h.edit_root_widget(|wm| {
+            assert!(
+                !wm.widget.copied,
+                "copied feedback should revert after ~1.5s"
+            );
+        });
+    }
+
+    #[test]
+    fn reactivating_while_copied_restarts_the_countdown() {
+        let mut h = harness();
+        h.edit_root_widget(|mut wm| {
+            ClipboardWidget::set_copied(&mut wm, true);
+        });
+        h.animate_ms(1000);
+        h.edit_root_widget(|mut wm| {
+            // Re-activating mid-countdown must reset the elapsed timer, not
+            // just no-op because `copied` was already `true`.
+            ClipboardWidget::set_copied(&mut wm, true);
+        });
+        h.animate_ms(1000);
+        h.edit_root_widget(|wm| {
+            assert!(
+                wm.widget.copied,
+                "restarted countdown should still be within its duration"
+            );
+        });
+    }
+}

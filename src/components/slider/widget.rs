@@ -822,3 +822,285 @@ mod density_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod value_math_tests {
+    use super::*;
+
+    fn single(min: f64, max: f64, step: f64) -> SliderWidget {
+        SliderWidget::new_single(
+            &Theme::dark(),
+            min,
+            min,
+            max,
+            step,
+            false,
+            Orientation::Horizontal,
+        )
+    }
+
+    fn range(low: f64, high: f64, min: f64, max: f64) -> SliderWidget {
+        SliderWidget::new_range(
+            &Theme::dark(),
+            low,
+            high,
+            min,
+            max,
+            0.0,
+            false,
+            Orientation::Horizontal,
+        )
+    }
+
+    #[test]
+    fn snap_rounds_to_the_nearest_step_and_clamps_to_bounds() {
+        let w = single(0.0, 10.0, 2.0);
+        assert!((w.snap(3.1) - 4.0).abs() < 1e-9);
+        assert!((w.snap(-5.0) - 0.0).abs() < 1e-9, "must clamp below min");
+        assert!((w.snap(50.0) - 10.0).abs() < 1e-9, "must clamp above max");
+    }
+
+    #[test]
+    fn snap_is_a_passthrough_when_step_is_not_positive() {
+        let w = single(0.0, 10.0, 0.0);
+        assert!((w.snap(3.14842) - 3.14842).abs() < 1e-9);
+    }
+
+    #[test]
+    fn nudge_uses_the_configured_step_when_positive() {
+        let w = single(0.0, 10.0, 2.0);
+        assert!((w.nudge() - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn nudge_defaults_to_one_hundredth_of_the_range_when_continuous() {
+        let w = single(0.0, 200.0, 0.0);
+        assert!((w.nudge() - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn value_from_position_round_trips_thumb_main_axis_pos() {
+        let w = single(0.0, 100.0, 0.0);
+        let size = Size::new(300.0, 40.0);
+        for v in [0.0, 25.0, 50.0, 75.0, 100.0] {
+            let pos = w.thumb_center(size, v);
+            let recovered = w.value_from_position(size, pos);
+            assert!((recovered - v).abs() < 1e-6, "v={v} recovered={recovered}");
+        }
+    }
+
+    #[test]
+    fn value_from_position_clamps_positions_outside_the_track() {
+        let w = single(0.0, 100.0, 0.0);
+        let size = Size::new(300.0, 40.0);
+        assert!((w.value_from_position(size, Point::new(-1000.0, 20.0)) - 0.0).abs() < 1e-6);
+        assert!((w.value_from_position(size, Point::new(1000.0, 20.0)) - 100.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn thumb_at_picks_the_nearer_thumb_in_range_mode() {
+        let w = range(20.0, 80.0, 0.0, 100.0);
+        let size = Size::new(300.0, 40.0);
+        let near_low = w.thumb_center(size, 20.0);
+        let near_high = w.thumb_center(size, 80.0);
+        assert_eq!(w.thumb_at(size, near_low), Thumb::Low);
+        assert_eq!(w.thumb_at(size, near_high), Thumb::High);
+    }
+
+    #[test]
+    fn thumb_at_breaks_a_collapsed_range_tie_by_pointer_side() {
+        let w = range(50.0, 50.0, 0.0, 100.0);
+        let size = Size::new(300.0, 40.0);
+        let center = w.thumb_center(size, 50.0);
+        let just_past = Point::new(center.x + 1.0, center.y);
+        let just_before = Point::new(center.x - 1.0, center.y);
+        assert_eq!(w.thumb_at(size, just_past), Thumb::High);
+        assert_eq!(w.thumb_at(size, just_before), Thumb::Low);
+    }
+
+    #[test]
+    fn value_for_thumb_prevents_the_low_thumb_from_crossing_high() {
+        let w = range(20.0, 80.0, 0.0, 100.0);
+        assert_eq!(
+            w.value_for_thumb(Thumb::Low, 95.0),
+            SliderValue::Range(80.0, 80.0)
+        );
+    }
+
+    #[test]
+    fn value_for_thumb_prevents_the_high_thumb_from_crossing_low() {
+        let w = range(20.0, 80.0, 0.0, 100.0);
+        assert_eq!(
+            w.value_for_thumb(Thumb::High, 5.0),
+            SliderValue::Range(20.0, 20.0)
+        );
+    }
+}
+
+#[cfg(test)]
+mod interaction_tests {
+    use masonry::core::keyboard::{Key, NamedKey};
+    use masonry::core::{NewWidget, PointerButton, TextEvent};
+    use masonry::testing::TestHarness;
+
+    use super::*;
+
+    fn single_harness(
+        value: f64,
+        min: f64,
+        max: f64,
+        step: f64,
+        disabled: bool,
+    ) -> TestHarness<SliderWidget> {
+        let widget = SliderWidget::new_single(
+            &Theme::dark(),
+            value,
+            min,
+            max,
+            step,
+            disabled,
+            Orientation::Horizontal,
+        );
+        TestHarness::create_with_size(
+            masonry::theme::default_property_set(),
+            NewWidget::new(widget),
+            (300, 40),
+        )
+    }
+
+    fn range_harness(low: f64, high: f64, min: f64, max: f64) -> TestHarness<SliderWidget> {
+        let widget = SliderWidget::new_range(
+            &Theme::dark(),
+            low,
+            high,
+            min,
+            max,
+            0.0,
+            false,
+            Orientation::Horizontal,
+        );
+        TestHarness::create_with_size(
+            masonry::theme::default_property_set(),
+            NewWidget::new(widget),
+            (300, 40),
+        )
+    }
+
+    #[test]
+    fn clicking_the_track_emits_slider_changed_at_the_clicked_value() {
+        let mut h = single_harness(50.0, 0.0, 100.0, 0.0, false);
+        let size = h.root_widget().ctx().border_box().size();
+        let calc = SliderWidget::new_single(
+            &Theme::dark(),
+            50.0,
+            0.0,
+            100.0,
+            0.0,
+            false,
+            Orientation::Horizontal,
+        );
+        let pos = calc.thumb_center(size, 80.0);
+
+        h.mouse_move(pos);
+        h.mouse_button_press(Some(PointerButton::Primary));
+
+        let (SliderChanged(value), _) = h
+            .pop_action::<SliderChanged>()
+            .expect("clicking the track should emit SliderChanged");
+        match value {
+            SliderValue::Single(v) => assert!((v - 80.0).abs() < 1.0, "expected ~80.0, got {v}"),
+            SliderValue::Range(..) => panic!("expected a Single value"),
+        }
+    }
+
+    #[test]
+    fn disabled_slider_ignores_pointer_input() {
+        let mut h = single_harness(50.0, 0.0, 100.0, 0.0, true);
+        let size = h.root_widget().ctx().border_box().size();
+        let calc = SliderWidget::new_single(
+            &Theme::dark(),
+            50.0,
+            0.0,
+            100.0,
+            0.0,
+            false,
+            Orientation::Horizontal,
+        );
+        let pos = calc.thumb_center(size, 80.0);
+
+        h.mouse_move(pos);
+        h.mouse_button_press(Some(PointerButton::Primary));
+
+        assert!(h.pop_action_erased().is_none());
+    }
+
+    #[test]
+    fn arrow_right_nudges_the_value_up_by_the_step() {
+        let mut h = single_harness(50.0, 0.0, 100.0, 5.0, false);
+        h.focus_on(Some(h.root_id()));
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowRight)));
+
+        let (SliderChanged(value), _) = h
+            .pop_action::<SliderChanged>()
+            .expect("ArrowRight should emit SliderChanged");
+        assert_eq!(value, SliderValue::Single(55.0));
+    }
+
+    #[test]
+    fn arrow_left_nudges_the_value_down_by_the_step() {
+        let mut h = single_harness(50.0, 0.0, 100.0, 5.0, false);
+        h.focus_on(Some(h.root_id()));
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowLeft)));
+
+        let (SliderChanged(value), _) = h
+            .pop_action::<SliderChanged>()
+            .expect("ArrowLeft should emit SliderChanged");
+        assert_eq!(value, SliderValue::Single(45.0));
+    }
+
+    #[test]
+    fn home_and_end_jump_to_the_bounds() {
+        let mut h = single_harness(50.0, 0.0, 100.0, 5.0, false);
+        h.focus_on(Some(h.root_id()));
+
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Home)));
+        let (SliderChanged(value), _) = h
+            .pop_action::<SliderChanged>()
+            .expect("Home should emit SliderChanged");
+        assert_eq!(value, SliderValue::Single(0.0));
+
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::End)));
+        let (SliderChanged(value), _) = h
+            .pop_action::<SliderChanged>()
+            .expect("End should emit SliderChanged");
+        assert_eq!(value, SliderValue::Single(100.0));
+    }
+
+    #[test]
+    fn disabled_slider_ignores_keyboard_input() {
+        let mut h = single_harness(50.0, 0.0, 100.0, 5.0, true);
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowRight)));
+
+        assert!(h.pop_action_erased().is_none());
+    }
+
+    #[test]
+    fn gaining_focus_in_range_mode_resets_to_the_low_thumb() {
+        let mut h = range_harness(20.0, 80.0, 0.0, 100.0);
+        h.focus_on(Some(h.root_id()));
+        h.edit_root_widget(|wm| {
+            assert_eq!(wm.widget.focused_thumb, Thumb::Low);
+        });
+    }
+
+    #[test]
+    fn tab_steps_focus_from_low_to_high_thumb_in_range_mode() {
+        let mut h = range_harness(20.0, 80.0, 0.0, 100.0);
+        h.focus_on(Some(h.root_id()));
+
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
+        h.edit_root_widget(|wm| {
+            assert_eq!(wm.widget.focused_thumb, Thumb::High);
+        });
+    }
+}

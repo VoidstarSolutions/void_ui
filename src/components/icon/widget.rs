@@ -36,3 +36,38 @@ impl Icon {
         lbl
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use lucide_icons::Icon as IconName;
+
+    use super::Icon;
+    use crate::Theme;
+
+    #[test]
+    fn build_widget_uses_the_icons_glyph_char() {
+        let theme = Theme::default();
+        let nw = Icon::from(IconName::Bell).build_widget(&theme);
+        assert_eq!(
+            nw.widget.text().as_ref(),
+            &String::from(char::from(IconName::Bell))
+        );
+    }
+
+    #[test]
+    fn distinct_icons_produce_distinct_glyphs() {
+        let theme = Theme::default();
+        let bell = Icon::from(IconName::Bell).build_widget(&theme);
+        let x = Icon::from(IconName::X).build_widget(&theme);
+        assert_ne!(bell.widget.text(), x.widget.text());
+    }
+
+    #[test]
+    fn build_widget_does_not_panic_with_overrides() {
+        let theme = Theme::default();
+        let _ = Icon::from(IconName::Bell)
+            .color(theme.palette.accent)
+            .size(24.0)
+            .build_widget(&theme);
+    }
+}
