@@ -1,120 +1,78 @@
-//! Masonry widget that hosts a child widget and pops a tooltip
-//! [`Layer`](masonry::core::Layer) after the pointer has been idle over
-//! it for a configurable delay.
+//! Masonry widget that hosts a child widget and shows a tooltip popup after
+//! the pointer has been idle over it for a configurable delay.
 //!
-//! Built on top of masonry's overlay infrastructure: [`EventCtx::create_layer`]
-//! creates a window-level layer, [`masonry::layers::Tooltip`] is the layer
-//! widget itself (it dismisses itself on the next pointer activity via
-//! `Layer::capture_pointer_event`), and the delay is a hand-rolled
-//! `Instant`/`Duration` loop driven by `request_anim_frame()`.
-//!
-//! We use `create_layer` rather than `create_attached_layer` because the
-//! latter tracks the layer in an `attached_layers` map keyed by the host
-//! widget. When `TooltipLayer` self-removes via `capture_pointer_event` it
-//! does not clean up that map entry, so a subsequent `create_attached_layer`
-//! call would emit a spurious `RemoveLayer` for the already-gone layer and
-//! panic. Instead we track `layer_id` ourselves and clear it in
-//! `on_pointer_event` (which fires after each `capture_pointer_event`).
+//! Built on the same `overlay_scope`/`overlay_portal` mechanism `popover` and
+//! `dialog` use — required (no in-tree fallback), since masonry's window
+//! `Layer` can't route `View::message` to arbitrary content (see
+//! `docs/superpowers/specs/2026-07-21-tooltip-arbitrary-content-design.md`).
+//! `binding.open_at_point`/`close` push visibility to the scope's portal
+//! slot; the popup content itself is registered separately by the view layer
+//! (`super::view::TooltipView`) and lives entirely in that slot.
 
 use std::time::Duration;
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
-    AccessCtx, ArcStr, ChildrenIds, EventCtx, LayerType, LayoutCtx, MeasureCtx, NewWidget,
-    NoAction, PaintCtx, PointerEvent, PointerUpdate, PropertiesMut, PropertiesRef, RegisterCtx,
-    StyleProperty, Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
+    PointerEvent, PointerUpdate, PropertiesMut, PropertiesRef, RegisterCtx, Update, UpdateCtx,
+    Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Size, Vec2};
-use masonry::layers::Tooltip as TooltipLayer;
 use masonry::layout::{LenReq, Length};
-use masonry::properties::types::CrossAxisAlignment;
-use masonry::properties::{
-    Background, BorderColor, BorderWidth, ContentColor, CornerRadius, Gap, Padding,
-};
 use masonry::util::Instant;
-use masonry::widgets::{Flex, Label, SizedBox};
 
-use super::view::{TooltipContent, TooltipRow};
-use crate::Theme;
+use crate::overlay::binding::{PortalBinding, PortalCtx};
+use crate::overlay_scope::OverlayScopeHandle;
 
-/// Offset of the tooltip layer from the cursor: slightly right, well below
-/// the typical button-press hand-shape so the label is readable.
+/// Offset of the tooltip popup from the cursor: slightly right, well below
+/// the typical button-press hand-shape so the content is readable.
 const CURSOR_OFFSET: Vec2 = Vec2::new(12.0, 20.0);
-/// Border thickness on the tooltip surface.
-const BORDER_WIDTH: Length = Length::const_px(1.0);
-/// Padding inside the tooltip surface around the label.
-const PADDING: Length = Length::const_px(6.0);
-/// Diameter of a rows-tooltip legend dot, matching the sidebar's own
-/// status-dot size so the legend reads as the same visual language.
-const ROW_DOT_SIZE: Length = Length::const_px(8.0);
-/// Corner radius that turns a [`ROW_DOT_SIZE`] square into a circle.
-const ROW_DOT_RADIUS: Length = Length::const_px(4.0);
-/// Gap between a row's dot and its label.
-const ROW_DOT_LABEL_GAP: Length = Length::const_px(6.0);
-/// Vertical gap between rows in a rows-style tooltip.
-const ROW_LINE_GAP: Length = Length::const_px(4.0);
 
-/// Hosts a child widget and creates a tooltip layer on hover-idle.
+/// Hosts a child widget and shows a portal-mounted tooltip popup on
+/// hover-idle (or keyboard-focus-idle).
 ///
 /// Tracks the most recent pointer-move time in `last_pointer_move` and the
-/// cursor position in `last_cursor_pos`. While `last_pointer_move` is `Some`,
-/// the widget polls via `request_anim_frame` until the configured `delay`
-/// has elapsed, then materializes a [`masonry::layers::Tooltip`] layer at
-/// the cursor position. The layer dismisses itself on the next pointer
-/// activity (see [`masonry::layers::Tooltip::capture_pointer_event`]);
-/// when the pointer leaves the host the timer is cleared so a new idle
-/// period starts cleanly on re-entry.
+/// last-known anchor point (cursor position, or the child's bottom-left
+/// corner for keyboard focus) in `last_cursor_pos_window`. While
+/// `last_pointer_move` is `Some`, the widget polls via `request_anim_frame`
+/// until `delay` has elapsed, then opens the popup at
+/// `last_cursor_pos_window + CURSOR_OFFSET` via `binding.open_at_point`.
+/// `visible` mirrors whether the popup is currently shown, kept in sync by
+/// `tooltip_dismiss_hook` when an outside press dismisses it.
 pub struct TooltipHost {
     child: WidgetPod<dyn Widget>,
-    content: TooltipContent,
-    theme: Theme,
+    binding: PortalBinding,
     delay: Duration,
     last_pointer_move: Option<Instant>,
-    last_cursor_pos: Point,
-    /// ID of the currently-live tooltip layer, if any.
-    /// Cleared in `on_pointer_event` so we don't try to create a layer
-    /// while one is already showing.
-    layer_id: Option<WidgetId>,
+    last_cursor_pos_window: Point,
+    visible: bool,
 }
 
 // --- MARK: BUILDERS
 impl TooltipHost {
-    /// Creates a new tooltip host wrapping `child`.
+    /// Creates a new tooltip host wrapping `child`, whose popup content is
+    /// already registered under `key` in `scope`'s portal.
     #[must_use]
     pub(crate) fn new(
         child: NewWidget<impl Widget + ?Sized>,
-        content: TooltipContent,
-        theme: &Theme,
+        scope: OverlayScopeHandle,
+        key: u64,
         delay: Duration,
     ) -> Self {
         Self {
             child: child.erased().to_pod(),
-            content,
-            theme: *theme,
+            binding: PortalBinding::new(scope, key, tooltip_dismiss_hook),
             delay,
             last_pointer_move: None,
-            last_cursor_pos: Point::ZERO,
-            layer_id: None,
+            last_cursor_pos_window: Point::ZERO,
+            visible: false,
         }
     }
 }
 
 // --- MARK: WIDGETMUT
 impl TooltipHost {
-    /// Replaces the theme used to style the tooltip surface.
-    pub fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
-        if this.widget.theme != *theme {
-            this.widget.theme = *theme;
-        }
-    }
-
-    /// Replaces the tooltip content shown on the layer.
-    pub(crate) fn set_content(this: &mut WidgetMut<'_, Self>, content: TooltipContent) {
-        this.widget.content = content;
-        this.ctx.request_accessibility_update();
-    }
-
     /// Replaces the hover-idle delay before the tooltip appears.
     pub fn set_delay(this: &mut WidgetMut<'_, Self>, delay: Duration) {
         this.widget.delay = delay;
@@ -124,89 +82,38 @@ impl TooltipHost {
     pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
         this.ctx.get_mut(&mut this.widget.child)
     }
+
+    /// Sync `visible` after the portal slot dismissed the popup (outside
+    /// press). Mirrors `PopoverHost::mark_closed`; unlike popover, there's no
+    /// action to submit — a tooltip's visibility is purely internal.
+    pub(crate) fn mark_dismissed(this: &mut WidgetMut<'_, Self>) {
+        this.widget.visible = false;
+    }
 }
 
-// --- MARK: LAYER BUILDER
+/// Dismiss hook registered with the portal slot (see
+/// [`crate::overlay_portal::DismissHook`]): syncs `visible` after an
+/// outside-press dismissal via [`TooltipHost::mark_dismissed`].
+pub(crate) fn tooltip_dismiss_hook(mut w: WidgetMut<'_, dyn Widget>) {
+    let mut host = w.downcast::<TooltipHost>();
+    TooltipHost::mark_dismissed(&mut host);
+}
+
+// --- MARK: INTERNAL HELPERS
 impl TooltipHost {
-    /// Builds the tooltip layer widget freshly each time it is shown.
-    /// Properties are applied per-instance because the theme may have
-    /// changed since the last presentation.
-    fn build_layer(&self) -> NewWidget<TooltipLayer> {
-        let surface = match &self.content {
-            TooltipContent::Text(text) => self.build_text_surface(text),
-            TooltipContent::Rows(rows) => self.build_rows_surface(rows),
-        };
-
-        let mut tooltip = NewWidget::new(TooltipLayer::new(surface));
-        tooltip.properties.insert(BorderWidth::all(BORDER_WIDTH));
-        tooltip
-            .properties
-            .insert(BorderColor::new(self.theme.palette.border_strong));
-        tooltip
-            .properties
-            .insert(Background::Color(self.theme.palette.surface_hi));
-        tooltip.properties.insert(Padding::all(PADDING));
-        tooltip
+    /// Show the popup at the current anchor point, if not already visible.
+    fn show(&mut self, ctx: &mut UpdateCtx<'_>) {
+        let point = self.last_cursor_pos_window + CURSOR_OFFSET;
+        self.binding.open_at_point(ctx, point);
+        self.visible = true;
     }
 
-    /// A single line of text, styled to match the tooltip surface.
-    fn build_text_surface(&self, text: &ArcStr) -> NewWidget<dyn Widget> {
-        let mut label = Label::new(text.clone())
-            .with_style(StyleProperty::FontSize(self.theme.typography.size_body))
-            .prepare();
-        label
-            .properties
-            .insert(ContentColor::new(self.theme.palette.text));
-        label.erased()
-    }
-
-    /// A vertical list of dot+label rows, e.g. a status-colour legend —
-    /// each row is the same coloured-dot shape the sidebar uses for its own
-    /// status dots, so the legend reads as the same visual language as the
-    /// thing it explains.
-    fn build_rows_surface(&self, rows: &[TooltipRow]) -> NewWidget<dyn Widget> {
-        let mut column = Flex::column().cross_axis_alignment(CrossAxisAlignment::Start);
-        for row in rows {
-            let mut dot = SizedBox::empty()
-                .width(ROW_DOT_SIZE)
-                .height(ROW_DOT_SIZE)
-                .prepare();
-            dot.properties.insert(Background::Color(row.color));
-            dot.properties.insert(CornerRadius::all(ROW_DOT_RADIUS));
-
-            let mut label = Label::new(row.label.clone())
-                .with_style(StyleProperty::FontSize(self.theme.typography.size_body))
-                .prepare();
-            label
-                .properties
-                .insert(ContentColor::new(self.theme.palette.text));
-
-            let mut line = Flex::row()
-                .cross_axis_alignment(CrossAxisAlignment::Center)
-                .with_fixed(dot.erased())
-                .with_fixed(label.erased())
-                .prepare();
-            line.properties.insert(Gap::new(ROW_DOT_LABEL_GAP));
-
-            column = column.with_fixed(line.erased());
-        }
-        let mut column = column.prepare();
-        column.properties.insert(Gap::new(ROW_LINE_GAP));
-        column.erased()
-    }
-
-    /// Flattened text used for the accessibility description and the
-    /// window layer's debug tag. A rows tooltip loses its colour coding in
-    /// this form (screen readers don't convey colour anyway), but keeps the
-    /// row labels in order.
-    fn description(&self) -> String {
-        match &self.content {
-            TooltipContent::Text(text) => text.to_string(),
-            TooltipContent::Rows(rows) => rows
-                .iter()
-                .map(|row| row.label.as_ref())
-                .collect::<Vec<_>>()
-                .join(", "),
+    /// Hide the popup, if currently visible. No-op otherwise, so callers can
+    /// call this unconditionally on every hover/focus-loss signal.
+    fn hide(&mut self, ctx: &mut impl PortalCtx) {
+        if self.visible {
+            self.binding.close(ctx);
+            self.visible = false;
         }
     }
 }
@@ -222,11 +129,10 @@ impl Widget for TooltipHost {
         event: &PointerEvent,
     ) {
         if let PointerEvent::Move(PointerUpdate { current, .. }) = event {
-            self.last_cursor_pos = current.logical_point();
-            // The TooltipLayer's capture_pointer_event fires before this handler
-            // and has already queued RemoveLayer. Clear our tracking so the
-            // next anim-frame won't think a layer is still live.
-            self.layer_id = None;
+            self.last_cursor_pos_window = current.logical_point();
+            // Any pointer activity dismisses an already-shown tooltip,
+            // including a jiggle while still hovering the same child.
+            self.hide(ctx);
             self.last_pointer_move = Some(Instant::now());
             ctx.request_anim_frame();
         }
@@ -242,22 +148,9 @@ impl Widget for TooltipHost {
             return;
         };
         if Instant::now().duration_since(last) >= self.delay {
-            // Guard: on_pointer_event clears layer_id whenever the pointer
-            // moves (which also triggers the layer's self-dismissal), so
-            // this should always be None here. Belt-and-suspenders.
-            if self.layer_id.is_none() {
-                let layer = self.build_layer();
-                let layer_id = layer.id();
-                let pos = self.last_cursor_pos + CURSOR_OFFSET;
-                ctx.create_layer::<TooltipLayer>(
-                    LayerType::Tooltip(self.description()),
-                    layer,
-                    pos,
-                );
-                self.layer_id = Some(layer_id);
+            if !self.visible {
+                self.show(ctx);
             }
-            // Disarm the timer. The next PointerEvent::Move re-arms via
-            // on_pointer_event (and clears layer_id so we can show again).
             self.last_pointer_move = None;
         } else {
             ctx.request_anim_frame();
@@ -266,27 +159,18 @@ impl Widget for TooltipHost {
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
-            // When an *interactive* child (a button) is hovered, it — not
-            // TooltipHost — is the directly-hovered widget, so the host sees
-            // `ChildHoveredChanged` rather than `HoveredChanged`. Use the
-            // child signal to disarm the timer so we don't accumulate live
-            // timers across siblings.
-            Update::ChildHoveredChanged(false) => {
+            // Hover/focus loss disarms the timer and hides an already-shown
+            // popup. `ChildHoveredChanged(false)` fires when an *interactive*
+            // child (a button) — not TooltipHost — was the directly-hovered
+            // widget; `HoveredChanged(false)` covers the host's own hover
+            // loss, which is what fires for a non-interactive child (a plain
+            // label or icon) that never becomes the hovered widget itself;
+            // `ChildFocusChanged(false)` is the keyboard-focus equivalent.
+            Update::ChildHoveredChanged(false)
+            | Update::HoveredChanged(false)
+            | Update::ChildFocusChanged(false) => {
                 self.last_pointer_move = None;
-            }
-            // Hover loss on the host itself. A non-interactive child (a plain
-            // label or icon) never becomes the hovered widget — the host does —
-            // so `ChildHoveredChanged` never fires for it, only `HoveredChanged`.
-            // Without this match arm the host's `layer_id` goes stale on leave,
-            // and the `on_anim_frame` guard (`if self.layer_id.is_none()`) then
-            // blocks *every* future tooltip — the glyph shows a tip once and
-            // never again. The visible layer self-dismisses via the leaving
-            // pointer move (`TooltipLayer::capture_pointer_event`), so we only
-            // clear our own tracking here; calling `remove_layer` on the
-            // already-gone layer would `debug_panic!`.
-            Update::HoveredChanged(false) => {
-                self.last_pointer_move = None;
-                self.layer_id = None;
+                self.hide(ctx);
             }
             // Keyboard users never produce pointer events, so focus is the
             // equivalent "arm the timer" signal: anchor the tooltip at the
@@ -294,20 +178,10 @@ impl Widget for TooltipHost {
             // used for hover.
             Update::ChildFocusChanged(true) => {
                 let rect = ctx.border_box();
-                self.last_cursor_pos = ctx.to_window(Point::new(rect.x0, rect.y1));
-                if let Some(layer_id) = self.layer_id.take() {
-                    ctx.remove_layer(layer_id);
-                }
+                self.last_cursor_pos_window = ctx.to_window(Point::new(rect.x0, rect.y1));
+                self.hide(ctx);
                 self.last_pointer_move = Some(Instant::now());
                 ctx.request_anim_frame();
-            }
-            // Unlike hover, losing focus has no follow-up pointer event to
-            // trigger the layer's self-dismissal, so remove it explicitly.
-            Update::ChildFocusChanged(false) => {
-                self.last_pointer_move = None;
-                if let Some(layer_id) = self.layer_id.take() {
-                    ctx.remove_layer(layer_id);
-                }
             }
             _ => {}
         }
@@ -352,12 +226,8 @@ impl Widget for TooltipHost {
         &mut self,
         _ctx: &mut AccessCtx<'_>,
         _props: &PropertiesRef<'_>,
-        node: &mut Node,
+        _node: &mut Node,
     ) {
-        // Exposes the tooltip text to assistive tech regardless of whether
-        // the layer is currently shown, mirroring the alt-text pattern used
-        // by `Image`/`Canvas`/`Svg`.
-        node.set_description(self.description());
     }
 
     fn children_ids(&self) -> ChildrenIds {
@@ -369,17 +239,56 @@ impl Widget for TooltipHost {
 
 #[cfg(test)]
 mod tests {
-    use masonry::core::NewWidget;
+    use masonry::core::{NewWidget, WidgetId};
     use masonry::testing::TestHarness;
     use masonry::theme::default_property_set;
     use masonry::widgets::Label;
+    use xilem::view::PointerButton;
 
     use super::*;
+    use crate::Theme;
     use crate::components::button::widget::ThemedButton;
+    use crate::overlay_portal::PortalPlacement;
+    use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
-    /// Builds a `TooltipHost` wrapping a focusable button child, returning
-    /// the harness and the child's `WidgetId`.
-    fn harness(delay: Duration) -> (TestHarness<TooltipHost>, WidgetId) {
+    /// Builds an `OverlayScope` whose content is a `TooltipHost` wrapping
+    /// `child`, with a `Label("Tip text")` popup registered under `key = 5`
+    /// in the scope's portal — mirrors `ContextMenuArea::portal_scope_harness`.
+    /// Returns the harness, the popup's portal key, and the host's own
+    /// widget id (needed for `mouse_move_to`/`focus_on` targets now that the
+    /// scope, not the host, is the harness root).
+    fn tooltip_scope_harness(
+        delay: Duration,
+        child: NewWidget<dyn Widget>,
+    ) -> (TestHarness<OverlayScope>, u64, WidgetId) {
+        let key = 5;
+        let scope_handle = OverlayScopeHandle::new();
+        let host = NewWidget::new(TooltipHost::new(child, scope_handle.clone(), key, delay));
+        let host_id = host.id();
+        let content = host.erased();
+        let popup = Label::new("Tip text").prepare().erased();
+        let scope = OverlayScope::new(
+            scope_handle,
+            content,
+            vec![(key, popup, PortalPlacement::Trigger)],
+        );
+        let harness = TestHarness::create(default_property_set(), NewWidget::new(scope));
+        (harness, key, host_id)
+    }
+
+    fn with_host<R>(
+        h: &mut TestHarness<OverlayScope>,
+        f: impl FnOnce(&mut WidgetMut<'_, TooltipHost>) -> R,
+    ) -> R {
+        h.edit_root_widget(|mut wm| {
+            let mut content = OverlayScope::content_mut(&mut wm);
+            let mut host = content.downcast::<TooltipHost>();
+            f(&mut host)
+        })
+    }
+
+    #[test]
+    fn child_focus_gain_shows_after_delay() {
         let theme = Theme::dark();
         let child = NewWidget::new(ThemedButton::new(
             NewWidget::new(Label::new("Hover me")).erased(),
@@ -387,180 +296,110 @@ mod tests {
         ))
         .erased();
         let child_id = child.id();
-        let widget = TooltipHost::new(
-            child,
-            TooltipContent::Text("Tip text".into()),
-            &theme,
-            delay,
-        );
-        let h = TestHarness::create(default_property_set(), NewWidget::new(widget));
-        (h, child_id)
-    }
+        let (mut h, key, _host_id) = tooltip_scope_harness(Duration::ZERO, child);
 
-    #[test]
-    fn accessibility_exposes_tooltip_text_as_description() {
-        let (mut h, _) = harness(Duration::from_millis(300));
-        h.redraw();
+        h.focus_on(Some(child_id));
+        h.animate_ms(1);
 
-        let node = h.access_node(h.root_id()).expect("node exists");
-        assert_eq!(node.description(), Some("Tip text".to_string()));
-    }
-
-    #[test]
-    fn set_content_updates_accessibility_description() {
-        let (mut h, _) = harness(Duration::from_millis(300));
-
+        assert!(with_host(&mut h, |host| host.widget.visible));
         h.edit_root_widget(|mut wm| {
-            TooltipHost::set_content(&mut wm, TooltipContent::Text("New text".into()));
+            let slot = OverlayScope::portal_slot_mut(&mut wm);
+            assert!(
+                slot.widget.placed_rect(key).is_some(),
+                "the popup must actually be placed"
+            );
         });
-        h.redraw();
-
-        let node = h.access_node(h.root_id()).expect("node exists");
-        assert_eq!(node.description(), Some("New text".to_string()));
     }
 
-    /// Keyboard users never produce pointer-move events, so focus gain must
-    /// arm the same idle timer hover does.
     #[test]
-    fn child_focus_gain_shows_layer_after_delay() {
-        let (mut h, child_id) = harness(Duration::ZERO);
+    fn child_focus_loss_hides() {
+        let theme = Theme::dark();
+        let child = NewWidget::new(ThemedButton::new(
+            NewWidget::new(Label::new("Hover me")).erased(),
+            &theme,
+        ))
+        .erased();
+        let child_id = child.id();
+        let (mut h, _key, _host_id) = tooltip_scope_harness(Duration::ZERO, child);
 
         h.focus_on(Some(child_id));
         h.animate_ms(1);
-
-        assert!(h.edit_root_widget(|wm| wm.widget.layer_id.is_some()));
-    }
-
-    /// Losing focus has no follow-up pointer event to trigger the layer's
-    /// self-dismissal, so it must be removed explicitly.
-    #[test]
-    fn child_focus_loss_removes_layer() {
-        let (mut h, child_id) = harness(Duration::ZERO);
-
-        h.focus_on(Some(child_id));
-        h.animate_ms(1);
-        assert!(h.edit_root_widget(|wm| wm.widget.layer_id.is_some()));
+        assert!(with_host(&mut h, |host| host.widget.visible));
 
         h.focus_on(None);
-        assert!(h.edit_root_widget(|wm| wm.widget.layer_id.is_none()));
+        assert!(!with_host(&mut h, |host| host.widget.visible));
     }
 
-    /// Builds a `TooltipHost` wrapping a NON-interactive child (a plain
-    /// `Label`). Such a child never becomes the hovered widget — `TooltipHost`
-    /// itself does — so the tooltip must arm/disarm off the host's own hovered
-    /// status, not the child's.
-    fn label_harness(delay: Duration) -> TestHarness<TooltipHost> {
-        let theme = Theme::dark();
-        let child = NewWidget::new(Label::new("plain")).erased();
-        let widget = TooltipHost::new(
-            child,
-            TooltipContent::Text("Tip text".into()),
-            &theme,
-            delay,
-        );
-        TestHarness::create(default_property_set(), NewWidget::new(widget))
-    }
-
-    /// Number of overlay (non-root) layers actually painted — the
-    /// user-visible signal that a tooltip is on screen, independent of the
-    /// host's internal `layer_id` bookkeeping.
-    fn visible_overlay_layers(h: &mut TestHarness<TooltipHost>) -> usize {
-        h.redraw().0.overlay_layers().count()
-    }
-
-    /// Hovering an icon/label (non-interactive child) must still show the
-    /// tooltip — regression for backfill-error reasons that were invisible on
-    /// hover because the info glyph is a plain `Label`.
     #[test]
-    fn hover_over_noninteractive_child_shows_layer_after_delay() {
-        let mut h = label_harness(Duration::ZERO);
-        let root = h.root_id();
+    fn hover_over_noninteractive_child_shows_after_delay() {
+        let child = NewWidget::new(Label::new("plain")).erased();
+        let (mut h, key, host_id) = tooltip_scope_harness(Duration::ZERO, child);
 
-        h.mouse_move_to(root);
+        h.mouse_move_to(host_id);
         h.animate_ms(1);
 
         assert!(
-            h.edit_root_widget(|wm| wm.widget.layer_id.is_some()),
+            with_host(&mut h, |host| host.widget.visible),
             "hovering a non-interactive child must show the tooltip"
         );
-        assert_eq!(
-            visible_overlay_layers(&mut h),
-            1,
-            "the tooltip layer must actually be painted"
-        );
+        h.edit_root_widget(|mut wm| {
+            let slot = OverlayScope::portal_slot_mut(&mut wm);
+            assert!(slot.widget.placed_rect(key).is_some());
+        });
     }
 
-    /// Leaving the host (pointer moves away entirely) must remove the layer —
-    /// a non-interactive child produces no `ChildHoveredChanged`, so the host's
-    /// own hover-loss is the only disarm signal.
     #[test]
-    fn leaving_host_over_noninteractive_child_removes_layer() {
-        let mut h = label_harness(Duration::ZERO);
-        let root = h.root_id();
+    fn leaving_host_over_noninteractive_child_hides() {
+        let child = NewWidget::new(Label::new("plain")).erased();
+        let (mut h, key, host_id) = tooltip_scope_harness(Duration::ZERO, child);
 
-        h.mouse_move_to(root);
+        h.mouse_move_to(host_id);
         h.animate_ms(1);
-        assert!(h.edit_root_widget(|wm| wm.widget.layer_id.is_some()));
-        assert_eq!(
-            visible_overlay_layers(&mut h),
-            1,
-            "precondition: the tooltip layer is painted before leaving"
-        );
+        assert!(with_host(&mut h, |host| host.widget.visible));
+        h.edit_root_widget(|mut wm| {
+            let slot = OverlayScope::portal_slot_mut(&mut wm);
+            assert!(
+                slot.widget.placed_rect(key).is_some(),
+                "precondition: popup is placed before leaving"
+            );
+        });
 
         h.mouse_move((10_000.0, 10_000.0));
         assert!(
-            h.edit_root_widget(|wm| wm.widget.layer_id.is_none()),
-            "leaving the host must clear the host's layer tracking"
+            !with_host(&mut h, |host| host.widget.visible),
+            "leaving the host must hide the tooltip"
         );
-        assert_eq!(
-            visible_overlay_layers(&mut h),
-            0,
-            "leaving the host must remove the visible tooltip layer"
-        );
+        h.edit_root_widget(|mut wm| {
+            let slot = OverlayScope::portal_slot_mut(&mut wm);
+            assert!(
+                slot.widget.placed_rect(key).is_none(),
+                "the popup must actually be hidden"
+            );
+        });
     }
 
-    /// A rows tooltip's accessibility description joins row labels in order —
-    /// screen readers get the same information as a text tooltip, just
-    /// without the colour coding a sighted user gets from the dots.
+    /// Regression test for the one case `TooltipHost`'s own Move-based
+    /// dismissal can't catch: a click on the still-hovered child with no
+    /// intervening pointer move. Masonry's window `Layer` used to dismiss
+    /// this via its own global pointer-event capture; the portal-based
+    /// replacement must get the same behavior from `dismiss_outside`'s
+    /// outside-press mechanism instead, since the popup's synthetic
+    /// cursor-anchor rect doesn't cover the host's own box.
     #[test]
-    fn rows_tooltip_description_joins_labels_in_order() {
-        let theme = Theme::dark();
+    fn a_click_on_the_hovered_child_dismisses_via_the_scope() {
         let child = NewWidget::new(Label::new("plain")).erased();
-        let rows = vec![
-            TooltipRow::new(masonry::peniko::Color::from_rgb8(34, 197, 94), "Ready"),
-            TooltipRow::new(masonry::peniko::Color::from_rgb8(239, 68, 68), "Error"),
-        ];
-        let widget = TooltipHost::new(
-            child,
-            TooltipContent::Rows(rows),
-            &theme,
-            Duration::from_millis(300),
-        );
-        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
-        h.redraw();
+        let (mut h, _key, host_id) = tooltip_scope_harness(Duration::ZERO, child);
 
-        let node = h.access_node(h.root_id()).expect("node exists");
-        assert_eq!(node.description(), Some("Ready, Error".to_string()));
-    }
-
-    /// A rows tooltip must pop the same overlay layer a text tooltip does —
-    /// the richer content shape doesn't change the hover/show mechanics.
-    #[test]
-    fn rows_tooltip_shows_layer_after_delay() {
-        let theme = Theme::dark();
-        let child = NewWidget::new(Label::new("plain")).erased();
-        let rows = vec![TooltipRow::new(
-            masonry::peniko::Color::from_rgb8(34, 197, 94),
-            "Ready",
-        )];
-        let widget = TooltipHost::new(child, TooltipContent::Rows(rows), &theme, Duration::ZERO);
-        let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
-        let root = h.root_id();
-
-        h.mouse_move_to(root);
+        h.mouse_move_to(host_id);
         h.animate_ms(1);
+        assert!(with_host(&mut h, |host| host.widget.visible));
 
-        assert!(h.edit_root_widget(|wm| wm.widget.layer_id.is_some()));
-        assert_eq!(visible_overlay_layers(&mut h), 1);
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+
+        assert!(
+            !with_host(&mut h, |host| host.widget.visible),
+            "a click on the hovered child (no intervening move) must still dismiss the tooltip"
+        );
     }
 }

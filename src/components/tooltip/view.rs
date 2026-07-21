@@ -1,96 +1,62 @@
 //! Xilem view that wraps any child view with hover-driven tooltip behavior.
 //!
+//! Popup content is mounted through the outermost `overlay_scope`'s
+//! `OverlayPortal` (`root_portal_lookup`), the same mechanism `dialog` uses —
+//! required, no in-tree fallback, since Layer-hosted content can't route
+//! `View::message` (see
+//! `docs/superpowers/specs/2026-07-21-tooltip-arbitrary-content-design.md`).
+//!
 //! ```ignore
-//! use void_ui::components::{button, tooltip};
+//! use void_ui::components::{button, label, tooltip};
 //! tooltip(
-//!     "Reset the chart to defaults",
+//!     label("Reset the chart to defaults").render(&theme),
 //!     button(|_: &mut State| {}).label("Reset").render(&theme),
 //! )
 //! .render(&theme)
 //! ```
 
 use std::marker::PhantomData;
+use std::sync::Arc;
 use std::time::Duration;
 
-use masonry::core::ArcStr;
-use masonry::peniko::Color;
 use xilem_masonry::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem_masonry::{Pod, ViewCtx, WidgetView};
 
 use super::widget::TooltipHost;
 use crate::Theme;
+use crate::overlay::SurfaceStyle;
+use crate::overlay_portal::{OverlayPortal, PortalContentView, PortalPlacement};
+use crate::overlay_scope::root_portal_lookup;
 
 /// Default hover-idle delay before the tooltip appears.
 pub const DEFAULT_DELAY_MS: u64 = 300;
 
-/// One row of a [`tooltip_rows`] tooltip: a small filled dot in `color`
-/// followed by `label`, e.g. one entry of a status-colour legend ("Ready"
-/// beside a green dot).
-#[derive(Clone, PartialEq)]
-pub struct TooltipRow {
-    pub(super) color: Color,
-    pub(super) label: ArcStr,
-}
-
-impl TooltipRow {
-    /// Creates a legend row: `color` renders as a small filled dot, `label`
-    /// as text beside it.
-    pub fn new(color: Color, label: impl Into<ArcStr>) -> Self {
-        Self {
-            color,
-            label: label.into(),
-        }
-    }
-}
-
-/// What a [`Tooltip`] shows on its popped-up surface: either a single line
-/// of text, or a vertical list of colour-coded [`TooltipRow`]s (e.g. a
-/// status legend). `void_ui`'s tooltip layer can't host arbitrary child
-/// views (see [`super::widget`]'s module docs), so rows are the one
-/// richer shape it renders directly.
-#[derive(Clone, PartialEq)]
-pub(crate) enum TooltipContent {
-    Text(ArcStr),
-    Rows(Vec<TooltipRow>),
-}
-
 /// Builder for a hover-driven tooltip wrapping an inner view.
 ///
-/// Created with [`tooltip`] or [`tooltip_rows`]. Returns a xilem `WidgetView`
-/// via [`Self::render`].
+/// Created with [`tooltip`]. Returns a xilem `WidgetView` via [`Self::render`].
 #[must_use = "Tooltip does nothing until rendered with .render(&theme)"]
-pub struct Tooltip<V> {
-    content: TooltipContent,
-    child: V,
+pub struct Tooltip<ChildV, ContentV> {
+    content: ContentV,
+    child: ChildV,
     delay: Duration,
 }
 
-/// Wraps `child` with hover-driven tooltip behavior showing a single line
-/// of `text`.
+/// Wraps `child` with hover-driven tooltip behavior showing `content` — any
+/// view, e.g. `label("...").render(theme)` for plain text, or a richer
+/// composition for something like a status legend.
 ///
 /// The tooltip surface appears after the pointer has been idle over the
 /// child for the configured delay (default 300 ms). It dismisses itself on
 /// the next pointer activity.
-pub fn tooltip<V>(text: impl Into<ArcStr>, child: V) -> Tooltip<V> {
+pub fn tooltip<ChildV, ContentV>(content: ContentV, child: ChildV) -> Tooltip<ChildV, ContentV> {
     Tooltip {
-        content: TooltipContent::Text(text.into()),
+        content,
         child,
         delay: Duration::from_millis(DEFAULT_DELAY_MS),
     }
 }
 
-/// Wraps `child` with hover-driven tooltip behavior showing a vertical list
-/// of colour-coded [`TooltipRow`]s (e.g. a status-colour legend) instead of
-/// a single line of text. Otherwise identical to [`tooltip`].
-pub fn tooltip_rows<V>(rows: Vec<TooltipRow>, child: V) -> Tooltip<V> {
-    Tooltip {
-        content: TooltipContent::Rows(rows),
-        child,
-        delay: Duration::from_millis(DEFAULT_DELAY_MS),
-    }
-}
-
-impl<V> Tooltip<V> {
+impl<ChildV, ContentV> Tooltip<ChildV, ContentV> {
     /// Sets the hover-idle delay before the tooltip appears.
     pub fn delay(mut self, delay: Duration) -> Self {
         self.delay = delay;
@@ -98,14 +64,16 @@ impl<V> Tooltip<V> {
     }
 
     /// Materialize the xilem view at the supplied theme.
-    pub fn render<State, Action>(self, theme: &Theme) -> TooltipView<V, State, Action>
+    pub fn render<State, Action>(self, theme: &Theme) -> TooltipView<ChildV, State, Action>
     where
         State: 'static,
         Action: 'static,
-        V: WidgetView<State, Action>,
+        ChildV: WidgetView<State, Action>,
+        ContentV: WidgetView<State, Action>,
     {
+        let content: Arc<PortalContentView<State, Action>> = Arc::new(self.content);
         TooltipView {
-            content: self.content,
+            content,
             child: self.child,
             delay: self.delay,
             theme: *theme,
@@ -116,34 +84,65 @@ impl<V> Tooltip<V> {
 
 /// The materialized [`View`] backing a [`Tooltip`].
 #[must_use = "View values do nothing unless provided to Xilem."]
-pub struct TooltipView<V, State, Action> {
-    content: TooltipContent,
-    child: V,
+pub struct TooltipView<ChildV, State, Action> {
+    content: Arc<PortalContentView<State, Action>>,
+    child: ChildV,
     delay: Duration,
     theme: Theme,
     phantom: PhantomData<fn(State) -> Action>,
 }
 
-impl<V, State, Action> ViewMarker for TooltipView<V, State, Action> {}
+impl<ChildV, State, Action> ViewMarker for TooltipView<ChildV, State, Action> {}
 
-impl<V, State, Action> View<State, Action, ViewCtx> for TooltipView<V, State, Action>
+/// View state for `TooltipView`: the portal registration/key for the popup
+/// content, plus the wrapped child's own view state.
+#[doc(hidden)]
+pub struct TooltipViewState<State: 'static, Action: 'static, ChildState> {
+    portal: OverlayPortal<State, Action>,
+    key: u64,
+    child: ChildState,
+}
+
+impl<ChildV, State, Action> View<State, Action, ViewCtx> for TooltipView<ChildV, State, Action>
 where
     State: 'static,
     Action: 'static,
-    V: WidgetView<State, Action>,
+    ChildV: WidgetView<State, Action>,
 {
     type Element = Pod<TooltipHost>;
-    type ViewState = V::ViewState;
+    type ViewState = TooltipViewState<State, Action, ChildV::ViewState>;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let (child_pod, child_state) = self.child.build(ctx, app_state);
-        let widget = TooltipHost::new(
-            child_pod.new_widget.erased(),
+
+        // Targets the outermost scope ancestor, mirroring `dialog` exactly —
+        // a tooltip has no trigger rect it needs to stay confined to, so
+        // "no scope" is a clear build-time panic, the same tradeoff dialog
+        // already made. `or_panic` distinguishes "no scope at all" from "a
+        // scope that isn't yours".
+        let portal = root_portal_lookup::<State, Action>().or_panic("tooltip");
+        let key = portal.register(
             self.content.clone(),
             &self.theme,
+            PortalPlacement::Trigger,
+            SurfaceStyle::Tooltip,
+        );
+
+        let widget = TooltipHost::new(
+            child_pod.new_widget.erased(),
+            portal.scope().clone(),
+            key,
             self.delay,
         );
-        (ctx.create_pod(widget), child_state)
+        let element = ctx.create_pod(widget);
+        (
+            element,
+            TooltipViewState {
+                portal,
+                key,
+                child: child_state,
+            },
+        )
     }
 
     fn rebuild(
@@ -154,18 +153,27 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) {
-        if self.theme != prev.theme {
-            TooltipHost::set_theme(&mut element, &self.theme);
-        }
-        if self.content != prev.content {
-            TooltipHost::set_content(&mut element, self.content.clone());
-        }
+        // Content rebuild happens when the scope's view diffs the registry
+        // (after our subtree's rebuild returns) — we only refresh the
+        // registered view value here, unconditionally, same as `dialog`.
+        view_state.portal.update(
+            view_state.key,
+            self.content.clone(),
+            &self.theme,
+            PortalPlacement::Trigger,
+            SurfaceStyle::Tooltip,
+        );
         if self.delay != prev.delay {
             TooltipHost::set_delay(&mut element, self.delay);
         }
         let mut child = TooltipHost::child_mut(&mut element);
-        self.child
-            .rebuild(&prev.child, view_state, ctx, child.downcast(), app_state);
+        self.child.rebuild(
+            &prev.child,
+            &mut view_state.child,
+            ctx,
+            child.downcast(),
+            app_state,
+        );
     }
 
     fn teardown(
@@ -174,8 +182,10 @@ where
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
     ) {
+        view_state.portal.deregister(view_state.key);
         let mut child = TooltipHost::child_mut(&mut element);
-        self.child.teardown(view_state, ctx, child.downcast());
+        self.child
+            .teardown(&mut view_state.child, ctx, child.downcast());
     }
 
     fn message(
@@ -185,9 +195,11 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
+        // Content messages route through the scope's slot path, never
+        // through us — same as `dialog`.
         let mut child = TooltipHost::child_mut(&mut element);
         self.child
-            .message(view_state, message, child.downcast(), app_state)
+            .message(&mut view_state.child, message, child.downcast(), app_state)
     }
 }
 
@@ -195,15 +207,44 @@ where
 mod tests {
     use std::time::Duration;
 
+    use xilem::ViewCtx;
+    use xilem::core::View;
+
     use super::tooltip;
     use crate::Theme;
-    use crate::label;
+    use crate::label::label;
+    use crate::overlay_scope::overlay_scope;
+    use crate::test_support;
+
+    #[derive(Default)]
+    struct AppState;
 
     #[test]
     fn delay_is_the_canonical_builder_name() {
         let theme = Theme::default();
-        let _ = tooltip("hint", label("child").render::<(), ()>(&theme))
-            .delay(Duration::from_millis(500))
-            .render::<(), ()>(&theme);
+        let _ = tooltip(
+            label("hint").render::<(), ()>(&theme),
+            label("child").render::<(), ()>(&theme),
+        )
+        .delay(Duration::from_millis(500))
+        .render::<(), ()>(&theme);
+    }
+
+    /// A `tooltip` rendered with the same `State`/`Action` pair as the root
+    /// `overlay_scope` ancestor registers successfully — mirrors `dialog`'s
+    /// identical test.
+    #[test]
+    fn tooltip_builds_under_a_same_typed_root_overlay_scope() {
+        let theme = Theme::default();
+        let runtime = test_support::current_thread_runtime();
+        let proxy = test_support::noop_proxy();
+
+        let content = label("hint").render::<AppState, ()>(&theme);
+        let child = label("child").render::<AppState, ()>(&theme);
+        let scope = overlay_scope(tooltip(content, child).render(&theme));
+
+        let mut ctx = ViewCtx::new(proxy, runtime);
+        let mut state = AppState;
+        let _ = scope.build(&mut ctx, &mut state);
     }
 }

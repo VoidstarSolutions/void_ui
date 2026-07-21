@@ -141,7 +141,7 @@ pub use spinner::{Spinner, SpinnerView, spinner};
 pub use status_dot::{StatusDot, status_dot};
 pub use tabs::{TabItem, Tabs, TabsVariant, TabsView, tabs};
 pub use toggle::{Toggle, TogglePress, ToggleView, toggle};
-pub use tooltip::{DEFAULT_DELAY_MS, Tooltip, TooltipRow, TooltipView, tooltip, tooltip_rows};
+pub use tooltip::{DEFAULT_DELAY_MS, Tooltip, TooltipView, tooltip};
 
 /// One entry per component the gallery exposes.
 ///
