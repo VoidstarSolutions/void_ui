@@ -35,17 +35,17 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     let default_example = with_source!(theme, {
         flex_row((
             tooltip(
-                "Reset the chart to defaults",
+                label("Reset the chart to defaults").render(theme),
                 button(|_: &mut S| {}).label("Reset").render(theme),
             )
             .render(theme),
             tooltip(
-                "Add annotation marker at the cursor",
+                label("Add annotation marker at the cursor").render(theme),
                 button(|_: &mut S| {}).label("Annotate").render(theme),
             )
             .render(theme),
             tooltip(
-                "Toggle the inspector pane",
+                label("Toggle the inspector pane").render(theme),
                 button(|_: &mut S| {}).label("Inspector").render(theme),
             )
             .render(theme),
@@ -57,13 +57,13 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     let custom_delay_example = with_source!(theme, {
         flex_row((
             tooltip(
-                "Instant — 0 ms delay",
+                label("Instant — 0 ms delay").render(theme),
                 button(|_: &mut S| {}).label("Fast").render(theme),
             )
             .delay(Duration::from_millis(0))
             .render(theme),
             tooltip(
-                "Slow — 1500 ms delay",
+                label("Slow — 1500 ms delay").render(theme),
                 button(|_: &mut S| {}).label("Slow").render(theme),
             )
             .delay(Duration::from_millis(1500))

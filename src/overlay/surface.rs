@@ -28,6 +28,7 @@ const BORDER_WIDTH: f64 = 1.0;
 pub(crate) enum SurfaceStyle {
     Popover,
     Dialog,
+    Tooltip,
 }
 
 impl SurfaceStyle {
@@ -35,6 +36,7 @@ impl SurfaceStyle {
         match self {
             Self::Popover => f64::from(theme.radius.small),
             Self::Dialog => f64::from(theme.radius.large),
+            Self::Tooltip => 0.0,
         }
     }
 }

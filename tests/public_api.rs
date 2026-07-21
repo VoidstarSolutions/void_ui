@@ -192,9 +192,6 @@ fn simple_leaf_and_composition_components_build_from_outside_the_crate() {
     let _ = toggle(false, |_: &mut AppState, _on: bool| ())
         .render(&theme)
         .build(&mut ctx, &mut state);
-    let _ = tooltip("hint", label("target").render::<AppState, ()>(&theme))
-        .render::<AppState, ()>(&theme)
-        .build(&mut ctx, &mut state);
 }
 
 #[test]
@@ -205,5 +202,17 @@ fn dialog_builds_under_a_root_overlay_scope_from_outside_the_crate() {
 
     let content = label("content").render::<AppState, ()>(&theme);
     let scope = overlay_scope(dialog(true, content).render(&theme));
+    let _ = scope.build(&mut ctx, &mut state);
+}
+
+#[test]
+fn tooltip_builds_under_a_root_overlay_scope_from_outside_the_crate() {
+    let theme = Theme::default();
+    let mut ctx = view_ctx();
+    let mut state = AppState;
+
+    let content = label("hint").render::<AppState, ()>(&theme);
+    let child = label("target").render::<AppState, ()>(&theme);
+    let scope = overlay_scope(tooltip(content, child).render(&theme));
     let _ = scope.build(&mut ctx, &mut state);
 }
