@@ -3,9 +3,13 @@
 //! Each component is a small builder that resolves to a `WidgetView` at the
 //! supplied [`Theme`](crate::Theme). The pattern is intentionally explicit:
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State;
 //! use void_ui::components::button;
 //! button(|_: &mut State| {}).label("Reset view").render(&theme)
+//! # ;
 //! ```
 //!
 //! Theme is passed at the render boundary rather than stored on each

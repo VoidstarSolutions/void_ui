@@ -4,12 +4,17 @@
 //! (hover, press) is tracked by the masonry widget; the `selected` flag is the
 //! host-controlled selected-toggle state.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State;
+//! # impl State { fn reset(&mut self) {} }
 //! use void_ui::components::button;
 //! button(|s: &mut State| s.reset())
 //!     .label("Reset view")
 //!     .selected(false)
 //!     .render(&theme)
+//! # ;
 //! ```
 
 use std::marker::PhantomData;

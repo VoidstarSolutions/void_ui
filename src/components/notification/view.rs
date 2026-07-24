@@ -6,16 +6,22 @@
 //! the rendered card(s) yourself, e.g. via [`notification_stack`], then
 //! register the stack as a corner-anchored overlay with [`notification_layer`].
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State;
+//! # impl State { fn dismiss_toast(&mut self, id: u64) {} }
+//! # let id = 0u64;
 //! use std::time::Duration;
 //! use void_ui::components::notification::notification;
 //! use void_ui::AlertVariant;
 //!
 //! notification("Saved successfully.")
 //!     .variant(AlertVariant::Success)
-//!     .on_close(|s: &mut State| s.dismiss_toast(id))
+//!     .on_close(move |s: &mut State| s.dismiss_toast(id))
 //!     .with_timeout(Duration::from_secs(3))
 //!     .render(&theme)
+//! # ;
 //! ```
 //!
 //! If this card's host widget can be reused for a *different* toast across

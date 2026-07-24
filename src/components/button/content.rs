@@ -8,8 +8,13 @@
 //! variants, hover/press fills, focus ring, Space/Enter activation and
 //! `Role::Button` accessibility without the caller dropping to the widget layer.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State;
+//! # impl State { fn open_symbol(&mut self) {} }
 //! use void_ui::{content_button, label};
+//! use void_ui::components::ButtonVariant;
 //! use xilem::view::flex_row;
 //!
 //! content_button(
@@ -22,6 +27,7 @@
 //! .variant(ButtonVariant::Ghost)
 //! .accessible_name("Open AAPL")
 //! .render(&theme)
+//! # ;
 //! ```
 //!
 //! The child is **content, not a control**: [`ThemedButton`] does not propagate

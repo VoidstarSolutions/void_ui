@@ -11,13 +11,18 @@
 //! marking the whole trail as a navigation landmark and the current segment
 //! as `AriaCurrent::Page` via [`access_wrap::annotate`].
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State;
+//! # impl State { fn navigate_home(&mut self) {} }
 //! use void_ui::{breadcrumb, segment};
 //!
 //! breadcrumb()
 //!     .segment(segment("Trade Dashboard").on_select(|s: &mut State| s.navigate_home()))
 //!     .segment(segment("Trade dashboard"))
 //!     .render(&theme)
+//! # ;
 //! ```
 
 use masonry::core::ArcStr;
