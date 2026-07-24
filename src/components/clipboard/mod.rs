@@ -12,7 +12,7 @@
 //! # struct State { last_copied: Option<String> }
 //! # let _state = State { last_copied: None };
 //! use void_ui::components::clipboard;
-//! clipboard("sk-proj-abc123", |s: &mut State, text: &str| {
+//! clipboard("hello, clipboard!", |s: &mut State, text: &str| {
 //!     s.last_copied = Some(text.to_owned());
 //! })
 //! .render(&theme)
