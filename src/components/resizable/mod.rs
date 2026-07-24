@@ -4,7 +4,13 @@
 //! top/bottom split. Drive the ratio from app state; the `on_resize` callback
 //! is called with the updated fraction on every drag step.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State { split_ratio: f32 }
+//! # let state = State { split_ratio: 0.5 };
+//! # let left_panel = void_ui::label("left").render(&theme);
+//! # let right_panel = void_ui::label("right").render(&theme);
 //! use void_ui::components::{h_resizable, v_resizable};
 //!
 //! h_resizable(
@@ -14,6 +20,7 @@
 //! )
 //! .ratio(state.split_ratio)
 //! .render(&theme)
+//! # ;
 //! ```
 
 #[cfg(feature = "gallery")]

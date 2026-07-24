@@ -218,9 +218,13 @@ impl<R, State> ColumnDef<R, State> {
     /// grid is wider than its columns' natural total. A non-finite or
     /// negative value is ignored (treated as `0.0`).
     ///
-    /// ```ignore
+    /// ```
+    /// # struct Row { name: String }
+    /// use void_ui::components::data_grid::text_column;
+    /// use void_ui::CellAlign;
     /// // "Name" absorbs all the surplus; the metric columns stay fixed.
-    /// text_column("Name", 200.0, CellAlign::Start, |r| r.name.clone()).flex(1.0)
+    /// text_column::<Row, (), _>("Name", 200.0, CellAlign::Start, |r| r.name.clone()).flex(1.0)
+    /// # ;
     /// ```
     pub fn flex(mut self, flex: f64) -> Self {
         self.flex = if flex.is_finite() && flex > 0.0 {

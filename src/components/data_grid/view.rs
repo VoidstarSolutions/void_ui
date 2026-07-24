@@ -249,14 +249,30 @@ const fn align_to_main(align: CellAlign) -> MainAxisAlignment {
 /// [`DataGrid::render`]. Lenses are stored boxed, so each future
 /// feature is a new method rather than another positional parameter.
 ///
-/// ```ignore
+/// ```
+/// # use void_ui::Theme;
+/// # let theme = Theme::default();
+/// # use void_ui::components::data_grid::DataGrid;
+/// # use void_ui::{SelectionState, SortState};
+/// # struct Row { }
+/// # struct State { ticks: Vec<Row>, selection: SelectionState, sort: SortState }
+/// # let columns: Vec<void_ui::ColumnDef<Row, State>> = Vec::new();
+/// # let n = 0u64;
+/// # let sort_snapshot = SortState::default();
 /// DataGrid::new(columns)
 ///     .rows(|s: &State| &s.ticks[..])
 ///     .row_count(n)
 ///     .selection(|s| &mut s.selection)
-///     .sort(sort_snapshot, |s| &mut s.sort)
+///     .sort(sort_snapshot, |s: &mut State, col, multi| {
+///         if multi {
+///             s.sort.cycle_additive(col);
+///         } else {
+///             s.sort.cycle(col);
+///         }
+///     })
 ///     .row_height(22.0)
 ///     .render(&theme)
+/// # ;
 /// ```
 ///
 /// `selection` and `sort` are optional — omit them for a
@@ -508,7 +524,7 @@ where
     /// The host keeps the `ScrollState` in its app state and calls
     /// [`ScrollState::scroll_to_index`] from any callback:
     ///
-    /// ```ignore
+    /// ```text
     /// // In app state: scroll: ScrollState,
     /// // In any callback:
     /// state.scroll.scroll_to_index(50_000);
@@ -587,11 +603,19 @@ where
 /// (`button(..)`, `checkbox(..)`, …). Equivalent to [`DataGrid::new`];
 /// attach data/behavior with the chained setters, then [`DataGrid::render`].
 ///
-/// ```ignore
-/// data_grid(columns)
+/// ```
+/// # use void_ui::Theme;
+/// # let theme = Theme::default();
+/// # use void_ui::data_grid;
+/// # struct Row { }
+/// # struct State { rows: Vec<Row> }
+/// # let columns: Vec<void_ui::ColumnDef<Row, State>> = Vec::new();
+/// # let n = 0u64;
+/// data_grid::<State, Row, ()>(columns)
 ///     .rows(|s: &State| &s.rows[..])
 ///     .row_count(n)
 ///     .render(&theme)
+/// # ;
 /// ```
 pub fn data_grid<State, R, Action>(columns: Vec<ColumnDef<R, State>>) -> DataGrid<State, R, Action>
 where

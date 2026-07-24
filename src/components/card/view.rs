@@ -6,11 +6,16 @@
 //! in `sized_box` styling, following the same pure-composition pattern as
 //! `group_box`.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # let kv_rows = void_ui::label("content").render::<(), ()>(&theme);
+//! # let content = void_ui::label("content").render::<(), ()>(&theme);
 //! use void_ui::card;
 //!
-//! card(kv_rows).render(&theme)
+//! card(kv_rows).render(&theme);
 //! card(content).border().background(theme.palette.surface_2).render(&theme)
+//! # ;
 //! ```
 
 use masonry::peniko::Color;

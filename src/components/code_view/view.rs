@@ -5,9 +5,13 @@
 //! produces the spans and the brush palette, on `rebuild` it diffs against
 //! the previous view and pushes only the deltas down to the widget.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct MyState;
 //! use void_ui::components::code_view::read_only_text;
 //! read_only_text("fn main() {}\n").render::<MyState>(&theme)
+//! # ;
 //! ```
 //!
 //! By default `read_only_text` wires up [`RustHighlighter`]. Use

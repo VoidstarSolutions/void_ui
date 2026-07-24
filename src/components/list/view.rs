@@ -67,14 +67,21 @@ const DEFAULT_LOAD_THRESHOLD: u64 = 20;
 /// Construct with [`list`], attach data and behavior through the chained
 /// setters, then materialize the xilem view with [`List::render`].
 ///
-/// ```ignore
-/// list()
+/// ```
+/// # use void_ui::Theme;
+/// # let theme = Theme::default();
+/// # use void_ui::{list, label, SelectionState};
+/// # struct Item { name: String }
+/// # struct State { items: Vec<Item>, selection: SelectionState }
+/// # let n = 0u64;
+/// list::<State, Item, ()>()
 ///     .items(|s: &State| &s.items[..])
 ///     .item_count(n)
 ///     .item_height(28.0)
-///     .render_item(|item, selected, theme| label(item.name.clone()).render(theme))
-///     .selection(|s| &mut s.selection)
+///     .render_item(|item: &Item, _selected: bool, theme: &Theme| label(item.name.clone()).render(theme))
+///     .selection(|s: &mut State| &mut s.selection)
 ///     .render(&theme)
+/// # ;
 /// ```
 ///
 /// All setters are optional — an empty `List` renders an empty body.
