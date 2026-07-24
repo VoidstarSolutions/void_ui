@@ -28,7 +28,7 @@ use xilem::peniko::color::{AlphaColor, Srgb};
 use xilem::{Pod, ViewCtx};
 
 use super::ButtonVariant;
-use super::widget::ThemedButton;
+use super::widget::{ThemedButton, ThemedButtonProps, apply_themed_button_props};
 use crate::components::spinner::widget::SpinnerWidget;
 use crate::{IconName, Theme};
 
@@ -212,6 +212,27 @@ impl<F, State, Action> ButtonView<F, State, Action> {
     }
 }
 
+impl<F, State, Action> ThemedButtonProps for ButtonView<F, State, Action> {
+    fn theme(&self) -> Theme {
+        self.theme
+    }
+    fn selected(&self) -> bool {
+        self.selected
+    }
+    fn disabled(&self) -> bool {
+        self.disabled
+    }
+    fn variant(&self) -> ButtonVariant {
+        self.variant
+    }
+    fn accessible_name(&self) -> Option<&ArcStr> {
+        self.accessible_name.as_ref()
+    }
+    fn corners(&self) -> Option<RoundedRectRadii> {
+        self.corners
+    }
+}
+
 impl<F, State, Action> ViewMarker for ButtonView<F, State, Action> {}
 
 impl<F, State, Action> View<State, Action, ViewCtx> for ButtonView<F, State, Action>
@@ -268,11 +289,8 @@ where
         mut element: Mut<'_, Self::Element>,
         _app_state: &mut State,
     ) {
-        // Only push properties that actually changed; each setter on ThemedButton
-        // guards behind a `!=` check and calls `request_layout` / `request_paint_only`
-        // only when needed, so diffing here avoids spurious repaints.
+        apply_themed_button_props(&mut element, prev, self);
         if self.theme != prev.theme {
-            ThemedButton::set_theme(&mut element, &self.theme);
             let text_color = self.text_color();
             let mut child = ThemedButton::child_mut(&mut element);
             child.insert_prop(ContentColor::new(text_color));
@@ -289,28 +307,22 @@ where
             SpinnerWidget::set_color(&mut s, self.theme.palette.text_muted);
             SpinnerWidget::set_size(&mut s, f64::from(self.theme.density.ui_font_size));
         }
-        if self.selected != prev.selected {
-            ThemedButton::set_selected(&mut element, self.selected);
-        }
         if self.loading != prev.loading {
             ThemedButton::set_loading(&mut element, self.loading);
         }
         if self.disabled != prev.disabled {
-            ThemedButton::set_disabled(&mut element, self.disabled);
             let text_color = self.text_color();
             let mut child = ThemedButton::child_mut(&mut element);
             child.insert_prop(ContentColor::new(text_color));
         }
-        if self.variant != prev.variant {
-            ThemedButton::set_variant(&mut element, self.variant);
-            // Link gains/loses accent text; Text and others revert to default.
-            if !self.disabled
-                && (self.variant == ButtonVariant::Link || prev.variant == ButtonVariant::Link)
-            {
-                let text_color = self.text_color();
-                let mut child = ThemedButton::child_mut(&mut element);
-                child.insert_prop(ContentColor::new(text_color));
-            }
+        // Link gains/loses accent text; Text and others revert to default.
+        if self.variant != prev.variant
+            && !self.disabled
+            && (self.variant == ButtonVariant::Link || prev.variant == ButtonVariant::Link)
+        {
+            let text_color = self.text_color();
+            let mut child = ThemedButton::child_mut(&mut element);
+            child.insert_prop(ContentColor::new(text_color));
         }
         let icon_color = self.icon_color();
         if self.icon.map(char::from) != prev.icon.map(char::from) {
@@ -354,18 +366,6 @@ where
                 &mut m,
                 StyleProperty::FontSize(self.theme.density.ui_font_size),
             );
-        }
-        if self.accessible_name != prev.accessible_name {
-            ThemedButton::set_accessibility_label(&mut element, self.accessible_name.clone());
-        }
-        if self.corners != prev.corners
-            || (self.corners.is_none() && self.theme.radius != prev.theme.radius)
-        {
-            use masonry::kurbo::RoundedRectRadii as R;
-            let radii = self
-                .corners
-                .unwrap_or_else(|| R::from_single_radius(f64::from(self.theme.radius.small)));
-            ThemedButton::set_corners(&mut element, radii);
         }
         // Label text is not re-applied here; masonry's Label doesn't expose
         // stable post-construction text mutation. If the label string changes
