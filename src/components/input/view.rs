@@ -10,13 +10,18 @@
 //! `TextInput`'s own chrome is stripped to transparent so only the surrounding
 //! `sized_box` paints it.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State { amount: String }
+//! # let state = State { amount: String::new() };
 //! use void_ui::components::input::input;
 //! input(state.amount.clone(), |s: &mut State, text| s.amount = text)
 //!     .prefix("$")
 //!     .suffix("USD")
 //!     .placeholder("0.00")
 //!     .render(&theme)
+//! # ;
 //! ```
 //!
 //! The contents are host-controlled: the field emits the new string on every

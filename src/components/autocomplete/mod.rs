@@ -4,13 +4,18 @@
 //! candidate (case-insensitive prefix match). Arrow keys navigate, Enter or a
 //! click selects, and Escape or focus-loss closes the overlay.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State { city: String }
+//! # let state = State { city: String::new() };
 //! use void_ui::components::autocomplete::autocomplete;
 //!
 //! autocomplete(state.city.clone(), |s: &mut State, text| s.city = text)
 //!     .suggestions(["New York", "Los Angeles", "Chicago"])
 //!     .placeholder("Enter city…")
 //!     .render(&theme)
+//! # ;
 //! ```
 
 #[cfg(feature = "gallery")]

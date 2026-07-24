@@ -3,13 +3,18 @@
 //! [`autocomplete`] returns an [`Autocomplete`] builder. Call `.render(&theme)`
 //! to get the concrete xilem view.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State { city: String }
+//! # let state = State { city: String::new() };
 //! use void_ui::components::autocomplete::autocomplete;
 //!
 //! autocomplete(state.city.clone(), |s: &mut State, text| s.city = text)
 //!     .suggestions(["New York", "Los Angeles", "Chicago", "Houston"])
 //!     .placeholder("Enter city…")
 //!     .render(&theme)
+//! # ;
 //! ```
 //!
 //! The text is **host-controlled**: on every keystroke the `on_changed`

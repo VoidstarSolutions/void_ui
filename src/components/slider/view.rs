@@ -1,13 +1,17 @@
 //! Xilem views for the slider component.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State { volume: f64, lo: f64, hi: f64 }
+//! # let state = State { volume: 50.0, lo: 20.0, hi: 80.0 };
 //! use void_ui::components::{slider, range_slider};
 //!
 //! // Single thumb:
 //! slider(state.volume, |s: &mut State, v| s.volume = v)
 //!     .range(0.0, 100.0)
 //!     .step(1.0)
-//!     .render(&theme)
+//!     .render(&theme);
 //!
 //! // Dual thumb — independent low/high bounds that cannot cross:
 //! range_slider(state.lo, state.hi, |s: &mut State, lo, hi| {
@@ -16,6 +20,7 @@
 //! })
 //! .range(0.0, 100.0)
 //! .render(&theme)
+//! # ;
 //! ```
 
 use std::marker::PhantomData;

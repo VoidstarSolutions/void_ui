@@ -1,10 +1,15 @@
 //! Xilem view for the toggle switch component.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State { on: bool }
+//! # let state = State { on: false };
 //! use void_ui::components::toggle;
 //! toggle(state.on, |s: &mut State, on: bool| s.on = on)
 //!     .label("Enable feature")
 //!     .render(&theme)
+//! # ;
 //! ```
 
 use std::marker::PhantomData;
