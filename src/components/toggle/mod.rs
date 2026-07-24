@@ -6,7 +6,7 @@
 //! # struct State { on: bool }
 //! # let state = State { on: false };
 //! use void_ui::components::toggle;
-//! toggle(state.on, |s: &mut State, _| s.on = !s.on)
+//! toggle(state.on, |s: &mut State, on: bool| s.on = on)
 //!     .label("Enable feature")
 //!     .render(&theme)
 //! # ;
