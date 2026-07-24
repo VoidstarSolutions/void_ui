@@ -62,6 +62,14 @@ pub(crate) const SETTLE_EPSILON: f32 = 1e-4;
 /// `target`, checked before touching `anim` at all so a settled value isn't
 /// fed a near-zero `over_millis`.
 ///
+/// `full_duration_millis` must be finite and positive: a non-positive value
+/// snaps `anim` straight to `target` (matching the old "complete immediately"
+/// behavior for a misconfigured duration), but a NaN value panics via
+/// [`AnimatedF32::move_to`]'s own `is_finite` assertion rather than
+/// completing gracefully — unlike this crate's fixed-literal durations
+/// (`SLIDE_MILLIS`, `FADE_MILLIS`), a caller computing `full_duration_millis`
+/// dynamically must keep it finite.
+///
 /// [`AnimatedF32::move_to`]: masonry::widgets::AnimatedF32::move_to
 /// [`AnimationStatus::Completed`]: masonry::widgets::AnimationStatus::Completed
 pub(crate) fn advance_toward(
