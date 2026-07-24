@@ -7,11 +7,18 @@
 //! Group mutual-exclusion is host-managed: render each option with
 //! `.selected(selected == this_value)` and in the callback update `selected`.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # #[derive(PartialEq)]
+//! # enum Choice { A, B }
+//! # struct State { selected: Choice }
+//! # let s = &State { selected: Choice::A };
 //! use void_ui::components::radio;
 //! radio("Option A", |s: &mut State| s.selected = Choice::A)
 //!     .selected(s.selected == Choice::A)
 //!     .render(&theme)
+//! # ;
 //! ```
 
 use std::marker::PhantomData;

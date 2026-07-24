@@ -4,11 +4,18 @@
 //! state (hover, press) is tracked by the masonry widget; the `selected` flag
 //! is the host-controlled selected-row state.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # #[derive(PartialEq)]
+//! # enum Section { Charts }
+//! # struct State { focused: Section }
+//! # let state = State { focused: Section::Charts };
 //! use void_ui::components::sidebar_item;
 //! sidebar_item("Charts", |s: &mut State| s.focused = Section::Charts)
 //!     .selected(state.focused == Section::Charts)
 //!     .render(&theme)
+//! # ;
 //! ```
 
 use std::marker::PhantomData;

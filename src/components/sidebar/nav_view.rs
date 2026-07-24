@@ -1,6 +1,10 @@
 //! Xilem view for a roving-tabindex sidebar nav list.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State { selected_section: usize }
+//! # let state = State { selected_section: 0 };
 //! use void_ui::components::sidebar::{SidebarNavItem, sidebar_nav};
 //!
 //! sidebar_nav(
@@ -13,6 +17,7 @@
 //!     |s: &mut State, i| s.selected_section = i,
 //! )
 //! .render(&theme)
+//! # ;
 //! ```
 //!
 //! Selection is host-managed, mirroring [`crate::components::tabs::tabs`]:

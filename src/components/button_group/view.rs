@@ -10,20 +10,28 @@
 //! the type-erased view directly. A toggle group is the same component with a
 //! host-owned selected index.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State { view: usize }
+//! # impl State { fn cut(&mut self) {} fn copy(&mut self) {} fn paste(&mut self) {} }
+//! # let state = State { view: 0 };
+//! use void_ui::components::{button_group, toggle_button_group};
+//!
 //! // Regular horizontal group
 //! button_group(["Cut", "Copy", "Paste"], |s: &mut State, i| match i {
 //!     0 => s.cut(),
 //!     1 => s.copy(),
 //!     _ => s.paste(),
 //! })
-//! .render(&theme)
+//! .render(&theme);
 //!
 //! // Toggle group — host owns the selected index
 //! toggle_button_group(["Day", "Week", "Month"], state.view, |s: &mut State, i| {
 //!     s.view = i;
 //! })
 //! .render(&theme)
+//! # ;
 //! ```
 
 use masonry::core::ArcStr;

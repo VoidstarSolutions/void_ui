@@ -1,6 +1,10 @@
 //! Xilem view for [`crate::components::tabs`].
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State { selected_tab: usize }
+//! # let state = State { selected_tab: 0 };
 //! use void_ui::components::tabs::{tabs, TabItem, TabsVariant};
 //!
 //! tabs(
@@ -10,6 +14,7 @@
 //! )
 //! .variant(TabsVariant::Underline)
 //! .render(&theme)
+//! # ;
 //! ```
 //!
 //! Selection is host-managed, mirroring [`crate::components::radio`]: the
