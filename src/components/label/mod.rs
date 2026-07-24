@@ -3,19 +3,22 @@
 //! Wraps `masonry::widgets::Label` with theme-aware defaults, optional
 //! secondary (muted) text, masking, and multiline word-wrap.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
 //! use void_ui::components::label;
 //! label("API key")
 //!     .secondary("sk-proj-abc123")
-//!     .render(&theme)
+//!     .render::<(), ()>(&theme);
 //!
 //! label("Redacted value")
 //!     .masked(true)
-//!     .render(&theme)
+//!     .render::<(), ()>(&theme);
 //!
 //! label("A long paragraph that wraps at the container edge.")
 //!     .multiline(true)
-//!     .render(&theme)
+//!     .render::<(), ()>(&theme)
+//! # ;
 //! ```
 
 #[cfg(feature = "gallery")]
