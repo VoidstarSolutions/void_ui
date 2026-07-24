@@ -20,7 +20,7 @@
 //! its height is the fixed `row_height`.
 //!
 //! Structurally this mirrors the crate's existing multi-child view
-//! [`flex_wrap`](crate::layout::flex_wrap) (a `CollectionWidget` + a
+//! [`flex_wrap`](crate::layout::flex_wrap()) (a `CollectionWidget` + a
 //! `ViewSequence`/`ElementSplice` + a blanket sequence-marker trait), so
 //! it composes with tuples of mixed cell views just like `flex_row(..)`.
 //! It is *not* a new architectural precedent — only a new layout rule.

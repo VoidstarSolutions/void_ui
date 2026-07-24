@@ -4,7 +4,15 @@
 //! Provide the section title as a string, the body content as a child
 //! `WidgetView`, and a callback invoked when the user clicks the header.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State { debug: bool, advanced_open: bool }
+//! # let state = State { debug: false, advanced_open: false };
+//! use void_ui::components::collapsible;
+//! use void_ui::components::checkbox;
+//! use xilem::view::flex_col;
+//!
 //! collapsible(
 //!     "Advanced options",
 //!     flex_col((
@@ -16,6 +24,7 @@
 //! )
 //! .open(state.advanced_open)
 //! .render(&theme)
+//! # ;
 //! ```
 
 use std::marker::PhantomData;

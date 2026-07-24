@@ -1,7 +1,7 @@
 //! Radio button demo panel used by the void-ui gallery.
 //!
 //! The interactive group section uses a custom [`View`] implementation whose
-//! [`ViewState`] holds the selected index. No gallery state is involved;
+//! [`View::ViewState`] holds the selected index. No gallery state is involved;
 //! clicking a radio returns [`MessageResult::RequestRebuild`], which causes
 //! xilem to rebuild the view tree with the updated selection from `ViewState`.
 

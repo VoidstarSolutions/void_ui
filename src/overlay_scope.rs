@@ -10,7 +10,7 @@
 //! children, so arbitrary stateful content keeps full xilem semantics
 //! (rebuilds, theme swaps, button callbacks). Open/close/placement are plain
 //! data pushed from descendants via `ctx.mutate_later(scope_id, ...)`
-//! ([`OverlayScope::set_portal_visible`] /
+//! (`OverlayScope::set_portal_visible` /
 //! [`OverlayScope::set_portal_placement`]). See [`crate::overlay_portal`] for
 //! the full flow.
 //!
@@ -33,7 +33,7 @@
 //! # Which consumers *require* a scope
 //!
 //! `popover`, `dropdown_button`, and `autocomplete` fall back to
-//! [`crate::AnchoredOverlay`] when no scope ancestor exists — they anchor to a
+//! [`crate::anchored_overlay::AnchoredOverlay`] when no scope ancestor exists — they anchor to a
 //! trigger rect, which an in-tree overlay can do.
 //!
 //! `dialog` and `notification_layer` **require** one and panic without it: a
@@ -317,8 +317,8 @@ pub(crate) fn root_portal_lookup<State: 'static, Action: 'static>() -> ScopeLook
 ///
 /// `content` alone determines the container's measured size — showing or
 /// hiding portal children never reflows surrounding layout (mirrors
-/// [`crate::AnchoredOverlay::measure`]). Portal children carry per-key
-/// placements (see [`Self::set_portal_visible`]).
+/// [`crate::anchored_overlay::AnchoredOverlay`]'s measure behavior). Portal children carry per-key
+/// placements (see `set_portal_visible`).
 pub struct OverlayScope {
     handle: OverlayScopeHandle,
     content: WidgetPod<dyn Widget>,
@@ -511,9 +511,14 @@ impl Widget for OverlayScope {
 /// discover it and push popups into it — popups that paint on top of
 /// everything inside `content`, clipped to `content`'s own bounds.
 ///
-/// ```ignore
+/// ```
+/// # use void_ui::Theme;
+/// # let theme = Theme::default();
+/// # use xilem::WidgetView as _;
+/// # let my_content = void_ui::label("content").render::<(), ()>(&theme).boxed();
 /// use void_ui::{overlay_scope, components::scroll_container::scroll_container};
-/// overlay_scope(scroll_container(my_content)).render(&theme)
+/// overlay_scope(scroll_container(my_content).render(&theme))
+/// # ;
 /// ```
 pub fn overlay_scope<State, Action, V>(content: V) -> impl WidgetView<State, Action>
 where

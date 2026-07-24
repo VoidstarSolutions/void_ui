@@ -1,10 +1,15 @@
 //! Xilem view for the checkbox component.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State { enabled: bool }
+//! # let state = State { enabled: false };
 //! use void_ui::components::checkbox;
 //! checkbox(state.enabled, |s: &mut State, checked: bool| s.enabled = checked)
 //!     .label("Enable feature")
 //!     .render(&theme)
+//! # ;
 //! ```
 
 use std::marker::PhantomData;

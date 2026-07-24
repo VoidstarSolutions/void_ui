@@ -11,12 +11,17 @@
 //! `f64`, so partial entries like `12.` don't get reformatted mid-typing. Hosts
 //! parse it when they need a number.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State { qty: String }
+//! # let state = State { qty: String::from("1") };
 //! use void_ui::components::input::number_input;
 //! number_input(state.qty.clone(), |s: &mut State, text| s.qty = text)
 //!     .step(1.0)
 //!     .range(0.0, 100.0)
 //!     .render(&theme)
+//! # ;
 //! ```
 
 use std::sync::Arc;

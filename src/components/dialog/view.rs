@@ -3,12 +3,18 @@
 //! `Dialog<State, Action, ContentV, D>` is the builder; `.render(&theme)`
 //! produces a `DialogView`.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State { dialog_open: bool }
+//! # let state = State { dialog_open: false };
+//! # let my_content_view = void_ui::label("content").render(&theme);
 //! use void_ui::components::dialog;
 //! dialog(state.dialog_open, my_content_view)
 //!     .show_close_button()
 //!     .on_close(|s: &mut State| s.dialog_open = false)
 //!     .render(&theme)
+//! # ;
 //! ```
 //!
 //! Unlike `popover`, a dialog's open/closed state is app-owned (there's no
@@ -101,7 +107,7 @@ pub struct Dialog<State, Action, ContentV, D = ()> {
 /// Construct a dialog showing `content` when `open` is `true`.
 ///
 /// The dialog is mounted above everything else inside the ROOT
-/// [`crate::overlay_scope`] ancestor — the outermost scope, regardless of how
+/// [`crate::overlay_scope()`] ancestor — the outermost scope, regardless of how
 /// deeply nested the dialog itself is — horizontally centered and a quarter
 /// of the way down that container.
 pub fn dialog<State, Action, ContentV>(

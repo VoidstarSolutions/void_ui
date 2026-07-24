@@ -2,7 +2,7 @@
 //! portal open/close plumbing used by every overlay-flavored
 //! component (`popover`, `dropdown_button`, `autocomplete`, `dialog`,
 //! `notification`) and by the root overlay machinery
-//! ([`crate::overlay_scope`], [`crate::overlay_portal`],
+//! ([`crate::overlay_scope()`], [`crate::overlay_portal`],
 //! [`crate::anchored_overlay`]).
 //!
 //! Nothing here is component-specific — if a type only makes sense for one

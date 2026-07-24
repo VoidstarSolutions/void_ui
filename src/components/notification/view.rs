@@ -6,16 +6,22 @@
 //! the rendered card(s) yourself, e.g. via [`notification_stack`], then
 //! register the stack as a corner-anchored overlay with [`notification_layer`].
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State;
+//! # impl State { fn dismiss_toast(&mut self, id: u64) {} }
+//! # let id = 0u64;
 //! use std::time::Duration;
 //! use void_ui::components::notification::notification;
 //! use void_ui::AlertVariant;
 //!
 //! notification("Saved successfully.")
 //!     .variant(AlertVariant::Success)
-//!     .on_close(|s: &mut State| s.dismiss_toast(id))
+//!     .on_close(move |s: &mut State| s.dismiss_toast(id))
 //!     .with_timeout(Duration::from_secs(3))
 //!     .render(&theme)
+//! # ;
 //! ```
 //!
 //! If this card's host widget can be reused for a *different* toast across
@@ -91,10 +97,10 @@ pub struct Notification<C = ()> {
 ///
 /// Defaults to [`AlertVariant::Default`] (no accent color, no icon) and a
 /// [`DEFAULT_TIMEOUT`] auto-dismiss countdown (the countdown only arms once
-/// [`Notification::on_close`] is set; [`Self::with_timeout`] is likewise
+/// [`Notification::on_close`] is set; [`Notification::with_timeout`] is likewise
 /// only available after it).
 /// `created_at` defaults to [`Instant::now`] at the point this builder is
-/// constructed — override with [`Self::created_at`] if this notification's
+/// constructed — override with [`Notification::created_at`] if this notification's
 /// host widget may be reused for a different toast across rebuilds (see that
 /// method's docs).
 pub fn notification(message: impl Into<ArcStr>) -> Notification {
@@ -386,18 +392,18 @@ pub fn notification_stack<State: 'static, Action: 'static>(
 }
 
 /// Register `content` (typically a [`notification_stack`]) as a corner-anchored
-/// layer in the nearest ancestor [`crate::overlay_scope`]'s portal.
+/// layer in the nearest ancestor [`crate::overlay_scope()`]'s portal.
 ///
 /// The scope's view mounts the content in its always-on-top `PortalSlot`,
 /// sized to its own intrinsic content and aligned to `position`'s
 /// [`UnitPoint`] corner (see [`NotificationPosition`]'s conversion). The
 /// returned view itself renders nothing in-tree — wrap your app's root (or
-/// the region toasts should float over) in [`crate::overlay_scope`] and place
+/// the region toasts should float over) in [`crate::overlay_scope()`] and place
 /// this view anywhere inside it.
 ///
 /// # Panics
 ///
-/// Panics at `build` if there is no ancestor [`crate::overlay_scope`].
+/// Panics at `build` if there is no ancestor [`crate::overlay_scope()`].
 pub fn notification_layer<State, Action, V>(
     content: V,
     theme: &Theme,
@@ -495,7 +501,7 @@ where
 ///
 /// # Panics
 ///
-/// Panics at `build` if there is no ancestor [`crate::overlay_scope`] (see
+/// Panics at `build` if there is no ancestor [`crate::overlay_scope()`] (see
 /// [`notification_layer`]).
 pub fn notification_overlay<State, Action>(
     theme: &Theme,

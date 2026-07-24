@@ -248,7 +248,7 @@ fn build_inner<S: NotificationDemoHost>(
 
 /// Render the active toast stack as a corner-anchored overlay layer.
 ///
-/// Registers the stack with the nearest ancestor [`crate::overlay_scope`]'s
+/// Registers the stack with the nearest ancestor [`crate::overlay_scope()`]'s
 /// portal, anchored to [`NotificationDemoState::position`] (see
 /// [`notification_overlay`]). Place the result anywhere inside an
 /// `overlay_scope`-wrapped tree (see `examples/gallery.rs`) so toasts float

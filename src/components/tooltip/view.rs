@@ -6,13 +6,17 @@
 //! `View::message` (see
 //! `docs/superpowers/specs/2026-07-21-tooltip-arbitrary-content-design.md`).
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State;
 //! use void_ui::components::{button, label, tooltip};
 //! tooltip(
 //!     label("Reset the chart to defaults").render(&theme),
 //!     button(|_: &mut State| {}).label("Reset").render(&theme),
 //! )
 //! .render(&theme)
+//! # ;
 //! ```
 
 use std::marker::PhantomData;

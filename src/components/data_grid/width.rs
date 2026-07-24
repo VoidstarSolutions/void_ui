@@ -2,13 +2,13 @@
 //!
 //! Columns have a default pixel width on their [`ColumnDef`](super::column::ColumnDef).
 //! [`ColumnWidths`] holds optional *overrides* keyed by
-//! [`ColumnId`](super::column::ColumnId); the grid resolves an
+//! [`ColumnId`]; the grid resolves an
 //! **effective width** for each column as `override(id)` if present, else
 //! the column's default. This is the shared model behind both horizontal
 //! scroll (total content width) and drag-to-resize (resize mutates an
 //! override).
 //!
-//! Keyed by [`ColumnId`](super::column::ColumnId) rather than position so
+//! Keyed by [`ColumnId`] rather than position so
 //! a width override stays attached to its column when the host reorders
 //! or hides columns (the same stable-identity contract as
 //! [`SortState`](super::sort::SortState) /

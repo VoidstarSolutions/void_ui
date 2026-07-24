@@ -4,12 +4,17 @@
 //! `DropdownButtonView`. Clicking the button (anywhere on it) opens or closes the
 //! floating menu; selecting an item from the menu fires the corresponding callback.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State;
+//! # impl State { fn save_as(&mut self) {} fn export(&mut self) {} }
 //! use void_ui::components::dropdown_button;
 //! dropdown_button("Save")
 //!     .item("Save as…", |s: &mut State| s.save_as())
 //!     .item("Export", |s: &mut State| s.export())
 //!     .render(&theme)
+//! # ;
 //! ```
 //!
 //! At `build`, the view looks for the nearest [`crate::overlay_scope`]'s

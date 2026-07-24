@@ -4,11 +4,22 @@
 //! convention. Provide the sidebar's content as a child `WidgetView` and a
 //! callback that is invoked when the user clicks the built-in toggle strip.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # #[derive(PartialEq)]
+//! # enum Nav { Dashboard, Charts }
+//! # struct State { nav: Nav, sidebar_collapsed: bool }
+//! # let state = State { nav: Nav::Dashboard, sidebar_collapsed: false };
+//! use void_ui::components::{sidebar_item, sidebar_panel};
+//! use xilem::view::{CrossAxisAlignment, flex_col};
+//! # use xilem::style::Style as _;
+//! use masonry::layout::Length;
+//!
 //! sidebar_panel(
 //!     flex_col((
 //!         sidebar_item("Dashboard", |s: &mut State| s.nav = Nav::Dashboard)
-//!             .selected(s.nav == Nav::Dashboard)
+//!             .selected(state.nav == Nav::Dashboard)
 //!             .render(&theme),
 //!     ))
 //!     .cross_axis_alignment(CrossAxisAlignment::Stretch)
@@ -17,6 +28,7 @@
 //! )
 //! .collapsed(state.sidebar_collapsed)
 //! .render(&theme)
+//! # ;
 //! ```
 
 use std::marker::PhantomData;

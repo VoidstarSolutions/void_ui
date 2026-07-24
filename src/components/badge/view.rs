@@ -6,12 +6,15 @@
 //! inside a `sized_box`, reusing [`AlertVariant`]'s color mapping so a
 //! badge's semantics match an alert's.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
 //! use void_ui::{badge, pill};
 //! use void_ui::components::AlertVariant;
 //!
-//! badge("Draft").render(&theme)
-//! pill("Active").variant(AlertVariant::Success).render(&theme)
+//! badge("Draft").render::<(), ()>(&theme);
+//! pill("Active").variant(AlertVariant::Success).render::<(), ()>(&theme)
+//! # ;
 //! ```
 
 use masonry::core::ArcStr;

@@ -13,15 +13,22 @@
 //! otherwise the calendar is built in-tree under the picker's
 //! `AnchoredOverlay`, exactly as before.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # use chrono::NaiveDate;
+//! # enum Action { DateChanged(Option<NaiveDate>) }
+//! # struct State { selected_date: Option<NaiveDate> }
+//! # let state = State { selected_date: None };
 //! use void_ui::components::date_picker::date_picker;
-//! date_picker(self.selected_date, |s: &mut State, date| {
+//! date_picker(state.selected_date, |s: &mut State, date| {
 //!     s.selected_date = date;
 //!     Action::DateChanged(date)
 //! })
 //! .placeholder("Pick a date…")
 //! .cleanable(true)
 //! .render(&theme)
+//! # ;
 //! ```
 
 use std::marker::PhantomData;

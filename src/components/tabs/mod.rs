@@ -2,10 +2,14 @@
 //!
 //! One masonry widget (`TabsWidget`) backs six visual styles, selected via
 //! [`TabsVariant`]. Selection is host-managed, mirroring
-//! [`crate::components::radio`]: pass `selected: usize` and an `on_select`
+//! [`crate::components::radio()`]: pass `selected: usize` and an `on_select`
 //! callback that updates the host's own state.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State { selected_tab: usize }
+//! # let state = State { selected_tab: 0 };
 //! use void_ui::components::tabs::{tabs, TabItem, TabsVariant};
 //!
 //! tabs(
@@ -15,6 +19,7 @@
 //! )
 //! .variant(TabsVariant::Underline)
 //! .render(&theme)
+//! # ;
 //! ```
 
 #[cfg(feature = "gallery")]

@@ -1,10 +1,13 @@
 //! Xilem view for the spinner component.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
 //! use void_ui::spinner;
 //!
-//! spinner().render(&theme)
-//! spinner().color(theme.palette.accent).size(24.0).render(&theme)
+//! spinner().render::<(), ()>(&theme);
+//! spinner().color(theme.palette.accent).size(24.0).render::<(), ()>(&theme)
+//! # ;
 //! ```
 
 use std::marker::PhantomData;

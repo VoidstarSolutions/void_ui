@@ -7,11 +7,14 @@
 //! to half the size, which kurbo clamps into a perfect circle regardless of
 //! rounding.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
 //! use void_ui::status_dot;
 //!
-//! status_dot(theme.palette.green).render(&theme)
-//! status_dot(theme.palette.coral).size(10.0).render(&theme)
+//! status_dot(theme.palette.green).render::<(), ()>(&theme);
+//! status_dot(theme.palette.coral).size(10.0).render::<(), ()>(&theme)
+//! # ;
 //! ```
 
 use masonry::layout::Length;

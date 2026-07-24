@@ -67,14 +67,21 @@ const DEFAULT_LOAD_THRESHOLD: u64 = 20;
 /// Construct with [`list`], attach data and behavior through the chained
 /// setters, then materialize the xilem view with [`List::render`].
 ///
-/// ```ignore
-/// list()
+/// ```
+/// # use void_ui::Theme;
+/// # let theme = Theme::default();
+/// # use void_ui::{list, label, SelectionState};
+/// # struct Item { name: String }
+/// # struct State { items: Vec<Item>, selection: SelectionState }
+/// # let n = 0u64;
+/// list::<State, Item, ()>()
 ///     .items(|s: &State| &s.items[..])
 ///     .item_count(n)
 ///     .item_height(28.0)
-///     .render_item(|item, selected, theme| label(item.name.clone()).render(theme))
-///     .selection(|s| &mut s.selection)
+///     .render_item(|item: &Item, _selected: bool, theme: &Theme| label(item.name.clone()).render(theme))
+///     .selection(|s: &mut State| &mut s.selection)
 ///     .render(&theme)
+/// # ;
 /// ```
 ///
 /// All setters are optional — an empty `List` renders an empty body.
@@ -234,7 +241,7 @@ where
     }
 
     /// Distance (in items) from the end of `item_count` at which
-    /// [`Self::on_load_more`] fires (defaults to [`DEFAULT_LOAD_THRESHOLD`]).
+    /// [`Self::on_load_more`] fires (defaults to `DEFAULT_LOAD_THRESHOLD`).
     pub fn load_threshold(mut self, load_threshold: u64) -> Self {
         self.load_threshold = load_threshold;
         self

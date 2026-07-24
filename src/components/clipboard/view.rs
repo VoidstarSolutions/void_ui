@@ -1,12 +1,17 @@
 //! Xilem view that wraps a [`ThemedButton`] containing a [`ClipboardWidget`]
 //! icon child, and forwards the copy action to a caller-supplied callback.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State;
+//! # impl State { fn write_to_clipboard(&mut self, _text: &str) {} }
 //! use void_ui::components::clipboard;
 //! clipboard("https://example.com/api", |s: &mut State, text: &str| {
 //!     s.write_to_clipboard(text);
 //! })
 //! .render(&theme)
+//! # ;
 //! ```
 //!
 //! [`ThemedButton`]: crate::components::button::widget::ThemedButton

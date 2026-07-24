@@ -11,11 +11,16 @@
 //! stores it and passes it back). The host strips the group separator it
 //! supplied to recover a parseable number.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State { amount: String }
+//! # let state = State { amount: String::from("1234.56") };
 //! use void_ui::components::input::{currency_input, CurrencyFormat};
 //! currency_input(state.amount.clone(), |s: &mut State, text| s.amount = text)
 //!     .format(CurrencyFormat::default()) // $1,234.56
 //!     .render(&theme)
+//! # ;
 //! ```
 
 use masonry::core::ArcStr;

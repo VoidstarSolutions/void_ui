@@ -1,30 +1,36 @@
 //! Xilem view for the meter component.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
 //! use void_ui::meter;
 //!
-//! meter(0.72).render(&theme)
+//! meter(0.72).render::<(), ()>(&theme);
 //! meter(0.42)
 //!     .fill_gradient(theme.palette.green, theme.palette.coral)
-//!     .render(&theme)
+//!     .render::<(), ()>(&theme);
 //!
 //! // A trailing "NN%" label derived from the fraction, composed alongside
 //! // the bar — the label can never drift out of sync since it's computed
 //! // from the same fraction, not supplied separately.
-//! meter(0.72).percent_label().render(&theme)
+//! meter(0.72).percent_label().render::<(), ()>(&theme)
+//! # ;
 //! ```
 //!
 //! An arbitrary (non-percentage) trailing label is just as trivially
 //! composed by hand:
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
 //! use xilem::view::flex_row;
 //! use void_ui::{label, meter};
 //!
 //! flex_row((
-//!     meter(0.72).fill_gradient(theme.palette.green, theme.palette.coral).render(&theme),
-//!     label("B+").render(&theme),
+//!     meter(0.72).fill_gradient(theme.palette.green, theme.palette.coral).render::<(), ()>(&theme),
+//!     label("B+").render::<(), ()>(&theme),
 //! ))
+//! # ;
 //! ```
 
 use masonry::layout::Length;
@@ -45,7 +51,7 @@ const DEFAULT_HEIGHT: f32 = 8.0;
 /// Gap between the bar and its `.percent_label()` readout, in px.
 const PERCENT_LABEL_GAP: f64 = 8.0;
 
-/// How the fill portion of a [`crate::meter`] is painted.
+/// How the fill portion of a [`crate::meter()`] is painted.
 ///
 /// [`MeterFill::Gradient`] spans the *full track width* regardless of the
 /// current fraction — the fill rect is a window onto a fixed gradient, so a
@@ -120,7 +126,7 @@ impl Meter {
     /// string to pass in, so it can never drift out of sync with the bar
     /// the way a hand-composed literal could. For any other text (a score,
     /// a letter grade, anything not a percentage), compose a
-    /// [`crate::label`] alongside `.render(&theme)` yourself instead — see
+    /// [`crate::label()`] alongside `.render(&theme)` yourself instead — see
     /// this module's doc example.
     pub fn percent_label(mut self) -> Self {
         self.percent_label = true;
@@ -145,7 +151,7 @@ impl Meter {
     ///
     /// Returns a type-erased view because [`Self::percent_label`] may need
     /// to compose the bar with an adjacent label (same reasoning as
-    /// [`crate::separator`]'s optional label) — a plain [`MeterView`]
+    /// [`crate::separator()`]'s optional label) — a plain `MeterView`
     /// alone can't express that composed shape.
     #[must_use = "View values do nothing unless provided to Xilem."]
     pub fn render<S: 'static, A: 'static>(self, theme: &Theme) -> Box<AnyWidgetView<S, A>> {

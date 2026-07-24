@@ -13,11 +13,16 @@
 //! Use [`format_mask`] to render the masked string anywhere else (e.g. a
 //! read-only summary).
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State { phone: String }
+//! # let state = State { phone: String::new() };
 //! use void_ui::components::input::masked_input;
 //! masked_input(state.phone.clone(), |s: &mut State, raw| s.phone = raw)
 //!     .mask("(###)-###-####")
 //!     .render(&theme)
+//! # ;
 //! ```
 
 use masonry::core::ArcStr;

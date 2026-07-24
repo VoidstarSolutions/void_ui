@@ -6,12 +6,17 @@
 //! afterward so the host can react (e.g. update UI state, show a toast) —
 //! it must **not** write the clipboard again.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State { last_copied: Option<String> }
+//! # let _state = State { last_copied: None };
 //! use void_ui::components::clipboard;
-//! clipboard("sk-proj-abc123", |s: &mut State, text: &str| {
+//! clipboard("hello, clipboard!", |s: &mut State, text: &str| {
 //!     s.last_copied = Some(text.to_owned());
 //! })
 //! .render(&theme)
+//! # ;
 //! ```
 
 #[cfg(feature = "gallery")]

@@ -7,14 +7,17 @@
 //! composes a trailing "NN%" readout derived from the fraction; any other
 //! label is composed by hand alongside it (e.g. in a `flex_row`).
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
 //! use void_ui::meter;
 //!
-//! meter(0.72).render(&theme)
+//! meter(0.72).render::<(), ()>(&theme);
 //! meter(0.42)
 //!     .fill_gradient(theme.palette.green, theme.palette.coral)
 //!     .percent_label()
-//!     .render(&theme)
+//!     .render::<(), ()>(&theme)
+//! # ;
 //! ```
 
 #[cfg(feature = "gallery")]

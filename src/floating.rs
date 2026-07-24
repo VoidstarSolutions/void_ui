@@ -50,7 +50,7 @@ pub struct FloatingOverlay {
 impl FloatingOverlay {
     /// Create a `FloatingOverlay` wrapping `child` at the given `position`
     /// (or hidden when `position` is `None`). Pointer-transparent by
-    /// default; flip [`Self::set_interactive`] / pass `interactive: true`
+    /// default; use [`Self::new_interactive`] / pass `interactive: true`
     /// through the view constructor when wrapping an interactive child.
     #[must_use]
     pub fn new(child: NewWidget<impl Widget + ?Sized>, position: Option<Point>) -> Self {

@@ -1,6 +1,13 @@
 //! Xilem view wrapper for the resizable split panel.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State { split_ratio: f32 }
+//! # let state = State { split_ratio: 0.5 };
+//! # let left_content = void_ui::label("left").render(&theme);
+//! # let right_content = void_ui::label("right").render(&theme);
+//! use void_ui::components::h_resizable;
 //! h_resizable(
 //!     left_content,
 //!     right_content,
@@ -8,11 +15,20 @@
 //! )
 //! .ratio(state.split_ratio)
 //! .render(&theme)
+//! # ;
 //! ```
 //!
 //! For more than two panes, use [`h_resizable_panels`]/[`v_resizable_panels`]:
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State { pane_ratios: Vec<f32> }
+//! # let state = State { pane_ratios: vec![0.2, 0.6, 0.2] };
+//! # let sidebar = void_ui::label("sidebar").render(&theme);
+//! # let editor = void_ui::label("editor").render(&theme);
+//! # let inspector = void_ui::label("inspector").render(&theme);
+//! use void_ui::components::{ResizablePanel, h_resizable_panels};
 //! h_resizable_panels(
 //!     vec![
 //!         ResizablePanel::new(sidebar).min_size(160.0).max_size(320.0),
@@ -23,6 +39,7 @@
 //!     |s: &mut State, _handle: usize, ratios: Vec<f32>| s.pane_ratios = ratios,
 //! )
 //! .render(&theme)
+//! # ;
 //! ```
 
 use std::marker::PhantomData;
@@ -107,7 +124,7 @@ pub struct ResizablePanels<State, Action, F> {
 ///
 /// # Panics
 ///
-/// [`Self::render`] panics (via `ResizableWidget::new`)
+/// [`ResizablePanels::render`] panics (via `ResizableWidget::new`)
 /// if `panels.len() != ratios.len()` or there are fewer than two panels.
 pub fn h_resizable_panels<State, Action, F>(
     panels: Vec<ResizablePanel<State, Action>>,
@@ -126,7 +143,7 @@ pub fn h_resizable_panels<State, Action, F>(
 ///
 /// # Panics
 ///
-/// [`Self::render`] panics (via `ResizableWidget::new`)
+/// [`ResizablePanels::render`] panics (via `ResizableWidget::new`)
 /// if `panels.len() != ratios.len()` or there are fewer than two panels.
 pub fn v_resizable_panels<State, Action, F>(
     panels: Vec<ResizablePanel<State, Action>>,

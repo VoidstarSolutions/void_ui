@@ -605,7 +605,7 @@ pub struct StockDemo {
     pub filter: FilterState,
     /// Per-column width overrides.
     pub column_widths: ColumnWidths,
-    /// Materialized filtered-then-sorted view (see [`Self::refresh`]).
+    /// Materialized filtered-then-sorted view (see `refresh`).
     pub visible: Vec<StockQuote>,
     /// Visible columns in display order (show/hide + reorder).
     column_order: Option<Vec<ColumnId>>,

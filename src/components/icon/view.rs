@@ -1,10 +1,13 @@
 //! Xilem view for the icon component.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
 //! use void_ui::components::icon::{IconName, icon};
 //!
-//! icon(IconName::ChevronLeft).render(&theme)
-//! icon(IconName::Plus).color(theme.palette.accent).size(20.0).render(&theme)
+//! icon(IconName::ChevronLeft).render::<(), ()>(&theme);
+//! icon(IconName::Plus).color(theme.palette.accent).size(20.0).render::<(), ()>(&theme)
+//! # ;
 //! ```
 //!
 //! The host application must register [`crate::LUCIDE_FONT_BYTES`] once before
@@ -55,8 +58,8 @@ pub fn icon(name: impl Into<Icon>) -> Icon {
 /// when `open` (expanded), a rightward chevron when closed (collapsed).
 ///
 /// The single source of truth for the open → glyph mapping shared by every
-/// disclosure affordance — [`collapsible`](crate::collapsible) headers,
-/// expandable [`data_grid`](crate::data_grid) rows, tree nodes — so the
+/// disclosure affordance — [`collapsible`](crate::collapsible()) headers,
+/// expandable [`data_grid`](crate::data_grid()) rows, tree nodes — so the
 /// convention can't drift between the view layer ([`disclosure_chevron`])
 /// and widgets that build the chevron directly via
 /// [`Icon::build_widget`](crate::Icon::build_widget).

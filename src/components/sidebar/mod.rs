@@ -3,8 +3,18 @@
 //! Use [`sidebar_item`] for individual nav rows and [`sidebar_panel`] to wrap
 //! them in a collapsible container with a built-in toggle strip:
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # #[derive(PartialEq)]
+//! # enum Section { Dashboard, Charts }
+//! # struct State { focused: Section, sidebar_collapsed: bool }
+//! # let state = State { focused: Section::Dashboard, sidebar_collapsed: false };
 //! use void_ui::components::{sidebar_item, sidebar_panel};
+//! use xilem::view::{CrossAxisAlignment, flex_col};
+//! # use xilem::style::Style as _;
+//! use masonry::layout::Length;
+//!
 //! sidebar_panel(
 //!     flex_col((
 //!         sidebar_item("Charts", |s: &mut State| s.focused = Section::Charts)
@@ -17,6 +27,7 @@
 //! )
 //! .collapsed(state.sidebar_collapsed)
 //! .render(&theme)
+//! # ;
 //! ```
 
 #[cfg(feature = "gallery")]

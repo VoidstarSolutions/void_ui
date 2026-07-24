@@ -5,16 +5,23 @@
 //! the existing themed [`label`] with `sized_box` styling around the child
 //! and returns the type-erased view directly.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State { enabled: bool }
+//! # let state = State { enabled: false };
+//! # let content = void_ui::label("content").render::<(), ()>(&theme);
 //! use void_ui::group_box;
+//! use void_ui::components::checkbox;
 //!
-//! group_box(checkbox("Enable feature", |s: &mut State| s.enabled = !s.enabled)
-//!     .checked(state.enabled)
+//! group_box(checkbox(state.enabled, |s: &mut State, checked: bool| s.enabled = checked)
+//!     .label("Enable feature")
 //!     .render(&theme))
 //!     .title("Settings")
-//!     .render(&theme)
+//!     .render(&theme);
 //!
 //! group_box(content).title("Section").border().render(&theme)
+//! # ;
 //! ```
 
 use masonry::core::ArcStr;

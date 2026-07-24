@@ -1,13 +1,20 @@
 //! Generic popover component — trigger widget + floating content panel.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State;
 //! use void_ui::components::popover;
+//! use void_ui::components::PopoverAnchor;
+//! use void_ui::{button, label};
+//!
 //! popover(
-//!     button(|_| {}).label("Show info").render(&theme),
+//!     button(|_: &mut State| {}).label("Show info").render(&theme),
 //!     label("Here is some info.").render(&theme),
 //! )
 //! .anchor(PopoverAnchor::BottomStart)
 //! .render(&theme)
+//! # ;
 //! ```
 
 #[cfg(feature = "gallery")]

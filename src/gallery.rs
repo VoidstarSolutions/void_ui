@@ -11,7 +11,7 @@ use crate::components::code_view::read_only_text;
 /// Renders `source` in a styled monospace code panel with Rust syntax
 /// highlighting and a copy-to-clipboard button at the right edge.
 ///
-/// Typically called via the [`with_source`](crate::with_source) macro rather
+/// Typically called via the [`with_source`] macro rather
 /// than directly.
 #[must_use]
 pub fn code_block<S: 'static>(source: &str, theme: &Theme) -> impl WidgetView<S> + use<S> {
