@@ -12,7 +12,7 @@
 //! # let state = State { focused: Section::Dashboard, sidebar_collapsed: false };
 //! use void_ui::components::{sidebar_item, sidebar_panel};
 //! use xilem::view::{CrossAxisAlignment, flex_col};
-//! use xilem::style::Style as _;
+//! # use xilem::style::Style as _;
 //! use masonry::layout::Length;
 //!
 //! sidebar_panel(
