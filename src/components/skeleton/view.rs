@@ -1,16 +1,19 @@
 //! Xilem view for the skeleton loading placeholder.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
 //! use void_ui::skeleton;
 //!
-//! // A full-width text line.
-//! skeleton().render(&theme)
+//! // Full-width single-line placeholder (default).
+//! skeleton().render(&theme);
 //!
-//! // A fixed block, secondary tone, no animation.
-//! skeleton().rectangle().width(200.0).height(80.0).secondary().animated(false).render(&theme)
+//! // A fixed image block in the secondary tone, animation off.
+//! skeleton().rectangle().width(200.0).height(80.0).secondary().animated(false).render(&theme);
 //!
 //! // A 40px avatar circle with a shimmer sweep.
 //! skeleton().circle(40.0).wave().render(&theme)
+//! # ;
 //! ```
 
 use masonry::peniko::Color;

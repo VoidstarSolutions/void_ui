@@ -3,11 +3,14 @@
 //! A standalone, continuously-animating arc that conveys background activity.
 //! The widget drives its own animation loop — no host state required.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
 //! use void_ui::spinner;
 //!
-//! spinner().render(&theme)
-//! spinner().color(theme.palette.accent).size(24.0).render(&theme)
+//! spinner().render::<(), ()>(&theme);
+//! spinner().color(theme.palette.accent).size(24.0).render::<(), ()>(&theme)
+//! # ;
 //! ```
 
 #[cfg(feature = "gallery")]

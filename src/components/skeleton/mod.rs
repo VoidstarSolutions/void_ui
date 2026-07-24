@@ -17,17 +17,20 @@
 //! transitions through a live region while the skeletons are mounted, and
 //! clear it once the real content replaces them.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
 //! use void_ui::skeleton;
 //!
 //! // Full-width single-line placeholder (default).
-//! skeleton().render(&theme)
+//! skeleton().render(&theme);
 //!
 //! // A fixed image block in the secondary tone, animation off.
-//! skeleton().rectangle().width(240.0).height(120.0).secondary().animated(false).render(&theme)
+//! skeleton().rectangle().width(240.0).height(120.0).secondary().animated(false).render(&theme);
 //!
 //! // A 40px avatar circle with a shimmer sweep.
 //! skeleton().circle(40.0).wave().render(&theme)
+//! # ;
 //! ```
 
 #[cfg(feature = "gallery")]

@@ -1,11 +1,14 @@
 //! Xilem view for the separator component.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
 //! use void_ui::separator;
 //!
-//! separator().render(&theme)
-//! separator().vertical().dashed().color(theme.palette.accent).render(&theme)
-//! separator().label("Section").render(&theme)
+//! separator().render::<(), ()>(&theme);
+//! separator().vertical().dashed().color(theme.palette.accent).render::<(), ()>(&theme);
+//! separator().label("Section").render::<(), ()>(&theme)
+//! # ;
 //! ```
 
 use masonry::peniko::Color;

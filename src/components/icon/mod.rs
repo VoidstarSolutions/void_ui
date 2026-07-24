@@ -4,7 +4,7 @@
 //! bundled Lucide font. The host application must register the font once at
 //! startup:
 //!
-//! ```ignore
+//! ```text
 //! use void_ui::LUCIDE_FONT_BYTES;
 //!
 //! let app = Xilem::new_simple(state, logic, options)
@@ -13,9 +13,14 @@
 //!
 //! Then render icons anywhere in the view tree:
 //!
-//! ```ignore
-//! icon(IconName::ChevronLeft).render(&theme)
-//! icon(IconName::Plus).color(theme.palette.accent).size(20.0).render(&theme)
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! use void_ui::components::icon::{IconName, icon};
+//!
+//! icon(IconName::ChevronLeft).render::<(), ()>(&theme);
+//! icon(IconName::Plus).color(theme.palette.accent).size(20.0).render::<(), ()>(&theme)
+//! # ;
 //! ```
 
 #[cfg(feature = "gallery")]

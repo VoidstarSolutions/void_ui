@@ -1,10 +1,13 @@
 //! Xilem view for the icon component.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
 //! use void_ui::components::icon::{IconName, icon};
 //!
-//! icon(IconName::ChevronLeft).render(&theme)
-//! icon(IconName::Plus).color(theme.palette.accent).size(20.0).render(&theme)
+//! icon(IconName::ChevronLeft).render::<(), ()>(&theme);
+//! icon(IconName::Plus).color(theme.palette.accent).size(20.0).render::<(), ()>(&theme)
+//! # ;
 //! ```
 //!
 //! The host application must register [`crate::LUCIDE_FONT_BYTES`] once before
