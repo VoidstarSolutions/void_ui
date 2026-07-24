@@ -51,7 +51,7 @@ use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
 use super::ButtonVariant;
-use super::widget::ThemedButton;
+use super::widget::{ThemedButton, ThemedButtonProps, apply_themed_button_props};
 use crate::Theme;
 
 /// Builder for a themed button wrapped around an arbitrary child view.
@@ -193,6 +193,27 @@ impl<V, F, State, Action> ContentButtonView<V, F, State, Action> {
     }
 }
 
+impl<V, F, State, Action> ThemedButtonProps for ContentButtonView<V, F, State, Action> {
+    fn theme(&self) -> Theme {
+        self.theme
+    }
+    fn selected(&self) -> bool {
+        self.selected
+    }
+    fn disabled(&self) -> bool {
+        self.disabled
+    }
+    fn variant(&self) -> ButtonVariant {
+        self.variant
+    }
+    fn accessible_name(&self) -> Option<&ArcStr> {
+        self.accessible_name.as_ref()
+    }
+    fn corners(&self) -> Option<RoundedRectRadii> {
+        self.corners
+    }
+}
+
 impl<V, F, State, Action> ViewMarker for ContentButtonView<V, F, State, Action> {}
 
 impl<V, F, State, Action> View<State, Action, ViewCtx> for ContentButtonView<V, F, State, Action>
@@ -228,30 +249,9 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) {
-        // Each ThemedButton setter guards behind a `!=` and only then requests
-        // layout/paint, so diffing here just avoids redundant calls.
-        if self.theme != prev.theme {
-            ThemedButton::set_theme(&mut element, &self.theme);
-        }
-        if self.selected != prev.selected {
-            ThemedButton::set_selected(&mut element, self.selected);
-        }
-        if self.disabled != prev.disabled {
-            ThemedButton::set_disabled(&mut element, self.disabled);
-        }
-        if self.variant != prev.variant {
-            ThemedButton::set_variant(&mut element, self.variant);
-        }
-        if self.accessible_name != prev.accessible_name {
-            ThemedButton::set_accessibility_label(&mut element, self.accessible_name.clone());
-        }
+        apply_themed_button_props(&mut element, prev, self);
         if self.fill_content != prev.fill_content {
             ThemedButton::set_stretch_child(&mut element, self.fill_content);
-        }
-        // A theme swap moves the default radius, so recompute whenever either
-        // the override or the theme changed.
-        if self.corners != prev.corners || self.theme.radius != prev.theme.radius {
-            ThemedButton::set_corners(&mut element, self.resolved_corners());
         }
         // The child owns its own theming: it was rendered by the caller with a
         // theme, so its rebuild pushes any color/size changes down itself.
