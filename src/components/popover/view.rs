@@ -3,14 +3,20 @@
 //! `Popover<State, Action, TriggerV, ContentV>` is the builder; `.render(&theme)`
 //! produces a `PopoverView`.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State;
 //! use void_ui::components::popover;
+//! use void_ui::{button, label, OverlayAnchor};
+//!
 //! popover(
-//!     button(|_| {}).label("Show info").render(&theme),
+//!     button(|_: &mut State| {}).label("Show info").render(&theme),
 //!     label("Some helpful information here.").render(&theme),
 //! )
 //! .anchor(OverlayAnchor::BottomStart)
 //! .render(&theme)
+//! # ;
 //! ```
 //!
 //! `render` erases the content view into an `Arc`. At `build`, the view looks

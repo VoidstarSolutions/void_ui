@@ -4,10 +4,14 @@
 //! convention. The clip rect excludes scrollbar track areas, so content is
 //! never rendered behind scrollbars.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # let my_content_view = void_ui::label("content").render::<(), ()>(&theme);
 //! use void_ui::components::scroll_container;
 //! scroll_container(my_content_view)
 //!     .render(&theme)
+//! # ;
 //! ```
 
 use std::marker::PhantomData;

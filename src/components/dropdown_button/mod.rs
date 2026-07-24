@@ -9,13 +9,19 @@
 //! viewport or card actually clips it, rather than floating above all other
 //! content.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State;
+//! # impl State { fn save_as(&mut self) {} fn export(&mut self) {} }
 //! use void_ui::components::dropdown_button;
+//! use void_ui::components::ButtonVariant;
 //! dropdown_button("Save")
 //!     .item("Save as…", |s: &mut State| s.save_as())
 //!     .item("Export PDF", |s: &mut State| s.export())
 //!     .variant(ButtonVariant::Primary)
 //!     .render(&theme)
+//! # ;
 //! ```
 
 #[cfg(feature = "gallery")]

@@ -5,7 +5,11 @@
 //! and [`Menu::render`] materializes a [`MenuView`] that drives the
 //! `MenuPanel` widget. Selecting an enabled row fires that row's callback.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State;
+//! # impl State { fn copy(&mut self) {} fn paste(&mut self) {} fn select_all(&mut self) {} }
 //! use void_ui::components::context_menu::{menu, item};
 //! menu()
 //!     .item(item("Copy").on_select(|s: &mut State| s.copy()))
@@ -13,6 +17,7 @@
 //!     .separator()
 //!     .item(item("Select All").on_select(|s: &mut State| s.select_all()))
 //!     .render(&theme)
+//! # ;
 //! ```
 //!
 //! Rows can be actions (with icon/shortcut/checked/sub-title/disabled),
@@ -395,7 +400,12 @@ where
 /// anywhere in `content` opens the menu at the cursor; selecting a row fires its
 /// callback, and selecting / clicking outside / Escape dismisses it.
 ///
-/// ```ignore
+/// ```
+/// # use void_ui::Theme;
+/// # let theme = Theme::default();
+/// # struct State;
+/// # impl State { fn cut(&mut self) {} fn copy(&mut self) {} fn paste(&mut self) {} }
+/// # let my_content = void_ui::label("content");
 /// use void_ui::components::context_menu::{context_menu_area, item};
 /// context_menu_area(my_content.render(&theme))
 ///     .item(item("Cut").on_select(|s: &mut State| s.cut()))
@@ -403,6 +413,7 @@ where
 ///     .separator()
 ///     .item(item("Paste").disabled(true).on_select(|s: &mut State| s.paste()))
 ///     .render(&theme)
+/// # ;
 /// ```
 #[must_use = "ContextMenuAreaBuilder does nothing until rendered with .render(&theme)"]
 pub struct ContextMenuAreaBuilder<State, Action, V> {

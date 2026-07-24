@@ -6,7 +6,10 @@
 //! mounted through the outermost `overlay_scope`'s portal, the same
 //! mechanism `dialog` uses — an `overlay_scope` ancestor is required.
 //!
-//! ```ignore
+//! ```
+//! # use void_ui::Theme;
+//! # let theme = Theme::default();
+//! # struct State;
 //! use void_ui::components::{button, label, tooltip};
 //! use void_ui::overlay_scope;
 //!
@@ -18,6 +21,7 @@
 //!     )
 //!     .render(&theme),
 //! )
+//! # ;
 //! ```
 
 #[cfg(feature = "gallery")]

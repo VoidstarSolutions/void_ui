@@ -511,9 +511,13 @@ impl Widget for OverlayScope {
 /// discover it and push popups into it — popups that paint on top of
 /// everything inside `content`, clipped to `content`'s own bounds.
 ///
-/// ```ignore
-/// use void_ui::{overlay_scope, components::scroll_container::scroll_container};
-/// overlay_scope(scroll_container(my_content)).render(&theme)
+/// ```
+/// # use void_ui::Theme;
+/// # let theme = Theme::default();
+/// use void_ui::overlay_scope;
+/// use void_ui::label;
+/// overlay_scope(label("content").render::<(), ()>(&theme))
+/// # ;
 /// ```
 pub fn overlay_scope<State, Action, V>(content: V) -> impl WidgetView<State, Action>
 where
