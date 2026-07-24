@@ -374,7 +374,7 @@ pub trait ThemedButtonProps {
     fn selected(&self) -> bool;
     fn disabled(&self) -> bool;
     fn variant(&self) -> ButtonVariant;
-    fn accessible_name(&self) -> &Option<ArcStr>;
+    fn accessible_name(&self) -> Option<&ArcStr>;
     /// Explicit corner-radii override; `None` falls back to the theme's
     /// small radius.
     fn corners(&self) -> Option<RoundedRectRadii>;
@@ -403,7 +403,7 @@ pub fn apply_themed_button_props<P: ThemedButtonProps>(
         ThemedButton::set_variant(element, next.variant());
     }
     if next.accessible_name() != prev.accessible_name() {
-        ThemedButton::set_accessibility_label(element, next.accessible_name().clone());
+        ThemedButton::set_accessibility_label(element, next.accessible_name().cloned());
     }
     let corners = next.corners();
     let default_radius_changed = corners.is_none() && next.theme().radius != prev.theme().radius;
@@ -948,8 +948,8 @@ mod tests {
         fn variant(&self) -> ButtonVariant {
             self.variant
         }
-        fn accessible_name(&self) -> &Option<ArcStr> {
-            &self.accessible_name
+        fn accessible_name(&self) -> Option<&ArcStr> {
+            self.accessible_name.as_ref()
         }
         fn corners(&self) -> Option<RoundedRectRadii> {
             self.corners
