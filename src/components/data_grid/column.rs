@@ -236,7 +236,7 @@ impl<R, State> ColumnDef<R, State> {
     }
 
     /// The column's effective [`ColumnId`]: its explicit [`Self::id`] if
-    /// set, else one derived from its [`title`](Self::title).
+    /// set, else one derived from its `title`.
     #[must_use]
     pub fn effective_id(&self) -> ColumnId {
         self.id

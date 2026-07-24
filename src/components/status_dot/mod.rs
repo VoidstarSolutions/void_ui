@@ -2,7 +2,7 @@
 //! (connection state, online/offline, etc.).
 //!
 //! There is no custom masonry widget and no view state: [`StatusDot::render`]
-//! wraps an empty [`crate::label`] in `sized_box` styling.
+//! wraps an empty [`crate::label()`] in `sized_box` styling.
 
 #[cfg(feature = "gallery")]
 pub mod demo;

@@ -124,7 +124,7 @@ pub struct ResizablePanels<State, Action, F> {
 ///
 /// # Panics
 ///
-/// [`Self::render`] panics (via `ResizableWidget::new`)
+/// [`ResizablePanels::render`] panics (via `ResizableWidget::new`)
 /// if `panels.len() != ratios.len()` or there are fewer than two panels.
 pub fn h_resizable_panels<State, Action, F>(
     panels: Vec<ResizablePanel<State, Action>>,
@@ -143,7 +143,7 @@ pub fn h_resizable_panels<State, Action, F>(
 ///
 /// # Panics
 ///
-/// [`Self::render`] panics (via `ResizableWidget::new`)
+/// [`ResizablePanels::render`] panics (via `ResizableWidget::new`)
 /// if `panels.len() != ratios.len()` or there are fewer than two panels.
 pub fn v_resizable_panels<State, Action, F>(
     panels: Vec<ResizablePanel<State, Action>>,

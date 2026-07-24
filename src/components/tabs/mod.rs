@@ -2,7 +2,7 @@
 //!
 //! One masonry widget (`TabsWidget`) backs six visual styles, selected via
 //! [`TabsVariant`]. Selection is host-managed, mirroring
-//! [`crate::components::radio`]: pass `selected: usize` and an `on_select`
+//! [`crate::components::radio()`]: pass `selected: usize` and an `on_select`
 //! callback that updates the host's own state.
 //!
 //! ```

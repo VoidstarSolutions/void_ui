@@ -9,7 +9,7 @@
 //! Each skeleton hides itself from assistive tech (`node.set_hidden()`) — a
 //! placeholder shape carries no announceable content, so exposing an empty
 //! generic container would only add noise. The consequence is that skeletons
-//! are **silent**: unlike [`crate::spinner`], which reports
+//! are **silent**: unlike [`crate::spinner()`], which reports
 //! `Role::ProgressIndicator`, a screen full of skeletons announces nothing,
 //! so a screen-reader user is told neither that content is loading nor when
 //! it arrives. The loading cue is therefore the **host's** responsibility:

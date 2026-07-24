@@ -1,7 +1,7 @@
 //! `list` — a virtualized, theme-driven vertical list of items.
 //!
 //! A single-column, row-virtualized list — a stripped-down
-//! [`data_grid`](super::data_grid) without table chrome (no
+//! [`data_grid`](super::data_grid()) without table chrome (no
 //! header/columns/sort/per-column-filter/horizontal scroll). It supports an
 //! optional loading spinner, a search input, item selection, lazy loading
 //! (an `on_load_more` callback fired as the visible range nears the end of
@@ -11,7 +11,7 @@
 //! ## A thin consumer of the collection substrate
 //!
 //! Like `data_grid`, `list` builds its virtualized body on the
-//! crate-internal [`collection`](crate::collection) substrate: row
+//! crate-internal `collection` substrate: row
 //! virtualization, scroll-to-index, lazy-load, arrow-key navigation, the
 //! selection background, and click routing all live there. `list` adds only
 //! its chrome (search box, loading spinner) and per-item content. It does

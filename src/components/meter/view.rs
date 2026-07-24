@@ -51,7 +51,7 @@ const DEFAULT_HEIGHT: f32 = 8.0;
 /// Gap between the bar and its `.percent_label()` readout, in px.
 const PERCENT_LABEL_GAP: f64 = 8.0;
 
-/// How the fill portion of a [`crate::meter`] is painted.
+/// How the fill portion of a [`crate::meter()`] is painted.
 ///
 /// [`MeterFill::Gradient`] spans the *full track width* regardless of the
 /// current fraction — the fill rect is a window onto a fixed gradient, so a
@@ -126,7 +126,7 @@ impl Meter {
     /// string to pass in, so it can never drift out of sync with the bar
     /// the way a hand-composed literal could. For any other text (a score,
     /// a letter grade, anything not a percentage), compose a
-    /// [`crate::label`] alongside `.render(&theme)` yourself instead — see
+    /// [`crate::label()`] alongside `.render(&theme)` yourself instead — see
     /// this module's doc example.
     pub fn percent_label(mut self) -> Self {
         self.percent_label = true;
@@ -151,7 +151,7 @@ impl Meter {
     ///
     /// Returns a type-erased view because [`Self::percent_label`] may need
     /// to compose the bar with an adjacent label (same reasoning as
-    /// [`crate::separator`]'s optional label) — a plain [`MeterView`]
+    /// [`crate::separator()`]'s optional label) — a plain `MeterView`
     /// alone can't express that composed shape.
     #[must_use = "View values do nothing unless provided to Xilem."]
     pub fn render<S: 'static, A: 'static>(self, theme: &Theme) -> Box<AnyWidgetView<S, A>> {

@@ -27,7 +27,7 @@ pub enum OverlayAnchor {
     TopEnd,
     /// Centered horizontally, top edge 25% down the *container* — used by
     /// `dialog`, which has no trigger rect to anchor to.
-    /// [`Self::child_offset`]'s `trigger` parameter is the container's own
+    /// `child_offset`'s `trigger` parameter is the container's own
     /// size for this variant (see `PortalSlot::layout`, which substitutes
     /// its own size for the usual trigger placement).
     ViewportQuarter,

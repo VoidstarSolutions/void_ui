@@ -285,7 +285,7 @@ impl Widget for ContextMenuArea {
     }
 
     /// We hold focus while open, so navigation keys land here; forward them to
-    /// the menu's own [`MenuPanel::handle_menu_key`], which owns highlight
+    /// the menu's own `MenuPanel::handle_menu_key`, which owns highlight
     /// movement, submenu open/close, and selection/dismissal (emitted as a
     /// `MenuAction` that bubbles back to our `on_action`).
     fn on_text_event(

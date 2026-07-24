@@ -1,6 +1,6 @@
 //! Generic dialog component — content positioned above everything else,
 //! centered horizontally and a quarter of the way down the enclosing
-//! [`crate::overlay_scope`].
+//! [`crate::overlay_scope()`].
 //!
 //! ```
 //! # use void_ui::Theme;

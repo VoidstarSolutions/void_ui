@@ -1,6 +1,6 @@
 //! View-level overlay portal: the typed registry resource that lets
 //! `popover` (and future overlay components) mount arbitrary stateful
-//! content views into the nearest [`crate::overlay_scope`]'s always-on-top
+//! content views into the nearest [`crate::overlay_scope()`]'s always-on-top
 //! slot, with full xilem rebuild/message semantics.
 //!
 //! # The full flow
@@ -9,8 +9,8 @@
 //!    [`OverlayPortal<State, Action>`] inside its `provides` closure and
 //!    publishes it into the xilem `Environment`. `provides` build-once
 //!    semantics give the registry stable identity for the scope's lifetime.
-//! 2. **Register.** `popover()`'s view ([`crate::components::popover`]) finds
-//!    the portal via [`portal_from_env`] at `View::build`, registers its
+//! 2. **Register.** `popover()`'s view ([`crate::components::popover()`]) finds
+//!    the portal via `portal_from_env` at `View::build`, registers its
 //!    `Arc`-erased content view ([`PortalContentView`]) and gets back a key;
 //!    on rebuild it refreshes the entry, on teardown it deregisters.
 //! 3. **Mount.** The scope's own view (`OverlayScopeRootView` in
@@ -24,9 +24,9 @@
 //! 4. **Show/hide/place.** Open state never flows through the registry:
 //!    each host (`PopoverHost` and its three siblings for `dropdown_button`,
 //!    `autocomplete`, and `dialog`) pushes visibility and anchor placement to
-//!    the slot through [`crate::overlay::binding::PortalBinding`] as
+//!    the slot through `PortalBinding` as
 //!    *plain data* via `ctx.mutate_later(scope_id, …)`
-//!    ([`crate::overlay_scope::OverlayScope::set_portal_visible`] /
+//!    (`OverlayScope::set_portal_visible` /
 //!    `set_portal_placement`), re-anchoring from `compose` while the trigger
 //!    scrolls.
 //! 5. **Dismiss.** Light dismiss with pass-through, no backdrop. The scope
@@ -155,7 +155,7 @@ struct PortalRegistry<State, Action> {
     entries: Vec<PortalEntry<State, Action>>,
 }
 
-/// Typed Environment resource published by [`crate::overlay_scope`].
+/// Typed Environment resource published by [`crate::overlay_scope()`].
 ///
 /// Cloning is shallow — all clones share one registry. The resource is
 /// created once at the scope's `View::build` and keeps stable identity for
@@ -334,7 +334,7 @@ use masonry::layout::{LayoutSize, LenReq, Length, SizeDef, UnitPoint};
 
 use crate::overlay::OverlayAnchor;
 
-/// How [`PortalSlot::dismiss_outside`] notifies a dismissed child's owner:
+/// How `PortalSlot::dismiss_outside` notifies a dismissed child's owner:
 /// a plain `fn` pointer invoked with a [`WidgetMut`] for the owner widget
 /// via `mutate_later`. A `fn` pointer (not a closure/`Box<dyn Fn>`) because
 /// it is `Copy + Send + 'static` — it threads through `mutate_later`'s
@@ -376,8 +376,8 @@ impl fmt::Debug for PortalOwner {
 
 /// Show/hide arguments for a portal child: who owns it (for outside-press
 /// notification), where it's anchored, and how far to offset it. Grouped
-/// into one struct so [`PortalSlot::set_visible`] /
-/// [`crate::overlay_scope::OverlayScope::set_portal_visible`] stay under
+/// into one struct so `PortalSlot::set_visible` /
+/// `OverlayScope::set_portal_visible` stay under
 /// clippy's `too_many_arguments`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PortalVisibility {
@@ -385,9 +385,9 @@ pub struct PortalVisibility {
     /// in tests / ownerless pushes and for every close push.
     pub owner: Option<PortalOwner>,
     /// Trigger's anchor rect. In window coordinates for
-    /// [`crate::overlay_scope::OverlayScope::set_portal_visible`], converted
+    /// `OverlayScope::set_portal_visible`, converted
     /// to the scope's local coordinates before reaching
-    /// [`PortalSlot::set_visible`]. Ignored for
+    /// `PortalSlot::set_visible`. Ignored for
     /// [`OverlayAnchor::ViewportQuarter`] — pass [`Rect::ZERO`].
     pub rect: Rect,
     pub anchor: OverlayAnchor,
@@ -445,7 +445,7 @@ impl PortalChild {
 /// content beneath as if no popover were open. Outside-press dismissal is
 /// driven by `OverlayScope` — an ancestor of *everything* in the scope, so
 /// every pointer-down inside the scope bubbles through it — which calls
-/// [`Self::dismiss_outside`] with the press position (light dismiss with
+/// `dismiss_outside` with the press position (light dismiss with
 /// pass-through: the press also acts on whatever was under it).
 pub struct PortalSlot {
     children: Vec<PortalChild>,

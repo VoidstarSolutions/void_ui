@@ -535,7 +535,7 @@ type RowActivate<State> = Arc<dyn Fn(&mut State) + Send + Sync>;
 /// `&mut State`. `None` means the row can't be toggled by keyboard.
 type RowToggle<State> = Arc<dyn Fn(&mut State) + Send + Sync>;
 
-/// Wraps a child view in `RowClickable` and routes its [`RowInteraction`]
+/// Wraps a child view in `RowClickable` and routes its `RowInteraction`
 /// through the supplied callbacks: a pointer click or Space runs `on_click`
 /// (selection); Enter runs the optional `on_activate` (activation), or falls
 /// back to `on_click` when none is set.
@@ -611,7 +611,7 @@ where
 }
 
 impl<V, State, Action, F> ClickableRow<V, State, Action, F> {
-    /// Reserves a leading hit [`zone`](LeadingHitZone) that defers to an
+    /// Reserves a leading hit `zone` that defers to an
     /// interactive child sitting there — an expandable row's disclosure
     /// chevron, a leading row-action control.
     ///
@@ -633,7 +633,7 @@ impl<V, State, Action, F> ClickableRow<V, State, Action, F> {
     ///
     /// Pass a **collection-level** value, not a per-row one: it's cached at
     /// widget creation and virtualization recycles a row across positions —
-    /// see [`RowClickable::new`].
+    /// see `RowClickable::new`.
     pub fn propagate_pointer_to_children(mut self, propagate: bool) -> Self {
         self.propagates_pointer = propagate;
         self
@@ -651,7 +651,7 @@ impl<V, State, Action, F> ClickableRow<V, State, Action, F> {
         self
     }
 
-    /// Attaches [`TreeRowMeta`] so Right/Left act on this row as a tree node —
+    /// Attaches `TreeRowMeta` so Right/Left act on this row as a tree node —
     /// Right expands a collapsed parent, Left collapses an expanded one (via
     /// [`Self::on_toggle`]). `None` (the default) leaves the row plain.
     pub fn tree_meta(mut self, meta: Option<TreeRowMeta>) -> Self {

@@ -107,7 +107,7 @@ pub struct Dialog<State, Action, ContentV, D = ()> {
 /// Construct a dialog showing `content` when `open` is `true`.
 ///
 /// The dialog is mounted above everything else inside the ROOT
-/// [`crate::overlay_scope`] ancestor — the outermost scope, regardless of how
+/// [`crate::overlay_scope()`] ancestor — the outermost scope, regardless of how
 /// deeply nested the dialog itself is — horizontally centered and a quarter
 /// of the way down that container.
 pub fn dialog<State, Action, ContentV>(

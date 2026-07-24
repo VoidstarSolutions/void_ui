@@ -12,7 +12,7 @@
 //!
 //! Backed by masonry's [`VirtualScroll`][masonry::widgets::VirtualScroll]
 //! for row virtualization, and wrapped in a horizontal-only
-//! [`scroll_container`](crate::components::scroll_container) so columns
+//! [`scroll_container`](crate::components::scroll_container()) so columns
 //! wider than the viewport are reachable. That `VirtualScroll` wiring now
 //! lives one layer down in the crate-internal `collection` substrate: row
 //! virtualization, selection, scroll-to, and keyboard nav are provided by
@@ -53,8 +53,8 @@
 //!
 //! The host composes the two stages in the canonical order — **filter,
 //! then sort** — using the two mirror helpers
-//! [`filtered_indices`](filter::filtered_indices) and
-//! [`sort_indices`](sort::sort_indices) over an index list, then
+//! [`filtered_indices`] and
+//! [`sort_indices`] over an index list, then
 //! materializes the surviving rows. The grid virtualizes over that
 //! ordered slice.
 //!
@@ -65,7 +65,7 @@
 //! Clicking a sortable header invokes the
 //! [`DataGrid::sort`](view::DataGrid::sort) callback with the column and a
 //! `multi` flag (whether Shift was held); the host cycles its `SortState`
-//! and re-derives its view with [`sort_indices`](sort::sort_indices),
+//! and re-derives its view with [`sort_indices`],
 //! which applies the levels as tiebreakers in priority order.
 //!
 //! - **Plain click** replaces the sort with that one column, cycling
@@ -99,7 +99,7 @@
 //!
 //! ## Columns are keyed by stable id (show/hide + reorder)
 //!
-//! Every column has a stable [`ColumnId`](column::ColumnId) — explicit
+//! Every column has a stable [`ColumnId`] — explicit
 //! (via [`ColumnDef::id`](column::ColumnDef::id)) or derived from its
 //! title. **All column state — sort, filter, and width — is keyed by
 //! that id, never by the column's position** in the `Vec<ColumnDef>`.

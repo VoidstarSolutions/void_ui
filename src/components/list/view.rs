@@ -241,7 +241,7 @@ where
     }
 
     /// Distance (in items) from the end of `item_count` at which
-    /// [`Self::on_load_more`] fires (defaults to [`DEFAULT_LOAD_THRESHOLD`]).
+    /// [`Self::on_load_more`] fires (defaults to `DEFAULT_LOAD_THRESHOLD`).
     pub fn load_threshold(mut self, load_threshold: u64) -> Self {
         self.load_threshold = load_threshold;
         self

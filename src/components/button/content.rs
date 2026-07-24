@@ -75,7 +75,7 @@ pub struct ContentButton<V, F> {
 /// Space / Enter while it is focused — the same activation contract as
 /// [`button`](super::button).
 ///
-/// The child is static content, not a control (see the [module docs](self)).
+/// The child is static content, not a control (see the module docs above).
 /// Set an [`accessible_name`](ContentButton::accessible_name): a composite
 /// child has no single string for assistive tech to announce.
 pub fn content_button<V, F>(child: V, callback: F) -> ContentButton<V, F> {
@@ -100,7 +100,7 @@ impl<V, F> ContentButton<V, F> {
 
     /// Suppress all interaction and mute the button's background.
     ///
-    /// The child renders its own colors — see the [module docs](self).
+    /// The child renders its own colors — see the module docs above.
     pub fn disabled(mut self, on: bool) -> Self {
         self.disabled = on;
         self

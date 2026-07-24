@@ -1,6 +1,6 @@
 //! Button group demo panel used by the void-ui gallery.
 //!
-//! The toggle group sections use a custom [`View`] whose [`ViewState`] holds
+//! The toggle group sections use a custom [`View`] whose [`View::ViewState`] holds
 //! the selected index so the demo is fully self-contained — no gallery state
 //! required.
 
@@ -130,7 +130,7 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
 type ToggleDemoChildView<S> = Box<AnyWidgetView<S, usize>>;
 type ToggleDemoChildState<S> = <ToggleDemoChildView<S> as View<S, usize, ViewCtx>>::ViewState;
 
-/// Self-contained toggle group whose selected index lives in [`ViewState`].
+/// Self-contained toggle group whose selected index lives in [`View::ViewState`].
 ///
 /// One type serves both orientations; the vertical flavor also switches the
 /// variant so the gallery shows two distinct looks.
