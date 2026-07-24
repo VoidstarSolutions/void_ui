@@ -363,6 +363,58 @@ impl ThemedButton {
     }
 }
 
+// --- MARK: REBUILD WIRING
+/// The subset of a button flavour's builder state that maps 1:1 onto
+/// [`ThemedButton`] setters. Implemented by both `ButtonView` and
+/// `ContentButtonView` so [`apply_themed_button_props`] can push all six
+/// shared properties from a single call site instead of each `rebuild`
+/// re-deriving the same diff-and-call pairs by hand (#174).
+pub trait ThemedButtonProps {
+    fn theme(&self) -> Theme;
+    fn selected(&self) -> bool;
+    fn disabled(&self) -> bool;
+    fn variant(&self) -> ButtonVariant;
+    fn accessible_name(&self) -> &Option<ArcStr>;
+    /// Explicit corner-radii override; `None` falls back to the theme's
+    /// small radius.
+    fn corners(&self) -> Option<RoundedRectRadii>;
+}
+
+/// Diffs `prev` against `next` and pushes only the [`ThemedButton`] setters
+/// whose value actually changed. Each setter already guards behind its own
+/// `!=` check and only then requests layout/repaint, so this diffing exists
+/// purely to skip the surrounding work (cloning `accessible_name`,
+/// recomputing corners) rather than for correctness.
+pub fn apply_themed_button_props<P: ThemedButtonProps>(
+    element: &mut WidgetMut<'_, ThemedButton>,
+    prev: &P,
+    next: &P,
+) {
+    if next.theme() != prev.theme() {
+        ThemedButton::set_theme(element, &next.theme());
+    }
+    if next.selected() != prev.selected() {
+        ThemedButton::set_selected(element, next.selected());
+    }
+    if next.disabled() != prev.disabled() {
+        ThemedButton::set_disabled(element, next.disabled());
+    }
+    if next.variant() != prev.variant() {
+        ThemedButton::set_variant(element, next.variant());
+    }
+    if next.accessible_name() != prev.accessible_name() {
+        ThemedButton::set_accessibility_label(element, next.accessible_name().clone());
+    }
+    let corners = next.corners();
+    let default_radius_changed = corners.is_none() && next.theme().radius != prev.theme().radius;
+    if corners != prev.corners() || default_radius_changed {
+        let radii = corners.unwrap_or_else(|| {
+            RoundedRectRadii::from_single_radius(f64::from(next.theme().radius.small))
+        });
+        ThemedButton::set_corners(element, radii);
+    }
+}
+
 // --- MARK: PAINT STATE
 impl ThemedButton {
     fn icon_size(&self) -> f64 {
@@ -856,6 +908,127 @@ mod tests {
             child.ctx().border_box().size().width,
             child_x - button_x,
         )
+    }
+
+    /// Minimal `ThemedButtonProps` double so this module can exercise
+    /// `apply_themed_button_props` without going through a real `View`.
+    #[derive(Clone)]
+    struct FakeProps {
+        theme: Theme,
+        selected: bool,
+        disabled: bool,
+        variant: ButtonVariant,
+        accessible_name: Option<ArcStr>,
+        corners: Option<RoundedRectRadii>,
+    }
+
+    impl FakeProps {
+        fn base() -> Self {
+            FakeProps {
+                theme: Theme::dark(),
+                selected: false,
+                disabled: false,
+                variant: ButtonVariant::Default,
+                accessible_name: None,
+                corners: None,
+            }
+        }
+    }
+
+    impl ThemedButtonProps for FakeProps {
+        fn theme(&self) -> Theme {
+            self.theme
+        }
+        fn selected(&self) -> bool {
+            self.selected
+        }
+        fn disabled(&self) -> bool {
+            self.disabled
+        }
+        fn variant(&self) -> ButtonVariant {
+            self.variant
+        }
+        fn accessible_name(&self) -> &Option<ArcStr> {
+            &self.accessible_name
+        }
+        fn corners(&self) -> Option<RoundedRectRadii> {
+            self.corners
+        }
+    }
+
+    #[test]
+    fn apply_themed_button_props_pushes_selected_disabled_and_variant() {
+        let mut h = harness_with(false);
+        let prev = FakeProps::base();
+        let next = FakeProps {
+            selected: true,
+            disabled: true,
+            variant: ButtonVariant::Danger,
+            ..FakeProps::base()
+        };
+        h.edit_root_widget(|mut wm| {
+            apply_themed_button_props(&mut wm, &prev, &next);
+        });
+        h.edit_root_widget(|wm| {
+            assert!(wm.widget.selected);
+            assert!(wm.widget.disabled);
+            assert_eq!(wm.widget.variant, ButtonVariant::Danger);
+        });
+    }
+
+    #[test]
+    fn apply_themed_button_props_recomputes_default_corners_on_theme_radius_change() {
+        let mut h = harness_with(false);
+        let prev = FakeProps::base();
+        let mut theme = Theme::dark();
+        theme.radius.small = 99.0;
+        let next = FakeProps {
+            theme,
+            ..FakeProps::base()
+        };
+        h.edit_root_widget(|mut wm| {
+            apply_themed_button_props(&mut wm, &prev, &next);
+        });
+        h.edit_root_widget(|wm| {
+            assert_eq!(
+                wm.widget.corners,
+                RoundedRectRadii::from_single_radius(99.0)
+            );
+        });
+    }
+
+    #[test]
+    fn apply_themed_button_props_leaves_an_explicit_corner_override_alone_on_theme_change() {
+        let mut h = harness_with(false);
+        let radii = RoundedRectRadii::from_single_radius(3.0);
+
+        // Seed the widget into the overridden state first.
+        let seeded = FakeProps {
+            corners: Some(radii),
+            ..FakeProps::base()
+        };
+        h.edit_root_widget(|mut wm| {
+            apply_themed_button_props(&mut wm, &FakeProps::base(), &seeded);
+        });
+        h.edit_root_widget(|wm| assert_eq!(wm.widget.corners, radii));
+
+        // An unrelated theme.radius change must not clobber the override.
+        let mut theme = Theme::dark();
+        theme.radius.small = 99.0;
+        let next = FakeProps {
+            theme,
+            corners: Some(radii),
+            ..FakeProps::base()
+        };
+        h.edit_root_widget(|mut wm| {
+            apply_themed_button_props(&mut wm, &seeded, &next);
+        });
+        h.edit_root_widget(|wm| {
+            assert_eq!(
+                wm.widget.corners, radii,
+                "explicit override should survive an unrelated theme change"
+            );
+        });
     }
 
     #[test]
