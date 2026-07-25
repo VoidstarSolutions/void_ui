@@ -100,7 +100,7 @@ impl<V> ScrollContainer<V> {
     }
 
     /// Materialize the xilem view at the supplied theme.
-    pub fn render<State, Action>(self, _theme: &Theme) -> ScrollContainerView<V, State, Action>
+    pub fn render<State, Action>(self, theme: &Theme) -> ScrollContainerView<V, State, Action>
     where
         State: 'static,
         Action: 'static,
@@ -112,6 +112,7 @@ impl<V> ScrollContainer<V> {
             constrain_vertical: self.constrain_vertical,
             fill: self.fill,
             scroll_bar_visibility: self.scroll_bar_visibility,
+            theme: *theme,
             phantom: PhantomData,
         }
     }
@@ -127,6 +128,7 @@ pub struct ScrollContainerView<V, State, Action> {
     constrain_vertical: bool,
     fill: bool,
     scroll_bar_visibility: ScrollBarVisibility,
+    theme: Theme,
     phantom: PhantomData<fn(State) -> Action>,
 }
 
@@ -144,7 +146,7 @@ where
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
         let (child_pod, child_state) = self.child.build(ctx, app_state);
-        let scroll_view = ScrollView::new(child_pod.new_widget)
+        let scroll_view = ScrollView::new(child_pod.new_widget, &self.theme)
             .constrain_horizontal(self.constrain_horizontal)
             .constrain_vertical(self.constrain_vertical)
             .content_must_fill(self.fill)
@@ -164,6 +166,9 @@ where
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) {
+        if self.theme != prev.theme {
+            ScrollView::set_theme(&mut element, &self.theme);
+        }
         if self.constrain_horizontal != prev.constrain_horizontal {
             ScrollView::set_constrain_horizontal(&mut element, self.constrain_horizontal);
         }

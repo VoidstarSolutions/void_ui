@@ -14,14 +14,16 @@ use masonry::core::{
 };
 use masonry::dpi::{LogicalPosition, PhysicalPosition};
 use masonry::imaging::{Composite, GroupRef, Painter};
+use masonry::kurbo;
 use masonry::kurbo::{Axis, Point, Rect, Size, Stroke, Vec2};
 use masonry::layout::{AsUnit as _, LayoutSize, LenDef, LenReq, Length, SizeDef};
 use masonry::peniko::BlendMode;
+use masonry::peniko::Color;
 use masonry::properties::AutoHideScrollBar;
 use masonry::widgets::{AnimatedF32, AnimationStatus};
-use masonry::{kurbo, theme};
 use tracing::{Span, trace_span};
 
+use crate::Theme;
 use crate::anim;
 
 fn compute_pan_range(viewport: Range<f64>, target: Range<f64>) -> Range<f64> {
@@ -42,6 +44,7 @@ fn compute_pan_range(viewport: Range<f64>, target: Range<f64>) -> Range<f64> {
 /// [`ScrollView`] can read/write them directly via `get_raw_mut`.
 pub(crate) struct VoidScrollBar {
     axis: Axis,
+    theme: Theme,
     pub(crate) cursor_progress: f64,
     pub(crate) moved: bool,
     pub(crate) portal_size: f64,
@@ -54,9 +57,10 @@ pub(crate) struct VoidScrollBar {
 }
 
 impl VoidScrollBar {
-    pub(crate) fn new(axis: Axis) -> Self {
+    pub(crate) fn new(axis: Axis, theme: &Theme) -> Self {
         Self {
             axis,
+            theme: *theme,
             cursor_progress: 0.0,
             moved: false,
             portal_size: 0.0,
@@ -73,10 +77,19 @@ impl VoidScrollBar {
         } else {
             1.0
         };
-        let thumb_len =
-            (size_ratio * layout_size.get_coord(self.axis)).max(theme::SCROLLBAR_MIN_SIZE);
+        let thumb_len = (size_ratio * layout_size.get_coord(self.axis))
+            .max(f64::from(self.theme.density.scrollbar_min_size));
         let track_len = layout_size.get_coord(self.axis) - thumb_len;
         (thumb_len, track_len)
+    }
+
+    /// Thumb fill color for the given hover state, read from `self.theme`.
+    fn thumb_color(&self, hovered: bool) -> Color {
+        if hovered {
+            self.theme.palette.scrollbar_thumb_hover
+        } else {
+            self.theme.palette.scrollbar_thumb
+        }
     }
 
     fn thumb_rect(&self, layout_size: Size) -> Rect {
@@ -113,6 +126,10 @@ impl VoidScrollBar {
 /// Fade-out duration for the scrollbar thumb — an animation timing value,
 /// not spacing, so it doesn't scale with density.
 const FADE_MILLIS: f32 = 300.0;
+
+/// Thumb edge stroke width — a hairline, not a spacing value, so it doesn't
+/// scale with density.
+const SCROLLBAR_EDGE_WIDTH: f64 = 1.0;
 
 impl AllowRawMut for VoidScrollBar {}
 
@@ -225,7 +242,9 @@ impl Widget for VoidScrollBar {
                 LenReq::FitContent(space) => space,
             }
         } else {
-            (theme::SCROLLBAR_WIDTH + theme::SCROLLBAR_PAD * 2.0).px()
+            (f64::from(self.theme.density.scrollbar_width)
+                + f64::from(self.theme.density.scrollbar_pad) * 2.0)
+                .px()
         }
     }
 
@@ -248,7 +267,7 @@ impl Widget for VoidScrollBar {
             );
         }
 
-        let pad = theme::SCROLLBAR_PAD;
+        let pad = f64::from(self.theme.density.scrollbar_pad);
         let thumb = self.thumb_rect(size).inset((
             -if self.axis == Axis::Vertical {
                 pad
@@ -271,14 +290,16 @@ impl Widget for VoidScrollBar {
                 0.0
             },
         ));
-        let thumb = thumb.to_rounded_rect(theme::SCROLLBAR_RADIUS);
+        let thumb = thumb.to_rounded_rect(f64::from(self.theme.density.scrollbar_radius));
 
-        painter.fill(thumb, theme::SCROLLBAR_COLOR).draw();
+        painter
+            .fill(thumb, self.thumb_color(ctx.is_hovered()))
+            .draw();
         painter
             .stroke(
                 thumb,
-                &Stroke::new(theme::SCROLLBAR_EDGE_WIDTH),
-                theme::SCROLLBAR_BORDER_COLOR,
+                &Stroke::new(SCROLLBAR_EDGE_WIDTH),
+                self.theme.palette.scrollbar_border,
             )
             .draw();
 
@@ -455,6 +476,7 @@ struct ConstrainAxes {
 /// A scrolling viewport with clipping that excludes the scrollbar tracks,
 /// so scrollbars are always adjacent to content rather than overlapping it.
 pub struct ScrollView<W: Widget + ?Sized> {
+    theme: Theme,
     child: WidgetPod<ContentClip<W>>,
     content_size: Size,
     viewport_pos: Point,
@@ -472,16 +494,17 @@ pub struct ScrollView<W: Widget + ?Sized> {
 
 impl<W: Widget + ?Sized> ScrollView<W> {
     #[must_use]
-    pub fn new(child: NewWidget<W>) -> Self {
+    pub fn new(child: NewWidget<W>, theme: &Theme) -> Self {
         Self {
+            theme: *theme,
             child: WidgetPod::new(ContentClip::new(child)),
             content_size: Size::ZERO,
             viewport_pos: Point::ORIGIN,
             constrain: ConstrainAxes::default(),
             must_fill: false,
             always_hide_scrollbars: false,
-            scrollbar_h: WidgetPod::new(VoidScrollBar::new(Axis::Horizontal)),
-            scrollbar_v: WidgetPod::new(VoidScrollBar::new(Axis::Vertical)),
+            scrollbar_h: WidgetPod::new(VoidScrollBar::new(Axis::Horizontal, theme)),
+            scrollbar_v: WidgetPod::new(VoidScrollBar::new(Axis::Vertical, theme)),
             vbar_width: 0.0,
             hbar_height: 0.0,
             nanos_since_last_pointer_move: None,
@@ -518,6 +541,26 @@ impl<W: Widget + ?Sized> ScrollView<W> {
     /// Call [`ContentClip::child_mut`] on the result to reach the user content.
     pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, ContentClip<W>> {
         this.ctx.get_mut(&mut this.widget.child)
+    }
+
+    /// Re-applies a new theme to the scroll view and both scrollbar
+    /// children — scrollbar sizing/color live in `Theme`, not masonry's
+    /// ambient globals, so a theme swap has to be pushed down explicitly.
+    pub fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
+        if this.widget.theme != *theme {
+            this.widget.theme = *theme;
+            {
+                let (sb, mut sb_ctx) = this.ctx.get_raw_mut(&mut this.widget.scrollbar_h);
+                sb.theme = *theme;
+                sb_ctx.request_render();
+            }
+            {
+                let (sb, mut sb_ctx) = this.ctx.get_raw_mut(&mut this.widget.scrollbar_v);
+                sb.theme = *theme;
+                sb_ctx.request_render();
+            }
+            this.ctx.request_layout();
+        }
     }
 
     pub fn set_constrain_horizontal(this: &mut WidgetMut<'_, Self>, v: bool) {
@@ -1063,7 +1106,8 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
                     cross_space,
                 );
                 if axis == Axis::Horizontal && !self.constrain.vertical {
-                    let track = theme::SCROLLBAR_WIDTH + theme::SCROLLBAR_PAD * 2.0;
+                    let track = f64::from(self.theme.density.scrollbar_width)
+                        + f64::from(self.theme.density.scrollbar_pad) * 2.0;
                     Length::px(child_length.get() + track)
                 } else {
                     child_length
@@ -1074,7 +1118,8 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let track = theme::SCROLLBAR_WIDTH + theme::SCROLLBAR_PAD * 2.0;
+        let track = f64::from(self.theme.density.scrollbar_width)
+            + f64::from(self.theme.density.scrollbar_pad) * 2.0;
 
         if self.always_hide_scrollbars {
             self.layout_hidden_bars(ctx, size);
@@ -1219,6 +1264,8 @@ mod tests {
     use masonry::widgets::SizedBox;
 
     use super::{ScrollView, VoidScrollBar, compute_pan_range};
+    use crate::Theme;
+    use crate::theme::Density;
 
     const MS: u64 = 1_000_000; // one millisecond in nanoseconds
 
@@ -1241,7 +1288,7 @@ mod tests {
     /// viewport, so it starts out vertically scrollable.
     fn tall_content_harness() -> TestHarness<ScrollView<SizedBox>> {
         let content = SizedBox::empty().size(Length::px(50.0), Length::px(1000.0));
-        let view = ScrollView::new(NewWidget::new(content));
+        let view = ScrollView::new(NewWidget::new(content), &Theme::dark());
         TestHarness::create_with_size(
             masonry::theme::default_property_set(),
             NewWidget::new(view),
@@ -1288,6 +1335,31 @@ mod tests {
              (already-origin) viewport, not skip the sync because the \
              viewport didn't need to move (progress={progress})"
         );
+    }
+
+    // --- ScrollView::set_theme ---
+
+    /// A theme swap must reach both scrollbar children, not just the
+    /// `ScrollView` itself — this is the behavior the "discards its theme
+    /// and paints from masonry's ambient globals" bug was about.
+    #[test]
+    fn set_theme_cascades_into_both_scrollbar_children() {
+        let mut harness = tall_content_harness();
+        let light = Theme::light();
+
+        harness.edit_root_widget(|mut root| {
+            ScrollView::set_theme(&mut root, &light);
+        });
+
+        harness.edit_root_widget(|mut root| {
+            assert_eq!(root.widget.theme, light);
+            {
+                let sb_h = root.ctx.get_mut(&mut root.widget.scrollbar_h);
+                assert_eq!(sb_h.widget.theme, light);
+            }
+            let sb_v = root.ctx.get_mut(&mut root.widget.scrollbar_v);
+            assert_eq!(sb_v.widget.theme, light);
+        });
     }
 
     // --- compute_pan_range ---
@@ -1377,7 +1449,7 @@ mod tests {
 
     #[test]
     fn scrollbar_scroll_range_is_content_minus_portal() {
-        let mut bar = VoidScrollBar::new(Axis::Vertical);
+        let mut bar = VoidScrollBar::new(Axis::Vertical, &Theme::dark());
         bar.content_size = 500.0;
         bar.portal_size = 200.0;
         assert!((bar.scroll_range() - 300.0).abs() < 1e-12);
@@ -1385,7 +1457,7 @@ mod tests {
 
     #[test]
     fn scrollbar_scroll_range_is_zero_when_content_fits() {
-        let mut bar = VoidScrollBar::new(Axis::Vertical);
+        let mut bar = VoidScrollBar::new(Axis::Vertical, &Theme::dark());
         bar.content_size = 100.0;
         bar.portal_size = 200.0;
         assert!(bar.scroll_range() < 1e-12);
@@ -1393,7 +1465,7 @@ mod tests {
 
     #[test]
     fn scrollbar_set_cursor_progress_clamps_to_unit_interval() {
-        let mut bar = VoidScrollBar::new(Axis::Horizontal);
+        let mut bar = VoidScrollBar::new(Axis::Horizontal, &Theme::dark());
         bar.set_cursor_progress(-0.5);
         assert!(bar.cursor_progress.abs() < 1e-12);
         bar.set_cursor_progress(1.5);
@@ -1402,9 +1474,52 @@ mod tests {
 
     #[test]
     fn scrollbar_set_cursor_progress_returns_true_only_on_change() {
-        let mut bar = VoidScrollBar::new(Axis::Horizontal);
+        let mut bar = VoidScrollBar::new(Axis::Horizontal, &Theme::dark());
         assert!(bar.set_cursor_progress(0.5));
         assert!(!bar.set_cursor_progress(0.5));
         assert!(bar.set_cursor_progress(0.6));
+    }
+
+    #[test]
+    fn thumb_color_uses_the_hover_token_only_when_hovered() {
+        let theme = Theme::dark();
+        let bar = VoidScrollBar::new(Axis::Vertical, &theme);
+        assert_eq!(bar.thumb_color(false), theme.palette.scrollbar_thumb);
+        assert_eq!(bar.thumb_color(true), theme.palette.scrollbar_thumb_hover);
+    }
+
+    #[test]
+    fn thumb_color_reads_the_theme_it_was_built_with_not_masonrys_ambient_theme() {
+        let dark = VoidScrollBar::new(Axis::Vertical, &Theme::dark());
+        let light = VoidScrollBar::new(Axis::Vertical, &Theme::light());
+        assert_ne!(dark.thumb_color(false), light.thumb_color(false));
+    }
+
+    #[test]
+    fn thumb_min_size_scales_with_density() {
+        // A thumb whose size-ratio-derived length would be tiny (content
+        // vastly larger than the portal) must be floored at
+        // `density.scrollbar_min_size`, and that floor must move with density
+        // rather than masonry's fixed ambient `SCROLLBAR_MIN_SIZE`.
+        let bar_at = |density| {
+            let theme = Theme::dark().with_density(density);
+            let mut bar = VoidScrollBar::new(Axis::Vertical, &theme);
+            bar.content_size = 1_000_000.0;
+            bar.portal_size = 100.0;
+            bar
+        };
+        let compact = bar_at(Density::compact());
+        let airy = bar_at(Density::airy());
+        let (compact_len, _) = compact.track_size(Size::new(100.0, 400.0));
+        let (airy_len, _) = airy.track_size(Size::new(100.0, 400.0));
+        assert!(
+            (compact_len - f64::from(Density::compact().scrollbar_min_size)).abs() < 1e-9,
+            "compact_len={compact_len}"
+        );
+        assert!(
+            (airy_len - f64::from(Density::airy().scrollbar_min_size)).abs() < 1e-9,
+            "airy_len={airy_len}"
+        );
+        assert!(compact_len < airy_len);
     }
 }

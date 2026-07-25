@@ -88,6 +88,13 @@ pub struct Palette {
     pub info_deep: Color,
     /// Focus-ring stroke color.
     pub focus: Color,
+
+    /// Scroll container thumb fill (rest state).
+    pub scrollbar_thumb: Color,
+    /// Scroll container thumb fill, hovered.
+    pub scrollbar_thumb_hover: Color,
+    /// Scroll container thumb edge stroke.
+    pub scrollbar_border: Color,
 }
 
 impl Palette {
@@ -112,19 +119,22 @@ impl Palette {
         let blue = oklch(0.68, 0.090, 260.0);
         let blue_soft = oklcha(0.68, 0.090, 260.0, 0.18);
         let blue_deep = oklch(0.60, 0.090, 260.0);
+        let border = oklch(0.30, 0.008, 240.0);
+        let border_strong = oklch(0.40, 0.010, 240.0);
+        let text_muted = oklch(0.70, 0.006, 240.0);
         Self {
             bg: oklch(0.18, 0.008, 240.0),
             bg_deep: oklch(0.14, 0.008, 240.0),
             surface: oklch(0.22, 0.008, 240.0),
             surface_2: oklch(0.26, 0.008, 240.0),
             surface_hi: oklch(0.30, 0.008, 240.0),
-            border: oklch(0.30, 0.008, 240.0),
-            border_strong: oklch(0.40, 0.010, 240.0),
+            border,
+            border_strong,
             grid: oklch(0.26, 0.006, 240.0),
             grid_major: oklch(0.32, 0.008, 240.0),
 
             text: oklch(0.94, 0.005, 240.0),
-            text_muted: oklch(0.70, 0.006, 240.0),
+            text_muted,
             text_faint: oklch(0.52, 0.006, 240.0),
 
             teal,
@@ -165,6 +175,10 @@ impl Palette {
             info_soft: blue_soft,
             info_deep: blue_deep,
             focus: teal,
+
+            scrollbar_thumb: border_strong,
+            scrollbar_thumb_hover: text_muted,
+            scrollbar_border: border,
         }
     }
 
@@ -189,19 +203,22 @@ impl Palette {
         let blue = oklch(0.51, 0.090, 260.0);
         let blue_soft = oklcha(0.51, 0.090, 260.0, 0.14);
         let blue_deep = oklch(0.47, 0.090, 260.0);
+        let border = oklch(0.900, 0.005, 85.0);
+        let border_strong = oklch(0.820, 0.006, 85.0);
+        let text_muted = oklch(0.45, 0.008, 240.0);
         Self {
             bg: oklch(0.985, 0.004, 85.0),
             bg_deep: oklch(0.965, 0.004, 85.0),
             surface: oklch(0.995, 0.003, 85.0),
             surface_2: oklch(0.970, 0.004, 85.0),
             surface_hi: oklch(0.940, 0.005, 85.0),
-            border: oklch(0.900, 0.005, 85.0),
-            border_strong: oklch(0.820, 0.006, 85.0),
+            border,
+            border_strong,
             grid: oklch(0.930, 0.004, 85.0),
             grid_major: oklch(0.860, 0.005, 85.0),
 
             text: oklch(0.22, 0.010, 240.0),
-            text_muted: oklch(0.45, 0.008, 240.0),
+            text_muted,
             text_faint: oklch(0.62, 0.006, 240.0),
 
             teal,
@@ -242,6 +259,10 @@ impl Palette {
             info_soft: blue_soft,
             info_deep: blue_deep,
             focus: teal,
+
+            scrollbar_thumb: border_strong,
+            scrollbar_thumb_hover: text_muted,
+            scrollbar_border: border,
         }
     }
 }
@@ -281,6 +302,18 @@ mod tests {
             assert_eq!(p.info_soft, p.blue_soft);
             assert_eq!(p.info_deep, p.blue_deep);
             assert_eq!(p.focus, p.teal);
+        }
+    }
+
+    /// Scrollbar chrome is neutral (not accent-colored) and, like the other
+    /// semantic roles, defaults to an existing neutral token rather than a
+    /// bespoke value — divergeable later without touching `scroll_container`.
+    #[test]
+    fn scrollbar_tokens_default_to_neutral_values() {
+        for p in [Palette::dark(), Palette::light()] {
+            assert_eq!(p.scrollbar_thumb, p.border_strong);
+            assert_eq!(p.scrollbar_thumb_hover, p.text_muted);
+            assert_eq!(p.scrollbar_border, p.border);
         }
     }
 }
