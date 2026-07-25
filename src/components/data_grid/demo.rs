@@ -1128,6 +1128,7 @@ fn build_inner(theme: &Theme, demo: &Demo) -> impl WidgetView<Demo> + use<> {
             .row_height(26.0)
             .scroll_to(scroll)
             .render(&theme_copy)
+            .flex(1.0)
     });
 
     flex_col((toolbar, sized_box(grid).flex(1.0)))
@@ -1249,6 +1250,7 @@ fn build_stock_inner(theme: &Theme, demo: &StockDemo) -> impl WidgetView<StockDe
             })
             .row_height(24.0)
             .render(&theme_copy)
+            .flex(1.0)
     });
 
     flex_col((toolbar, sized_box(grid).flex(1.0)))
@@ -1659,6 +1661,7 @@ fn build_tree_inner(theme: &Theme, demo: &TreeDemo) -> impl WidgetView<TreeDemo>
             )
             .row_height(24.0)
             .render(&theme_copy)
+            .flex(1.0)
     });
 
     flex_col((toolbar, key_legend, sized_box(grid).flex(1.0)))
