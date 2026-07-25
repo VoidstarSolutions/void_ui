@@ -45,6 +45,14 @@ pub struct Density {
     /// grid's filter row and list's loading footer are both
     /// `row_height + pad_v`, in px.
     pub row_height: f32,
+    /// Scroll container scrollbar thickness (cross-axis track size), in px.
+    pub scrollbar_width: f32,
+    /// Gap between a scrollbar thumb and the edges of its track, in px.
+    pub scrollbar_pad: f32,
+    /// Minimum scrollbar thumb length along its track, in px.
+    pub scrollbar_min_size: f32,
+    /// Scrollbar thumb corner radius, in px.
+    pub scrollbar_radius: f32,
 }
 
 impl Density {
@@ -62,6 +70,10 @@ impl Density {
             pad_v: 4.0,
             control: 12.0,
             row_height: 20.0,
+            scrollbar_width: 6.0,
+            scrollbar_pad: 1.0,
+            scrollbar_min_size: 36.0,
+            scrollbar_radius: 4.0,
         }
     }
 
@@ -79,6 +91,10 @@ impl Density {
             pad_v: 6.0,
             control: 14.0,
             row_height: 24.0,
+            scrollbar_width: 8.0,
+            scrollbar_pad: 2.0,
+            scrollbar_min_size: 45.0,
+            scrollbar_radius: 5.0,
         }
     }
 
@@ -96,6 +112,10 @@ impl Density {
             pad_v: 8.0,
             control: 16.0,
             row_height: 30.0,
+            scrollbar_width: 10.0,
+            scrollbar_pad: 3.0,
+            scrollbar_min_size: 54.0,
+            scrollbar_radius: 6.0,
         }
     }
 }
@@ -136,6 +156,14 @@ mod tests {
         assert_token_eq("control", d.control, 14.0);
         // data_grid DEFAULT_ROW_HEIGHT
         assert_token_eq("row_height", d.row_height, 24.0);
+        // former masonry::theme::SCROLLBAR_WIDTH
+        assert_token_eq("scrollbar_width", d.scrollbar_width, 8.0);
+        // former masonry::theme::SCROLLBAR_PAD
+        assert_token_eq("scrollbar_pad", d.scrollbar_pad, 2.0);
+        // former masonry::theme::SCROLLBAR_MIN_SIZE
+        assert_token_eq("scrollbar_min_size", d.scrollbar_min_size, 45.0);
+        // former masonry::theme::SCROLLBAR_RADIUS
+        assert_token_eq("scrollbar_radius", d.scrollbar_radius, 5.0);
     }
 
     /// `gap_lg` inherits the exact former `col` values so the five inline-gap
@@ -171,6 +199,30 @@ mod tests {
             ("control", c.control, b.control, a.control),
             ("row_height", c.row_height, b.row_height, a.row_height),
             ("pad", c.pad, b.pad, a.pad),
+            (
+                "scrollbar_width",
+                c.scrollbar_width,
+                b.scrollbar_width,
+                a.scrollbar_width,
+            ),
+            (
+                "scrollbar_pad",
+                c.scrollbar_pad,
+                b.scrollbar_pad,
+                a.scrollbar_pad,
+            ),
+            (
+                "scrollbar_min_size",
+                c.scrollbar_min_size,
+                b.scrollbar_min_size,
+                a.scrollbar_min_size,
+            ),
+            (
+                "scrollbar_radius",
+                c.scrollbar_radius,
+                b.scrollbar_radius,
+                a.scrollbar_radius,
+            ),
             (
                 "ui_font_size",
                 c.ui_font_size,

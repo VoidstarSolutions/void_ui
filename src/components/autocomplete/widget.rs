@@ -145,7 +145,7 @@ impl SuggestionList {
             autocomplete_handle,
             text_area_handle,
         );
-        let scroll = ScrollView::new(NewWidget::new(label_list));
+        let scroll = ScrollView::new(NewWidget::new(label_list), theme);
         Self {
             scroll: NewWidget::new(scroll).to_pod(),
             theme: *theme,
@@ -173,6 +173,7 @@ impl SuggestionList {
         this.widget.theme = *theme;
         {
             let mut scroll = this.ctx.get_mut(&mut this.widget.scroll);
+            ScrollView::set_theme(&mut scroll, theme);
             with_label_list(&mut scroll, |list| LabelList::set_theme(list, theme));
         }
         this.ctx.request_layout();
