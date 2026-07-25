@@ -35,6 +35,7 @@ use crate::Theme;
 use crate::collection::ScrollState;
 use crate::collection::SelectionState;
 use crate::layout::flex_wrap;
+use crate::with_source;
 
 const START_PRICE_UNITS: i64 = 100_000_000_000; // $100.00 in 1e-9 units.
 const TICK_INTERVAL_NS: i64 = 100_000_000; // 100 ms between synthetic trades.
@@ -1102,30 +1103,32 @@ fn build_inner(theme: &Theme, demo: &Demo) -> impl WidgetView<Demo> + use<> {
 
     let toolbar = build_toolbar(theme, notional_shown, row_count, demo.last_opened);
 
-    let grid = super::view::data_grid(columns)
-        .rows(|s: &Demo| {
-            if s.view_is_materialized() {
-                &s.visible[..]
-            } else {
-                &s.ticks[..]
-            }
-        })
-        .row_count(row_count)
-        .row_id(|t: &DemoTick| t.id)
-        .selection(|s: &mut Demo| &mut s.selection)
-        .sort(sort, |s: &mut Demo, col: ColumnId, multi: bool| {
-            s.cycle_sort(col, multi);
-        })
-        .filter(filter, |s: &mut Demo, col: ColumnId, query: String| {
-            s.set_filter(col, query);
-        })
-        .column_widths(widths)
-        .on_column_resize(|s: &mut Demo, col: ColumnId, new_width: f64| {
-            s.resize_column(col, new_width);
-        })
-        .row_height(26.0)
-        .scroll_to(scroll)
-        .render(&theme_copy);
+    let grid = with_source!(theme, {
+        super::view::data_grid(columns)
+            .rows(|s: &Demo| {
+                if s.view_is_materialized() {
+                    &s.visible[..]
+                } else {
+                    &s.ticks[..]
+                }
+            })
+            .row_count(row_count)
+            .row_id(|t: &DemoTick| t.id)
+            .selection(|s: &mut Demo| &mut s.selection)
+            .sort(sort, |s: &mut Demo, col: ColumnId, multi: bool| {
+                s.cycle_sort(col, multi);
+            })
+            .filter(filter, |s: &mut Demo, col: ColumnId, query: String| {
+                s.set_filter(col, query);
+            })
+            .column_widths(widths)
+            .on_column_resize(|s: &mut Demo, col: ColumnId, new_width: f64| {
+                s.resize_column(col, new_width);
+            })
+            .row_height(26.0)
+            .scroll_to(scroll)
+            .render(&theme_copy)
+    });
 
     flex_col((toolbar, sized_box(grid).flex(1.0)))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
@@ -1219,32 +1222,34 @@ fn build_stock_inner(theme: &Theme, demo: &StockDemo) -> impl WidgetView<StockDe
     .cross_axis_alignment(CrossAxisAlignment::Center)
     .gap(Length::px(8.0));
 
-    let grid = super::view::data_grid(columns)
-        .rows(|s: &StockDemo| {
-            if s.view_is_materialized() {
-                &s.visible[..]
-            } else {
-                &s.quotes[..]
-            }
-        })
-        .row_count(row_count)
-        .row_id(stock_row_id)
-        .selection(|s: &mut StockDemo| &mut s.selection)
-        .on_activate(|s: &mut StockDemo, id: u64| {
-            s.activate_row(id);
-        })
-        .sort(sort, |s: &mut StockDemo, col: ColumnId, multi: bool| {
-            s.cycle_sort(col, multi);
-        })
-        .filter(filter, |s: &mut StockDemo, col: ColumnId, query: String| {
-            s.set_filter(col, query);
-        })
-        .column_widths(widths)
-        .on_column_resize(|s: &mut StockDemo, col: ColumnId, new_width: f64| {
-            s.resize_column(col, new_width);
-        })
-        .row_height(24.0)
-        .render(&theme_copy);
+    let grid = with_source!(theme, {
+        super::view::data_grid(columns)
+            .rows(|s: &StockDemo| {
+                if s.view_is_materialized() {
+                    &s.visible[..]
+                } else {
+                    &s.quotes[..]
+                }
+            })
+            .row_count(row_count)
+            .row_id(stock_row_id)
+            .selection(|s: &mut StockDemo| &mut s.selection)
+            .on_activate(|s: &mut StockDemo, id: u64| {
+                s.activate_row(id);
+            })
+            .sort(sort, |s: &mut StockDemo, col: ColumnId, multi: bool| {
+                s.cycle_sort(col, multi);
+            })
+            .filter(filter, |s: &mut StockDemo, col: ColumnId, query: String| {
+                s.set_filter(col, query);
+            })
+            .column_widths(widths)
+            .on_column_resize(|s: &mut StockDemo, col: ColumnId, new_width: f64| {
+                s.resize_column(col, new_width);
+            })
+            .row_height(24.0)
+            .render(&theme_copy)
+    });
 
     flex_col((toolbar, sized_box(grid).flex(1.0)))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
@@ -1638,21 +1643,23 @@ fn build_tree_inner(theme: &Theme, demo: &TreeDemo) -> impl WidgetView<TreeDemo>
         ),
     ];
 
-    let grid = super::view::data_grid(columns)
-        .rows(|s: &TreeDemo| &s.visible[..])
-        .row_count(row_count)
-        .row_id(|r: &TreeRow| r.id)
-        .selection(|s: &mut TreeDemo| &mut s.selection)
-        .expandable(
-            |r: &TreeRow| r.expanded,
-            |r: &TreeRow| r.has_children,
-            |r: &TreeRow| r.depth,
-            |s: &mut TreeDemo, id: u64| {
-                s.toggle(id);
-            },
-        )
-        .row_height(24.0)
-        .render(&theme_copy);
+    let grid = with_source!(theme, {
+        super::view::data_grid(columns)
+            .rows(|s: &TreeDemo| &s.visible[..])
+            .row_count(row_count)
+            .row_id(|r: &TreeRow| r.id)
+            .selection(|s: &mut TreeDemo| &mut s.selection)
+            .expandable(
+                |r: &TreeRow| r.expanded,
+                |r: &TreeRow| r.has_children,
+                |r: &TreeRow| r.depth,
+                |s: &mut TreeDemo, id: u64| {
+                    s.toggle(id);
+                },
+            )
+            .row_height(24.0)
+            .render(&theme_copy)
+    });
 
     flex_col((toolbar, key_legend, sized_box(grid).flex(1.0)))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
