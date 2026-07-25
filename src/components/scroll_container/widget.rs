@@ -239,7 +239,7 @@ impl Widget for VoidScrollBar {
     ) {
         let size = ctx.content_box().size();
         let opacity = self.opacity.value();
-        let needs_opacity = opacity < 1.0 - 1e-4;
+        let needs_opacity = opacity < 1.0 - crate::anim::SETTLE_EPSILON;
 
         if needs_opacity {
             painter.push_fill_clip(ctx.border_box());
