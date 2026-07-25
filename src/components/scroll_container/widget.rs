@@ -18,6 +18,7 @@ use masonry::kurbo::{Axis, Point, Rect, Size, Stroke, Vec2};
 use masonry::layout::{AsUnit as _, LayoutSize, LenDef, LenReq, Length, SizeDef};
 use masonry::peniko::BlendMode;
 use masonry::properties::AutoHideScrollBar;
+use masonry::widgets::{AnimatedF32, AnimationStatus};
 use masonry::{kurbo, theme};
 use tracing::{Span, trace_span};
 
@@ -46,7 +47,7 @@ pub(crate) struct VoidScrollBar {
     pub(crate) portal_size: f64,
     pub(crate) content_size: f64,
     /// Current rendered opacity (animated toward `target_opacity`).
-    opacity: f32,
+    opacity: AnimatedF32,
     /// Target opacity set by the parent.
     pub(crate) target_opacity: f32,
     grab_anchor: Option<f64>,
@@ -60,7 +61,7 @@ impl VoidScrollBar {
             moved: false,
             portal_size: 0.0,
             content_size: 0.0,
-            opacity: 1.0,
+            opacity: AnimatedF32::stable(1.0),
             target_opacity: 1.0,
             grab_anchor: None,
         }
@@ -112,29 +113,6 @@ impl VoidScrollBar {
 /// Fade-out duration for the scrollbar thumb — an animation timing value,
 /// not spacing, so it doesn't scale with density.
 const FADE_MILLIS: f32 = 300.0;
-
-/// How close `opacity` must be to `target_opacity` to count as settled.
-const OPACITY_SNAP_EPSILON: f32 = 1e-4;
-
-/// Advances `opacity` toward `target_opacity` for a frame of `interval`
-/// nanoseconds, returning the new opacity.
-///
-/// The per-frame step comes from [`crate::anim::elapsed_fraction`], scaled by
-/// how long the fade is supposed to take. A frame interval longer than the
-/// fade duration itself (e.g. the window was backgrounded or the compositor
-/// stalled for a while) produces a step `>= 1.0`, which jumps straight to
-/// `target_opacity` in one frame rather than crawling toward it over several
-/// — correct, since that much real time actually elapsed while the widget
-/// wasn't rendering.
-fn advance_opacity(opacity: f32, target_opacity: f32, interval: u64) -> f32 {
-    let delta = anim::elapsed_fraction(interval, FADE_MILLIS);
-    let diff = target_opacity - opacity;
-    if diff > 0.0 {
-        (opacity + delta).min(target_opacity)
-    } else {
-        (opacity - delta).max(target_opacity)
-    }
-}
 
 impl AllowRawMut for VoidScrollBar {}
 
@@ -206,13 +184,18 @@ impl Widget for VoidScrollBar {
         _props: &mut PropertiesMut<'_>,
         interval: u64,
     ) {
-        let diff = self.target_opacity - self.opacity;
-        if diff.abs() > OPACITY_SNAP_EPSILON {
-            self.opacity = advance_opacity(self.opacity, self.target_opacity, interval);
+        let before = self.opacity.value();
+        let status = anim::advance_toward(
+            &mut self.opacity,
+            self.target_opacity,
+            FADE_MILLIS,
+            interval,
+        );
+        if (self.opacity.value() - before).abs() > f32::EPSILON {
             ctx.request_render();
-            if (self.target_opacity - self.opacity).abs() > OPACITY_SNAP_EPSILON {
-                ctx.request_anim_frame();
-            }
+        }
+        if status == AnimationStatus::Ongoing {
+            ctx.request_anim_frame();
         }
     }
 
@@ -255,12 +238,13 @@ impl Widget for VoidScrollBar {
         painter: &mut Painter<'_>,
     ) {
         let size = ctx.content_box().size();
-        let needs_opacity = self.opacity < 1.0 - 1e-4;
+        let opacity = self.opacity.value();
+        let needs_opacity = opacity < 1.0 - crate::anim::SETTLE_EPSILON;
 
         if needs_opacity {
             painter.push_fill_clip(ctx.border_box());
             painter.push_group(
-                GroupRef::new().with_composite(Composite::new(BlendMode::default(), self.opacity)),
+                GroupRef::new().with_composite(Composite::new(BlendMode::default(), opacity)),
             );
         }
 
@@ -1234,42 +1218,23 @@ mod tests {
     use masonry::testing::TestHarness;
     use masonry::widgets::SizedBox;
 
-    use super::{ScrollView, VoidScrollBar, advance_opacity, compute_pan_range};
+    use super::{ScrollView, VoidScrollBar, compute_pan_range};
 
     const MS: u64 = 1_000_000; // one millisecond in nanoseconds
 
-    // --- advance_opacity ---
+    // --- FADE_MILLIS wiring (generic advance_toward behavior covered in crate::anim) ---
 
     #[test]
-    fn opacity_fades_gradually_over_the_fade_duration() {
-        let mut opacity = 1.0_f32;
+    fn opacity_fades_to_transparent_over_the_fade_duration() {
+        let mut opacity = masonry::widgets::AnimatedF32::stable(1.0);
         for _ in 0..1_000 {
-            opacity = advance_opacity(opacity, 0.0, 16 * MS); // ~60 Hz frame
+            crate::anim::advance_toward(&mut opacity, 0.0, super::FADE_MILLIS, 16 * MS);
         }
         assert!(
-            opacity.abs() < 1e-3,
-            "should fade to fully transparent, got {opacity}"
+            opacity.value().abs() < 1e-3,
+            "should fade to fully transparent, got {}",
+            opacity.value()
         );
-    }
-
-    #[test]
-    fn opacity_snaps_to_target_after_a_stall_longer_than_the_fade() {
-        // A frame interval longer than the 300ms fade itself (backgrounded
-        // window, stalled compositor) means that much real time already
-        // elapsed while unrendered, so the fade should complete in one step
-        // rather than crawl toward the target over several more frames.
-        let stalled_frame = 800 * MS;
-        let opacity = advance_opacity(1.0, 0.0, stalled_frame);
-        assert!(
-            opacity.abs() < f32::EPSILON,
-            "should snap to 0.0, got {opacity}"
-        );
-    }
-
-    #[test]
-    fn settled_opacity_is_unchanged() {
-        assert!((advance_opacity(0.0, 0.0, 16 * MS)).abs() < f32::EPSILON);
-        assert!((advance_opacity(1.0, 1.0, 16 * MS) - 1.0).abs() < f32::EPSILON);
     }
 
     /// Builds a `ScrollView` whose content is much taller than the 100x100

@@ -20,8 +20,7 @@ use masonry::core::{
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Size};
 use masonry::layout::{LayoutSize, LenReq, Length};
-
-use crate::anim;
+use masonry::widgets::{AnimatedF32, AnimationStatus};
 
 /// Duration of the open/close animation — an animation timing value, not
 /// spacing, so it doesn't scale with density.
@@ -40,7 +39,7 @@ pub struct AnimatedClip<W: Widget + ?Sized> {
     /// `true` = fully open (progress → 0.0), `false` = fully closed (progress → 1.0).
     open: bool,
     /// 0.0 = fully visible, 1.0 = fully hidden.
-    collapse_progress: f32,
+    collapse_progress: AnimatedF32,
     /// Child's natural size on [`Self::axis`] from the most recent measure pass.
     natural_extent: f64,
 }
@@ -57,13 +56,13 @@ impl<W: Widget + ?Sized> AnimatedClip<W> {
             child: child.to_pod(),
             axis,
             open,
-            collapse_progress: if open { 0.0 } else { 1.0 },
+            collapse_progress: AnimatedF32::stable(if open { 0.0 } else { 1.0 }),
             natural_extent: 0.0,
         }
     }
 
     fn animated_extent(&self) -> f64 {
-        (self.natural_extent * f64::from(1.0 - self.collapse_progress)).max(0.0)
+        (self.natural_extent * f64::from(1.0 - self.collapse_progress.value())).max(0.0)
     }
 }
 
@@ -82,35 +81,11 @@ impl<W: Widget + ?Sized> AnimatedClip<W> {
         if this.widget.open != open {
             this.widget.open = open;
             let target: f32 = if open { 0.0 } else { 1.0 };
-            if (target - this.widget.collapse_progress).abs() > SNAP_EPSILON {
+            if (target - this.widget.collapse_progress.value()).abs() > crate::anim::SETTLE_EPSILON
+            {
                 this.ctx.request_anim_frame();
             }
         }
-    }
-}
-
-/// How close `collapse_progress` must be to its target to count as settled.
-const SNAP_EPSILON: f32 = 1e-4;
-
-/// Advances `progress` (0.0 open … 1.0 closed) toward its target for a frame
-/// of `interval` nanoseconds, returning the new progress.
-///
-/// The per-frame step comes from [`crate::anim::elapsed_fraction`], which
-/// guarantees a non-zero step for a non-zero interval — the property whose
-/// absence (integer ns→ms truncation) stalled this animation and spun the CPU
-/// forever (#139). Returns `progress` unchanged once within [`SNAP_EPSILON`] of
-/// the target.
-fn advance_progress(progress: f32, open: bool, interval: u64) -> f32 {
-    let target: f32 = if open { 0.0 } else { 1.0 };
-    let diff = target - progress;
-    if diff.abs() <= SNAP_EPSILON {
-        return progress;
-    }
-    let delta = anim::elapsed_fraction(interval, SLIDE_MILLIS);
-    if diff > 0.0 {
-        (progress + delta).min(target)
-    } else {
-        (progress - delta).max(target)
     }
 }
 
@@ -126,14 +101,17 @@ impl<W: Widget + ?Sized> Widget for AnimatedClip<W> {
         interval: u64,
     ) {
         let target: f32 = if self.open { 0.0 } else { 1.0 };
-        let next = advance_progress(self.collapse_progress, self.open, interval);
-        if (next - self.collapse_progress).abs() > f32::EPSILON {
-            self.collapse_progress = next;
+        let before = self.collapse_progress.value();
+        let status = crate::anim::advance_toward(
+            &mut self.collapse_progress,
+            target,
+            SLIDE_MILLIS,
+            interval,
+        );
+        if (self.collapse_progress.value() - before).abs() > f32::EPSILON {
             ctx.request_layout();
         }
-        // Keep animating until settled. `advance_progress` guarantees a
-        // non-zero step for any non-zero interval, so this terminates.
-        if (target - self.collapse_progress).abs() > SNAP_EPSILON {
+        if status == AnimationStatus::Ongoing {
             ctx.request_anim_frame();
         }
     }
@@ -224,61 +202,30 @@ impl<W: Widget + ?Sized> Widget for AnimatedClip<W> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SLIDE_MILLIS, advance_progress};
+    use masonry::widgets::AnimatedF32;
+
+    use super::SLIDE_MILLIS;
+    use crate::anim::advance_toward;
 
     const MS: u64 = 1_000_000; // one millisecond in nanoseconds
-    const FRAME_16MS: u64 = 16 * MS; // a typical ~60 Hz frame
-
-    #[test]
-    fn sub_millisecond_frames_still_advance() {
-        // Regression for #139: a frame shorter than 1 ms used to truncate the
-        // per-frame delta to 0 (integer nanoseconds → milliseconds), so the
-        // slide never progressed and re-armed an anim frame forever.
-        let next = advance_progress(0.0, false, MS / 2); // 0.5 ms, closing
-        assert!(next > 0.0, "a 0.5 ms frame must make progress, got {next}");
-    }
-
-    #[test]
-    fn closing_climbs_toward_one_and_clamps() {
-        let mut p = 0.0_f32;
-        for _ in 0..1_000 {
-            p = advance_progress(p, false, FRAME_16MS);
-        }
-        assert!((p - 1.0).abs() < 1e-3, "should reach fully closed, got {p}");
-        // Overshoot is clamped: once settled, it stays put.
-        assert!((advance_progress(1.0, false, FRAME_16MS) - 1.0).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn opening_falls_toward_zero_and_clamps() {
-        let mut p = 1.0_f32;
-        for _ in 0..1_000 {
-            p = advance_progress(p, true, FRAME_16MS);
-        }
-        assert!((p - 0.0).abs() < 1e-3, "should reach fully open, got {p}");
-        assert!(advance_progress(0.0, true, FRAME_16MS).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn settled_progress_is_unchanged() {
-        // No animation when already at target — the caller stops requesting
-        // anim frames, which is what lets the loop terminate.
-        assert!((advance_progress(1.0, false, FRAME_16MS) - 1.0).abs() < f32::EPSILON);
-        assert!(advance_progress(0.0, true, FRAME_16MS).abs() < f32::EPSILON);
-    }
 
     #[test]
     fn one_full_duration_frame_completes_the_slide() {
-        // A single frame lasting the whole slide advances a full unit (clamped).
-        let full = 250 * MS; // SLIDE_MILLIS is 250.0
+        // A single frame lasting the whole 250ms slide advances a full unit.
+        // The generic constant-velocity/clamp/settle behavior of
+        // advance_toward itself is covered in crate::anim's own tests.
+        let mut progress = AnimatedF32::stable(0.0);
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "SLIDE_MILLIS is a small positive constant"
+        )]
+        let full = (SLIDE_MILLIS as u64) * MS;
+        advance_toward(&mut progress, 1.0, SLIDE_MILLIS, full);
         assert!(
-            (SLIDE_MILLIS - 250.0).abs() < f32::EPSILON,
-            "duration assumption"
-        );
-        let next = advance_progress(0.0, false, full);
-        assert!(
-            (next - 1.0).abs() < 1e-4,
-            "full-duration frame completes, got {next}"
+            (progress.value() - 1.0).abs() < 1e-4,
+            "full-duration frame completes the slide, got {}",
+            progress.value()
         );
     }
 }
