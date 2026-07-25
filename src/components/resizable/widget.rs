@@ -1001,4 +1001,52 @@ mod tests {
             assert_eq!(wm.widget.active_handle, 0);
         });
     }
+
+    // --- get_cursor ---
+
+    /// Drives the real masonry hit-testing path (not just [`ResizableWidget::handle_at`])
+    /// end to end, so it also catches coordinate-space mistakes between
+    /// `get_cursor`'s `ctx.to_local` and the window-space positions masonry's
+    /// hit-test hands it.
+    #[test]
+    fn hovering_a_handle_shows_the_axis_resize_cursor() {
+        use masonry::testing::TestHarness;
+
+        let theme = Theme::default();
+
+        let horizontal = ResizableWidget::new(
+            vec![panel(), panel()],
+            Axis::Horizontal,
+            vec![0.5, 0.5],
+            no_constraints(2),
+            no_constraints(2),
+            &theme,
+        );
+        let mut h = TestHarness::create_with_size(
+            masonry::theme::default_property_set(),
+            NewWidget::new(horizontal),
+            (200.0, 100.0),
+        );
+        // handle center = usable_width(199) * 0.5 + HANDLE_THICKNESS * 0.5 = 100.0
+        h.mouse_move(Point::new(100.0, 50.0));
+        assert_eq!(h.cursor_icon(), CursorIcon::ColResize);
+        h.mouse_move(Point::new(10.0, 50.0));
+        assert_eq!(h.cursor_icon(), CursorIcon::Default);
+
+        let vertical = ResizableWidget::new(
+            vec![panel(), panel()],
+            Axis::Vertical,
+            vec![0.5, 0.5],
+            no_constraints(2),
+            no_constraints(2),
+            &theme,
+        );
+        let mut v = TestHarness::create_with_size(
+            masonry::theme::default_property_set(),
+            NewWidget::new(vertical),
+            (100.0, 200.0),
+        );
+        v.mouse_move(Point::new(50.0, 100.0));
+        assert_eq!(v.cursor_icon(), CursorIcon::RowResize);
+    }
 }
