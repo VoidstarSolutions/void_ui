@@ -1799,14 +1799,27 @@ pub fn panel(theme: &Theme) -> DataGridScreenPanel {
 /// `Pod<Passthrough>`). `AnyFlexChild` is xilem's own erasure for flex
 /// children and preserves the flex params through `.into_any_flex()`.
 ///
-/// The inactive branch wraps `content` in [`scroll_container`] before
-/// collapsing it to zero height: `SizedBox` alone doesn't clip — it offers
-/// its child a size but never calls `set_clip_path`, so a child that
-/// doesn't shrink to fit (e.g. `data_grid`'s internal toolbar row) still
-/// paints its full, unclipped content at whatever size it wants, bleeding
-/// through below the active tab. `scroll_container` always clips to
-/// whatever size it's given (that's how it hides off-viewport content), so
-/// nesting it here reuses that instead of inventing new clip machinery.
+/// Both branches wrap `content` in the same fully-constrained
+/// [`scroll_container`] regardless of `active`, differing only in the outer
+/// `sized_box`'s height: `constrain_horizontal(true).constrain_vertical(true)`
+/// forces the child to fit exactly the given size on both axes, so no
+/// scrollbar ever appears and the active panel still gets the same
+/// pass-through sizing it had before this wrapper existed. What matters is
+/// that both arms produce the *same concrete `ScrollContainerView` type* —
+/// `AnyFlexChild`'s erasure only rebuilds a child in place when its erased
+/// value's concrete type is unchanged from the previous render; giving the
+/// active and inactive arms different wrapper types (e.g. a bare
+/// `sized_box(content)` for one and a `scroll_container`-wrapped one for the
+/// other) makes every tab switch look like a type change, so xilem tears
+/// down and rebuilds both the panel losing activation and the one gaining
+/// it — silently resetting their `Demo`/`StockDemo`/`TreeDemo` state
+/// (selection, scroll, sort, filter). `scroll_container` always clips to
+/// whatever size it's given (that's how it hides off-viewport content when
+/// collapsed to zero height), so reusing it unconditionally also covers the
+/// clipping `SizedBox` alone doesn't provide — a child that doesn't shrink
+/// to fit (e.g. `data_grid`'s internal toolbar row) would otherwise paint
+/// its full, unclipped content at whatever size it wants, bleeding through
+/// below the active tab.
 fn tab_content<S: 'static, V: WidgetView<S> + 'static>(
     active: bool,
     content: V,
@@ -1815,10 +1828,14 @@ fn tab_content<S: 'static, V: WidgetView<S> + 'static>(
 where
     V::Widget: FromDynWidget + Sized,
 {
+    let scrollable = scroll_container(content)
+        .constrain_horizontal(true)
+        .constrain_vertical(true)
+        .render(theme);
     if active {
-        sized_box(content).flex(1.0).into_any_flex()
+        sized_box(scrollable).flex(1.0).into_any_flex()
     } else {
-        sized_box(scroll_container(content).render(theme))
+        sized_box(scrollable)
             .fixed_height(Length::px(0.0))
             .into_any_flex()
     }
@@ -1938,6 +1955,78 @@ mod tests {
         for mode in DataGridMode::ALL {
             assert_eq!(DataGridMode::from_index(mode.index()), mode);
         }
+    }
+
+    /// `tab_content` gives the active panel a bare `sized_box` wrapper but
+    /// wraps an *inactive* one in `scroll_container` for clipping (see its
+    /// doc comment). Both arms still erase to the same `AnyFlexChild`, but
+    /// xilem's type-erased `View`s rebuild in place only when the erased
+    /// value's *concrete* type is unchanged from the previous render —
+    /// otherwise they tear the old widget down and build a fresh one,
+    /// silently resetting whatever `Demo`/`StockDemo`/`TreeDemo` state
+    /// (selection, scroll, sort, filter) that panel had accumulated. That
+    /// would contradict `DataGridScreenPanel`'s own doc comment, which
+    /// promises switching tabs never loses state. A widget instance keeps
+    /// its `WidgetId` across an in-place rebuild but is assigned a new one
+    /// if torn down and rebuilt, so comparing each panel's
+    /// `CollectionBodyWidget` id before and after a tab switch is a direct
+    /// proxy for "was this panel actually rebuilt, or secretly recreated".
+    #[test]
+    fn switching_tabs_preserves_every_panels_widget_identity() {
+        use masonry::core::{Widget, WidgetId, WidgetRef};
+        use masonry::testing::TestHarness;
+        use xilem::ViewCtx;
+        use xilem::core::View as _;
+
+        use crate::collection::CollectionBodyWidget;
+        use crate::test_support;
+
+        fn collect_body_ids(widget: WidgetRef<'_, dyn Widget>, out: &mut Vec<WidgetId>) {
+            if let Some(body) = widget.downcast::<CollectionBodyWidget>() {
+                out.push(body.id());
+            }
+            for child in widget.children() {
+                collect_body_ids(child, out);
+            }
+        }
+
+        let theme = Theme::default();
+        let view = super::panel(&theme);
+        let mut ctx = ViewCtx::new(
+            test_support::noop_proxy(),
+            test_support::current_thread_runtime(),
+        );
+        let mut host = ();
+        let (pod, mut vs) = view.build(&mut ctx, &mut host);
+
+        let mut harness =
+            TestHarness::create(masonry::theme::default_property_set(), pod.new_widget);
+
+        let mut before = Vec::new();
+        collect_body_ids(harness.root_widget().as_dyn(), &mut before);
+        assert_eq!(
+            before.len(),
+            3,
+            "grid, stock-quotes, and tree panels should each mount one CollectionBodyWidget"
+        );
+
+        // Switch away from the default Grid tab: Grid goes inactive, Stock
+        // Quotes goes active. Both panels' `tab_content` wrapper shape
+        // changes as a result.
+        vs.state.mode = DataGridMode::StockQuotes;
+        harness.edit_root_widget(|root| {
+            view.rebuild(&view, &mut vs, &mut ctx, root, &mut host);
+        });
+
+        let mut after = Vec::new();
+        collect_body_ids(harness.root_widget().as_dyn(), &mut after);
+        assert_eq!(
+            before, after,
+            "switching the active tab must rebuild every panel in place, not tear any of \
+             them down and rebuild fresh — otherwise the newly-inactive Grid panel (and the \
+             newly-active Stock Quotes panel) would silently lose their prior selection/scroll \
+             state"
+        );
     }
 
     /// The `Side` column's stable filter id is its title.
