@@ -458,6 +458,53 @@ mod tests {
         assert_eq!(harness.focused_widget_id(), Some(first));
     }
 
+    /// #136: pressing ArrowDown to move focus onto a row that's
+    /// materialized but outside the current viewport (the far edge of
+    /// `VirtualScroll`'s buffered page) must scroll it into view — not just
+    /// move focus there and leave the viewport where it was.
+    #[test]
+    fn arrow_down_past_the_viewport_edge_scrolls_the_new_focus_into_view() {
+        let (mut harness, rows) = harness_with_clickable_rows();
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
+
+        // Drain any Scroll/Fetch actions emitted while the harness settled,
+        // so the only action left in the queue after the key press below is
+        // the one it (should) trigger.
+        while harness.pop_action::<VirtualScrollAction>().is_some() {}
+
+        // The very last materialized row sits at the outer edge of
+        // VirtualScroll's buffered page — reliably outside the current
+        // viewport (see CollectionBodyWidget's module docs).
+        let last_idx = *rows.keys().max().expect("at least one materialized row");
+        let prev_idx = last_idx - 1;
+        assert!(
+            rows.contains_key(&prev_idx),
+            "fixture must materialize at least two rows for this test"
+        );
+
+        harness.focus_on(Some(rows[&prev_idx]));
+        let handled = harness.process_text_event(arrow_key(NamedKey::ArrowDown));
+        assert!(handled.is_handled());
+        assert_eq!(harness.focused_widget_id(), Some(rows[&last_idx]));
+
+        let mut scrolled_to_last = false;
+        while let Some((action, _id)) = harness.pop_action::<VirtualScrollAction>() {
+            if let VirtualScrollAction::Scroll(scroll) = action
+                && scroll.range_in_viewport().contains(&last_idx)
+            {
+                scrolled_to_last = true;
+            }
+        }
+        assert!(
+            scrolled_to_last,
+            "ArrowDown onto row {last_idx} (the far edge of the materialized \
+             buffer, well past the viewport) should emit a \
+             VirtualScrollAction::Scroll whose viewport range includes it, \
+             but none did"
+        );
+    }
+
     /// Reproduces #175's regression crash: `refresh_row_nav` must not touch a
     /// row `VirtualScroll::add_child`-ed in the *same* pass. Masonry only
     /// registers a freshly added child with its mutate arena in the update
