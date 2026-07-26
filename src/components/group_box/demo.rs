@@ -14,7 +14,7 @@ use crate::components::button::button;
 use crate::components::checkbox::checkbox;
 use crate::components::radio::radio;
 use crate::components::toggle::toggle;
-use crate::{label, scroll_container, separator};
+use crate::{label, scroll_container, separator, with_source};
 
 #[derive(Debug, Clone)]
 struct GroupBoxDemo {
@@ -83,129 +83,139 @@ fn labeled_row<S: 'static, C: WidgetView<S> + 'static>(
 /// Default style — checkbox group with a trailing action button.
 fn default_section(theme: &Theme, state: &GroupBoxDemo) -> Box<AnyWidgetView<GroupBoxDemo>> {
     let [sub_all, sub_news, sub_activity] = state.subscriptions;
-    group_box(
-        flex_col((
-            checkbox(sub_all, |s: &mut GroupBoxDemo, checked: bool| {
-                s.subscriptions[0] = checked;
-            })
-            .label("All")
-            .render(theme),
-            checkbox(sub_news, |s: &mut GroupBoxDemo, checked: bool| {
-                s.subscriptions[1] = checked;
-            })
-            .label("Newsletter")
-            .render(theme),
-            checkbox(sub_activity, |s: &mut GroupBoxDemo, checked: bool| {
-                s.subscriptions[2] = checked;
-            })
-            .label("Account Activity")
-            .render(theme),
-            button(|_: &mut GroupBoxDemo| {})
-                .label("Update Subscriptions")
+    Box::new(with_source!(theme, {
+        group_box(
+            flex_col((
+                checkbox(sub_all, |s: &mut GroupBoxDemo, checked: bool| {
+                    s.subscriptions[0] = checked;
+                })
+                .label("All")
                 .render(theme),
-        ))
-        .cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .gap(Length::px(8.0)),
-    )
-    .title("Subscriptions")
-    .render(theme)
+                checkbox(sub_news, |s: &mut GroupBoxDemo, checked: bool| {
+                    s.subscriptions[1] = checked;
+                })
+                .label("Newsletter")
+                .render(theme),
+                checkbox(sub_activity, |s: &mut GroupBoxDemo, checked: bool| {
+                    s.subscriptions[2] = checked;
+                })
+                .label("Account Activity")
+                .render(theme),
+                button(|_: &mut GroupBoxDemo| {})
+                    .label("Update Subscriptions")
+                    .render(theme),
+            ))
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .gap(Length::px(8.0)),
+        )
+        .title("Subscriptions")
+        .render(theme)
+    }))
 }
 
 /// Fill style — toggle rows with a primary action button.
 fn fill_section(theme: &Theme, state: &GroupBoxDemo) -> Box<AnyWidgetView<GroupBoxDemo>> {
-    group_box(
-        flex_col((
-            labeled_row(
-                "Make profile private and hide activity",
-                toggle(
-                    state.private_profile,
-                    |s: &mut GroupBoxDemo, checked: bool| {
-                        s.private_profile = checked;
-                    },
-                )
-                .render(theme),
-                theme,
-            ),
-            labeled_row(
-                "Include private contributions on my profile",
-                toggle(
-                    state.include_private_contributions,
-                    |s: &mut GroupBoxDemo, checked: bool| {
-                        s.include_private_contributions = checked;
-                    },
-                )
-                .render(theme),
-                theme,
-            ),
-            button(|_: &mut GroupBoxDemo| {})
-                .label("Save")
-                .render(theme),
-        ))
-        .cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .gap(Length::px(12.0)),
-    )
-    .title("Contributions & activity")
-    .fill()
-    .render(theme)
+    Box::new(with_source!(theme, {
+        group_box(
+            flex_col((
+                labeled_row(
+                    "Make profile private and hide activity",
+                    toggle(
+                        state.private_profile,
+                        |s: &mut GroupBoxDemo, checked: bool| {
+                            s.private_profile = checked;
+                        },
+                    )
+                    .render(theme),
+                    theme,
+                ),
+                labeled_row(
+                    "Include private contributions on my profile",
+                    toggle(
+                        state.include_private_contributions,
+                        |s: &mut GroupBoxDemo, checked: bool| {
+                            s.include_private_contributions = checked;
+                        },
+                    )
+                    .render(theme),
+                    theme,
+                ),
+                button(|_: &mut GroupBoxDemo| {})
+                    .label("Save")
+                    .render(theme),
+            ))
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .gap(Length::px(12.0)),
+        )
+        .title("Contributions & activity")
+        .fill()
+        .render(theme)
+    }))
 }
 
 /// Outline style — a radio group.
 fn outline_section(theme: &Theme, state: &GroupBoxDemo) -> Box<AnyWidgetView<GroupBoxDemo>> {
-    group_box(
-        flex_col((
-            radio("Light", |s: &mut GroupBoxDemo| s.appearance = Some(0))
-                .selected(state.appearance == Some(0))
-                .render(theme),
-            radio("Dark", |s: &mut GroupBoxDemo| s.appearance = Some(1))
-                .selected(state.appearance == Some(1))
-                .render(theme),
-            radio("System", |s: &mut GroupBoxDemo| s.appearance = Some(2))
-                .selected(state.appearance == Some(2))
-                .render(theme),
-        ))
-        .cross_axis_alignment(CrossAxisAlignment::Start)
-        .gap(Length::px(6.0)),
-    )
-    .title("Appearance")
-    .border()
-    .render(theme)
+    Box::new(with_source!(theme, {
+        group_box(
+            flex_col((
+                radio("Light", |s: &mut GroupBoxDemo| s.appearance = Some(0))
+                    .selected(state.appearance == Some(0))
+                    .render(theme),
+                radio("Dark", |s: &mut GroupBoxDemo| s.appearance = Some(1))
+                    .selected(state.appearance == Some(1))
+                    .render(theme),
+                radio("System", |s: &mut GroupBoxDemo| s.appearance = Some(2))
+                    .selected(state.appearance == Some(2))
+                    .render(theme),
+            ))
+            .cross_axis_alignment(CrossAxisAlignment::Start)
+            .gap(Length::px(6.0)),
+        )
+        .title("Appearance")
+        .border()
+        .render(theme)
+    }))
 }
 
 /// Without a title — a single row, outlined.
 fn untitled_section(theme: &Theme, state: &GroupBoxDemo) -> Box<AnyWidgetView<GroupBoxDemo>> {
-    group_box(labeled_row(
-        "Make profile private and hide activity",
-        toggle(
-            state.hide_activity,
-            |s: &mut GroupBoxDemo, checked: bool| {
-                s.hide_activity = checked;
-            },
-        )
-        .render(theme),
-        theme,
-    ))
-    .border()
-    .render(theme)
+    Box::new(with_source!(theme, {
+        group_box(labeled_row(
+            "Make profile private and hide activity",
+            toggle(
+                state.hide_activity,
+                |s: &mut GroupBoxDemo, checked: bool| {
+                    s.hide_activity = checked;
+                },
+            )
+            .render(theme),
+            theme,
+        ))
+        .border()
+        .render(theme)
+    }))
 }
 
 /// Custom style — overridden title color and a custom-background content area.
 fn custom_section(theme: &Theme) -> Box<AnyWidgetView<GroupBoxDemo>> {
-    group_box(
-        flex_col((label(
-            "You can use .title_color() to recolor the title, and \
-                 .background() to override the content container's fill.",
+    Box::new(with_source!(theme, {
+        group_box(
+            flex_col((label(
+                "You can use .title_color() to recolor the title, and \
+                     .background() to override the content container's fill.",
+            )
+            .color(theme.palette.text_muted)
+            .multiline(true)
+            .render(theme),))
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .gap(Length::px(8.0)),
         )
-        .color(theme.palette.text_muted)
-        .multiline(true)
-        .render(theme),))
-        .cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .gap(Length::px(8.0)),
-    )
-    .title("This is a custom style")
-    .title_color(theme.palette.text_faint)
-    .background(theme.palette.surface_2)
-    .border()
-    .render(theme)
+        .title("This is a custom style")
+        .title_color(theme.palette.text_faint)
+        .background(theme.palette.surface_2)
+        .border()
+        .render(theme)
+    }))
 }
 
 fn build_inner(theme: &Theme, state: &GroupBoxDemo) -> impl WidgetView<GroupBoxDemo> + use<> {

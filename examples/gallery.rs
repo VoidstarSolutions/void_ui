@@ -215,12 +215,6 @@ fn main_pane(focused: ComponentKind, theme: &Theme) -> Box<AnyWidgetView<State>>
         ComponentKind::Slider => Box::new(void_ui::components::slider::demo::panel(theme)),
         ComponentKind::Spinner => Box::new(void_ui::components::spinner::demo::panel(theme)),
         ComponentKind::StatusDot => Box::new(void_ui::components::status_dot::demo::panel(theme)),
-        ComponentKind::StockQuotes => Box::new(
-            void_ui::components::data_grid::demo::stock_quotes_panel(theme),
-        ),
-        ComponentKind::TreeGrid => {
-            Box::new(void_ui::components::data_grid::demo::tree_grid_panel(theme))
-        }
         ComponentKind::Tabs => Box::new(void_ui::components::tabs::demo::panel(theme)),
         ComponentKind::Toggle => Box::new(void_ui::components::toggle::demo::panel(theme)),
         ComponentKind::CodeView => Box::new(void_ui::components::code_view::demo::panel(theme)),
