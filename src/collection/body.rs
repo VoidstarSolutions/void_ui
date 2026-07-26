@@ -703,8 +703,13 @@ mod tests {
     /// first child (the next row) isn't materialized, so there's nothing to
     /// focus — the same behavior Down has at the edge. (Tree Left/Right nav,
     /// `CollectionBodyWidget::on_text_event`, has the same scroll-into-view
-    /// gap Up/Down had before #136 was fixed — it isn't fixed by this change;
-    /// see the "Known follow-up" note in this plan.)
+    /// gap Up/Down had before #136 was fixed — it isn't fixed by this change.
+    /// Unlike Up/Down's fixed row-height offset, Left/Right targets aren't a
+    /// fixed distance from the current row, so computing an exact rect would
+    /// need real per-child position data that isn't reachable from
+    /// `on_text_event`'s `EventCtx` today — masonry's `VirtualScroll` only
+    /// exposes per-child geometry through `WidgetMut`-gated `child_mut`, not
+    /// through `EventCtx`/`ActionCtx`.)
     #[test]
     fn tree_nav_to_an_unmaterialized_target_is_a_no_op() {
         let (mut harness, _scroll, ids) = harness_with_rows();
