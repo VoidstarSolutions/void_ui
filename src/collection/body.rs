@@ -458,7 +458,7 @@ mod tests {
         assert_eq!(harness.focused_widget_id(), Some(first));
     }
 
-    /// #136: pressing ArrowDown to move focus onto a row that's
+    /// #136: pressing `ArrowDown` to move focus onto a row that's
     /// materialized but outside the current viewport (the far edge of
     /// `VirtualScroll`'s buffered page) must scroll it into view — not just
     /// move focus there and leave the viewport where it was.
@@ -500,6 +500,51 @@ mod tests {
             scrolled_to_last,
             "ArrowDown onto row {last_idx} (the far edge of the materialized \
              buffer, well past the viewport) should emit a \
+             VirtualScrollAction::Scroll whose viewport range includes it, \
+             but none did"
+        );
+    }
+
+    /// ...and `ArrowUp` scrolls a newly-focused row back into view when
+    /// moving focus onto a materialized-but-offscreen row above the
+    /// viewport (mirrors the `ArrowDown` test above, using `scroll_to` to
+    /// move the viewport away from row 0 first so there's a materialized
+    /// row above it for `ArrowUp` to reveal).
+    #[test]
+    fn arrow_up_before_the_viewport_edge_scrolls_the_new_focus_into_view() {
+        let (mut harness, rows) = harness_with_clickable_rows();
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
+
+        // Scroll down first so row 0 (still materialized, per VirtualScroll's
+        // buffered page) ends up above the current viewport.
+        harness.edit_root_widget(|mut body| {
+            let mut vs = CollectionBodyWidget::virtual_scroll_mut(&mut body);
+            VirtualScroll::scroll_to(&mut vs, 10);
+        });
+        assert!(
+            rows.contains_key(&0) && rows.contains_key(&1),
+            "fixture must still have rows 0 and 1 materialized after scroll_to(10)"
+        );
+
+        while harness.pop_action::<VirtualScrollAction>().is_some() {}
+
+        harness.focus_on(Some(rows[&1]));
+        let handled = harness.process_text_event(arrow_key(NamedKey::ArrowUp));
+        assert!(handled.is_handled());
+        assert_eq!(harness.focused_widget_id(), Some(rows[&0]));
+
+        let mut scrolled_to_first = false;
+        while let Some((action, _id)) = harness.pop_action::<VirtualScrollAction>() {
+            if let VirtualScrollAction::Scroll(scroll) = action
+                && scroll.range_in_viewport().contains(&0)
+            {
+                scrolled_to_first = true;
+            }
+        }
+        assert!(
+            scrolled_to_first,
+            "ArrowUp onto row 0 (scrolled out of view above) should emit a \
              VirtualScrollAction::Scroll whose viewport range includes it, \
              but none did"
         );
