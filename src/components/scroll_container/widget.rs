@@ -1133,12 +1133,21 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
             if self.must_fill { cs.max(size) } else { cs }
         };
 
-        // Determine scrollbar visibility (cascade: vbar may force hbar and vice versa)
+        // Determine scrollbar visibility (cascade: vbar may force hbar and vice versa).
+        // Every subtraction of `track` is clamped at zero: a viewport smaller
+        // than the scrollbar track (e.g. a collapsed/zero-height panel) must
+        // degrade to "no room for content" rather than an invalid negative
+        // size — `content_size_def` converts these into `Length`s, which
+        // panic on negative input.
         let vbar = !self.constrain.vertical && content_size.height > size.height;
-        let eff_w_if_vbar = if vbar { size.width - track } else { size.width };
+        let eff_w_if_vbar = if vbar {
+            (size.width - track).max(0.0)
+        } else {
+            size.width
+        };
         let hbar = !self.constrain.horizontal && content_size.width > eff_w_if_vbar;
         let eff_h_if_hbar = if hbar {
-            size.height - track
+            (size.height - track).max(0.0)
         } else {
             size.height
         };
@@ -1147,7 +1156,10 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
 
         let vbar_w = if vbar { track } else { 0.0 };
         let hbar_h = if hbar { track } else { 0.0 };
-        let eff_size = Size::new(size.width - vbar_w, size.height - hbar_h);
+        let eff_size = Size::new(
+            (size.width - vbar_w).max(0.0),
+            (size.height - hbar_h).max(0.0),
+        );
 
         // Second layout pass — re-layout content if a constrained axis got narrower
         let content_size =
@@ -1294,6 +1306,29 @@ mod tests {
             NewWidget::new(view),
             (100, 100),
         )
+    }
+
+    // --- degenerate (too-small) viewport ---
+
+    /// A vertically-constrained, horizontally-scrolling `ScrollView` (the
+    /// exact configuration `data_grid` uses internally, see
+    /// `data_grid/view.rs`'s `.constrain_vertical(true)`) laid out in a
+    /// viewport shorter than the scrollbar track must not panic. Content
+    /// wider than the viewport forces a horizontal scrollbar, whose track
+    /// width gets subtracted from the (already tiny) viewport height; that
+    /// subtraction must clamp at zero rather than go negative into
+    /// `content_size_def`'s `Length` conversion, which panics on negative
+    /// input.
+    #[test]
+    fn zero_height_viewport_with_horizontal_scrollbar_does_not_panic() {
+        let content = SizedBox::empty().size(Length::px(2000.0), Length::px(50.0));
+        let view =
+            ScrollView::new(NewWidget::new(content), &Theme::dark()).constrain_vertical(true);
+        let _harness = TestHarness::create_with_size(
+            masonry::theme::default_property_set(),
+            NewWidget::new(view),
+            (100, 0),
+        );
     }
 
     // --- scroll_to_origin ---
