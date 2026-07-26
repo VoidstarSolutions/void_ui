@@ -35,8 +35,9 @@ use super::single_child;
 ///
 /// Navigation operates over the **materialized** rows (`VirtualScroll` buffers
 /// ~a page beyond the viewport, so adjacent targets are present). A target past
-/// the materialized edge is a no-op. Scrolling the newly-focused row into view
-/// is a deferred, substrate-wide improvement; see issue #136.
+/// the materialized edge is a no-op. Moving focus (Up/Down, handled in
+/// `RowClickable`) also requests a scroll-into-view for the new target — see
+/// `RowClickable::request_neighbor_scroll_into_view` in `row_click.rs`.
 pub(crate) struct CollectionBodyWidget {
     child: WidgetPod<VirtualScrollWidget>,
     /// Per-visible-row tree metadata in materialized order, kept in sync by
@@ -700,8 +701,10 @@ mod tests {
 
     /// Right on an expanded parent at the materialized edge is a no-op: its
     /// first child (the next row) isn't materialized, so there's nothing to
-    /// focus — the same behavior Down has at the edge. Scrolling an off-screen
-    /// target into view is deferred (#136).
+    /// focus — the same behavior Down has at the edge. (Tree Left/Right nav,
+    /// `CollectionBodyWidget::on_text_event`, has the same scroll-into-view
+    /// gap Up/Down had before #136 was fixed — it isn't fixed by this change;
+    /// see the "Known follow-up" note in this plan.)
     #[test]
     fn tree_nav_to_an_unmaterialized_target_is_a_no_op() {
         let (mut harness, _scroll, ids) = harness_with_rows();
