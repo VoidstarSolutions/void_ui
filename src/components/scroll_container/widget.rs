@@ -1331,6 +1331,26 @@ mod tests {
         );
     }
 
+    /// A horizontally-constrained, vertically-scrolling `ScrollView` (the
+    /// mirror of the case above) laid out in a viewport narrower than the
+    /// scrollbar track must not panic. Content taller than the viewport
+    /// forces a vertical scrollbar, whose track width gets subtracted from
+    /// the (already tiny) viewport width; that subtraction must clamp at
+    /// zero (`eff_w_if_vbar`, and the final `eff_size.width`) rather than go
+    /// negative into `content_size_def`'s `Length` conversion, which panics
+    /// on negative input.
+    #[test]
+    fn zero_width_viewport_with_vertical_scrollbar_does_not_panic() {
+        let content = SizedBox::empty().size(Length::px(50.0), Length::px(2000.0));
+        let view =
+            ScrollView::new(NewWidget::new(content), &Theme::dark()).constrain_horizontal(true);
+        let _harness = TestHarness::create_with_size(
+            masonry::theme::default_property_set(),
+            NewWidget::new(view),
+            (0, 100),
+        );
+    }
+
     // --- scroll_to_origin ---
 
     /// `scroll_to_origin` must resync the scrollbar thumb even when
