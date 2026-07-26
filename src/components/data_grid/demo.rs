@@ -21,7 +21,9 @@ use xilem::masonry::layout::Length;
 use xilem::masonry::widgets::Passthrough;
 use xilem::peniko::Color;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, FlexExt as _, FlexSpacer, flex_col, flex_row, sized_box};
+use xilem::view::{
+    AnyFlexChild, CrossAxisAlignment, FlexExt as _, FlexSpacer, flex_col, flex_row, sized_box,
+};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::column::{
@@ -34,6 +36,7 @@ use super::width::ColumnWidths;
 use crate::Theme;
 use crate::collection::ScrollState;
 use crate::collection::SelectionState;
+use crate::components::tabs::{TabItem, tabs};
 use crate::layout::flex_wrap;
 use crate::with_source;
 
@@ -970,19 +973,14 @@ pub struct DataGridDemoPanelState {
     inner_state: InnerViewState,
 }
 
-/// The data-grid gallery panel, returned by [`panel`].
+/// The main-grid demo panel — one of three panels composed into the
+/// combined Data Grid gallery screen returned by [`panel`].
+///
+/// Owns its own [`Demo`] state (100k initial ticks). The toolbar lets you
+/// add rows, bulk-select, and show/hide/reorder columns. Click a header to
+/// sort; type in a filter input to filter.
 pub struct DataGridDemoPanel {
     theme: Theme,
-}
-
-/// Renders the data-grid demo panel.
-///
-/// The panel owns its own [`Demo`] state (100k initial ticks). The toolbar
-/// lets you add rows, bulk-select, and show/hide/reorder columns. Click a
-/// header to sort; type in a filter input to filter.
-#[must_use]
-pub fn panel(theme: &Theme) -> DataGridDemoPanel {
-    DataGridDemoPanel { theme: *theme }
 }
 
 fn build_toolbar(
@@ -1729,13 +1727,197 @@ impl<S: 'static> View<S, (), ViewCtx> for TreeGridDemoPanel {
     }
 }
 
+// ===========================================================================
+// MARK: Combined Data Grid gallery screen (tabs over grid / stock quotes / tree)
+// ===========================================================================
+
+/// Which of the three panels the combined Data Grid screen is showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DataGridMode {
+    Grid,
+    StockQuotes,
+    Tree,
+}
+
+impl DataGridMode {
+    const ALL: [Self; 3] = [Self::Grid, Self::StockQuotes, Self::Tree];
+
+    fn index(self) -> usize {
+        Self::ALL
+            .iter()
+            .position(|m| *m == self)
+            .expect("DataGridMode::ALL must contain every variant")
+    }
+
+    fn from_index(i: usize) -> Self {
+        Self::ALL[i]
+    }
+}
+
+/// Which tab is active. Internal to the combined screen's [`View`] impl —
+/// not part of the gallery's app state, per this crate's component-local
+/// state convention (see e.g. `ButtonDemoState`/`GroupBoxDemo`).
+struct DataGridScreenState {
+    mode: DataGridMode,
+}
+
+type ScreenInnerView = Box<AnyWidgetView<DataGridScreenState>>;
+type ScreenInnerViewState = <ScreenInnerView as View<DataGridScreenState, (), ViewCtx>>::ViewState;
+
+/// Opaque state owned by the combined Data Grid screen panel.
+pub struct DataGridScreenPanelState {
+    state: DataGridScreenState,
+    inner_view: ScreenInnerView,
+    inner_state: ScreenInnerViewState,
+}
+
+/// The combined Data Grid gallery screen, returned by [`panel`]: a
+/// `tabs()` switcher over the main grid, stock quotes, and tree grid. All
+/// three panels stay mounted regardless of which tab is active, so
+/// switching tabs never loses state (sort/filter/selection/scroll) or
+/// regenerates the main grid's synthetic dataset.
+pub struct DataGridScreenPanel {
+    theme: Theme,
+}
+
+/// Renders the combined Data Grid gallery screen.
+#[must_use]
+pub fn panel(theme: &Theme) -> DataGridScreenPanel {
+    DataGridScreenPanel { theme: *theme }
+}
+
+/// The active panel fills available height exactly like it does standalone
+/// today (`.flex(1.0)`, composing with each panel's own internal
+/// `sized_box(grid).flex(1.0)` wiring); inactive panels collapse to zero
+/// height rather than being torn down, so their internal state survives.
+///
+/// Returns [`AnyFlexChild`] rather than `Box<AnyWidgetView<S>>`: a
+/// `.flex()`-wrapped view's `Element` is `FlexElement`, which can't be
+/// type-erased into `Box<AnyWidgetView<S>>` (that alias fixes `Element` to
+/// `Pod<Passthrough>`). `AnyFlexChild` is xilem's own erasure for flex
+/// children and preserves the flex params through `.into_any_flex()`.
+fn tab_content<S: 'static, V: WidgetView<S> + 'static>(
+    active: bool,
+    content: V,
+) -> AnyFlexChild<S> {
+    if active {
+        sized_box(content).flex(1.0).into_any_flex()
+    } else {
+        sized_box(content)
+            .fixed_height(Length::px(0.0))
+            .into_any_flex()
+    }
+}
+
+fn build_screen(
+    theme: &Theme,
+    state: &DataGridScreenState,
+) -> impl WidgetView<DataGridScreenState> + use<> {
+    let switcher = tabs(
+        vec![
+            TabItem::label("Grid"),
+            TabItem::label("Stock Quotes"),
+            TabItem::label("Tree"),
+        ],
+        state.mode.index(),
+        |s: &mut DataGridScreenState, i: usize| {
+            s.mode = DataGridMode::from_index(i);
+        },
+    )
+    .render(theme);
+
+    flex_col((
+        switcher,
+        tab_content(
+            state.mode == DataGridMode::Grid,
+            DataGridDemoPanel { theme: *theme },
+        ),
+        tab_content(
+            state.mode == DataGridMode::StockQuotes,
+            stock_quotes_panel(theme),
+        ),
+        tab_content(state.mode == DataGridMode::Tree, tree_grid_panel(theme)),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Stretch)
+    .gap(Length::px(12.0))
+}
+
+impl ViewMarker for DataGridScreenPanel {}
+
+impl<S: 'static> View<S, (), ViewCtx> for DataGridScreenPanel {
+    type ViewState = DataGridScreenPanelState;
+    type Element = Pod<Passthrough>;
+
+    fn build(&self, ctx: &mut ViewCtx, _: &mut S) -> (Self::Element, Self::ViewState) {
+        let mut state = DataGridScreenState {
+            mode: DataGridMode::Grid,
+        };
+        let inner_view: ScreenInnerView = Box::new(build_screen(&self.theme, &state));
+        let (element, inner_state) = inner_view.build(ctx, &mut state);
+        (
+            element,
+            DataGridScreenPanelState {
+                state,
+                inner_view,
+                inner_state,
+            },
+        )
+    }
+
+    fn rebuild(
+        &self,
+        _prev: &Self,
+        vs: &mut DataGridScreenPanelState,
+        ctx: &mut ViewCtx,
+        element: Mut<'_, Pod<Passthrough>>,
+        _: &mut S,
+    ) {
+        let new_inner: ScreenInnerView = Box::new(build_screen(&self.theme, &vs.state));
+        new_inner.rebuild(
+            &vs.inner_view,
+            &mut vs.inner_state,
+            ctx,
+            element,
+            &mut vs.state,
+        );
+        vs.inner_view = new_inner;
+    }
+
+    fn teardown(
+        &self,
+        vs: &mut DataGridScreenPanelState,
+        ctx: &mut ViewCtx,
+        element: Mut<'_, Pod<Passthrough>>,
+    ) {
+        vs.inner_view.teardown(&mut vs.inner_state, ctx, element);
+    }
+
+    fn message(
+        &self,
+        vs: &mut DataGridScreenPanelState,
+        message: &mut MessageCtx,
+        element: Mut<'_, Pod<Passthrough>>,
+        _: &mut S,
+    ) -> MessageResult<()> {
+        vs.inner_view
+            .message(&mut vs.inner_state, message, element, &mut vs.state)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        ColumnId, Demo, DemoSide, DemoTick, StockDemo, TreeDemo, arrange_columns,
+        ColumnId, DataGridMode, Demo, DemoSide, DemoTick, StockDemo, TreeDemo, arrange_columns,
         arrange_stock_columns, side_color, stock_columns,
     };
     use crate::Theme;
+
+    #[test]
+    fn data_grid_mode_index_round_trips_through_from_index() {
+        for mode in DataGridMode::ALL {
+            assert_eq!(DataGridMode::from_index(mode.index()), mode);
+        }
+    }
 
     /// The `Side` column's stable filter id is its title.
     fn side_id() -> crate::components::data_grid::column::ColumnId {
