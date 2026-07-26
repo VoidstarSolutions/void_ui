@@ -17,6 +17,7 @@
 //! market-data crate.
 
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
+use xilem::masonry::core::FromDynWidget;
 use xilem::masonry::layout::Length;
 use xilem::masonry::widgets::Passthrough;
 use xilem::peniko::Color;
@@ -38,6 +39,7 @@ use crate::collection::ScrollState;
 use crate::collection::SelectionState;
 use crate::components::tabs::{TabItem, tabs};
 use crate::layout::flex_wrap;
+use crate::scroll_container;
 use crate::with_source;
 
 const START_PRICE_UNITS: i64 = 100_000_000_000; // $100.00 in 1e-9 units.
@@ -1796,14 +1798,27 @@ pub fn panel(theme: &Theme) -> DataGridScreenPanel {
 /// type-erased into `Box<AnyWidgetView<S>>` (that alias fixes `Element` to
 /// `Pod<Passthrough>`). `AnyFlexChild` is xilem's own erasure for flex
 /// children and preserves the flex params through `.into_any_flex()`.
+///
+/// The inactive branch wraps `content` in [`scroll_container`] before
+/// collapsing it to zero height: `SizedBox` alone doesn't clip — it offers
+/// its child a size but never calls `set_clip_path`, so a child that
+/// doesn't shrink to fit (e.g. `data_grid`'s internal toolbar row) still
+/// paints its full, unclipped content at whatever size it wants, bleeding
+/// through below the active tab. `scroll_container` always clips to
+/// whatever size it's given (that's how it hides off-viewport content), so
+/// nesting it here reuses that instead of inventing new clip machinery.
 fn tab_content<S: 'static, V: WidgetView<S> + 'static>(
     active: bool,
     content: V,
-) -> AnyFlexChild<S> {
+    theme: &Theme,
+) -> AnyFlexChild<S>
+where
+    V::Widget: FromDynWidget + Sized,
+{
     if active {
         sized_box(content).flex(1.0).into_any_flex()
     } else {
-        sized_box(content)
+        sized_box(scroll_container(content).render(theme))
             .fixed_height(Length::px(0.0))
             .into_any_flex()
     }
@@ -1831,12 +1846,18 @@ fn build_screen(
         tab_content(
             state.mode == DataGridMode::Grid,
             DataGridDemoPanel { theme: *theme },
+            theme,
         ),
         tab_content(
             state.mode == DataGridMode::StockQuotes,
             stock_quotes_panel(theme),
+            theme,
         ),
-        tab_content(state.mode == DataGridMode::Tree, tree_grid_panel(theme)),
+        tab_content(
+            state.mode == DataGridMode::Tree,
+            tree_grid_panel(theme),
+            theme,
+        ),
     ))
     .cross_axis_alignment(CrossAxisAlignment::Stretch)
     .gap(Length::px(12.0))
