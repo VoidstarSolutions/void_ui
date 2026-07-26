@@ -35,8 +35,9 @@ use super::single_child;
 ///
 /// Navigation operates over the **materialized** rows (`VirtualScroll` buffers
 /// ~a page beyond the viewport, so adjacent targets are present). A target past
-/// the materialized edge is a no-op. Scrolling the newly-focused row into view
-/// is a deferred, substrate-wide improvement; see issue #136.
+/// the materialized edge is a no-op. Moving focus (Up/Down, handled in
+/// `RowClickable`) also requests a scroll-into-view for the new target — see
+/// `RowClickable::request_neighbor_scroll_into_view` in `row_click.rs`.
 pub(crate) struct CollectionBodyWidget {
     child: WidgetPod<VirtualScrollWidget>,
     /// Per-visible-row tree metadata in materialized order, kept in sync by
@@ -458,6 +459,98 @@ mod tests {
         assert_eq!(harness.focused_widget_id(), Some(first));
     }
 
+    /// #136: pressing `ArrowDown` to move focus onto a row that's
+    /// materialized but outside the current viewport (the far edge of
+    /// `VirtualScroll`'s buffered page) must scroll it into view — not just
+    /// move focus there and leave the viewport where it was.
+    #[test]
+    fn arrow_down_past_the_viewport_edge_scrolls_the_new_focus_into_view() {
+        let (mut harness, rows) = harness_with_clickable_rows();
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
+
+        // Drain any Scroll/Fetch actions emitted while the harness settled,
+        // so the only action left in the queue after the key press below is
+        // the one it (should) trigger.
+        while harness.pop_action::<VirtualScrollAction>().is_some() {}
+
+        // The very last materialized row sits at the outer edge of
+        // VirtualScroll's buffered page — reliably outside the current
+        // viewport (see CollectionBodyWidget's module docs).
+        let last_idx = *rows.keys().max().expect("at least one materialized row");
+        let prev_idx = last_idx - 1;
+        assert!(
+            rows.contains_key(&prev_idx),
+            "fixture must materialize at least two rows for this test"
+        );
+
+        harness.focus_on(Some(rows[&prev_idx]));
+        let handled = harness.process_text_event(arrow_key(NamedKey::ArrowDown));
+        assert!(handled.is_handled());
+        assert_eq!(harness.focused_widget_id(), Some(rows[&last_idx]));
+
+        let mut scrolled_to_last = false;
+        while let Some((action, _id)) = harness.pop_action::<VirtualScrollAction>() {
+            if let VirtualScrollAction::Scroll(scroll) = action
+                && scroll.range_in_viewport().contains(&last_idx)
+            {
+                scrolled_to_last = true;
+            }
+        }
+        assert!(
+            scrolled_to_last,
+            "ArrowDown onto row {last_idx} (the far edge of the materialized \
+             buffer, well past the viewport) should emit a \
+             VirtualScrollAction::Scroll whose viewport range includes it, \
+             but none did"
+        );
+    }
+
+    /// ...and `ArrowUp` scrolls a newly-focused row back into view when
+    /// moving focus onto a materialized-but-offscreen row above the
+    /// viewport (mirrors the `ArrowDown` test above, using `scroll_to` to
+    /// move the viewport away from row 0 first so there's a materialized
+    /// row above it for `ArrowUp` to reveal).
+    #[test]
+    fn arrow_up_before_the_viewport_edge_scrolls_the_new_focus_into_view() {
+        let (mut harness, rows) = harness_with_clickable_rows();
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
+
+        // Scroll down first so row 0 (still materialized, per VirtualScroll's
+        // buffered page) ends up above the current viewport.
+        harness.edit_root_widget(|mut body| {
+            let mut vs = CollectionBodyWidget::virtual_scroll_mut(&mut body);
+            VirtualScroll::scroll_to(&mut vs, 10);
+        });
+        assert!(
+            rows.contains_key(&0) && rows.contains_key(&1),
+            "fixture must still have rows 0 and 1 materialized after scroll_to(10)"
+        );
+
+        while harness.pop_action::<VirtualScrollAction>().is_some() {}
+
+        harness.focus_on(Some(rows[&1]));
+        let handled = harness.process_text_event(arrow_key(NamedKey::ArrowUp));
+        assert!(handled.is_handled());
+        assert_eq!(harness.focused_widget_id(), Some(rows[&0]));
+
+        let mut scrolled_to_first = false;
+        while let Some((action, _id)) = harness.pop_action::<VirtualScrollAction>() {
+            if let VirtualScrollAction::Scroll(scroll) = action
+                && scroll.range_in_viewport().contains(&0)
+            {
+                scrolled_to_first = true;
+            }
+        }
+        assert!(
+            scrolled_to_first,
+            "ArrowUp onto row 0 (scrolled out of view above) should emit a \
+             VirtualScrollAction::Scroll whose viewport range includes it, \
+             but none did"
+        );
+    }
+
     /// Reproduces #175's regression crash: `refresh_row_nav` must not touch a
     /// row `VirtualScroll::add_child`-ed in the *same* pass. Masonry only
     /// registers a freshly added child with its mutate arena in the update
@@ -608,8 +701,15 @@ mod tests {
 
     /// Right on an expanded parent at the materialized edge is a no-op: its
     /// first child (the next row) isn't materialized, so there's nothing to
-    /// focus — the same behavior Down has at the edge. Scrolling an off-screen
-    /// target into view is deferred (#136).
+    /// focus — the same behavior Down has at the edge. (Tree Left/Right nav,
+    /// `CollectionBodyWidget::on_text_event`, has the same scroll-into-view
+    /// gap Up/Down had before #136 was fixed — it isn't fixed by this change.
+    /// Unlike Up/Down's fixed row-height offset, Left/Right targets aren't a
+    /// fixed distance from the current row, so computing an exact rect would
+    /// need real per-child position data that isn't reachable from
+    /// `on_text_event`'s `EventCtx` today — masonry's `VirtualScroll` only
+    /// exposes per-child geometry through `WidgetMut`-gated `child_mut`, not
+    /// through `EventCtx`/`ActionCtx`.)
     #[test]
     fn tree_nav_to_an_unmaterialized_target_is_a_no_op() {
         let (mut harness, _scroll, ids) = harness_with_rows();
