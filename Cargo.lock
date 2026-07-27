@@ -3946,6 +3946,7 @@ dependencies = [
  "masonry",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "void-ui-macros",
  "xilem",
  "xilem_masonry",

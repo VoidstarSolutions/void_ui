@@ -42,6 +42,8 @@ xilem_masonry = { workspace = true }
 
 [dev-dependencies]
 image = { version = "0.25", default-features = false }
+# Frame-latency instrumentation for the gallery example (VOID_UI_TRACE_FRAMES=1).
+tracing-subscriber = { version = "0.3", features = ["registry", "fmt"] }
 masonry = { workspace = true, features = ["testing"] }
 tokio = { version = "1", features = ["rt"] }
 xilem = { workspace = true }

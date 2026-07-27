@@ -473,7 +473,11 @@ fn swatch_tile(name: &'static str, color: Color, theme: &Theme) -> impl WidgetVi
         .gap(Length::px(2.0))
 }
 
+#[path = "support/frame_trace.rs"]
+mod frame_trace;
+
 fn main() -> Result<(), EventLoopError> {
+    frame_trace::install_if_requested();
     let app = Xilem::new_simple(
         State::new(),
         app_logic,
