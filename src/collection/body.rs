@@ -44,8 +44,11 @@ use super::single_child;
 pub(crate) struct CollectionBodyWidget {
     child: WidgetPod<VirtualScrollWidget>,
     /// Per-visible-row tree metadata in materialized order, kept in sync by
-    /// [`super::body_view`] so Left/Right can find a row's parent (by depth) or
-    /// first child. Empty for a flat (non-tree) collection.
+    /// [`super::body_view`] so Left nav can find a row's materialized parent
+    /// (by depth) — see [`tree_parent_with_distance`](Self::tree_parent_with_distance).
+    /// Right's first-child target doesn't need this: it's always the next
+    /// materialized row, the same `nav_down` target Down already uses. Empty
+    /// for a flat (non-tree) collection.
     row_meta: Vec<(WidgetId, TreeRowMeta)>,
     /// Row ids seen in `VirtualScroll`'s materialized set as of the end of the
     /// previous [`refresh_row_nav`](Self::refresh_row_nav) call. See that
@@ -77,13 +80,16 @@ impl CollectionBodyWidget {
     }
 
     /// Precomputes each visible row's up/down materialized-neighbor
-    /// `WidgetId` and pushes it into the row via [`RowClickable::set_nav`],
-    /// so Up/Down navigation can be handled locally by the focused row
+    /// `WidgetId`, and (for a tree collection) its materialized-parent target
+    /// and distance, pushing both into the row via
+    /// [`RowClickable::set_nav`]/[`RowClickable::set_tree_parent_nav`] so
+    /// Up/Down/Left navigation can all be handled locally by the focused row
     /// itself — see [`row_click`](super::row_click)'s module docs for why
-    /// this widget can't handle Up/Down directly anymore. Called on every
-    /// rebuild by `body_view::CollectionBodyView::rebuild`, mirroring
+    /// this widget can't handle them directly. Called on every rebuild by
+    /// `body_view::CollectionBodyView::rebuild`, mirroring
     /// `refresh_tree_row_meta`'s "materialization has caught up" trigger
-    /// point.
+    /// point (which must run first each rebuild, so this method sees a fresh
+    /// `row_meta` — see that call site's ordering).
     ///
     /// A row `VirtualScroll::add_child`-ed by the *same* rebuild pass (via
     /// the child's own `rebuild`, called just before this) is skipped rather
@@ -755,9 +761,16 @@ mod tests {
             let mut vs = CollectionBodyWidget::virtual_scroll_mut(&mut body);
             VirtualScroll::scroll_to(&mut vs, 15);
         });
+        let row_0_still_materialized = harness.edit_root_widget(|mut body| {
+            use masonry::core::Widget as _;
+            let vs = CollectionBodyWidget::virtual_scroll_mut(&mut body);
+            vs.widget.children_ids().iter().any(|&id| id == ids[&0])
+        });
         assert!(
-            ids.contains_key(&0),
-            "fixture must still have row 0 materialized after scroll_to(15)"
+            row_0_still_materialized,
+            "row 0 must still be materialized (inside VirtualScroll's buffer) \
+             after scroll_to(15) — otherwise the Left-nav target below \
+             wouldn't exist to focus at all"
         );
 
         while harness.pop_action::<VirtualScrollAction>().is_some() {}
