@@ -71,6 +71,14 @@ impl VoidScrollBar {
         }
     }
 
+    /// Jump straight to `value` with no animation, leaving nothing for
+    /// `on_anim_frame` to advance. Used on mount so an auto-hiding scrollbar
+    /// starts hidden rather than fading out of view over `FADE_MILLIS`.
+    pub(crate) fn snap_opacity(&mut self, value: f32) {
+        self.opacity = AnimatedF32::stable(value);
+        self.target_opacity = value;
+    }
+
     fn track_size(&self, layout_size: Size) -> (f64, f64) {
         let size_ratio = if self.content_size > 0.0 {
             (self.portal_size / self.content_size).clamp(0.0, 1.0)
@@ -1040,7 +1048,26 @@ impl<W: Widget + ?Sized> Widget for ScrollView<W> {
         ctx.register_child(&mut self.scrollbar_v);
     }
 
-    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+    fn update(&mut self, ctx: &mut UpdateCtx<'_>, props: &mut PropertiesMut<'_>, event: &Update) {
+        if matches!(event, Update::WidgetAdded) {
+            // Scrollbars are constructed fully opaque, which is right for
+            // `AlwaysVisible`. For `OnActivity` it meant every mount played a
+            // FADE_MILLIS fade-out of a scrollbar the user never asked to see —
+            // ~19 full-window frames, and because nothing in the paint/encode
+            // pipeline tracks damage, each one re-encodes and re-resolves the
+            // entire window. The gallery paid that on every panel switch.
+            //
+            // Snap straight to hidden instead. Pointer activity still reveals
+            // the bar through the normal `target_opacity` path, so only the
+            // unasked-for opening animation is gone.
+            let cache = ctx.property_cache();
+            if props.get::<AutoHideScrollBar>(cache).0 {
+                for bar in [&mut self.scrollbar_h, &mut self.scrollbar_v] {
+                    let (sb, _) = ctx.get_raw_mut(bar);
+                    sb.snap_opacity(0.0);
+                }
+            }
+        }
         if let Update::RequestPanToChild(target) = event {
             let size = ctx.content_box().size();
             let eff_size = self.effective_size(size);
@@ -1576,5 +1603,112 @@ mod tests {
             "airy_len={airy_len}"
         );
         assert!(compact_len < airy_len);
+    }
+
+    /// Builds an auto-hiding (`ScrollBarVisibility::OnActivity`) `ScrollView`
+    /// whose content is much taller than the viewport.
+    fn auto_hiding_harness() -> TestHarness<ScrollView<SizedBox>> {
+        let content = SizedBox::empty().size(Length::px(50.0), Length::px(1000.0));
+        let view = ScrollView::new(NewWidget::new(content), &Theme::dark());
+        TestHarness::create_with_size(
+            masonry::theme::default_property_set(),
+            NewWidget::new(view).with_props(masonry::properties::AutoHideScrollBar(true)),
+            (100, 100),
+        )
+    }
+
+    fn frame_scenes(
+        harness: &mut TestHarness<ScrollView<SizedBox>>,
+    ) -> Vec<masonry::imaging::record::Scene> {
+        let (plan, _) = harness.redraw();
+        plan.layers
+            .iter()
+            .filter_map(|layer| match &layer.kind {
+                masonry::app::VisualLayerKind::Scene(scene) => Some(scene.clone()),
+                masonry::app::VisualLayerKind::External { .. } => None,
+            })
+            .collect()
+    }
+
+    /// Highest opacity across both scrollbars. Reads the private field
+    /// directly rather than adding a test-only accessor to the production
+    /// widget — `mod tests` is a child of the module that owns it.
+    fn max_scrollbar_opacity(harness: &mut TestHarness<ScrollView<SizedBox>>) -> f32 {
+        let mut max = 0.0_f32;
+        harness.inspect_widgets(|widget| {
+            if let Some(bar) = widget.downcast::<VoidScrollBar>() {
+                max = max.max(bar.opacity.value());
+            }
+        });
+        max
+    }
+
+    /// An auto-hiding scrollbar used to mount at full opacity and then fade to
+    /// nothing over `FADE_MILLIS`, which is ~19 full-window frames spent
+    /// animating something the user never asked to see. Since neither masonry
+    /// nor vello tracks damage, each of those frames re-encodes and re-resolves
+    /// the whole window — and the gallery pays it on *every* panel switch.
+    ///
+    /// Auto-hidden scrollbars must therefore mount already hidden.
+    #[test]
+    fn an_auto_hiding_scrollbar_does_not_fade_on_mount() {
+        let mut h = auto_hiding_harness();
+
+        let mut prev = frame_scenes(&mut h);
+        let mut last_change = None;
+        for frame in 0..40 {
+            h.animate_ms(16);
+            let next = frame_scenes(&mut h);
+            if next != prev {
+                last_change = Some(frame);
+                prev = next;
+            }
+        }
+
+        assert!(
+            last_change.is_none(),
+            "an auto-hiding scroll container repainted with no input, last at frame {last_change:?} \
+             — it is fading a scrollbar nobody asked for"
+        );
+    }
+
+    /// The mount-hidden shortcut is conditional on auto-hide. An
+    /// `AlwaysVisible` scroll container must still mount showing its
+    /// scrollbar — snapping unconditionally would make it invisible until the
+    /// first pointer move.
+    #[test]
+    fn an_always_visible_scrollbar_still_mounts_visible() {
+        let mut h = tall_content_harness();
+        h.animate_ms(16);
+
+        let opacity = max_scrollbar_opacity(&mut h);
+        assert!(
+            opacity > 0.99,
+            "a non-auto-hiding scrollbar must mount fully opaque, got {opacity}"
+        );
+    }
+
+    /// The mount-hidden shortcut must not break the actual affordance: pointer
+    /// activity still has to bring the scrollbar back.
+    #[test]
+    fn pointer_activity_still_reveals_an_auto_hidden_scrollbar() {
+        let mut h = auto_hiding_harness();
+        h.animate_ms(16);
+
+        let resting = max_scrollbar_opacity(&mut h);
+        assert!(
+            resting < 0.01,
+            "an untouched auto-hiding scrollbar should rest hidden, got {resting}"
+        );
+
+        h.mouse_move(Point::new(50.0, 50.0));
+        h.animate_ms(16);
+        h.animate_ms(16);
+
+        let after_move = max_scrollbar_opacity(&mut h);
+        assert!(
+            after_move > resting,
+            "pointer activity must reveal the scrollbar: {resting} -> {after_move}"
+        );
     }
 }
