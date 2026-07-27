@@ -2,10 +2,15 @@
 //!
 //! Composes one or two `masonry::widgets::Label` widgets — a second one for
 //! optional secondary text — configured from a [`Theme`] snapshot. There is
-//! no custom masonry widget and no interaction; [`Label::render`] returns a
-//! type-erased [`WidgetView`] so the single-label and two-label cases share
-//! one return type, and `Box<AnyWidgetView>` handles the concrete type
-//! changing across rebuilds (e.g. when `.secondary()` toggles).
+//! no custom masonry `Widget` type (both segments reuse
+//! `masonry::widgets::Label` as-is), but construction goes through a small
+//! internal `styled_text::StyledLabel` view rather than xilem's own
+//! `label()` convenience wrapper, which has no field for the
+//! underline/strikethrough style properties `.decoration()` needs.
+//! [`Label::render`] returns a type-erased [`WidgetView`] so the
+//! single-label and two-label cases share one return type, and
+//! `Box<AnyWidgetView>` handles the concrete type changing across rebuilds
+//! (e.g. when `.secondary()` toggles).
 
 use masonry::core::ArcStr;
 use masonry::parley::{FontFamily, LineHeight};
@@ -13,11 +18,12 @@ use masonry::properties::LineBreaking;
 use xilem::masonry::layout::Length;
 use xilem::peniko::Color;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, flex_row, label as xl_label};
+use xilem::view::{CrossAxisAlignment, flex_row};
 use xilem::{AnyWidgetView, WidgetView};
 
 use super::LabelAlignment;
-use crate::Theme;
+use super::styled_text::styled_label;
+use crate::{TextDecoration, Theme};
 
 /// Builder for a themed text label.
 ///
@@ -34,6 +40,8 @@ pub struct Label {
     line_height: Option<f32>,
     multiline: bool,
     masked: bool,
+    decoration: TextDecoration,
+    secondary_decoration: TextDecoration,
 }
 
 /// Create a themed text label.
@@ -52,6 +60,8 @@ pub fn label(text: impl Into<ArcStr>) -> Label {
         line_height: None,
         multiline: false,
         masked: false,
+        decoration: TextDecoration::None,
+        secondary_decoration: TextDecoration::None,
     }
 }
 
@@ -117,6 +127,21 @@ impl Label {
         self
     }
 
+    /// Set a text decoration (underline/strikethrough) on the main text.
+    /// Defaults to [`TextDecoration::None`].
+    pub fn decoration(mut self, decoration: TextDecoration) -> Self {
+        self.decoration = decoration;
+        self
+    }
+
+    /// Set a text decoration on the secondary text, independently of the
+    /// main text's decoration. No effect unless [`Self::secondary`] is also
+    /// set.
+    pub fn secondary_decoration(mut self, decoration: TextDecoration) -> Self {
+        self.secondary_decoration = decoration;
+        self
+    }
+
     /// Materialize the xilem view at the supplied theme.
     #[must_use = "View values do nothing unless provided to Xilem."]
     pub fn render<State, Action>(
@@ -135,11 +160,16 @@ impl Label {
         };
 
         let view: Box<AnyWidgetView<State, Action>> = match &self.secondary {
-            None => self.single(main_text, main_color, theme),
+            None => self.single(main_text, main_color, self.decoration, theme),
             Some(sec) => {
                 let sec_text = if self.masked { mask(sec) } else { sec.clone() };
-                let main = self.single(main_text, main_color, theme);
-                let secondary = self.single(sec_text, theme.palette.text_muted, theme);
+                let main = self.single(main_text, main_color, self.decoration, theme);
+                let secondary = self.single(
+                    sec_text,
+                    theme.palette.text_muted,
+                    self.secondary_decoration,
+                    theme,
+                );
                 Box::new(
                     flex_row((main, secondary))
                         .cross_axis_alignment(CrossAxisAlignment::Center)
@@ -156,9 +186,10 @@ impl Label {
         &self,
         text: ArcStr,
         color: Color,
+        decoration: TextDecoration,
         theme: &Theme,
     ) -> Box<AnyWidgetView<S, A>> {
-        let base = xl_label(text)
+        let base = styled_label(text, decoration)
             .text_size(self.text_size.unwrap_or(theme.typography.size_body))
             .text_alignment(self.alignment.into_text_align())
             .letter_spacing(self.letter_spacing);
@@ -188,7 +219,7 @@ mod tests {
     use xilem::core::View;
 
     use super::{label, mask};
-    use crate::{Theme, test_support};
+    use crate::{TextDecoration, Theme, test_support};
 
     #[derive(Default)]
     struct AppState;
@@ -212,6 +243,8 @@ mod tests {
         assert!(l.secondary.is_none());
         assert!(!l.multiline);
         assert!(!l.masked);
+        assert_eq!(l.decoration, TextDecoration::None);
+        assert_eq!(l.secondary_decoration, TextDecoration::None);
     }
 
     #[test]
@@ -219,10 +252,14 @@ mod tests {
         let l = label("hello")
             .secondary("world")
             .multiline(true)
-            .masked(true);
+            .masked(true)
+            .decoration(TextDecoration::Strikethrough)
+            .secondary_decoration(TextDecoration::Underline);
         assert_eq!(l.secondary.as_deref(), Some("world"));
         assert!(l.multiline);
         assert!(l.masked);
+        assert_eq!(l.decoration, TextDecoration::Strikethrough);
+        assert_eq!(l.secondary_decoration, TextDecoration::Underline);
     }
 
     #[test]
@@ -247,6 +284,21 @@ mod tests {
             .build(&mut ctx, &mut state);
         let _ = label("wraps")
             .multiline(true)
+            .render::<AppState, ()>(&theme)
+            .build(&mut ctx, &mut state);
+        let _ = label("underlined")
+            .decoration(TextDecoration::Underline)
+            .render::<AppState, ()>(&theme)
+            .build(&mut ctx, &mut state);
+        let _ = label("struck through, multiline")
+            .decoration(TextDecoration::Strikethrough)
+            .multiline(true)
+            .render::<AppState, ()>(&theme)
+            .build(&mut ctx, &mut state);
+        let _ = label("failed result")
+            .decoration(TextDecoration::Strikethrough)
+            .secondary("reason")
+            .secondary_decoration(TextDecoration::None)
             .render::<AppState, ()>(&theme)
             .build(&mut ctx, &mut state);
     }
