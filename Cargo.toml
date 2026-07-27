@@ -83,5 +83,10 @@ name = "gallery"
 path = "examples/gallery.rs"
 required-features = ["gallery"]
 
+[[example]]
+name = "perf_probe"
+path = "examples/perf_probe.rs"
+required-features = ["gallery"]
+
 [lints]
 workspace = true
