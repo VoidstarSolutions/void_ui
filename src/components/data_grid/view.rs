@@ -48,7 +48,7 @@ use crate::collection::{
     CollectionBodyParams, IdSource, ItemsFn, Lazy, LeadingHitZone, LeadingHitZoneFn, OnActivate,
     OnToggle, RenderRow, SelectionLens, TreeMetaFn, TreeRowMeta, collection_body,
 };
-use crate::components::icon::disclosure_chevron;
+use crate::components::icon::{IconName, disclosure_chevron, icon};
 use crate::components::scroll_container::{ScrollBarVisibility, scroll_container};
 use crate::theme::Density;
 
@@ -1578,11 +1578,14 @@ struct FilterRowParams<'a, State, Action> {
 
 /// Builds the per-column filter-input row shown beneath the header.
 ///
-/// Each filterable column gets a `text_input` seeded from its current
-/// query; editing it calls `on_change(state, column, query)` so the
-/// host updates its [`FilterState`] and re-derives the filtered view.
-/// Non-filterable columns render a blank slot of the same width so the
-/// inputs line up under their columns.
+/// Each filterable column gets a leading muted search-icon glyph next to a
+/// `text_input` seeded from its current query — the icon is the primary
+/// discoverability affordance (issue #149: a bare row of text boxes reads
+/// as inert, not as "type here to filter"), backing up the existing
+/// "Filter" placeholder. Editing the input calls `on_change(state, column,
+/// query)` so the host updates its [`FilterState`] and re-derives the
+/// filtered view. Non-filterable columns render a blank slot of the same
+/// width so the inputs line up under their columns.
 fn build_filter_row<State, Action>(
     params: FilterRowParams<'_, State, Action>,
 ) -> impl WidgetView<State, Action> + use<State, Action>
@@ -1616,7 +1619,19 @@ where
                 })
                 .text_color(theme.palette.text)
                 .placeholder("Filter");
-                Box::new(input)
+                // Decorative: the "Filter" placeholder and the input's own
+                // semantics already carry the meaning; the glyph itself has
+                // no meaningful screen-reader pronunciation (see
+                // `Icon::decorative`).
+                let glyph = icon(IconName::Search)
+                    .color(theme.palette.text_muted)
+                    .decorative()
+                    .render(theme);
+                Box::new(
+                    flex_row((flex_item(glyph, 0.0), flex_item(input, 1.0)))
+                        .cross_axis_alignment(CrossAxisAlignment::Center)
+                        .gap(Length::px(f64::from(theme.density.gap_lg) / 2.0)),
+                )
             } else {
                 Box::new(label(""))
             }
