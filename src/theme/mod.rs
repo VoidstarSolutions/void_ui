@@ -1,9 +1,10 @@
 //! Design tokens for `void_ui` components.
 //!
-//! A [`Theme`] bundles a [`Palette`], a [`Density`], a [`Typography`], and
-//! [`Radii`]. Components read the theme they need at render time; the host
-//! application owns the live `Theme` value and swaps it (dark/light,
-//! density step) by replacing it in state.
+//! A [`Theme`] bundles a [`Palette`], a [`Density`], a [`Typography`],
+//! [`Radii`], a [`CodePalette`], and a [`Motion`] preference. Components read
+//! the theme they need at render time; the host application owns the live
+//! `Theme` value and swaps it (dark/light, density step, motion preference)
+//! by replacing it in state.
 
 mod code_palette;
 pub mod color;
