@@ -52,6 +52,31 @@ default = ["gallery"]
 # proc-macro). On by default; disable with `default-features = false` if
 # you don't need demo panels or the proc-macro crate.
 gallery = ["dep:void-ui-macros"]
+# Streams CPU frame timings to the Tracy profiler (https://github.com/wolfpld/tracy).
+#
+# Off by default; it pulls in tracing-tracy, and the Tracy client opens a
+# listening socket on port 8086 at startup.
+#
+# There is no code to write on our side. `masonry_winit::app::run` calls
+# `masonry_core::app::try_init_tracing()`, which installs a `TracyLayer` when
+# `masonry_core/tracy` is on. That layer carries no level filter, so every
+# `info_span!` in the pass system (`layout`, `paint`, `compose`, `update_anim`,
+# `update_pointer`, ...) becomes a Tracy zone.
+#
+# NOTE: this deliberately routes through `masonry/tracy` (= `masonry_core/tracy`)
+# rather than `masonry_winit/tracy`. The latter is the more complete feature — it
+# adds a `non_continuous_frame!("Masonry")` marker per redraw and GPU zones via
+# `vello/wgpu-profiler` — but it also makes `vello_util.rs` request
+# `GpuProfiler::ALL_WGPU_TIMER_FEATURES` on the device, and on macOS/Metal that
+# hangs the app before the window ever appears: the unconditional
+# `device.poll(wait_indefinitely())` in `masonry_winit`'s `present_surface` never
+# returns on the first frame. Verified by isolation — `masonry_winit/tracy` hangs
+# with 100% of main-thread samples in `Device::poll`; `masonry/tracy` comes up
+# fine and still streams to Tracy.
+#
+# Losing the frame marker costs little in practice: the `paint` span fires once
+# per redraw, so counting `paint` zones counts frames.
+profiling = ["masonry/tracy"]
 
 [[example]]
 name = "gallery"
