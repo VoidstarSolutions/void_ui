@@ -23,6 +23,7 @@
 
 #[cfg(feature = "gallery")]
 pub mod demo;
+mod styled_text;
 mod view;
 
 pub use view::{Label, label};
