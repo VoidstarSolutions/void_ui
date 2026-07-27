@@ -43,7 +43,7 @@ use masonry::core::NewWidget;
 use masonry::imaging::record::Scene;
 use masonry::testing::TestHarness;
 use masonry::theme::default_property_set;
-use masonry::widgets::SizedBox;
+use masonry::widgets::Passthrough;
 use xilem::AnyWidgetView;
 use xilem::core::{ProxyError, RawProxy, SendMessage, View, ViewId};
 use xilem::style::Style as _;
@@ -63,6 +63,9 @@ const WINDOW: (u16, u16) = (1400, 900);
 const SAMPLES: usize = 40;
 /// Animation frames driven with no user input (~1 s at 60 Hz).
 const IDLE_FRAMES: usize = 60;
+/// View-rebuild samples per panel. Fewer than repaint samples because a
+/// rebuild is far more expensive.
+const REBUILD_SAMPLES: usize = 10;
 /// How many trailing frames count as "still moving long after settling".
 const LATE_WINDOW: usize = 10;
 
@@ -100,24 +103,36 @@ impl RawProxy for NoopProxy {
     }
 }
 
-/// Materialize a xilem view into a masonry widget, the way the real app does at
-/// startup, so the probe measures shipped widgets rather than a stand-in.
-fn build_widget(view: &AnyWidgetView<ProbeState>, state: &mut ProbeState) -> NewWidget<SizedBox> {
+/// View state for a boxed, erased panel view.
+type ProbeViewState = <Box<AnyWidgetView<ProbeState>> as View<ProbeState, (), ViewCtx>>::ViewState;
+
+/// A live `ViewCtx`, kept around so the probe can drive rebuilds as well as
+/// the initial build.
+fn probe_ctx() -> ViewCtx {
     let runtime = Arc::new(
         tokio::runtime::Builder::new_current_thread()
             .build()
             .expect("probe runtime"),
     );
-    let mut ctx = ViewCtx::new(Arc::new(NoopProxy), runtime);
-    let (pod, _view_state) = view.build(&mut ctx, state);
-    // `TestHarness<W>` needs a sized root, and panels build to `Pod<dyn Widget>`,
-    // so adopt the erased child into a plain `SizedBox`. The baseline row
-    // includes the same wrapper, so it cancels out of every comparison.
-    NewWidget::new(SizedBox::new(pod.new_widget))
+    ViewCtx::new(Arc::new(NoopProxy), runtime)
+}
+
+/// Materialize a xilem view into a masonry widget, the way the real app does at
+/// startup, so the probe measures shipped widgets rather than a stand-in.
+fn build_widget(
+    view: &AnyWidgetView<ProbeState>,
+    state: &mut ProbeState,
+    ctx: &mut ViewCtx,
+) -> (NewWidget<Passthrough>, ProbeViewState) {
+    let (pod, view_state) = view.build(ctx, state);
+    // A boxed, erased xilem view builds to `Pod<Passthrough>`, which is already
+    // sized — so it can be the harness root directly, with no extra wrapper
+    // widget between the harness and the panel under measurement.
+    (pod.new_widget, view_state)
 }
 
 /// Every scene layer masonry produced for this frame, flattened into one list.
-fn frame_scenes(harness: &mut TestHarness<SizedBox>) -> Vec<Scene> {
+fn frame_scenes(harness: &mut TestHarness<Passthrough>) -> Vec<Scene> {
     let (plan, _) = harness.redraw();
     plan.layers
         .iter()
@@ -129,7 +144,7 @@ fn frame_scenes(harness: &mut TestHarness<SizedBox>) -> Vec<Scene> {
 }
 
 /// Total commands across every layer masonry produced for this frame.
-fn scene_commands(harness: &mut TestHarness<SizedBox>) -> usize {
+fn scene_commands(harness: &mut TestHarness<Passthrough>) -> usize {
     frame_scenes(harness)
         .iter()
         .map(Scene::commands)
@@ -142,8 +157,8 @@ fn scene_commands(harness: &mut TestHarness<SizedBox>) -> usize {
 struct Measurement {
     label: &'static str,
     commands: usize,
+    rebuild_median: Duration,
     repaint_median: Duration,
-    repaint_min: Duration,
     settle_frame: Option<usize>,
     late_churn: usize,
 }
@@ -158,11 +173,25 @@ fn measure(label: &'static str, view: Box<AnyWidgetView<ProbeState>>) -> Measure
     // The real gallery wraps its root in an `overlay_scope`, and `dialog` panics
     // without one, so the probe measures the same shape the app ships.
     let view: Box<AnyWidgetView<ProbeState>> = Box::new(overlay_scope::<ProbeState, (), _>(view));
-    let widget = build_widget(&*view, &mut state);
+    let mut ctx = probe_ctx();
+    let (widget, mut view_state) = build_widget(&*view, &mut state, &mut ctx);
     let mut harness = TestHarness::create_with_size(default_property_set(), widget, WINDOW);
 
     // Settle layout and the first paint before sampling.
     let commands = scene_commands(&mut harness);
+
+    // A xilem state change re-runs the app's view function and diffs the whole
+    // view tree against the previous one. Every click pays this *before* any
+    // painting happens, so it is measured separately from repaint.
+    let mut rebuilds = Vec::with_capacity(REBUILD_SAMPLES);
+    for _ in 0..REBUILD_SAMPLES {
+        let start = Instant::now();
+        harness.edit_root_widget(|root| {
+            view.rebuild(&view, &mut view_state, &mut ctx, root, &mut state);
+        });
+        rebuilds.push(start.elapsed());
+    }
+    rebuilds.sort_unstable();
 
     let root_id = harness.root_id();
     let mut samples = Vec::with_capacity(SAMPLES);
@@ -198,8 +227,8 @@ fn measure(label: &'static str, view: Box<AnyWidgetView<ProbeState>>) -> Measure
     Measurement {
         label,
         commands,
+        rebuild_median: rebuilds[rebuilds.len() / 2],
         repaint_median: samples[samples.len() / 2],
-        repaint_min: samples[0],
         settle_frame,
         late_churn,
     }
@@ -276,10 +305,10 @@ fn main() {
         WINDOW.0, WINDOW.1
     );
     println!(
-        "\n{:<22} {:>7} {:>12} {:>12} {:>8} {:>6}",
-        "target", "cmds", "repaint p50", "repaint min", "settle", "late"
+        "\n{:<22} {:>7} {:>13} {:>12} {:>8} {:>6}",
+        "target", "cmds", "rebuild p50", "repaint p50", "settle", "late"
     );
-    println!("{}", "-".repeat(72));
+    println!("{}", "-".repeat(74));
 
     let mut rows = vec![
         measure("(empty baseline)", baseline_view(&theme)),
@@ -292,7 +321,7 @@ fn main() {
 
     // Panels first by cost, so the worst offenders are the first thing read.
     let (fixed, panels) = rows.split_at_mut(2);
-    panels.sort_by_key(|m| std::cmp::Reverse(m.commands));
+    panels.sort_by_key(|m| std::cmp::Reverse(m.rebuild_median));
 
     for m in fixed.iter().chain(panels.iter()) {
         let flag = if m.late_churn > 0 {
@@ -304,8 +333,8 @@ fn main() {
             .settle_frame
             .map_or_else(|| "-".to_string(), |f| format!("f{f}"));
         println!(
-            "{:<22} {:>7} {:>9.3?} {:>9.3?} {:>8} {:>6}{flag}",
-            m.label, m.commands, m.repaint_median, m.repaint_min, settle, m.late_churn
+            "{:<22} {:>7} {:>13.3?} {:>12.3?} {:>8} {:>6}{flag}",
+            m.label, m.commands, m.rebuild_median, m.repaint_median, settle, m.late_churn
         );
     }
 
