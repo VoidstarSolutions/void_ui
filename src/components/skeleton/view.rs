@@ -169,7 +169,9 @@ impl Skeleton {
     /// ([`SkeletonAnimation::None`]). `true` re-enables it with the default
     /// pulse *only when animation is currently off* — it never overrides an
     /// explicit [`Self::wave`]/[`Self::pulse`] choice, so `.wave().animated(true)`
-    /// keeps the wave regardless of call order.
+    /// keeps the wave regardless of call order. Note: whatever is set here is
+    /// itself overridden by `theme.motion.reduced` at render time — see
+    /// [`crate::theme::Motion`].
     pub fn animated(mut self, animated: bool) -> Self {
         self.animation = match (animated, self.animation) {
             (false, _) => SkeletonAnimation::None,
@@ -179,8 +181,15 @@ impl Skeleton {
         self
     }
 
-    /// Materialize a view at the supplied theme.
+    /// Materialize a view at the supplied theme. `theme.motion.reduced`
+    /// overrides any animation choice made on this builder — see
+    /// [`crate::theme::Motion`].
     pub fn render(self, theme: &Theme) -> SkeletonView {
+        let animation = if theme.motion.reduced {
+            SkeletonAnimation::None
+        } else {
+            self.animation
+        };
         let color = self.color.unwrap_or(if self.secondary {
             theme.palette.surface_2
         } else {
@@ -198,7 +207,7 @@ impl Skeleton {
             height: self
                 .height
                 .unwrap_or(f64::from(theme.typography.size_body) * 1.2),
-            animation: self.animation,
+            animation,
         }
     }
 }
@@ -403,5 +412,22 @@ mod tests {
     #[test]
     fn shape_defaults_to_text() {
         assert_eq!(skeleton().shape, SkeletonShape::Text);
+    }
+
+    /// `theme.motion.reduced` forces `SkeletonAnimation::None` regardless of
+    /// any explicit per-instance animation choice — reduced motion always
+    /// wins, with no escape hatch.
+    #[test]
+    fn reduced_motion_theme_forces_animation_off() {
+        let theme = Theme::default().with_motion(crate::theme::Motion::reduced());
+        assert_eq!(skeleton().render(&theme).animation, SkeletonAnimation::None);
+        assert_eq!(
+            skeleton().wave().render(&theme).animation,
+            SkeletonAnimation::None
+        );
+        assert_eq!(
+            skeleton().animated(true).render(&theme).animation,
+            SkeletonAnimation::None
+        );
     }
 }
