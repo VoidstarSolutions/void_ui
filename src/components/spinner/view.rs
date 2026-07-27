@@ -1,5 +1,12 @@
 //! Xilem view for the spinner component.
 //!
+//! Unlike [`crate::skeleton()`], `spinner` does not honor
+//! [`crate::theme::Motion`]'s `reduced` flag — its rotation is the only
+//! signal it is a progress indicator, so freezing it under reduced motion
+//! would remove information rather than just decoration (WCAG 2.3.3's
+//! "unless essential" carve-out). See
+//! `docs/superpowers/specs/2026-07-27-motion-token-design.md`.
+//!
 //! ```
 //! # use void_ui::Theme;
 //! # let theme = Theme::default();
