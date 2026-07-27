@@ -5,3 +5,4 @@ docs/superpowers/plans/
 .omniscient/
 .DS_Store
 omniscient.toml
+.worktrees/
