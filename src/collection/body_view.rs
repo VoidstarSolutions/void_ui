@@ -256,6 +256,13 @@ struct CollectionBodyView<V, State, Action> {
 /// via `depth_at` — never from the live `VirtualScroll` child (which can be
 /// mid-transition and panic on read). A stale `active_start` at worst yields a
 /// transiently-wrong map that the next settled rebuild corrects; it can't panic.
+///
+/// Carries an entry for *every* materialized id, `None` where `depth_at`
+/// couldn't resolve one (position past the data edge, or the host's
+/// `tree_meta` returned `None` for that item) — dropping such rows entirely
+/// would shift every later row's index within `row_meta`, undercounting
+/// `CollectionBodyWidget::tree_parent_with_distance`'s materialized-row
+/// distance to an ancestor further back.
 fn refresh_tree_row_meta<State>(
     element: &mut Mut<'_, Pod<CollectionBodyWidget>>,
     depth_at: &DepthAtFn<State>,
@@ -267,12 +274,14 @@ fn refresh_tree_row_meta<State>(
         let vs = CollectionBodyWidget::virtual_scroll_mut(element);
         vs.widget.children_ids().iter().copied().collect()
     };
-    let meta: Vec<(masonry::core::WidgetId, TreeRowMeta)> = ids
+    let meta: Vec<(masonry::core::WidgetId, Option<TreeRowMeta>)> = ids
         .iter()
         .enumerate()
-        .filter_map(|(k, &id)| {
-            let pos = active_start.checked_add(k)?;
-            depth_at(app_state, pos).map(|m| (id, m))
+        .map(|(k, &id)| {
+            let meta = active_start
+                .checked_add(k)
+                .and_then(|pos| depth_at(app_state, pos));
+            (id, meta)
         })
         .collect();
     CollectionBodyWidget::set_row_meta(element, meta);
@@ -330,12 +339,12 @@ where
             self.child
                 .rebuild(&prev.child, &mut view_state.child_state, ctx, vs, app_state);
         }
-        // Materialization has now caught up, so refresh each row's Up/Down
-        // nav targets — every collection needs this, not just tree ones
-        // (see `refresh_tree_row_meta` just below for the tree-only case).
-        CollectionBodyWidget::refresh_row_nav(&mut element, view_state.active_range.start);
-        // Materialization has now caught up, so refresh the tree depth map for
-        // Left/Right nav — read from `app_state`, never from live row widgets.
+        // Materialization has now caught up, so refresh the tree depth map
+        // for Left/Right nav first — read from `app_state`, never from live
+        // row widgets. This must run *before* `refresh_row_nav` below: that
+        // method now also precomputes each row's materialized-parent target
+        // from `row_meta`, so it needs this rebuild's fresh map, not the
+        // previous rebuild's.
         if let Some(depth_at) = self.depth_at.as_ref() {
             refresh_tree_row_meta(
                 &mut element,
@@ -344,6 +353,9 @@ where
                 app_state,
             );
         }
+        // Refresh each row's Up/Down/Left nav targets — every collection
+        // needs the Up/Down half, not just tree ones.
+        CollectionBodyWidget::refresh_row_nav(&mut element, view_state.active_range.start);
     }
 
     fn teardown(

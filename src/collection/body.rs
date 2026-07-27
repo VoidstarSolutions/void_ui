@@ -1,18 +1,20 @@
-//! Unified virtualized body: a masonry widget that adds Left/Right
-//! tree-focus navigation over `VirtualScroll`. Up/Down row-focus navigation
-//! is handled locally by each row instead (see
-//! [`row_click`](super::row_click)'s module docs for why), driven by this
-//! widget's [`refresh_row_nav`](CollectionBodyWidget::refresh_row_nav). The
-//! xilem `View` (`collection_body`) that drives scroll-to-anchor, lazy-load,
-//! and central click routing lives in the sibling `body_view` module.
+//! Unified virtualized body: a masonry widget wrapping `VirtualScroll`.
+//! Left/Right tree-focus navigation, like Up/Down, is handled locally by
+//! each focused row instead (see [`row_click`](super::row_click)'s module
+//! docs for why) — this widget's job is precomputing each visible row's
+//! nav targets (up/down neighbor, and for a tree collection, its
+//! materialized parent) via [`refresh_row_nav`](CollectionBodyWidget::refresh_row_nav)
+//! and pushing them down, since a row doesn't know its siblings or
+//! ancestors on its own. The xilem `View` (`collection_body`) that drives
+//! scroll-to-anchor, lazy-load, and central click routing lives in the
+//! sibling `body_view` module.
 
 use std::collections::HashSet;
 
 use masonry::accesskit::Role;
-use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
-    AccessCtx, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
-    PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Widget, WidgetId, WidgetMut, WidgetPod,
+    AccessCtx, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx, PropertiesRef,
+    RegisterCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Size};
@@ -22,28 +24,37 @@ use xilem::masonry::widgets::VirtualScroll as VirtualScrollWidget;
 use super::row_click::{RowClickable, TreeRowMeta};
 use super::single_child;
 
-/// Single-child wrapper around masonry's `VirtualScroll` adding tree
-/// keyboard navigation for expandable collections: Left/Right move focus to
-/// a row's parent or first child. (Up/Down row-focus movement is handled
-/// locally by the focused row instead — see
-/// [`RowClickable`](super::row_click::RowClickable) — because `VirtualScroll`
-/// sits between a row and this widget and claims Up/Down via its own
-/// built-in arrow-key scrolling before this widget's `on_text_event` would
-/// run.) Expand/collapse itself is handled by the focused row too; the
-/// cases that reach here are the focus-movement ones a row can't do because
-/// it doesn't know row order.
+/// Single-child wrapper around masonry's `VirtualScroll`. All keyboard focus
+/// navigation (Up/Down/Left/Right) is handled locally by the focused row
+/// itself — see [`RowClickable`](super::row_click::RowClickable) — because
+/// this widget can't issue a scroll-into-view request for a descendant row:
+/// `VirtualScroll` sits between a row and this widget, so a scroll request
+/// from *this* widget's own `ctx` would walk up through this widget's
+/// ancestors, never reaching `VirtualScroll`. This widget's job is instead
+/// precomputing each visible row's nav targets (up/down neighbor via
+/// `refresh_row_nav`; for a tree collection, its materialized parent too)
+/// and pushing them down, since a row doesn't know its siblings or
+/// ancestors on its own.
 ///
 /// Navigation operates over the **materialized** rows (`VirtualScroll` buffers
 /// ~a page beyond the viewport, so adjacent targets are present). A target past
-/// the materialized edge is a no-op. Moving focus (Up/Down, handled in
-/// `RowClickable`) also requests a scroll-into-view for the new target — see
-/// `RowClickable::request_neighbor_scroll_into_view` in `row_click.rs`.
+/// the materialized edge is a no-op. Moving focus also requests a
+/// scroll-into-view for the new target — see
+/// `RowClickable::request_scroll_by_rows` in `row_click.rs`.
 pub(crate) struct CollectionBodyWidget {
     child: WidgetPod<VirtualScrollWidget>,
     /// Per-visible-row tree metadata in materialized order, kept in sync by
-    /// [`super::body_view`] so Left/Right can find a row's parent (by depth) or
-    /// first child. Empty for a flat (non-tree) collection.
-    row_meta: Vec<(WidgetId, TreeRowMeta)>,
+    /// [`super::body_view`] so Left nav can find a row's materialized parent
+    /// (by depth) — see [`tree_parent_with_distance`](Self::tree_parent_with_distance).
+    /// Right's first-child target doesn't need this: it's always the next
+    /// materialized row, the same `nav_down` target Down already uses. Empty
+    /// for a flat (non-tree) collection. Carries one entry per materialized
+    /// row — the same set `refresh_row_nav` walks — with `None` for a row
+    /// that isn't tree-tracked (host `tree_meta` returned `None` for it, or
+    /// it's past the data edge): such a row still occupies a materialized
+    /// position and must still count toward another row's parent distance,
+    /// it just can't itself be a parent-match candidate.
+    row_meta: Vec<(WidgetId, Option<TreeRowMeta>)>,
     /// Row ids seen in `VirtualScroll`'s materialized set as of the end of the
     /// previous [`refresh_row_nav`](Self::refresh_row_nav) call. See that
     /// method's doc for why this exists: a row `VirtualScroll::add_child`-ed
@@ -69,18 +80,24 @@ impl CollectionBodyWidget {
 
     /// Replaces the per-visible-row tree metadata used by Left/Right nav. Cheap:
     /// it only affects the next key press, so no repaint/relayout is requested.
-    pub(crate) fn set_row_meta(this: &mut WidgetMut<'_, Self>, meta: Vec<(WidgetId, TreeRowMeta)>) {
+    pub(crate) fn set_row_meta(
+        this: &mut WidgetMut<'_, Self>,
+        meta: Vec<(WidgetId, Option<TreeRowMeta>)>,
+    ) {
         this.widget.row_meta = meta;
     }
 
     /// Precomputes each visible row's up/down materialized-neighbor
-    /// `WidgetId` and pushes it into the row via [`RowClickable::set_nav`],
-    /// so Up/Down navigation can be handled locally by the focused row
+    /// `WidgetId`, and (for a tree collection) its materialized-parent target
+    /// and distance, pushing both into the row via
+    /// [`RowClickable::set_nav`]/[`RowClickable::set_tree_parent_nav`] so
+    /// Up/Down/Left navigation can all be handled locally by the focused row
     /// itself — see [`row_click`](super::row_click)'s module docs for why
-    /// this widget can't handle Up/Down directly anymore. Called on every
-    /// rebuild by `body_view::CollectionBodyView::rebuild`, mirroring
+    /// this widget can't handle them directly. Called on every rebuild by
+    /// `body_view::CollectionBodyView::rebuild`, mirroring
     /// `refresh_tree_row_meta`'s "materialization has caught up" trigger
-    /// point.
+    /// point (which must run first each rebuild, so this method sees a fresh
+    /// `row_meta` — see that call site's ordering).
     ///
     /// A row `VirtualScroll::add_child`-ed by the *same* rebuild pass (via
     /// the child's own `rebuild`, called just before this) is skipped rather
@@ -106,6 +123,13 @@ impl CollectionBodyWidget {
             std::mem::replace(&mut this.widget.registered_row_ids, ids.clone())
                 .into_iter()
                 .collect();
+        // Computed from `row_meta` before `virtual_scroll_mut` reborrows
+        // `this` below — `row_meta` is empty for a flat (non-tree)
+        // collection, so every entry is `None` there, same as today.
+        let nav_parents: Vec<Option<(WidgetId, u32)>> = ids
+            .iter()
+            .map(|&id| this.widget.tree_parent_with_distance(id))
+            .collect();
         let mut vs = Self::virtual_scroll_mut(this);
         for k in 0..ids.len() {
             let id = ids[k];
@@ -118,97 +142,39 @@ impl CollectionBodyWidget {
             let mut row = VirtualScrollWidget::child_mut(&mut vs, idx);
             let mut row = row.downcast::<RowClickable>();
             RowClickable::set_nav(&mut row, up, down);
+            RowClickable::set_tree_parent_nav(&mut row, nav_parents[k]);
         }
     }
 
-    /// The tree metadata for the materialized row with id `id`, if tracked.
-    fn meta_of(&self, id: WidgetId) -> Option<TreeRowMeta> {
-        self.row_meta
-            .iter()
-            .find(|(w, _)| *w == id)
-            .map(|(_, m)| *m)
-    }
-
-    /// Right target: an expanded parent moves focus to its first child (the next
-    /// row, since children are spliced right after their parent). A leaf yields
-    /// `None` (a collapsed parent's Right was already handled by the row as an
-    /// expand, so it never reaches here).
-    fn tree_first_child(
-        &self,
-        focused: WidgetId,
-        row_ids: &ChildrenIds,
-        pos: usize,
-    ) -> Option<WidgetId> {
-        let meta = self.meta_of(focused)?;
-        if meta.has_children && meta.is_expanded {
-            pos.checked_add(1).and_then(|i| row_ids.get(i)).copied()
-        } else {
-            None
-        }
-    }
-
-    /// Left target: the row's parent — the nearest preceding materialized row
-    /// with a shallower depth. A depth-0 row has no parent (`None`).
-    fn tree_parent(&self, focused: WidgetId) -> Option<WidgetId> {
+    /// The materialized-parent target for `focused` — the nearest preceding
+    /// row in `row_meta` with a shallower depth — and its distance from
+    /// `focused`, counted in materialized rows (not tree-depth difference:
+    /// skipping over a deeper sibling's whole subtree still counts each of
+    /// those intervening rows, since `RowClickable::request_scroll_by_rows`
+    /// needs a row-count, not a depth delta). The distance walks `row_meta`'s
+    /// full index range — including rows with no tracked metadata — so a row
+    /// the host didn't tag as tree-tracked still counts as one materialized
+    /// row of distance; only rows *with* metadata are candidates for the
+    /// shallower-parent match itself. A depth-0 row, or one not tracked in
+    /// `row_meta` at all (a flat collection, or the materialized/data edge),
+    /// yields `None`.
+    fn tree_parent_with_distance(&self, focused: WidgetId) -> Option<(WidgetId, u32)> {
         let idx = self.row_meta.iter().position(|(id, _)| *id == focused)?;
-        let depth = self.row_meta[idx].1.depth;
+        let depth = self.row_meta[idx].1?.depth;
         self.row_meta[..idx]
             .iter()
+            .enumerate()
             .rev()
-            .find(|(_, m)| m.depth < depth)
-            .map(|(id, _)| *id)
+            .find_map(|(parent_idx, (id, m))| {
+                let m = (*m)?;
+                (m.depth < depth)
+                    .then(|| (*id, u32::try_from(idx - parent_idx).unwrap_or(u32::MAX)))
+            })
     }
 }
 
 impl Widget for CollectionBodyWidget {
     type Action = NoAction;
-
-    fn on_text_event(
-        &mut self,
-        ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &TextEvent,
-    ) {
-        let TextEvent::Keyboard(key) = event else {
-            return;
-        };
-        if key.state != KeyState::Down {
-            return;
-        }
-        // Only Left/Right (tree collections) reach here — Up/Down are
-        // handled locally by the focused row itself
-        // (`RowClickable::on_text_event`), since `VirtualScroll`'s built-in
-        // arrow-key scrolling would otherwise intercept them before they got
-        // this far. See `row_click`'s module docs.
-        if !matches!(
-            &key.key,
-            Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowRight)
-        ) {
-            return;
-        }
-        let Some(focused) = ctx.focus_target_id() else {
-            return;
-        };
-        let row_ids = {
-            let (virtual_scroll, _) = ctx.get_raw(&mut self.child);
-            virtual_scroll.children_ids()
-        };
-        let Some(pos) = row_ids.iter().position(|&id| id == focused) else {
-            return;
-        };
-        // Left/Right do tree focus moves. A case that doesn't apply here (a
-        // leaf's Right, a depth-0 Left, or a toggle already handled by the
-        // row) yields `None` and is left unhandled so nothing is swallowed.
-        let target: Option<WidgetId> = match &key.key {
-            Key::Named(NamedKey::ArrowRight) => self.tree_first_child(focused, &row_ids, pos),
-            Key::Named(NamedKey::ArrowLeft) => self.tree_parent(focused),
-            _ => None,
-        };
-        if let Some(target) = target {
-            ctx.set_focus(target);
-            ctx.set_handled();
-        }
-    }
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
         single_child::register_children(ctx, &mut self.child);
@@ -270,40 +236,82 @@ mod tests {
 
     /// Installs a per-visible-row tree layout on the body widget for the
     /// Left/Right nav tests. `layout` is `(row index, depth, has_children,
-    /// is_expanded)` in ascending-index (materialized) order.
+    /// is_expanded)`, need not cover every materialized row — one that's
+    /// omitted mirrors a row the host's `tree_meta` returned `None` for, and
+    /// still gets a `row_meta` entry (`None`) so it counts toward another
+    /// row's parent distance without being a parent-match candidate itself
+    /// (see `tree_parent_with_distance`).
     fn set_tree(
         harness: &mut TestHarness<CollectionBodyWidget>,
         rows: &HashMap<usize, WidgetId>,
         layout: &[(usize, u16, bool, bool)],
     ) {
-        let meta: Vec<(WidgetId, TreeRowMeta)> = layout
+        let tracked: HashMap<usize, TreeRowMeta> = layout
             .iter()
-            .filter_map(|&(idx, depth, has_children, is_expanded)| {
-                rows.get(&idx).map(|&id| {
-                    (
-                        id,
-                        TreeRowMeta {
-                            depth,
-                            has_children,
-                            is_expanded,
-                        },
-                    )
-                })
+            .map(|&(idx, depth, has_children, is_expanded)| {
+                (
+                    idx,
+                    TreeRowMeta {
+                        depth,
+                        has_children,
+                        is_expanded,
+                    },
+                )
             })
             .collect();
+        let mut indices: Vec<usize> = rows.keys().copied().collect();
+        indices.sort_unstable();
+        let meta: Vec<(WidgetId, Option<TreeRowMeta>)> = indices
+            .into_iter()
+            .map(|idx| (rows[&idx], tracked.get(&idx).copied()))
+            .collect();
         harness.edit_root_widget(|mut body| CollectionBodyWidget::set_row_meta(&mut body, meta));
+
+        // Also push each row's own TreeRowMeta directly onto its
+        // RowClickable — production wires this per-row at view-build time
+        // (see body_view.rs's TreeMetaFn), independent of set_row_meta
+        // above. RowClickable::on_text_event now needs it locally to decide
+        // whether Right moves focus to a materialized first child.
+        for &(idx, depth, has_children, is_expanded) in layout {
+            if !rows.contains_key(&idx) {
+                continue;
+            }
+            harness.edit_root_widget(|mut body| {
+                let mut vs = CollectionBodyWidget::virtual_scroll_mut(&mut body);
+                let mut row = VirtualScroll::child_mut(&mut vs, idx);
+                let mut row = row.downcast::<RowClickable>();
+                RowClickable::set_tree_meta(
+                    &mut row,
+                    Some(TreeRowMeta {
+                        depth,
+                        has_children,
+                        is_expanded,
+                    }),
+                );
+            });
+        }
     }
 
     // A small tree over the first materialized rows:
     //   0  Parent A     depth 0, expanded
     //   1    Child A1   depth 1, leaf
-    //   2    Child A2   depth 1, expanded parent
+    //   2    Child A2   depth 1, collapsed parent (has a materialized child
+    //                   below it anyway — this is injected test metadata, not
+    //                   an enforced expand/collapse invariant — kept
+    //                   *collapsed* rather than expanded so pressing
+    //                   `ArrowLeft` while focused here exercises
+    //                   `nav_parent`'s skip logic instead of being
+    //                   intercepted as a collapse-toggle: a genuinely
+    //                   *expanded* parent's own `ArrowLeft` always collapses
+    //                   first, per `RowClickable::on_text_event`'s
+    //                   `toggles_on` guard — see `left_toggles_an_expanded_parent_right_does_not`
+    //                   in `row_click.rs`)
     //   3      GC A2a   depth 2, leaf
     //   4  Parent B     depth 0, collapsed
     const TREE: &[(usize, u16, bool, bool)] = &[
         (0, 0, true, true),
         (1, 1, false, false),
-        (2, 1, true, true),
+        (2, 1, true, false),
         (3, 2, false, false),
         (4, 0, true, false),
     ];
@@ -620,8 +628,10 @@ mod tests {
 
     #[test]
     fn right_on_expanded_parent_focuses_first_child() {
-        let (mut harness, _scroll, ids) = harness_with_rows();
+        let (mut harness, ids) = harness_with_clickable_rows();
         set_tree(&mut harness, &ids, TREE);
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
         harness.focus_on(Some(ids[&0])); // Parent A (expanded)
         let handled = harness.process_text_event(arrow_key(NamedKey::ArrowRight));
         assert!(handled.is_handled());
@@ -634,8 +644,10 @@ mod tests {
 
     #[test]
     fn right_on_leaf_or_collapsed_parent_does_not_move() {
-        let (mut harness, _scroll, ids) = harness_with_rows();
+        let (mut harness, ids) = harness_with_clickable_rows();
         set_tree(&mut harness, &ids, TREE);
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
         // Leaf (Child A1): Right does nothing here.
         harness.focus_on(Some(ids[&1]));
         assert!(
@@ -644,21 +656,27 @@ mod tests {
                 .is_handled()
         );
         assert_eq!(harness.focused_widget_id(), Some(ids[&1]));
-        // Collapsed parent (Parent B): Right expands via the row, not the body,
-        // so the body leaves focus put.
+        // Collapsed parent (Parent B): a collapsed parent's own `ArrowRight`
+        // is intercepted as an expand-toggle before nav (see `TREE`'s doc
+        // comment above and `RowClickable::on_text_event`'s `toggles_on`
+        // guard) — so this *is* handled, just not as a focus move: the row
+        // toggles, not `CollectionBodyWidget`'s nav_down, and focus stays put.
         harness.focus_on(Some(ids[&4]));
         assert!(
-            !harness
+            harness
                 .process_text_event(arrow_key(NamedKey::ArrowRight))
-                .is_handled()
+                .is_handled(),
+            "Right on a collapsed parent is handled as an expand-toggle by the row itself",
         );
         assert_eq!(harness.focused_widget_id(), Some(ids[&4]));
     }
 
     #[test]
     fn left_on_child_focuses_its_parent_skipping_deeper_siblings() {
-        let (mut harness, _scroll, ids) = harness_with_rows();
+        let (mut harness, ids) = harness_with_clickable_rows();
         set_tree(&mut harness, &ids, TREE);
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
         // Grandchild A2a (depth 2) → parent Child A2 (depth 1).
         harness.focus_on(Some(ids[&3]));
         let handled = harness.process_text_event(arrow_key(NamedKey::ArrowLeft));
@@ -678,20 +696,78 @@ mod tests {
         );
     }
 
+    /// #203 follow-up: a row between `focused` and its materialized parent
+    /// that carries no tracked `TreeRowMeta` (the host's `tree_meta` returned
+    /// `None` for it) must still count toward the parent distance — it
+    /// occupies a real materialized row, and `RowClickable::request_scroll_by_rows`
+    /// needs an accurate row count to land the scroll on the actual parent,
+    /// not just a count of tree-tracked rows. See `tree_parent_with_distance`.
+    #[test]
+    fn tree_parent_distance_counts_rows_without_tracked_metadata() {
+        let (mut harness, ids) = harness_with_clickable_rows();
+        assert!(
+            ids.contains_key(&4),
+            "fixture must materialize at least 5 rows"
+        );
+        let meta: Vec<(WidgetId, Option<TreeRowMeta>)> = vec![
+            (
+                ids[&0],
+                Some(TreeRowMeta {
+                    depth: 0,
+                    has_children: true,
+                    is_expanded: true,
+                }),
+            ),
+            (ids[&1], None),
+            (ids[&2], None),
+            (ids[&3], None),
+            (
+                ids[&4],
+                Some(TreeRowMeta {
+                    depth: 1,
+                    has_children: false,
+                    is_expanded: false,
+                }),
+            ),
+        ];
+        let (parent, distance) = harness
+            .edit_root_widget(|mut body| {
+                CollectionBodyWidget::set_row_meta(&mut body, meta);
+                body.widget.tree_parent_with_distance(ids[&4])
+            })
+            .expect("row 0 is a shallower-depth ancestor of row 4");
+        assert_eq!(parent, ids[&0]);
+        assert_eq!(
+            distance, 4,
+            "distance must count every materialized row between focused and \
+             parent (rows 1-3), not just the ones carrying tracked metadata"
+        );
+    }
+
     #[test]
     fn left_on_depth_zero_row_does_not_move() {
-        let (mut harness, _scroll, ids) = harness_with_rows();
+        let (mut harness, ids) = harness_with_clickable_rows();
         set_tree(&mut harness, &ids, TREE);
-        harness.focus_on(Some(ids[&0])); // Parent A, depth 0 — no parent
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
+        // Parent B (depth 0, collapsed — not Parent A) so `ArrowLeft` reaches
+        // the `nav_parent` no-op path here instead of being intercepted as a
+        // collapse-toggle: Parent A is an *expanded* parent, and an expanded
+        // parent's own `ArrowLeft` always collapses first (see `TREE`'s doc
+        // comment above).
+        harness.focus_on(Some(ids[&4])); // Parent B, depth 0 — no parent
         let handled = harness.process_text_event(arrow_key(NamedKey::ArrowLeft));
         assert!(!handled.is_handled());
-        assert_eq!(harness.focused_widget_id(), Some(ids[&0]));
+        assert_eq!(harness.focused_widget_id(), Some(ids[&4]));
     }
 
     #[test]
     fn left_right_are_no_ops_without_tree_metadata() {
-        // A flat collection (no row_meta set) ignores Left/Right entirely.
-        let (mut harness, _scroll, ids) = harness_with_rows();
+        // A flat collection (no row_meta / row tree_meta set) ignores
+        // Left/Right entirely.
+        let (mut harness, ids) = harness_with_clickable_rows();
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
         harness.focus_on(Some(ids[&1]));
         for key in [NamedKey::ArrowLeft, NamedKey::ArrowRight] {
             assert!(!harness.process_text_event(arrow_key(key)).is_handled());
@@ -700,22 +776,16 @@ mod tests {
     }
 
     /// Right on an expanded parent at the materialized edge is a no-op: its
-    /// first child (the next row) isn't materialized, so there's nothing to
-    /// focus — the same behavior Down has at the edge. (Tree Left/Right nav,
-    /// `CollectionBodyWidget::on_text_event`, has the same scroll-into-view
-    /// gap Up/Down had before #136 was fixed — it isn't fixed by this change.
-    /// Unlike Up/Down's fixed row-height offset, Left/Right targets aren't a
-    /// fixed distance from the current row, so computing an exact rect would
-    /// need real per-child position data that isn't reachable from
-    /// `on_text_event`'s `EventCtx` today — masonry's `VirtualScroll` only
-    /// exposes per-child geometry through `WidgetMut`-gated `child_mut`, not
-    /// through `EventCtx`/`ActionCtx`.)
+    /// first child (the next row) isn't materialized, so `nav_down` is
+    /// `None` — the same behavior Down has at the edge.
     #[test]
     fn tree_nav_to_an_unmaterialized_target_is_a_no_op() {
-        let (mut harness, _scroll, ids) = harness_with_rows();
+        let (mut harness, ids) = harness_with_clickable_rows();
         let last_idx = *ids.keys().max().expect("at least one materialized row");
         // Mark the last materialized row an expanded parent.
         set_tree(&mut harness, &ids, &[(last_idx, 0, true, true)]);
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
         harness.focus_on(Some(ids[&last_idx]));
         let handled = harness.process_text_event(arrow_key(NamedKey::ArrowRight));
         assert!(
@@ -723,5 +793,77 @@ mod tests {
             "no materialized first child → Right no-ops (like Down at the edge)",
         );
         assert_eq!(harness.focused_widget_id(), Some(ids[&last_idx]));
+    }
+
+    /// #203: pressing `ArrowLeft` to move focus onto a materialized ancestor
+    /// several rows back — outside the current viewport but still inside
+    /// `VirtualScroll`'s buffered page — must scroll it into view. This is
+    /// the actual bug: the old code moved focus correctly but never
+    /// requested a scroll, and unlike Up/Down (a fixed 1-row offset), a
+    /// parent can be an arbitrary number of materialized rows away, which is
+    /// exactly what this test exercises (not just the 1-row case Up/Down
+    /// already covers).
+    #[test]
+    fn left_past_the_viewport_edge_scrolls_the_new_focus_into_view() {
+        let (mut harness, ids) = harness_with_clickable_rows();
+        // A depth-0 parent at row 0, with 30 depth-1 leaf children directly
+        // after it (rows 1..=30) — the parent is a materialized ancestor
+        // many rows back from any of its later children, well past a single
+        // viewport's worth of rows.
+        let mut layout: Vec<(usize, u16, bool, bool)> = vec![(0, 0, true, true)];
+        for idx in 1..=30 {
+            layout.push((idx, 1, false, false));
+        }
+        set_tree(&mut harness, &ids, &layout);
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
+        harness.edit_root_widget(|mut body| CollectionBodyWidget::refresh_row_nav(&mut body, 0));
+
+        // Scroll down first so row 0 ends up above the current viewport —
+        // otherwise it would already be visible from the initial unscrolled
+        // position, making the scroll assertion below vacuous. scroll_to(15)
+        // rather than, say, scroll_to(30): row 0 must stay inside
+        // VirtualScroll's buffered (overscan) page or it gets stashed —
+        // scrolling all the way to row 30 pushes row 0 out of that buffer
+        // entirely (confirmed empirically: it then panics laying out a
+        // stashed widget). 15 keeps row 0 comfortably buffered while still
+        // scrolling it out of the *visible* viewport, which is all this test
+        // needs.
+        harness.edit_root_widget(|mut body| {
+            let mut vs = CollectionBodyWidget::virtual_scroll_mut(&mut body);
+            VirtualScroll::scroll_to(&mut vs, 15);
+        });
+        let row_0_still_materialized = harness.edit_root_widget(|mut body| {
+            use masonry::core::Widget as _;
+            let vs = CollectionBodyWidget::virtual_scroll_mut(&mut body);
+            vs.widget.children_ids().iter().any(|&id| id == ids[&0])
+        });
+        assert!(
+            row_0_still_materialized,
+            "row 0 must still be materialized (inside VirtualScroll's buffer) \
+             after scroll_to(15) — otherwise the Left-nav target below \
+             wouldn't exist to focus at all"
+        );
+
+        while harness.pop_action::<VirtualScrollAction>().is_some() {}
+
+        harness.focus_on(Some(ids[&30]));
+        let handled = harness.process_text_event(arrow_key(NamedKey::ArrowLeft));
+        assert!(handled.is_handled());
+        assert_eq!(harness.focused_widget_id(), Some(ids[&0]));
+
+        let mut scrolled_to_parent = false;
+        while let Some((action, _id)) = harness.pop_action::<VirtualScrollAction>() {
+            if let VirtualScrollAction::Scroll(scroll) = action
+                && scroll.range_in_viewport().contains(&0)
+            {
+                scrolled_to_parent = true;
+            }
+        }
+        assert!(
+            scrolled_to_parent,
+            "ArrowLeft onto row 0 (30 materialized rows back, well past the \
+             viewport) should emit a VirtualScrollAction::Scroll whose \
+             viewport range includes it, but none did"
+        );
     }
 }
