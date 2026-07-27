@@ -194,6 +194,7 @@ fn build_inner(theme: &Theme, state: &LabelDemoState) -> impl WidgetView<LabelDe
             multiline,
             section_header("Alignment", theme),
             alignment_section(theme),
+            // Nested to stay within xilem_core's 16-element ViewSequence tuple limit.
             (
                 section_header("Decoration", theme),
                 decoration_section(theme),
