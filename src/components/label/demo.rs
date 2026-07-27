@@ -11,7 +11,7 @@ use super::{LabelAlignment, label};
 use crate::components::ScrollBarVisibility;
 use crate::components::checkbox::checkbox;
 use crate::with_source;
-use crate::{Theme, scroll_container, separator};
+use crate::{TextDecoration, Theme, scroll_container, separator};
 
 struct LabelDemoState {
     masked: bool,
@@ -111,6 +111,26 @@ fn alignment_section(theme: &Theme) -> impl WidgetView<LabelDemoState> + use<> {
     })
 }
 
+fn decoration_section(theme: &Theme) -> impl WidgetView<LabelDemoState> + use<> {
+    with_source!(theme, {
+        flex_col((
+            label("Underlined text")
+                .decoration(TextDecoration::Underline)
+                .render(theme),
+            label("Struck-through text")
+                .decoration(TextDecoration::Strikethrough)
+                .render(theme),
+            label("Failed result")
+                .decoration(TextDecoration::Strikethrough)
+                .secondary("failed")
+                .secondary_decoration(TextDecoration::None)
+                .render(theme),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .gap(Length::px(6.0))
+    })
+}
+
 fn build_inner(theme: &Theme, state: &LabelDemoState) -> impl WidgetView<LabelDemoState> + use<> {
     let mask_toggle = checkbox(state.masked, |s: &mut LabelDemoState, checked: bool| {
         s.masked = checked;
@@ -174,6 +194,11 @@ fn build_inner(theme: &Theme, state: &LabelDemoState) -> impl WidgetView<LabelDe
             multiline,
             section_header("Alignment", theme),
             alignment_section(theme),
+            // Nested to stay within xilem_core's 16-element ViewSequence tuple limit.
+            (
+                section_header("Decoration", theme),
+                decoration_section(theme),
+            ),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .gap(Length::px(16.0)),

@@ -62,6 +62,7 @@ pub mod overlay_scope;
 pub mod pointer_inert;
 #[cfg(test)]
 pub(crate) mod test_support;
+pub mod text_style;
 pub mod theme;
 
 pub use animated_clip::AnimatedClip;
@@ -110,6 +111,7 @@ pub use lucide_icons::LUCIDE_FONT_BYTES;
 pub use overlay::OverlayAnchor;
 pub use overlay_scope::{OverlayScope, OverlayScopeHandle, overlay_scope};
 pub use pointer_inert::{PointerInert, PointerInertView, pointer_inert};
+pub use text_style::TextDecoration;
 pub use theme::{CodePalette, Density, FontStack, Palette, Radii, Theme, ThemeVariant, Typography};
 #[cfg(feature = "gallery")]
 pub use void_ui_macros::with_source;
