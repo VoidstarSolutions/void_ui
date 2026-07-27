@@ -1,19 +1,22 @@
 //! Design tokens for `void_ui` components.
 //!
-//! A [`Theme`] bundles a [`Palette`], a [`Density`], a [`Typography`], and
-//! [`Radii`]. Components read the theme they need at render time; the host
-//! application owns the live `Theme` value and swaps it (dark/light,
-//! density step) by replacing it in state.
+//! A [`Theme`] bundles a [`Palette`], a [`Density`], a [`Typography`],
+//! [`Radii`], a [`CodePalette`], and a [`Motion`] preference. Components read
+//! the theme they need at render time; the host application owns the live
+//! `Theme` value and swaps it (dark/light, density step, motion preference)
+//! by replacing it in state.
 
 mod code_palette;
 pub mod color;
 mod density;
+mod motion;
 mod palette;
 mod typography;
 
 pub use code_palette::CodePalette;
 pub use color::{oklch, oklcha};
 pub use density::Density;
+pub use motion::Motion;
 pub use palette::Palette;
 pub use typography::{FontStack, Typography};
 
@@ -69,6 +72,7 @@ pub struct Theme {
     pub typography: Typography,
     pub radius: Radii,
     pub code: CodePalette,
+    pub motion: Motion,
 }
 
 impl Theme {
@@ -82,6 +86,7 @@ impl Theme {
             typography: Typography::default_stack(),
             radius: Radii::default_stack(),
             code: CodePalette::dark(),
+            motion: Motion::default(),
         }
     }
 
@@ -95,6 +100,7 @@ impl Theme {
             typography: Typography::default_stack(),
             radius: Radii::default_stack(),
             code: CodePalette::light(),
+            motion: Motion::default(),
         }
     }
 
@@ -102,6 +108,14 @@ impl Theme {
     #[must_use]
     pub fn with_density(mut self, density: Density) -> Self {
         self.density = density;
+        self
+    }
+
+    /// Replace the motion preference, keeping palette / density /
+    /// typography / radii.
+    #[must_use]
+    pub fn with_motion(mut self, motion: Motion) -> Self {
+        self.motion = motion;
         self
     }
 
@@ -126,7 +140,7 @@ impl Default for Theme {
 
 #[cfg(test)]
 mod tests {
-    use super::{Radii, Theme};
+    use super::{Motion, Radii, Theme};
 
     /// Both theme variants share the default radius stack, including the
     /// `tiny` token used by compact form controls (checkbox box).
@@ -138,5 +152,14 @@ mod tests {
         assert!((r.large - 10.0).abs() < f32::EPSILON);
         assert_eq!(Theme::dark().radius, r);
         assert_eq!(Theme::light().radius, r);
+    }
+
+    /// Both theme variants default to full motion — `Motion::full()` — so
+    /// existing consumers who never touch `.with_motion(..)` keep playing
+    /// decorative animation exactly as before this token existed.
+    #[test]
+    fn theme_defaults_to_full_motion() {
+        assert_eq!(Theme::dark().motion, Motion::full());
+        assert_eq!(Theme::light().motion, Motion::full());
     }
 }

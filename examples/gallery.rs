@@ -23,7 +23,7 @@ use xilem::{AnyWidgetView, EventLoop, WidgetView, WindowOptions, Xilem};
 use void_ui::components::{ComponentKind, SidebarNavItem, button, sidebar_nav, sidebar_panel};
 use void_ui::layout::flex_wrap;
 use void_ui::overlay_scope::overlay_scope;
-use void_ui::theme::{Density, Theme};
+use void_ui::theme::{Density, Motion, Theme};
 use void_ui::{label, scroll_container};
 
 struct State {
@@ -231,6 +231,8 @@ fn theme_panel(theme: &Theme) -> impl WidgetView<State> {
         theme_variant_row(theme),
         section_header("Density", theme),
         density_row(theme),
+        section_header("Motion", theme),
+        motion_row(theme),
         section_header("Surfaces", theme),
         surfaces_block(theme),
         section_header("Accents", theme),
@@ -294,6 +296,25 @@ fn density_row(theme: &Theme) -> impl WidgetView<State> + use<> {
         })
         .label("Airy")
         .selected(theme.density == Density::airy())
+        .render(theme),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Center)
+    .gap(Length::px(6.0))
+}
+
+fn motion_row(theme: &Theme) -> impl WidgetView<State> + use<> {
+    flex_row((
+        button(|s: &mut State| {
+            s.theme = s.theme.with_motion(Motion::full());
+        })
+        .label("Full")
+        .selected(!theme.motion.reduced)
+        .render(theme),
+        button(|s: &mut State| {
+            s.theme = s.theme.with_motion(Motion::reduced());
+        })
+        .label("Reduced")
+        .selected(theme.motion.reduced)
         .render(theme),
     ))
     .cross_axis_alignment(CrossAxisAlignment::Center)

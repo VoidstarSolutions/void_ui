@@ -112,7 +112,9 @@ pub use overlay::OverlayAnchor;
 pub use overlay_scope::{OverlayScope, OverlayScopeHandle, overlay_scope};
 pub use pointer_inert::{PointerInert, PointerInertView, pointer_inert};
 pub use text_style::TextDecoration;
-pub use theme::{CodePalette, Density, FontStack, Palette, Radii, Theme, ThemeVariant, Typography};
+pub use theme::{
+    CodePalette, Density, FontStack, Motion, Palette, Radii, Theme, ThemeVariant, Typography,
+};
 #[cfg(feature = "gallery")]
 pub use void_ui_macros::with_source;
 
