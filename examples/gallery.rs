@@ -158,6 +158,7 @@ fn sidebar_items(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State
 
     scroll_container(
         sidebar_nav(items, active, |s: &mut State, i| {
+            frame_trace::mark("sidebar-nav");
             s.focused = ComponentKind::all()[i];
         })
         .render(theme),

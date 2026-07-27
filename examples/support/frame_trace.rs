@@ -13,24 +13,29 @@
 //!
 //! # Reading the output
 //!
-//! Two caveats, both learned the hard way:
+//! Durations are measured **enter -> exit**, i.e. time actually spent inside
+//! the span, and deliberately *not* creation -> close.
 //!
-//! - **Ignore per-widget rows** (`Label`, `Flex`, `Passthrough`, …). Those come
-//!   from `Widget::make_trace_span`, which masonry creates once per widget and
-//!   re-enters on every pass; the span closes when the *widget* is dropped, so
-//!   its "duration" is the widget's lifetime, not any unit of work. Only
-//!   pass-level spans — `layout`, `paint`, `compose`, `update_new_widgets`,
-//!   `update_anim`, `redraw`, `Rendering Masonry window` — are meaningful here.
-//! - **`input -> frame` over-reports when an input needed no repaint.** Not
-//!   every event dirties anything (a pointer move over inert chrome, say), so
-//!   the pending timestamp can survive until some much later frame and report a
-//!   gap of many seconds. Treat individual huge values as noise; what matters
-//!   is the shape of the bulk of the distribution.
+//! That distinction is the whole reason this file has a doc comment. Masonry
+//! stores a per-widget span on the widget itself (`state.trace_span =
+//! widget.make_trace_span(id)` in the `update_new_widgets` pass), and in
+//! `tracing` a child span keeps its parent alive — so a pass span does not
+//! *close* until every widget created during it has been dropped. Timing on
+//! close therefore reports widget teardown as if it were pass duration, and
+//! produces spectacular fictions: an early version of this layer showed
+//! `update_new_widgets` taking 1.2-4.4 seconds, with seven separate 1.19s
+//! spans all closing within 4ms of each other. None of it was real work.
+//!
+//! One caveat remains: **`input -> frame` over-reports when an input needed no
+//! repaint.** Not every event dirties anything (a pointer move over inert
+//! chrome, say), so the pending timestamp can survive until some much later
+//! frame and report a gap of many seconds. Treat individual huge values as
+//! noise; what matters is the bulk of the distribution.
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use tracing::span::{Attributes, Id};
+use tracing::span::Id;
 use tracing::{Subscriber, field};
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::Context;
@@ -44,6 +49,14 @@ const SLOW_SPAN: Duration = Duration::from_millis(2);
 const RENDER_SPAN: &str = "Rendering Masonry window";
 /// Span name masonry uses around each winit window event.
 const EVENT_SPAN: &str = "window_event";
+/// Span masonry uses around dispatching a pointer event into the widget tree.
+/// Logging every one of these shows whether input is *arriving* steadily, which
+/// is the half of the story frame timing cannot tell.
+const DISPATCH_SPAN: &str = "dispatch_pointer_event";
+/// Span masonry uses around keyboard dispatch. Logged loudly so the person
+/// reproducing a problem can timestamp it themselves by pressing a key — the
+/// only reliable way to correlate "it felt stuck here" with the trace.
+const TEXT_SPAN: &str = "dispatch_text_event";
 
 struct Timing {
     started: Instant,
@@ -53,17 +66,41 @@ struct Timing {
 struct Shared {
     /// When the most recent input event was seen, if no frame has followed yet.
     pending_input: Option<Instant>,
+    /// An app-level action awaiting the frame that renders its effect.
+    pending_action: Option<(&'static str, Instant)>,
 }
 
+/// Records that an app-level state change just happened, so the next rendered
+/// frame can report how long it took to become visible.
+///
+/// This is the only honest click-to-pixels measurement available here. Every
+/// span-derived proxy measures something subtly different: `input -> frame`
+/// times the *last* event before a frame, which under a continuous pointer-move
+/// stream is always about one frame regardless of how stale the content is.
+///
+/// Call this from the callback that mutates app state — the moment the app
+/// "knows" about the click.
+pub fn mark(label: &'static str) {
+    if let Some(shared) = SHARED.get() {
+        let mut shared = shared.lock().expect("frame-trace lock");
+        if shared.pending_action.is_none() {
+            shared.pending_action = Some((label, Instant::now()));
+        }
+    }
+}
+
+/// Set once `install_if_requested` runs, so `mark` is a cheap no-op otherwise.
+static SHARED: std::sync::OnceLock<&'static Mutex<Shared>> = std::sync::OnceLock::new();
+
 pub struct FrameTraceLayer {
-    shared: Mutex<Shared>,
+    shared: &'static Mutex<Shared>,
     start: Instant,
 }
 
 impl FrameTraceLayer {
-    fn new() -> Self {
+    fn new(shared: &'static Mutex<Shared>) -> Self {
         Self {
-            shared: Mutex::new(Shared::default()),
+            shared,
             start: Instant::now(),
         }
     }
@@ -77,19 +114,11 @@ impl<S> Layer<S> for FrameTraceLayer
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
-    fn on_new_span(&self, _attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
-        if let Some(span) = ctx.span(id) {
-            span.extensions_mut().insert(Timing {
-                started: Instant::now(),
-            });
-        }
-    }
-
     fn on_enter(&self, id: &Id, ctx: Context<'_, S>) {
         let Some(span) = ctx.span(id) else { return };
-        // Re-stamp on enter: masonry creates some spans well before entering
-        // them. `insert` panics if the extension is already present, and spans
-        // can be entered more than once, so update in place when it exists.
+        // Stamp on enter, report on exit. Spans can be entered more than once,
+        // and `insert` panics when the extension already exists, so update in
+        // place when present.
         let mut ext = span.extensions_mut();
         if let Some(timing) = ext.get_mut::<Timing>() {
             timing.started = Instant::now();
@@ -100,16 +129,24 @@ where
         }
     }
 
-    fn on_close(&self, id: Id, ctx: Context<'_, S>) {
-        let Some(span) = ctx.span(&id) else { return };
+    fn on_exit(&self, id: &Id, ctx: Context<'_, S>) {
+        let Some(span) = ctx.span(id) else { return };
         let name = span.name();
-        let elapsed = span
+        let Some(elapsed) = span
             .extensions()
             .get::<Timing>()
             .map(|t| t.started.elapsed())
-            .unwrap_or_default();
+        else {
+            return;
+        };
 
         match name {
+            TEXT_SPAN => {
+                println!("[{:8.3}] ======== USER MARK (key) ========", self.stamp());
+            }
+            DISPATCH_SPAN => {
+                println!("[{:8.3}] pointer dispatch {:>9.3?}", self.stamp(), elapsed);
+            }
             EVENT_SPAN => {
                 // An input event just finished being handled. Whatever visual
                 // response it causes has to come from a later frame.
@@ -123,6 +160,19 @@ where
                     let mut shared = self.shared.lock().expect("frame-trace lock");
                     shared.pending_input.take().map(|t| t.elapsed())
                 };
+                let action = {
+                    let mut shared = self.shared.lock().expect("frame-trace lock");
+                    shared.pending_action.take()
+                };
+                if let Some((label, at)) = action {
+                    println!(
+                        "[{:8.3}] ACTION {label:<12} -> visible after {:>9.3?}   (render {:>9.3?})",
+                        self.stamp(),
+                        at.elapsed(),
+                        elapsed
+                    );
+                }
+                let _ = &self.shared;
                 if let Some(waited) = waited {
                     println!(
                         "[{:8.3}] input -> frame: {:>9.3?}   (render span {:>9.3?})",
@@ -160,8 +210,12 @@ pub fn install_if_requested() {
     if std::env::var("VOID_UI_TRACE_FRAMES").as_deref() != Ok("1") {
         return;
     }
+    // Leak the shared state so `mark` can reach it without threading a handle
+    // through the whole gallery. The process lives as long as the tracer.
+    let shared: &'static Mutex<Shared> = Box::leak(Box::new(Mutex::new(Shared::default())));
+    let _ = SHARED.set(shared);
     tracing_subscriber::registry()
-        .with(FrameTraceLayer::new())
+        .with(FrameTraceLayer::new(shared))
         .init();
     println!("frame tracing on — 'input -> frame' is click-to-repaint latency");
 }
