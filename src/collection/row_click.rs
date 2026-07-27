@@ -316,21 +316,24 @@ impl RowClickable {
             .is_some_and(|m| m.has_children && m.is_expanded == expanded)
     }
 
-    /// Requests that the neighbor row about to receive focus (`ctx.set_focus`
-    /// must already have been called for it) be scrolled into view. Every
-    /// row in this substrate has fixed, uniform height with no inter-row gap
-    /// (`list::view.rs` / `data_grid::view.rs` both apply `.fixed_height(..)`
-    /// to rows; see `data_grid/view.rs:795`), so the neighbor's rect is
-    /// exactly this row's own border-box shifted by one row-height along the
-    /// vertical axis (this substrate is vertical-only — see `scroll.rs`'s
-    /// module docs) — no query into `VirtualScroll`'s internals needed.
-    /// `VirtualScroll` already implements `Update::RequestPanToChild` and
-    /// pans itself the minimal distance to reveal the rect once this
-    /// bubbles up (see masonry's `virtual_scroll.rs`).
-    fn request_neighbor_scroll_into_view(ctx: &mut EventCtx<'_>, down: bool) {
+    /// Requests that a target `row_delta` rows away from the currently-focused
+    /// row (`ctx.set_focus` must already have been called for it) be scrolled
+    /// into view. Every row in this substrate has fixed, uniform height with
+    /// no inter-row gap (`list::view.rs` / `data_grid::view.rs` both apply
+    /// `.fixed_height(..)` to rows; see `data_grid/view.rs:795`), so a target
+    /// `row_delta` rows away is exactly this row's own border-box shifted by
+    /// `row_delta` row-heights along the vertical axis (this substrate is
+    /// vertical-only — see `scroll.rs`'s module docs) — no query into
+    /// `VirtualScroll`'s internals needed. Positive `row_delta` is downward
+    /// (Down, or Right-to-first-child, always `1`); negative is upward (Up,
+    /// or Left-to-parent, any magnitude — an ancestor can be an arbitrary
+    /// number of materialized rows back). `VirtualScroll` already implements
+    /// `Update::RequestPanToChild` and pans itself the minimal distance to
+    /// reveal the rect once this bubbles up (see masonry's
+    /// `virtual_scroll.rs`).
+    fn request_scroll_by_rows(ctx: &mut EventCtx<'_>, row_delta: i32) {
         let rect = ctx.border_box();
-        let dy = if down { rect.height() } else { -rect.height() };
-        ctx.request_scroll_to(rect + Vec2::new(0.0, dy));
+        ctx.request_scroll_to(rect + Vec2::new(0.0, f64::from(row_delta) * rect.height()));
     }
 }
 
@@ -414,7 +417,7 @@ impl Widget for RowClickable {
             Key::Named(NamedKey::ArrowDown) => {
                 if let Some(target) = self.nav_down {
                     ctx.set_focus(target);
-                    Self::request_neighbor_scroll_into_view(ctx, true);
+                    Self::request_scroll_by_rows(ctx, 1);
                 }
                 ctx.set_handled();
                 return;
@@ -422,7 +425,7 @@ impl Widget for RowClickable {
             Key::Named(NamedKey::ArrowUp) => {
                 if let Some(target) = self.nav_up {
                     ctx.set_focus(target);
-                    Self::request_neighbor_scroll_into_view(ctx, false);
+                    Self::request_scroll_by_rows(ctx, -1);
                 }
                 ctx.set_handled();
                 return;
