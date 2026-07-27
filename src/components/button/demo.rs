@@ -24,6 +24,12 @@ use crate::{Theme, scroll_container, separator};
 struct ButtonDemoState {
     disabled: bool,
     selected: bool,
+    /// Drives the loading-spinner example. Defaults to `false`: a spinner
+    /// re-arms an anim frame every tick for as long as it exists, and nothing
+    /// in the paint/encode pipeline tracks damage, so leaving one running by
+    /// default pinned the entire window at refresh rate the moment the gallery
+    /// opened on its default Button panel.
+    loading: bool,
     /// Click count for the composite-content rows — proves the *whole* row is
     /// the click target, not just some inner label.
     opens: u32,
@@ -130,6 +136,13 @@ fn controls_row(
     theme: &Theme,
     state: &ButtonDemoState,
 ) -> impl WidgetView<ButtonDemoState> + use<> {
+    let loading_toggle = flex_row(
+        checkbox(state.loading, |s: &mut ButtonDemoState, checked: bool| {
+            s.loading = checked;
+        })
+        .label("loading")
+        .render(theme),
+    );
     let disabled_toggle = flex_row(
         checkbox(state.disabled, |s: &mut ButtonDemoState, checked: bool| {
             s.disabled = checked;
@@ -144,12 +157,16 @@ fn controls_row(
         .label("selected_bool")
         .render(theme),
     );
-    flex_row((disabled_toggle, selected_toggle))
+    flex_row((disabled_toggle, selected_toggle, loading_toggle))
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .gap(Length::px(12.0))
 }
 
-fn icons_section(theme: &Theme, disabled: bool) -> impl WidgetView<ButtonDemoState> + use<> {
+fn icons_section(
+    theme: &Theme,
+    disabled: bool,
+    loading: bool,
+) -> impl WidgetView<ButtonDemoState> + use<> {
     let header = |text: &'static str| {
         label(text)
             .text_size(theme.typography.size_caption)
@@ -163,14 +180,14 @@ fn icons_section(theme: &Theme, disabled: bool) -> impl WidgetView<ButtonDemoSta
             button(|_: &mut ButtonDemoState| {})
                 .label("Saving…")
                 .variant(ButtonVariant::Primary)
-                .loading(true)
+                .loading(loading)
                 .disabled(disabled)
                 .render(theme),
             button(|_: &mut ButtonDemoState| {})
                 .label("Adding")
                 .icon(IconName::Plus)
                 .variant(ButtonVariant::Primary)
-                .loading(true)
+                .loading(loading)
                 .disabled(disabled)
                 .render(theme),
         ))
@@ -213,7 +230,7 @@ fn icons_section(theme: &Theme, disabled: bool) -> impl WidgetView<ButtonDemoSta
     });
 
     flex_col((
-        header("Loading — spinner, interaction blocked"),
+        header("Loading — spinner, interaction blocked (toggle above)"),
         loading_example,
         header("Leading icon"),
         leading_icon_example,
@@ -404,7 +421,7 @@ fn build_inner(theme: &Theme, state: &ButtonDemoState) -> impl WidgetView<Button
             separator().render(theme),
             controls_row(theme, state),
             variants_section,
-            icons_section(theme, state.disabled),
+            icons_section(theme, state.disabled, state.loading),
             composite_section(theme, state),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)
@@ -425,6 +442,7 @@ impl<S: 'static> View<S, (), ViewCtx> for ButtonDemoPanel {
         let mut state = ButtonDemoState {
             disabled: false,
             selected: false,
+            loading: false,
             opens: 0,
         };
         let inner_view: InnerView = Box::new(build_inner(&self.theme, &state));
@@ -476,5 +494,76 @@ impl<S: 'static> View<S, (), ViewCtx> for ButtonDemoPanel {
     ) -> MessageResult<()> {
         vs.inner_view
             .message(&mut vs.inner_state, message, element, &mut vs.state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use masonry::app::VisualLayerKind;
+    use masonry::imaging::record::Scene;
+    use masonry::testing::TestHarness;
+    use xilem::ViewCtx;
+    use xilem::core::View as _;
+
+    use crate::test_support;
+    use crate::theme::Theme;
+
+    /// Frames driven with no input; ~1s at 60Hz.
+    const IDLE_FRAMES: usize = 60;
+    /// Trailing frames that must be completely still.
+    const LATE_WINDOW: usize = 10;
+
+    fn frame_scenes(harness: &mut TestHarness<masonry::widgets::Passthrough>) -> Vec<Scene> {
+        let (plan, _) = harness.redraw();
+        plan.layers
+            .iter()
+            .filter_map(|layer| match &layer.kind {
+                VisualLayerKind::Scene(scene) => Some(scene.clone()),
+                VisualLayerKind::External { .. } => None,
+            })
+            .collect()
+    }
+
+    /// The button demo shipped two permanently-`loading(true)` buttons, and
+    /// `Button` is the gallery's default panel — so simply launching the gallery
+    /// left a `SpinnerWidget` re-arming an anim frame forever. Since neither
+    /// masonry nor vello tracks damage, each of those frames re-encoded and
+    /// re-resolved the whole window, which is what put `render_to_texture` at
+    /// the top of the profile before anyone touched anything.
+    ///
+    /// The loading state is still demonstrable — it is behind a toggle now —
+    /// but the panel's *resting* state has to let the app go to sleep.
+    #[test]
+    fn the_panel_is_completely_still_when_left_alone() {
+        let theme = Theme::default();
+        let view = super::panel(&theme);
+        let mut ctx = ViewCtx::new(
+            test_support::noop_proxy(),
+            test_support::current_thread_runtime(),
+        );
+        let mut host = ();
+        let (pod, _vs) = view.build(&mut ctx, &mut host);
+        let mut harness =
+            TestHarness::create(masonry::theme::default_property_set(), pod.new_widget);
+
+        let mut prev = frame_scenes(&mut harness);
+        let mut last_change = None;
+        for frame in 0..IDLE_FRAMES {
+            harness.animate_ms(16);
+            let next = frame_scenes(&mut harness);
+            if next != prev {
+                last_change = Some(frame);
+                prev = next;
+            }
+        }
+
+        if let Some(frame) = last_change {
+            assert!(
+                frame < IDLE_FRAMES - LATE_WINDOW,
+                "the button panel was still repainting at frame {frame} of {IDLE_FRAMES} with \
+                 no input — something in it never stops requesting anim frames, which pins the \
+                 whole window at refresh rate"
+            );
+        }
     }
 }

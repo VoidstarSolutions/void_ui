@@ -40,14 +40,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use masonry::core::NewWidget;
-use masonry::widgets::SizedBox;
 use masonry::imaging::record::Scene;
 use masonry::testing::TestHarness;
 use masonry::theme::default_property_set;
-use xilem::core::{ProxyError, RawProxy, SendMessage, View, ViewId};
-use xilem::view::{flex_col, sized_box};
+use masonry::widgets::SizedBox;
 use xilem::AnyWidgetView;
+use xilem::core::{ProxyError, RawProxy, SendMessage, View, ViewId};
 use xilem::style::Style as _;
+use xilem::view::{flex_col, sized_box};
 use xilem_masonry::ViewCtx;
 
 use void_ui::components::dialog::demo::DialogDemoState;
@@ -157,8 +157,7 @@ fn measure(label: &'static str, view: Box<AnyWidgetView<ProbeState>>) -> Measure
     };
     // The real gallery wraps its root in an `overlay_scope`, and `dialog` panics
     // without one, so the probe measures the same shape the app ships.
-    let view: Box<AnyWidgetView<ProbeState>> =
-        Box::new(overlay_scope::<ProbeState, (), _>(view));
+    let view: Box<AnyWidgetView<ProbeState>> = Box::new(overlay_scope::<ProbeState, (), _>(view));
     let widget = build_widget(&*view, &mut state);
     let mut harness = TestHarness::create_with_size(default_property_set(), widget, WINDOW);
 
@@ -296,7 +295,11 @@ fn main() {
     panels.sort_by_key(|m| std::cmp::Reverse(m.commands));
 
     for m in fixed.iter().chain(panels.iter()) {
-        let flag = if m.late_churn > 0 { "  <-- NEVER IDLES" } else { "" };
+        let flag = if m.late_churn > 0 {
+            "  <-- NEVER IDLES"
+        } else {
+            ""
+        };
         let settle = m
             .settle_frame
             .map_or_else(|| "-".to_string(), |f| format!("f{f}"));
@@ -317,6 +320,10 @@ fn main() {
     println!(
         "{} target(s) never go idle: {}",
         churning.len(),
-        if churning.is_empty() { "-".to_string() } else { churning.join(", ") }
+        if churning.is_empty() {
+            "-".to_string()
+        } else {
+            churning.join(", ")
+        }
     );
 }

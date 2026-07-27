@@ -4,7 +4,14 @@
 //! rounded shape standing in for content that has not loaded yet. Unless
 //! [`SkeletonAnimation::None`] is set, it drives its own animation loop: it
 //! requests an anim frame on [`Update::WidgetAdded`] and advances phase `t`
-//! each frame, requesting the next frame until the widget is removed.
+//! each frame, requesting the next frame until the widget is removed or
+//! stashed.
+//!
+//! The stashed check is load-bearing, not a micro-optimization. Masonry's anim
+//! pass does not skip stashed widgets, and neither masonry nor vello tracks
+//! damage — so a skeleton hidden inside a closed overlay or a collapsed panel
+//! would otherwise keep the entire window re-encoding and re-resolving at
+//! refresh rate forever.
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
@@ -129,7 +136,13 @@ impl Widget for SkeletonWidget {
         _props: &mut PropertiesMut<'_>,
         interval: u64,
     ) {
-        if self.animation == SkeletonAnimation::None {
+        // A stashed skeleton is invisible, but masonry's anim pass does not
+        // skip stashed widgets — so without this guard a hidden skeleton keeps
+        // re-arming forever, and since nothing in the paint/encode pipeline
+        // tracks damage, every one of those frames re-encodes and re-resolves
+        // the entire window. Dropping out here (rather than advancing without
+        // re-arming) also means the phase is preserved while hidden.
+        if self.animation == SkeletonAnimation::None || ctx.is_stashed() {
             return;
         }
         let delta = anim::elapsed_secs(interval) / ANIM_PERIOD_SECS;
@@ -139,7 +152,11 @@ impl Widget for SkeletonWidget {
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        if matches!(event, Update::WidgetAdded) && self.animation != SkeletonAnimation::None {
+        // `StashedChanged(false)` is what restarts the loop the guard in
+        // `on_anim_frame` stopped; without it an unstashed skeleton sits frozen.
+        if matches!(event, Update::WidgetAdded | Update::StashedChanged(false))
+            && self.animation != SkeletonAnimation::None
+        {
             ctx.request_anim_frame();
         }
     }
@@ -242,6 +259,15 @@ mod tests {
     use masonry::testing::TestHarness;
     use masonry::theme::default_property_set;
 
+    use masonry::accesskit::{Node, Role};
+    use masonry::core::{
+        AccessCtx, ChildrenIds, LayoutCtx, MeasureCtx, NoAction, PaintCtx, PropertiesRef,
+        RegisterCtx, UpdateCtx, Widget, WidgetMut, WidgetPod,
+    };
+    use masonry::imaging::Painter;
+    use masonry::kurbo::{Axis, Point, Size};
+    use masonry::layout::{LenReq, Length};
+
     use super::{SkeletonAnimation, SkeletonWidget};
 
     fn widget(animation: SkeletonAnimation) -> SkeletonWidget {
@@ -288,5 +314,117 @@ mod tests {
         h.redraw();
         let node = h.access_node(h.root_id()).expect("node exists");
         assert!(node.is_hidden());
+    }
+
+    /// Minimal container that can stash its child, so tests can put the
+    /// skeleton in the state a collapsed panel or a closed overlay would.
+    /// Masonry's anim pass does not skip stashed widgets, so this is the only
+    /// way to observe what a hidden skeleton actually does.
+    struct StashBox {
+        child: WidgetPod<SkeletonWidget>,
+    }
+
+    impl StashBox {
+        fn set_child_stashed(this: &mut WidgetMut<'_, Self>, stashed: bool) {
+            this.ctx.set_stashed(&mut this.widget.child, stashed);
+        }
+
+        fn child_phase(this: &mut WidgetMut<'_, Self>) -> f64 {
+            this.ctx.get_mut(&mut this.widget.child).widget.t
+        }
+    }
+
+    impl Widget for StashBox {
+        type Action = NoAction;
+
+        fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
+            ctx.register_child(&mut self.child);
+        }
+
+        fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _t: std::any::TypeId) {}
+
+        fn measure(
+            &mut self,
+            _ctx: &mut MeasureCtx<'_>,
+            _props: &PropertiesRef<'_>,
+            _axis: Axis,
+            _len_req: LenReq,
+            _cross_length: Option<Length>,
+        ) -> Length {
+            Length::px(16.0)
+        }
+
+        fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
+            if !ctx.child_is_stashed(&self.child) {
+                ctx.run_layout(&mut self.child, size);
+                ctx.place_child(&mut self.child, Point::ZERO);
+            }
+        }
+
+        fn paint(&mut self, _: &mut PaintCtx<'_>, _: &PropertiesRef<'_>, _: &mut Painter<'_>) {}
+
+        fn accessibility_role(&self) -> Role {
+            Role::GenericContainer
+        }
+
+        fn accessibility(&mut self, _: &mut AccessCtx<'_>, _: &PropertiesRef<'_>, _: &mut Node) {}
+
+        fn children_ids(&self) -> ChildrenIds {
+            ChildrenIds::from_slice(&[self.child.id()])
+        }
+    }
+
+    fn stashable_harness(animation: SkeletonAnimation) -> TestHarness<StashBox> {
+        TestHarness::create(
+            default_property_set(),
+            NewWidget::new(StashBox {
+                child: WidgetPod::new(widget(animation)),
+            }),
+        )
+    }
+
+    #[test]
+    fn a_stashed_skeleton_stops_animating() {
+        // A skeleton nobody can see still drove masonry's anim pass, and
+        // because nothing in the paint/encode pipeline tracks damage, each of
+        // those frames re-encoded and re-resolved the entire window.
+        let mut h = stashable_harness(SkeletonAnimation::Pulse);
+
+        h.animate_ms(17);
+        let while_visible = h.edit_root_widget(|mut wm| StashBox::child_phase(&mut wm));
+        assert!(
+            while_visible > 0.0,
+            "a visible skeleton should advance; got {while_visible}"
+        );
+
+        h.edit_root_widget(|mut wm| StashBox::set_child_stashed(&mut wm, true));
+        h.animate_ms(17);
+        h.animate_ms(17);
+
+        let while_stashed = h.edit_root_widget(|mut wm| StashBox::child_phase(&mut wm));
+        assert!(
+            (while_stashed - while_visible).abs() < f64::EPSILON,
+            "a stashed skeleton must not advance: {while_visible} -> {while_stashed}"
+        );
+    }
+
+    #[test]
+    fn unstashing_a_skeleton_resumes_animation() {
+        // Stopping while hidden is only correct if showing it again restarts
+        // the loop — otherwise a re-opened panel shows a frozen skeleton.
+        let mut h = stashable_harness(SkeletonAnimation::Pulse);
+        h.edit_root_widget(|mut wm| StashBox::set_child_stashed(&mut wm, true));
+        h.animate_ms(17);
+
+        let frozen = h.edit_root_widget(|mut wm| StashBox::child_phase(&mut wm));
+
+        h.edit_root_widget(|mut wm| StashBox::set_child_stashed(&mut wm, false));
+        h.animate_ms(17);
+
+        let resumed = h.edit_root_widget(|mut wm| StashBox::child_phase(&mut wm));
+        assert!(
+            resumed > frozen,
+            "an unstashed skeleton must animate again: {frozen} -> {resumed}"
+        );
     }
 }
