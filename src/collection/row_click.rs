@@ -223,6 +223,15 @@ pub struct RowClickable {
     /// see [`Self::on_text_event`].
     nav_up: Option<WidgetId>,
     nav_down: Option<WidgetId>,
+    /// Precomputed materialized-parent target and its distance (in
+    /// materialized rows) for `ArrowLeft` tree-focus navigation, pushed by
+    /// [`CollectionBodyWidget::refresh_row_nav`](super::body::CollectionBodyWidget::refresh_row_nav).
+    /// Unlike `nav_up`/`nav_down` (always exactly 1 row away), an ancestor
+    /// can be an arbitrary number of materialized rows back — see
+    /// [`Self::on_text_event`]. `None` when this row has no tracked
+    /// ancestor (a depth-0 row, a flat/non-tree collection, or the
+    /// materialized/data edge).
+    nav_parent: Option<(WidgetId, u32)>,
 }
 
 // --- MARK: BUILDERS
@@ -250,6 +259,7 @@ impl RowClickable {
             tree_meta,
             nav_up: None,
             nav_down: None,
+            nav_parent: None,
         }
     }
 }
@@ -302,6 +312,16 @@ impl RowClickable {
     ) {
         this.widget.nav_up = up;
         this.widget.nav_down = down;
+    }
+
+    /// Updates the row's materialized-parent target for `ArrowLeft`
+    /// navigation (see [`Self::on_text_event`]). Cheap: it only affects the
+    /// next key press, so no repaint or relayout is requested.
+    pub(crate) fn set_tree_parent_nav(
+        this: &mut WidgetMut<'_, Self>,
+        target: Option<(WidgetId, u32)>,
+    ) {
+        this.widget.nav_parent = target;
     }
 }
 
@@ -428,6 +448,43 @@ impl Widget for RowClickable {
                     Self::request_scroll_by_rows(ctx, -1);
                 }
                 ctx.set_handled();
+                return;
+            }
+            // Right on an *expanded* parent moves focus to its first child
+            // (always the next materialized row — reuses `nav_down`, the
+            // same target Down would use). A *collapsed* parent's Right
+            // toggles instead (`toggles_on(false)`, checked via the guard
+            // here so that case falls through to the toggle match below
+            // unchanged). No target (materialized edge) falls through
+            // unhandled, unlike Up/Down which are *always* claimed — nothing
+            // else on a vertical `VirtualScroll` claims Right, so this
+            // matches today's no-op contract exactly.
+            Key::Named(NamedKey::ArrowRight) if !self.toggles_on(false) => {
+                let expanded_parent = self
+                    .tree_meta
+                    .is_some_and(|m| m.has_children && m.is_expanded);
+                if expanded_parent {
+                    if let Some(target) = self.nav_down {
+                        ctx.set_focus(target);
+                        Self::request_scroll_by_rows(ctx, 1);
+                        ctx.set_handled();
+                    }
+                    return;
+                }
+            }
+            // Left moves focus to the nearest materialized ancestor
+            // (`nav_parent`, precomputed by `CollectionBodyWidget` — see its
+            // module docs), unless this row is an *expanded* parent, in
+            // which case Left collapses it instead (`toggles_on(true)`,
+            // guarded the same way as Right above). No target (depth-0 row,
+            // or the materialized edge) falls through unhandled.
+            Key::Named(NamedKey::ArrowLeft) if !self.toggles_on(true) => {
+                if let Some((target, rows_back)) = self.nav_parent {
+                    ctx.set_focus(target);
+                    let delta = -i32::try_from(rows_back).unwrap_or(i32::MAX);
+                    Self::request_scroll_by_rows(ctx, delta);
+                    ctx.set_handled();
+                }
                 return;
             }
             _ => {}
@@ -1313,6 +1370,102 @@ mod tests {
             handled.is_handled(),
             "must be handled so it never falls through to VirtualScroll's native scroll"
         );
+        assert_eq!(harness.focused_widget_id(), Some(outer_id));
+    }
+
+    /// A `RowClickable` with tree metadata (an expandable row), wrapping a
+    /// second, nested `RowClickable` for a real nav-target `WidgetId` —
+    /// combines `tree_harness`'s tree-metadata setup with
+    /// `harness_with_nested_row`'s nested-target-id trick. Returns
+    /// `(harness, outer_id, inner_id)` with `outer` already focused.
+    fn harness_with_nested_tree_row(
+        meta: TreeRowMeta,
+    ) -> (TestHarness<RowClickable>, WidgetId, WidgetId) {
+        let inner = NewWidget::new(RowClickable::new(
+            NewWidget::new(Label::new("inner")),
+            false,
+            &Theme::default(),
+            None,
+            false,
+            None,
+        ));
+        let inner_id = inner.id();
+        let outer = RowClickable::new(inner, false, &Theme::default(), None, false, Some(meta));
+        let mut harness =
+            TestHarness::create_with_size(default_property_set(), NewWidget::new(outer), (120, 48));
+        let outer_id = harness.root_widget().id();
+        harness.focus_on(Some(outer_id));
+        (harness, outer_id, inner_id)
+    }
+
+    /// Right on an expanded parent (not toggle-eligible — that requires a
+    /// *collapsed* parent) with a `nav_down` target moves focus there and is
+    /// handled. Reuses `nav_down` rather than a separate field: a parent's
+    /// first child is always exactly the next materialized row.
+    #[test]
+    fn arrow_right_on_expanded_parent_moves_focus_to_nav_down_target() {
+        let meta = TreeRowMeta {
+            depth: 0,
+            has_children: true,
+            is_expanded: true,
+        };
+        let (mut harness, _outer_id, inner_id) = harness_with_nested_tree_row(meta);
+        harness.edit_root_widget(|mut row| RowClickable::set_nav(&mut row, None, Some(inner_id)));
+        let handled = harness.process_text_event(key_down(
+            Key::Named(NamedKey::ArrowRight),
+            Modifiers::empty(),
+        ));
+        assert!(handled.is_handled());
+        assert_eq!(harness.focused_widget_id(), Some(inner_id));
+    }
+
+    /// Same, but no `nav_down` target set (a materialized/data edge) — the
+    /// key falls through unhandled, mirroring Left/Right's existing no-op
+    /// contract (unlike Up/Down, which are *always* claimed).
+    #[test]
+    fn arrow_right_on_expanded_parent_without_nav_down_is_an_unhandled_no_op() {
+        let meta = TreeRowMeta {
+            depth: 0,
+            has_children: true,
+            is_expanded: true,
+        };
+        let (mut harness, outer_id, _inner_id) = harness_with_nested_tree_row(meta);
+        let handled = harness.process_text_event(key_down(
+            Key::Named(NamedKey::ArrowRight),
+            Modifiers::empty(),
+        ));
+        assert!(!handled.is_handled());
+        assert_eq!(harness.focused_widget_id(), Some(outer_id));
+    }
+
+    /// Left with a `nav_parent` target moves focus to it and is handled,
+    /// regardless of the distance recorded (an ancestor can be several
+    /// materialized rows back — this is the case Up/Down's fixed ±1 can't
+    /// cover).
+    #[test]
+    fn arrow_left_moves_focus_to_the_tree_parent_nav_target() {
+        let (mut harness, _outer_id, inner_id) = harness_with_nested_row();
+        harness.edit_root_widget(|mut row| {
+            RowClickable::set_tree_parent_nav(&mut row, Some((inner_id, 3)));
+        });
+        let handled = harness.process_text_event(key_down(
+            Key::Named(NamedKey::ArrowLeft),
+            Modifiers::empty(),
+        ));
+        assert!(handled.is_handled());
+        assert_eq!(harness.focused_widget_id(), Some(inner_id));
+    }
+
+    /// No `nav_parent` target (a depth-0 row, or the materialized edge) —
+    /// falls through unhandled.
+    #[test]
+    fn arrow_left_without_a_tree_parent_target_is_an_unhandled_no_op() {
+        let (mut harness, outer_id, _inner_id) = harness_with_nested_row();
+        let handled = harness.process_text_event(key_down(
+            Key::Named(NamedKey::ArrowLeft),
+            Modifiers::empty(),
+        ));
+        assert!(!handled.is_handled());
         assert_eq!(harness.focused_widget_id(), Some(outer_id));
     }
 
