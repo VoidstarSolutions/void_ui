@@ -48,8 +48,13 @@ pub(crate) struct CollectionBodyWidget {
     /// (by depth) — see [`tree_parent_with_distance`](Self::tree_parent_with_distance).
     /// Right's first-child target doesn't need this: it's always the next
     /// materialized row, the same `nav_down` target Down already uses. Empty
-    /// for a flat (non-tree) collection.
-    row_meta: Vec<(WidgetId, TreeRowMeta)>,
+    /// for a flat (non-tree) collection. Carries one entry per materialized
+    /// row — the same set `refresh_row_nav` walks — with `None` for a row
+    /// that isn't tree-tracked (host `tree_meta` returned `None` for it, or
+    /// it's past the data edge): such a row still occupies a materialized
+    /// position and must still count toward another row's parent distance,
+    /// it just can't itself be a parent-match candidate.
+    row_meta: Vec<(WidgetId, Option<TreeRowMeta>)>,
     /// Row ids seen in `VirtualScroll`'s materialized set as of the end of the
     /// previous [`refresh_row_nav`](Self::refresh_row_nav) call. See that
     /// method's doc for why this exists: a row `VirtualScroll::add_child`-ed
@@ -75,7 +80,10 @@ impl CollectionBodyWidget {
 
     /// Replaces the per-visible-row tree metadata used by Left/Right nav. Cheap:
     /// it only affects the next key press, so no repaint/relayout is requested.
-    pub(crate) fn set_row_meta(this: &mut WidgetMut<'_, Self>, meta: Vec<(WidgetId, TreeRowMeta)>) {
+    pub(crate) fn set_row_meta(
+        this: &mut WidgetMut<'_, Self>,
+        meta: Vec<(WidgetId, Option<TreeRowMeta>)>,
+    ) {
         this.widget.row_meta = meta;
     }
 
@@ -143,18 +151,25 @@ impl CollectionBodyWidget {
     /// `focused`, counted in materialized rows (not tree-depth difference:
     /// skipping over a deeper sibling's whole subtree still counts each of
     /// those intervening rows, since `RowClickable::request_scroll_by_rows`
-    /// needs a row-count, not a depth delta). A depth-0 row, or one not
-    /// tracked in `row_meta` (a flat collection, or the materialized/data
-    /// edge), yields `None`.
+    /// needs a row-count, not a depth delta). The distance walks `row_meta`'s
+    /// full index range — including rows with no tracked metadata — so a row
+    /// the host didn't tag as tree-tracked still counts as one materialized
+    /// row of distance; only rows *with* metadata are candidates for the
+    /// shallower-parent match itself. A depth-0 row, or one not tracked in
+    /// `row_meta` at all (a flat collection, or the materialized/data edge),
+    /// yields `None`.
     fn tree_parent_with_distance(&self, focused: WidgetId) -> Option<(WidgetId, u32)> {
         let idx = self.row_meta.iter().position(|(id, _)| *id == focused)?;
-        let depth = self.row_meta[idx].1.depth;
+        let depth = self.row_meta[idx].1?.depth;
         self.row_meta[..idx]
             .iter()
             .enumerate()
             .rev()
-            .find(|(_, (_, m))| m.depth < depth)
-            .map(|(parent_idx, (id, _))| (*id, u32::try_from(idx - parent_idx).unwrap_or(u32::MAX)))
+            .find_map(|(parent_idx, (id, m))| {
+                let m = (*m)?;
+                (m.depth < depth)
+                    .then(|| (*id, u32::try_from(idx - parent_idx).unwrap_or(u32::MAX)))
+            })
     }
 }
 
@@ -221,26 +236,34 @@ mod tests {
 
     /// Installs a per-visible-row tree layout on the body widget for the
     /// Left/Right nav tests. `layout` is `(row index, depth, has_children,
-    /// is_expanded)` in ascending-index (materialized) order.
+    /// is_expanded)`, need not cover every materialized row — one that's
+    /// omitted mirrors a row the host's `tree_meta` returned `None` for, and
+    /// still gets a `row_meta` entry (`None`) so it counts toward another
+    /// row's parent distance without being a parent-match candidate itself
+    /// (see `tree_parent_with_distance`).
     fn set_tree(
         harness: &mut TestHarness<CollectionBodyWidget>,
         rows: &HashMap<usize, WidgetId>,
         layout: &[(usize, u16, bool, bool)],
     ) {
-        let meta: Vec<(WidgetId, TreeRowMeta)> = layout
+        let tracked: HashMap<usize, TreeRowMeta> = layout
             .iter()
-            .filter_map(|&(idx, depth, has_children, is_expanded)| {
-                rows.get(&idx).map(|&id| {
-                    (
-                        id,
-                        TreeRowMeta {
-                            depth,
-                            has_children,
-                            is_expanded,
-                        },
-                    )
-                })
+            .map(|&(idx, depth, has_children, is_expanded)| {
+                (
+                    idx,
+                    TreeRowMeta {
+                        depth,
+                        has_children,
+                        is_expanded,
+                    },
+                )
             })
+            .collect();
+        let mut indices: Vec<usize> = rows.keys().copied().collect();
+        indices.sort_unstable();
+        let meta: Vec<(WidgetId, Option<TreeRowMeta>)> = indices
+            .into_iter()
+            .map(|idx| (rows[&idx], tracked.get(&idx).copied()))
             .collect();
         harness.edit_root_widget(|mut body| CollectionBodyWidget::set_row_meta(&mut body, meta));
 
@@ -670,6 +693,54 @@ mod tests {
             harness.focused_widget_id(),
             Some(ids[&0]),
             "depth 1 → depth 0"
+        );
+    }
+
+    /// #203 follow-up: a row between `focused` and its materialized parent
+    /// that carries no tracked `TreeRowMeta` (the host's `tree_meta` returned
+    /// `None` for it) must still count toward the parent distance — it
+    /// occupies a real materialized row, and `RowClickable::request_scroll_by_rows`
+    /// needs an accurate row count to land the scroll on the actual parent,
+    /// not just a count of tree-tracked rows. See `tree_parent_with_distance`.
+    #[test]
+    fn tree_parent_distance_counts_rows_without_tracked_metadata() {
+        let (mut harness, ids) = harness_with_clickable_rows();
+        assert!(
+            ids.contains_key(&4),
+            "fixture must materialize at least 5 rows"
+        );
+        let meta: Vec<(WidgetId, Option<TreeRowMeta>)> = vec![
+            (
+                ids[&0],
+                Some(TreeRowMeta {
+                    depth: 0,
+                    has_children: true,
+                    is_expanded: true,
+                }),
+            ),
+            (ids[&1], None),
+            (ids[&2], None),
+            (ids[&3], None),
+            (
+                ids[&4],
+                Some(TreeRowMeta {
+                    depth: 1,
+                    has_children: false,
+                    is_expanded: false,
+                }),
+            ),
+        ];
+        let (parent, distance) = harness
+            .edit_root_widget(|mut body| {
+                CollectionBodyWidget::set_row_meta(&mut body, meta);
+                body.widget.tree_parent_with_distance(ids[&4])
+            })
+            .expect("row 0 is a shallower-depth ancestor of row 4");
+        assert_eq!(parent, ids[&0]);
+        assert_eq!(
+            distance, 4,
+            "distance must count every materialized row between focused and \
+             parent (rows 1-3), not just the ones carrying tracked metadata"
         );
     }
 

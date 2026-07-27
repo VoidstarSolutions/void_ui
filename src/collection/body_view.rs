@@ -256,6 +256,13 @@ struct CollectionBodyView<V, State, Action> {
 /// via `depth_at` — never from the live `VirtualScroll` child (which can be
 /// mid-transition and panic on read). A stale `active_start` at worst yields a
 /// transiently-wrong map that the next settled rebuild corrects; it can't panic.
+///
+/// Carries an entry for *every* materialized id, `None` where `depth_at`
+/// couldn't resolve one (position past the data edge, or the host's
+/// `tree_meta` returned `None` for that item) — dropping such rows entirely
+/// would shift every later row's index within `row_meta`, undercounting
+/// `CollectionBodyWidget::tree_parent_with_distance`'s materialized-row
+/// distance to an ancestor further back.
 fn refresh_tree_row_meta<State>(
     element: &mut Mut<'_, Pod<CollectionBodyWidget>>,
     depth_at: &DepthAtFn<State>,
@@ -267,12 +274,14 @@ fn refresh_tree_row_meta<State>(
         let vs = CollectionBodyWidget::virtual_scroll_mut(element);
         vs.widget.children_ids().iter().copied().collect()
     };
-    let meta: Vec<(masonry::core::WidgetId, TreeRowMeta)> = ids
+    let meta: Vec<(masonry::core::WidgetId, Option<TreeRowMeta>)> = ids
         .iter()
         .enumerate()
-        .filter_map(|(k, &id)| {
-            let pos = active_start.checked_add(k)?;
-            depth_at(app_state, pos).map(|m| (id, m))
+        .map(|(k, &id)| {
+            let meta = active_start
+                .checked_add(k)
+                .and_then(|pos| depth_at(app_state, pos));
+            (id, meta)
         })
         .collect();
     CollectionBodyWidget::set_row_meta(element, meta);
