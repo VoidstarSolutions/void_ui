@@ -330,12 +330,12 @@ where
             self.child
                 .rebuild(&prev.child, &mut view_state.child_state, ctx, vs, app_state);
         }
-        // Materialization has now caught up, so refresh each row's Up/Down
-        // nav targets — every collection needs this, not just tree ones
-        // (see `refresh_tree_row_meta` just below for the tree-only case).
-        CollectionBodyWidget::refresh_row_nav(&mut element, view_state.active_range.start);
-        // Materialization has now caught up, so refresh the tree depth map for
-        // Left/Right nav — read from `app_state`, never from live row widgets.
+        // Materialization has now caught up, so refresh the tree depth map
+        // for Left/Right nav first — read from `app_state`, never from live
+        // row widgets. This must run *before* `refresh_row_nav` below: that
+        // method now also precomputes each row's materialized-parent target
+        // from `row_meta`, so it needs this rebuild's fresh map, not the
+        // previous rebuild's.
         if let Some(depth_at) = self.depth_at.as_ref() {
             refresh_tree_row_meta(
                 &mut element,
@@ -344,6 +344,9 @@ where
                 app_state,
             );
         }
+        // Refresh each row's Up/Down/Left nav targets — every collection
+        // needs the Up/Down half, not just tree ones.
+        CollectionBodyWidget::refresh_row_nav(&mut element, view_state.active_range.start);
     }
 
     fn teardown(
