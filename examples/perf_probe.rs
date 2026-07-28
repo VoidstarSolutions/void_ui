@@ -50,10 +50,12 @@ use xilem::style::Style as _;
 use xilem::view::{flex_col, sized_box};
 use xilem_masonry::ViewCtx;
 
+use void_ui::components::ScrollBarVisibility::OnActivity;
 use void_ui::components::dialog::demo::DialogDemoState;
 use void_ui::components::notification::demo::NotificationDemoState;
 use void_ui::components::{ComponentKind, SidebarNavItem, sidebar_nav};
 use void_ui::overlay_scope::overlay_scope;
+use void_ui::scroll_container;
 use void_ui::theme::Theme;
 
 /// Window size the probe lays panels out in — a plausible gallery window.
@@ -242,7 +244,10 @@ fn sidebar_view(theme: &Theme) -> Box<AnyWidgetView<ProbeState>> {
         .map(|kind| SidebarNavItem::new(kind.label()))
         .collect();
     Box::new(sized_box(
-        sidebar_nav(items, 0, |_: &mut ProbeState, _| {}).render(theme),
+        scroll_container(sidebar_nav(items, 0, |_: &mut ProbeState, _| {}).render(theme))
+            .constrain_horizontal(true)
+            .scroll_bar_visibility(OnActivity)
+            .render(theme),
     ))
 }
 
