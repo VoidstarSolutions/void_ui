@@ -16,13 +16,16 @@ were real, but they were not the reported problem.
 
 ## 1. Root cause of the reported latency
 
-**The app receives no mouse events at all for 250–780ms while the mouse is
+**The app receives no `CursorMoved` events for 250–780ms while the mouse is
 moving.** Positions are perfectly current when delivery resumes, so this is a
 delivery *gap*, not staleness or a backlog.
 
 Measured by patching `masonry_winit::MasonryState::handle_window_event` to log,
 for every `CursorMoved`, both the position carried by the event and the live OS
-cursor position (`NSEvent::mouseLocation()`) at that instant.
+cursor position (`NSEvent::mouseLocation()`) at that instant. Only `CursorMoved`
+was instrumented this way — other `WindowEvent` variants (button presses, etc.)
+were not logged or measured, so nothing here establishes whether they were also
+delayed or delivered normally during these gaps.
 
 | Measurement | Value |
 | --- | --- |
@@ -30,7 +33,7 @@ cursor position (`NSEvent::mouseLocation()`) at that instant.
 | Cross-correlation lag of the two series | **0ms** (corr 0.947) |
 | `CursorMoved` delivery intervals | p50 17ms, p90 34ms, **p99 317ms, max 784ms** |
 | Live cursor displacement during those stalls | up to **356px** |
-| App activity during a stall | zero events, zero redraws |
+| App activity during a stall | zero `CursorMoved` events, zero redraws |
 
 The displacement figure is the important one: the pointer moved hundreds of
 pixels during windows in which the process was handed nothing. The mouse was
@@ -44,8 +47,11 @@ demonstrably in motion; the events simply did not arrive.
   current position, so the UI jumps to the correct state in one frame.
 - **Only while moving.** A stationary pointer generates no events anyway, so a
   delivery gap is invisible.
-- **Clicks land late.** A `MouseDOWN` inside a gap is not delivered until the
-  gap ends; once delivered, the app reacts in ~30ms.
+- **Clicks land late.** Consistent with the reported symptom: a `MouseDown`
+  inside a gap would not be delivered until the gap ends, and once delivered,
+  the app reacts in ~30ms. (Button events themselves were not instrumented —
+  see above — so this is inferred from the `CursorMoved` gaps, not measured
+  directly.)
 
 ### Confirmed not the cause
 
