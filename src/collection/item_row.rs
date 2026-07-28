@@ -31,7 +31,7 @@ pub(crate) struct OverlayListItem {
 }
 
 impl OverlayListItem {
-    fn new(text: ArcStr, highlighted: bool, theme: &Theme, role: Role) -> Self {
+    pub(crate) fn new(text: ArcStr, highlighted: bool, theme: &Theme, role: Role) -> Self {
         let mut lbl = Label::new(text.clone())
             .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
             .prepare();
@@ -78,6 +78,24 @@ impl OverlayListItem {
             this.ctx.request_paint_only();
             this.ctx.request_accessibility_update();
         }
+    }
+
+    /// Replaces the row's displayed text — needed because `virtual_scroll`
+    /// (the View wrapping this widget) rebuilds already-materialized rows'
+    /// content on every ordinary rebuild pass, so an existing row can be
+    /// asked to show different text at the same index (e.g. a same-length
+    /// filtered result on a new keystroke) without being torn down.
+    pub(crate) fn set_text(this: &mut WidgetMut<'_, Self>, text: ArcStr) {
+        if this.widget.text == text {
+            return;
+        }
+        this.widget.text = text.clone();
+        {
+            let mut lbl = this.ctx.get_mut(&mut this.widget.label);
+            Label::set_text(&mut lbl, text);
+        }
+        this.ctx.request_layout();
+        this.ctx.request_accessibility_update();
     }
 }
 
@@ -220,6 +238,31 @@ mod tests {
 
     use masonry::core::PointerButton;
     use masonry::kurbo::Point;
+
+    #[test]
+    fn set_text_replaces_the_displayed_text() {
+        let widget = OverlayListItem::new(
+            "Apple".into(),
+            false,
+            &Theme::default(),
+            Role::ListBoxOption,
+        );
+        let mut harness = TestHarness::create_with_size(
+            default_property_set(),
+            NewWidget::new(widget),
+            (100, 24),
+        );
+        let id = harness.root_id();
+        harness.edit_root_widget(|mut w| {
+            OverlayListItem::set_text(&mut w, "Banana".into());
+        });
+        harness.redraw();
+        // Confirm via accessibility snapshot (the widget's own accessibility()
+        // sets node.set_label(self.text.to_string())) rather than reaching
+        // into Label internals directly.
+        let node = harness.access_node(id).expect("node exists");
+        assert_eq!(node.label(), Some("Banana".to_string()));
+    }
 
     #[test]
     fn clicking_a_row_submits_its_own_text() {

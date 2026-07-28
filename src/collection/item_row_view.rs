@@ -1,0 +1,137 @@
+//! Xilem `View` wrapper around `OverlayListItem`, mirroring the
+//! `RowClickable`/`ClickableRow` pair in `row_click.rs` at a smaller scale:
+//! a masonry `Widget` that submits an action on click, paired with a `View`
+//! that catches it via `message()` with real ownership (xilem's View-message
+//! system, not masonry's `on_action`/`ErasedAction` bubbling — see the design
+//! spec's "Key insight" for why that distinction matters here).
+
+use std::marker::PhantomData;
+use std::sync::Arc;
+
+use masonry::accesskit::Role;
+use masonry::core::ArcStr;
+use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
+use xilem::{Pod, ViewCtx, WidgetView};
+
+use super::item_row::OverlayListItem;
+use crate::Theme;
+
+/// Boxed row-selection handler: `(state, selected text) -> Action`. Unlike
+/// `ClickableRow`'s `on_click` (which requires `Action: Default` and always
+/// signals via `Action::default()`), this returns the *real* action the host
+/// wants — mirroring `AutocompleteView`'s existing `OnChanged` shape
+/// (`autocomplete/view.rs:45`), since a row selection is a real, meaningful
+/// event, not a "something changed, rerun" marker.
+pub(crate) type OnSelect<State, Action> = Arc<dyn Fn(&mut State, ArcStr) -> Action + Send + Sync>;
+
+struct OverlayListItemView<State, Action> {
+    text: ArcStr,
+    highlighted: bool,
+    theme: Theme,
+    role: Role,
+    on_select: OnSelect<State, Action>,
+    phantom: PhantomData<fn(State) -> Action>,
+}
+
+pub(crate) fn overlay_list_item<State, Action>(
+    text: ArcStr,
+    highlighted: bool,
+    theme: &Theme,
+    role: Role,
+    on_select: OnSelect<State, Action>,
+) -> impl WidgetView<State, Action>
+where
+    State: 'static,
+    Action: 'static,
+{
+    OverlayListItemView {
+        text,
+        highlighted,
+        theme: *theme,
+        role,
+        on_select,
+        phantom: PhantomData,
+    }
+}
+
+impl<State, Action> ViewMarker for OverlayListItemView<State, Action> {}
+
+impl<State, Action> View<State, Action, ViewCtx> for OverlayListItemView<State, Action>
+where
+    State: 'static,
+    Action: 'static,
+{
+    type Element = Pod<OverlayListItem>;
+    type ViewState = ();
+
+    fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
+        let widget =
+            OverlayListItem::new(self.text.clone(), self.highlighted, &self.theme, self.role);
+        let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
+        (element, ())
+    }
+
+    fn rebuild(
+        &self,
+        prev: &Self,
+        _view_state: &mut (),
+        _ctx: &mut ViewCtx,
+        mut element: Mut<'_, Self::Element>,
+        _state: &mut State,
+    ) {
+        if self.text != prev.text {
+            OverlayListItem::set_text(&mut element, self.text.clone());
+        }
+        if self.highlighted != prev.highlighted {
+            OverlayListItem::set_highlighted(&mut element, self.highlighted);
+        }
+        if self.theme != prev.theme {
+            OverlayListItem::set_theme(&mut element, &self.theme);
+        }
+    }
+
+    fn teardown(&self, _view_state: &mut (), ctx: &mut ViewCtx, element: Mut<'_, Self::Element>) {
+        ctx.teardown_action_source(element);
+    }
+
+    fn message(
+        &self,
+        _view_state: &mut (),
+        message: &mut MessageCtx,
+        _element: Mut<'_, Self::Element>,
+        app_state: &mut State,
+    ) -> MessageResult<Action> {
+        if let Some(boxed) = message.take_message::<ArcStr>() {
+            return MessageResult::Action((self.on_select)(app_state, *boxed));
+        }
+        tracing::error!(?message, "unexpected message in OverlayListItemView");
+        MessageResult::Stale
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use masonry::accesskit::Role;
+    use masonry::core::ArcStr;
+    use xilem::WidgetView;
+
+    use super::overlay_list_item;
+    use crate::Theme;
+
+    struct S;
+
+    fn assert_widget_view<V: WidgetView<S, ()>>(_: &V) {}
+
+    #[test]
+    fn overlay_list_item_builds_a_widget_view() {
+        let on_select: super::OnSelect<S, ()> = std::sync::Arc::new(|_s: &mut S, _text: ArcStr| ());
+        let view = overlay_list_item(
+            "Apple".into(),
+            false,
+            &Theme::default(),
+            Role::ListBoxOption,
+            on_select,
+        );
+        assert_widget_view(&view);
+    }
+}

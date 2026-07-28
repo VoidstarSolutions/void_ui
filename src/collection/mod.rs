@@ -17,6 +17,7 @@ mod body_view;
 mod click;
 mod ids;
 mod item_row;
+mod item_row_view;
 pub(crate) mod row_click;
 mod scroll;
 mod selection;
@@ -32,6 +33,7 @@ pub(crate) use body_view::{
 pub(crate) use click::{ItemsFn, OnActivate, SelectionLens, apply_row_activate, apply_row_click};
 pub(crate) use ids::{IdSource, nearing_end, scroll_range_end, visual_range_ids};
 pub(crate) use item_row::render_overlay_list_item;
+pub(crate) use item_row_view::{OnSelect, overlay_list_item};
 pub(crate) use row_click::{LeadingHitZone, TreeRowMeta};
 pub use scroll::ScrollState;
 pub(crate) use scroll::clamp_scroll_index;
