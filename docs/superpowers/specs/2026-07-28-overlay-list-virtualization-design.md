@@ -88,6 +88,11 @@ use `ArcStr` today, but a future richer item type isn't precluded). Owns a
   Re-renders the affected rows' `render_row` selected flag.
 - `set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme)` — forwarded to
   materialized rows.
+- `virtual_scroll_mut(this: &mut WidgetMut<'_, Self>) -> WidgetMut<'_, VirtualScroll>`
+  — exposed (mirroring `CollectionBodyWidget::virtual_scroll_mut`'s existing
+  pattern) so the owning `SuggestionList`/`MenuContent` can call
+  `VirtualScroll::scroll_to` directly for wrap-around, without
+  `CollectionListWidget` needing to know about wrapping itself.
 
 Reuses `apply_row_click`/`apply_row_activate` and `clamp_scroll_index`
 unchanged for click routing and index-shrink clamping.
@@ -107,10 +112,13 @@ NewWidget<OverlayListItem>` function is the `render_row` closure both
 Becomes a thin wrapper around `CollectionListWidget<ArcStr>`:
 
 - Row rendering: `render_overlay_list_item` (shared).
-- Wrap-around: catches `RowClickable`'s unhandled Up/Down at the materialized
-  edge (bubbled as an unhandled `TextEvent`) and, on Down-at-last / Up-at-first,
-  calls `VirtualScroll::scroll_to` (via the substrate's exposed handle) to the
-  opposite end and focuses the first/last materialized row once present.
+- Wrap-around: masonry's keyboard dispatch is bubble-only (no capture phase —
+  `row_click.rs`'s own module doc notes this), so `RowClickable`'s unhandled
+  Up/Down at the materialized edge bubbles up through `CollectionListWidget`
+  to `SuggestionList`'s own `on_text_event` with no extra plumbing. On
+  Down-at-last / Up-at-first, it calls `virtual_scroll_mut(...).scroll_to`
+  (the new accessor above) to the opposite end and focuses the first/last
+  materialized row once present.
 - Action translation: `RowInteraction` (click/activate) → `SuggestionSelected`,
   forwarded exactly as `SuggestionListView` forwards it today — no change to
   `SuggestionList`'s or `SuggestionListView`'s public shape.
