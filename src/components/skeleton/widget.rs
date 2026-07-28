@@ -259,16 +259,8 @@ mod tests {
     use masonry::testing::TestHarness;
     use masonry::theme::default_property_set;
 
-    use masonry::accesskit::{Node, Role};
-    use masonry::core::{
-        AccessCtx, ChildrenIds, LayoutCtx, MeasureCtx, NoAction, PaintCtx, PropertiesRef,
-        RegisterCtx, UpdateCtx, Widget, WidgetMut, WidgetPod,
-    };
-    use masonry::imaging::Painter;
-    use masonry::kurbo::{Axis, Point, Size};
-    use masonry::layout::{LenReq, Length};
-
     use super::{SkeletonAnimation, SkeletonWidget};
+    use crate::test_support::StashBox;
 
     fn widget(animation: SkeletonAnimation) -> SkeletonWidget {
         SkeletonWidget {
@@ -316,71 +308,12 @@ mod tests {
         assert!(node.is_hidden());
     }
 
-    /// Minimal container that can stash its child, so tests can put the
-    /// skeleton in the state a collapsed panel or a closed overlay would.
-    /// Masonry's anim pass does not skip stashed widgets, so this is the only
-    /// way to observe what a hidden skeleton actually does.
-    struct StashBox {
-        child: WidgetPod<SkeletonWidget>,
+    fn stashable_harness(animation: SkeletonAnimation) -> TestHarness<StashBox<SkeletonWidget>> {
+        StashBox::harness(widget(animation))
     }
 
-    impl StashBox {
-        fn set_child_stashed(this: &mut WidgetMut<'_, Self>, stashed: bool) {
-            this.ctx.set_stashed(&mut this.widget.child, stashed);
-        }
-
-        fn child_phase(this: &mut WidgetMut<'_, Self>) -> f64 {
-            this.ctx.get_mut(&mut this.widget.child).widget.t
-        }
-    }
-
-    impl Widget for StashBox {
-        type Action = NoAction;
-
-        fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-            ctx.register_child(&mut self.child);
-        }
-
-        fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _t: std::any::TypeId) {}
-
-        fn measure(
-            &mut self,
-            _ctx: &mut MeasureCtx<'_>,
-            _props: &PropertiesRef<'_>,
-            _axis: Axis,
-            _len_req: LenReq,
-            _cross_length: Option<Length>,
-        ) -> Length {
-            Length::px(16.0)
-        }
-
-        fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-            if !ctx.child_is_stashed(&self.child) {
-                ctx.run_layout(&mut self.child, size);
-                ctx.place_child(&mut self.child, Point::ZERO);
-            }
-        }
-
-        fn paint(&mut self, _: &mut PaintCtx<'_>, _: &PropertiesRef<'_>, _: &mut Painter<'_>) {}
-
-        fn accessibility_role(&self) -> Role {
-            Role::GenericContainer
-        }
-
-        fn accessibility(&mut self, _: &mut AccessCtx<'_>, _: &PropertiesRef<'_>, _: &mut Node) {}
-
-        fn children_ids(&self) -> ChildrenIds {
-            ChildrenIds::from_slice(&[self.child.id()])
-        }
-    }
-
-    fn stashable_harness(animation: SkeletonAnimation) -> TestHarness<StashBox> {
-        TestHarness::create(
-            default_property_set(),
-            NewWidget::new(StashBox {
-                child: WidgetPod::new(widget(animation)),
-            }),
-        )
+    fn child_phase(h: &mut TestHarness<StashBox<SkeletonWidget>>) -> f64 {
+        h.edit_root_widget(|mut wm| StashBox::child_mut(&mut wm).widget.t)
     }
 
     #[test]
@@ -391,7 +324,7 @@ mod tests {
         let mut h = stashable_harness(SkeletonAnimation::Pulse);
 
         h.animate_ms(17);
-        let while_visible = h.edit_root_widget(|mut wm| StashBox::child_phase(&mut wm));
+        let while_visible = child_phase(&mut h);
         assert!(
             while_visible > 0.0,
             "a visible skeleton should advance; got {while_visible}"
@@ -401,7 +334,7 @@ mod tests {
         h.animate_ms(17);
         h.animate_ms(17);
 
-        let while_stashed = h.edit_root_widget(|mut wm| StashBox::child_phase(&mut wm));
+        let while_stashed = child_phase(&mut h);
         assert!(
             (while_stashed - while_visible).abs() < f64::EPSILON,
             "a stashed skeleton must not advance: {while_visible} -> {while_stashed}"
@@ -416,12 +349,12 @@ mod tests {
         h.edit_root_widget(|mut wm| StashBox::set_child_stashed(&mut wm, true));
         h.animate_ms(17);
 
-        let frozen = h.edit_root_widget(|mut wm| StashBox::child_phase(&mut wm));
+        let frozen = child_phase(&mut h);
 
         h.edit_root_widget(|mut wm| StashBox::set_child_stashed(&mut wm, false));
         h.animate_ms(17);
 
-        let resumed = h.edit_root_widget(|mut wm| StashBox::child_phase(&mut wm));
+        let resumed = child_phase(&mut h);
         assert!(
             resumed > frozen,
             "an unstashed skeleton must animate again: {frozen} -> {resumed}"
