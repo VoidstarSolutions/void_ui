@@ -29,7 +29,7 @@ pub(crate) fn overlay_list_body<State, Action>(
     theme: &Theme,
     item_role: Role,
     on_select: OnSelect<State, Action>,
-) -> impl WidgetView<State, Action, Widget: Sized>
+) -> impl WidgetView<State, Action, Widget = xilem::masonry::widgets::VirtualScroll>
 where
     State: 'static,
     Action: 'static,
