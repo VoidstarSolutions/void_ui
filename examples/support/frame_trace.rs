@@ -35,8 +35,8 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use tracing::Subscriber;
 use tracing::span::Id;
-use tracing::{Subscriber, field};
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::prelude::*;
@@ -174,7 +174,6 @@ where
                         elapsed
                     );
                 }
-                let _ = &self.shared;
                 if let Some(waited) = waited {
                     println!(
                         "[{:8.3}] input -> frame: {:>9.3?}   (render span {:>9.3?})",
@@ -200,7 +199,6 @@ where
             }
             _ => {}
         }
-        let _ = field::Empty;
     }
 }
 
