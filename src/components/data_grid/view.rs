@@ -29,7 +29,7 @@ use xilem::masonry::layout::Length;
 use xilem::style::Style as _;
 use xilem::view::{
     AnyFlexChild, CrossAxisAlignment, FlexSpacer, MainAxisAlignment, flex_col, flex_item, flex_row,
-    label, sized_box, text_input,
+    label, sized_box,
 };
 use xilem::{AnyWidgetView, Pod, ViewCtx};
 
@@ -1579,7 +1579,8 @@ struct FilterRowParams<'a, State, Action> {
 /// Builds the per-column filter-input row shown beneath the header.
 ///
 /// Each filterable column gets a leading muted search-icon glyph next to a
-/// `text_input` seeded from its current query — the icon is the primary
+/// themed [`input`](crate::components::input::input) seeded from its
+/// current query — the icon is the primary
 /// discoverability affordance (issue #149: a bare row of text boxes reads
 /// as inert, not as "type here to filter"), backing up the existing
 /// "Filter" placeholder. Editing the input calls `on_change(state, column,
@@ -1608,17 +1609,25 @@ where
                 let id = ids[idx].clone();
                 let current = filter.get(&id).unwrap_or_default().to_string();
                 let on_change = Arc::clone(on_change);
-                // Default text size: masonry renders the placeholder as a
-                // separate Label at the default font size (it doesn't
-                // inherit `text_size`), so overriding it would clip the
-                // placeholder. ColumnStrip force-sizes the cell to the
-                // column width, so the input can't overflow its column —
-                // this is what finally fixed the filter-alignment bug.
-                let input = text_input(current, move |state: &mut State, text: String| {
-                    (*on_change)(state, id.clone(), text)
-                })
-                .text_color(theme.palette.text)
-                .placeholder("Filter");
+                // The themed `input` (not the bare masonry `text_input`)
+                // — issue #208: a bare `text_input` renders at masonry's
+                // hardcoded 15px default font (its own font-size never
+                // gets themed, only the placeholder Label would need a
+                // matching override), while `filter_row_height` reserves
+                // headroom sized for the theme's body font. That mismatch
+                // left zero slack for descenders, which `text_input`'s
+                // default `clip: true` then chopped. `input` sets the
+                // theme's font size on the field (and its placeholder) and
+                // sizes its own chrome from theme density, so there's
+                // always real headroom. ColumnStrip force-sizes the cell to
+                // the column width, so the input can't overflow its column
+                // — this is what finally fixed the filter-alignment bug.
+                let input = crate::components::input::input(
+                    current,
+                    move |state: &mut State, text: String| (*on_change)(state, id.clone(), text),
+                )
+                .placeholder("Filter")
+                .render(theme);
                 // Decorative: the "Filter" placeholder and the input's own
                 // semantics already carry the meaning; the glyph itself has
                 // no meaningful screen-reader pronunciation (see
@@ -1627,10 +1636,26 @@ where
                     .color(theme.palette.text_muted)
                     .decorative()
                     .render(theme);
+                // `input`'s own `TextInput` (masonry's, not ours) always
+                // consumes the full cross length it's offered rather than
+                // shrinking to its content — see its `measure()` doc
+                // comment — so `CrossAxisAlignment::Center` above can't
+                // actually center it: it fills `filter_row_height` and,
+                // since the text itself is drawn top-anchored inside that,
+                // all of the row's extra `pad_v` headroom (added below so
+                // descenders have room, see `filter_row_height`) ends up
+                // as slack *below* the text, reading as too high (#208
+                // follow-up). Nudging the whole cell down by half of that
+                // same headroom splits it evenly above/below instead.
                 Box::new(
-                    flex_row((flex_item(glyph, 0.0), flex_item(input, 1.0)))
-                        .cross_axis_alignment(CrossAxisAlignment::Center)
-                        .gap(Length::px(f64::from(theme.density.gap_lg) / 2.0)),
+                    sized_box(
+                        flex_row((flex_item(glyph, 0.0), flex_item(input, 1.0)))
+                            .cross_axis_alignment(CrossAxisAlignment::Center)
+                            .gap(Length::px(f64::from(theme.density.gap_lg) / 2.0)),
+                    )
+                    .padding(Padding::top(Length::px(
+                        f64::from(theme.density.pad_v) / 2.0,
+                    ))),
                 )
             } else {
                 Box::new(label(""))
@@ -1638,7 +1663,7 @@ where
         })
         .collect();
     // Filter row is deliberately taller than data rows: filter_row_height()
-    // adds pad_v of headroom on top of row_height so the text_input isn't
+    // adds pad_v of headroom on top of row_height so the input isn't
     // clipped. ColumnStrip enforces both per-column width and row height.
     sized_box(
         column_strip(widths, filter_row_height(&theme.density), cells).flex_weights(flex.to_vec()),
@@ -1648,7 +1673,7 @@ where
 }
 
 /// Height of the filter-input row: one density row plus a `pad_v` of
-/// headroom so the `text_input` (font + its internal padding) isn't
+/// headroom so the input (font + its own chrome padding) isn't
 /// clipped (24 + 6 = the pre-token 30 px at balanced).
 fn filter_row_height(density: &Density) -> f64 {
     f64::from(density.row_height) + f64::from(density.pad_v)
