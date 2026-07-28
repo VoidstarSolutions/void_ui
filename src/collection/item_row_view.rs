@@ -39,7 +39,7 @@ pub(crate) fn overlay_list_item<State, Action>(
     theme: &Theme,
     role: Role,
     on_select: OnSelect<State, Action>,
-) -> impl WidgetView<State, Action>
+) -> impl WidgetView<State, Action> + use<State, Action>
 where
     State: 'static,
     Action: 'static,
