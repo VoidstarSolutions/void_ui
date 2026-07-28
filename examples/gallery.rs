@@ -158,6 +158,7 @@ fn sidebar_items(focused: ComponentKind, theme: &Theme) -> impl WidgetView<State
 
     scroll_container(
         sidebar_nav(items, active, |s: &mut State, i| {
+            frame_trace::mark("sidebar-nav");
             s.focused = ComponentKind::all()[i];
         })
         .render(theme),
@@ -473,7 +474,11 @@ fn swatch_tile(name: &'static str, color: Color, theme: &Theme) -> impl WidgetVi
         .gap(Length::px(2.0))
 }
 
+#[path = "support/frame_trace.rs"]
+mod frame_trace;
+
 fn main() -> Result<(), EventLoopError> {
+    frame_trace::install_if_requested();
     let app = Xilem::new_simple(
         State::new(),
         app_logic,

@@ -36,12 +36,18 @@ chrono = "0.4"
 lucide-icons = "1.17.0"
 masonry = { workspace = true }
 tracing = { workspace = true }
+# Optional: composed into the gallery's frame tracer (see `profiling` feature
+# below and `examples/support/frame_trace.rs`) so it can add a `TracyLayer` to
+# its own subscriber instead of shutting Tracy out entirely.
+tracing-tracy = { version = "0.11", optional = true }
 void-ui-macros = { path = "void-ui-macros", optional = true }
 xilem = { workspace = true }
 xilem_masonry = { workspace = true }
 
 [dev-dependencies]
 image = { version = "0.25", default-features = false }
+# Frame-latency instrumentation for the gallery example (VOID_UI_TRACE_FRAMES=1).
+tracing-subscriber = { version = "0.3", features = ["registry", "fmt"] }
 masonry = { workspace = true, features = ["testing"] }
 tokio = { version = "1", features = ["rt"] }
 xilem = { workspace = true }
@@ -52,10 +58,47 @@ default = ["gallery"]
 # proc-macro). On by default; disable with `default-features = false` if
 # you don't need demo panels or the proc-macro crate.
 gallery = ["dep:void-ui-macros"]
+# Streams CPU frame timings to the Tracy profiler (https://github.com/wolfpld/tracy).
+#
+# Off by default; it pulls in tracing-tracy, and the Tracy client opens a
+# listening socket on port 8086 at startup.
+#
+# There is no code to write on our side. `masonry_winit::app::run` calls
+# `masonry_core::app::try_init_tracing()`, which installs a `TracyLayer` when
+# `masonry_core/tracy` is on. That layer carries no level filter, so every
+# `info_span!` in the pass system (`layout`, `paint`, `compose`, `update_anim`,
+# `update_pointer`, ...) becomes a Tracy zone.
+#
+# NOTE: this deliberately routes through `masonry/tracy` (= `masonry_core/tracy`)
+# rather than `masonry_winit/tracy`. The latter is the more complete feature — it
+# adds a `non_continuous_frame!("Masonry")` marker per redraw and GPU zones via
+# `vello/wgpu-profiler` — but it also makes `vello_util.rs` request
+# `GpuProfiler::ALL_WGPU_TIMER_FEATURES` on the device, and on macOS/Metal that
+# hangs the app before the window ever appears: the unconditional
+# `device.poll(wait_indefinitely())` in `masonry_winit`'s `present_surface` never
+# returns on the first frame. Verified by isolation — `masonry_winit/tracy` hangs
+# with 100% of main-thread samples in `Device::poll`; `masonry/tracy` comes up
+# fine and still streams to Tracy.
+#
+# Losing the frame marker costs little in practice: the `paint` span fires once
+# per redraw, so counting `paint` zones counts frames.
+#
+# Composes with `VOID_UI_TRACE_FRAMES=1` (the gallery's own text-based frame
+# tracer, `examples/support/frame_trace.rs`): that tracer finalizes the global
+# subscriber itself, which would otherwise make `try_init_tracing()` — and its
+# `TracyLayer` — a permanent no-op whenever both are requested together. Enable
+# `dep:tracing-tracy` here so `frame_trace::install_if_requested` can add the
+# same layer to its own registry instead.
+profiling = ["masonry/tracy", "dep:tracing-tracy"]
 
 [[example]]
 name = "gallery"
 path = "examples/gallery.rs"
+required-features = ["gallery"]
+
+[[example]]
+name = "perf_probe"
+path = "examples/perf_probe.rs"
 required-features = ["gallery"]
 
 [lints]

@@ -2,8 +2,14 @@
 //!
 //! `SpinnerWidget` is a leaf widget — no children — that drives its own
 //! animation loop. It requests an anim frame on [`Update::WidgetAdded`] and
-//! advances the rotation phase each frame, requesting the next frame until
-//! the widget is removed.
+//! advances the rotation phase each frame, requesting the next frame until the
+//! widget is removed or stashed.
+//!
+//! The stashed check is load-bearing, not a micro-optimization. Masonry's anim
+//! pass does not skip stashed widgets, and neither masonry nor vello tracks
+//! damage — so a spinner hidden inside a closed overlay or a collapsed panel
+//! would otherwise keep the entire window re-encoding and re-resolving at
+//! refresh rate forever.
 
 use std::sync::LazyLock;
 
@@ -93,13 +99,24 @@ impl Widget for SpinnerWidget {
         _props: &mut PropertiesMut<'_>,
         interval: u64,
     ) {
+        // A stashed spinner is invisible, but masonry's anim pass does not skip
+        // stashed widgets — so without this guard a hidden spinner keeps
+        // re-arming forever, and since nothing in the paint/encode pipeline
+        // tracks damage, every one of those frames re-encodes and re-resolves
+        // the entire window. Dropping out here (rather than advancing without
+        // re-arming) also means the phase is preserved while hidden.
+        if ctx.is_stashed() {
+            return;
+        }
         self.t = (self.t + anim::elapsed_secs(interval)).rem_euclid(1.0);
         ctx.request_anim_frame();
         ctx.request_paint_only();
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        if matches!(event, Update::WidgetAdded) {
+        // `StashedChanged(false)` is what restarts the loop the guard in
+        // `on_anim_frame` stopped; without it an unstashed spinner sits frozen.
+        if matches!(event, Update::WidgetAdded | Update::StashedChanged(false)) {
             ctx.request_anim_frame();
         }
     }
@@ -161,12 +178,67 @@ mod tests {
     use masonry::testing::TestHarness;
 
     use super::SpinnerWidget;
+    use crate::test_support::StashBox;
 
     fn harness() -> TestHarness<SpinnerWidget> {
         TestHarness::create(
             masonry::theme::default_property_set(),
             NewWidget::new(SpinnerWidget::new(Color::BLACK, 16.0)),
         )
+    }
+
+    fn stashable_harness() -> TestHarness<StashBox<SpinnerWidget>> {
+        StashBox::harness(SpinnerWidget::new(Color::BLACK, 16.0))
+    }
+
+    fn child_phase(h: &mut TestHarness<StashBox<SpinnerWidget>>) -> f64 {
+        h.edit_root_widget(|mut wm| StashBox::child_mut(&mut wm).widget.t)
+    }
+
+    #[test]
+    fn a_stashed_spinner_stops_animating() {
+        // A spinner nobody can see still drove masonry's anim pass, and because
+        // neither masonry nor vello tracks damage, each of those frames
+        // re-encoded and re-resolved the *entire* window. A hidden spinner must
+        // let the app go idle.
+        let mut h = stashable_harness();
+
+        h.animate_ms(17);
+        let while_visible = child_phase(&mut h);
+        assert!(
+            while_visible > 0.0,
+            "a visible spinner should advance; got {while_visible}"
+        );
+
+        h.edit_root_widget(|mut wm| StashBox::set_child_stashed(&mut wm, true));
+        h.animate_ms(17);
+        h.animate_ms(17);
+
+        let while_stashed = child_phase(&mut h);
+        assert!(
+            (while_stashed - while_visible).abs() < f64::EPSILON,
+            "a stashed spinner must not advance: {while_visible} -> {while_stashed}"
+        );
+    }
+
+    #[test]
+    fn unstashing_a_spinner_resumes_animation() {
+        // Stopping while hidden is only correct if showing it again restarts
+        // the loop — otherwise a re-opened overlay shows a frozen spinner.
+        let mut h = stashable_harness();
+        h.edit_root_widget(|mut wm| StashBox::set_child_stashed(&mut wm, true));
+        h.animate_ms(17);
+
+        let frozen = child_phase(&mut h);
+
+        h.edit_root_widget(|mut wm| StashBox::set_child_stashed(&mut wm, false));
+        h.animate_ms(17);
+
+        let resumed = child_phase(&mut h);
+        assert!(
+            resumed > frozen,
+            "an unstashed spinner must animate again: {frozen} -> {resumed}"
+        );
     }
 
     #[test]
