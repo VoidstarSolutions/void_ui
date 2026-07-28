@@ -95,10 +95,18 @@ Not a viable fix right now:
 
 - We are already on **winit 0.30.13**, the newest stable (released 2026-03-02).
   Its release notes contain no mouse-delivery fixes.
-- The newest published version overall, **0.31.0-beta.2**, was released
-  2025-11-16 — *older* than 0.30.13 — so it is unlikely to contain a fix that
-  0.30.13 lacks, and the macOS backend was refactored into `winit-appkit` in
-  that line.
+- The newest published version overall, **0.31.0-beta.2** (released
+  2025-11-16), is on a diverged `0.31.0` line, not a superset of `0.30.13`:
+  per `gh api repos/rust-windowing/winit/compare/v0.30.13...v0.31.0-beta.2`,
+  each side has commits the other lacks (0.30.13 has ~140 commits not in
+  beta.2; beta.2 has ~346 not in 0.30.13, including the macOS backend split
+  into `winit-appkit` — "Move AppKit (macOS) backend to `winit-appkit`
+  (#4248)", 2025-05-25 — and a breaking pointer-event overhaul that renames
+  `CursorMoved`/`MouseInput` to `PointerMoved`/`PointerButton`). So it is not
+  ruled out by publish date alone, and its unique macOS/pointer work makes it
+  worth a look — but it hasn't been tried against this bug: doing so means a
+  breaking-change migration (the event renames) on a pre-release, unreleased
+  API, which is why it isn't queued as a near-term fix.
 - winit is not a direct dependency we control. `masonry_winit`,
   `accesskit_winit`, `ui-events-winit`, and `xilem` all depend on it and would
   have to move together.
