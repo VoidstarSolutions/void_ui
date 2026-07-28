@@ -158,13 +158,12 @@ where
             }
             EVENT_SPAN => {}
             RENDER_SPAN => {
-                let waited = {
+                let (waited, action) = {
                     let mut shared = self.shared.lock().expect("frame-trace lock");
-                    shared.pending_input.take().map(|t| t.elapsed())
-                };
-                let action = {
-                    let mut shared = self.shared.lock().expect("frame-trace lock");
-                    shared.pending_action.take()
+                    (
+                        shared.pending_input.take().map(|t| t.elapsed()),
+                        shared.pending_action.take(),
+                    )
                 };
                 if let Some((label, at)) = action {
                     println!(
