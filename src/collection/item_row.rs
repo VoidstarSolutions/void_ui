@@ -14,13 +14,13 @@ use masonry::core::{
     StyleProperty, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Point, Rect, Size};
+use masonry::kurbo::{Axis, Point, Size};
 use masonry::layout::{LayoutSize, LenReq, Length};
 use masonry::properties::ContentColor;
 use masonry::widgets::Label;
 
 use crate::Theme;
-use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
+use crate::focus_ring::paint_focus_ring_inset;
 
 pub(crate) struct OverlayListItem {
     label: WidgetPod<Label>,
@@ -164,14 +164,7 @@ impl Widget for OverlayListItem {
             painter.fill(rect, p.surface_2).draw();
         }
         if self.highlighted {
-            let inset = FOCUS_RING_INSET;
-            let ring = Rect::new(
-                rect.x0 + inset,
-                rect.y0 + inset,
-                rect.x1 - inset,
-                rect.y1 - inset,
-            );
-            paint_focus_ring(painter, ring, &self.theme);
+            paint_focus_ring_inset(painter, rect.size(), &self.theme);
         }
     }
 
@@ -201,11 +194,11 @@ mod tests {
     use masonry::testing::TestHarness;
     use masonry::theme::default_property_set;
 
-    use super::OverlayListItem;
+    use super::{OverlayListItem, render_overlay_list_item};
     use crate::Theme;
 
     #[test]
-    fn render_overlay_list_item_builds_without_panicking() {
+    fn overlay_list_item_builds_in_a_harness_without_panicking() {
         let text: masonry::core::ArcStr = "Apple".into();
         let widget = OverlayListItem::new(text, true, &Theme::default(), Role::ListBoxOption);
         let _harness = TestHarness::create_with_size(
@@ -213,6 +206,16 @@ mod tests {
             NewWidget::new(widget),
             (100, 24),
         );
+    }
+
+    #[test]
+    fn render_overlay_list_item_returns_a_constructible_widget() {
+        let text: masonry::core::ArcStr = "Apple".into();
+        let widget = render_overlay_list_item(&text, true, &Theme::default(), Role::ListBoxOption);
+        // NewWidget<dyn Widget> can't go into TestHarness (which requires
+        // Widget: Sized) — this just confirms the call succeeds and returns
+        // a real widget (its id is obtainable) without panicking.
+        let _id = widget.id();
     }
 
     use masonry::core::PointerButton;
