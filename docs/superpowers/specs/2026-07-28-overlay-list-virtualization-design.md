@@ -10,6 +10,22 @@ out of scope here.
 > implementation plan found that premise wrong — see "Key insight" below.
 > This revision replaces that architecture; the Problem/scope stays the same.
 
+> **Revision note 2 (found while implementing Task 2):** the revised design
+> below still assumed `CollectionListWidget` could own `masonry::VirtualScroll`
+> directly as a plain widget and answer its `Fetch` action from
+> `Widget::on_action`. That doesn't compile: `VirtualScrollFetchAction` isn't
+> `Clone`, and `on_action` only ever lends a pass-scoped `&ErasedAction` —
+> there is no way to get ownership of it outside xilem's `View::message`
+> mechanism. See "Key insight" and "Design" below for the corrected
+> architecture: item content now flows through real, rebuild-diffed View
+> props (mirroring how `list`/`data_grid` already work), and
+> `xilem::view::virtual_scroll` is used directly rather than reimplemented.
+> This also required moving `compute_filtered` out of `AutocompleteWidget`
+> and into `AutocompleteView`, since only the View layer sees fresh
+> `contents`/`suggestions` on every rebuild in a way a plain widget's
+> `on_action` handler cannot durably act on. Confirmed with the user before
+> proceeding, given the size of the change.
+
 ## Problem
 
 `autocomplete`'s `SuggestionList`/`LabelList` and `dropdown_button`'s
@@ -76,6 +92,84 @@ doesn't fit:
   tree-nav, per-row-focus model. None of that machinery serves a
   single-highlighted-index, single-focus-target list.
 
+**Why `on_action` can't work at all for `Fetch`** (verified against the pinned
+masonry/xilem commit, `c5950bc`): `VirtualScrollFetchAction`
+(`masonry/src/widgets/virtual_scroll.rs:57`) derives only `Debug`, not
+`Clone`. `Widget::on_action` hands out `action: &ErasedAction` — a single
+shared reference bubbled through every ancestor in one pass
+(`masonry_core/src/passes/action.rs`'s `handle_action`), never ownership.
+Every `ActionCtx` deferred-mutation entry point (`mutate_child_later`,
+`mutate_self_later`, `mutate_later`) requires `'static` closures, and
+`VirtualScroll::will_handle_action` (the only thing that updates its private
+`active_range`) requires the *exact* action instance masonry handed it — not
+a reconstructed equivalent from the two `Range<usize>` values alone, since its
+fields are private with no public constructor. There is no synchronous
+workaround either: `ActionCtx` has no `get_mut` (that's `MutateCtx`-only) and
+`VirtualScroll` doesn't implement `AllowRawMut`. This is a hard gap, not a
+local bug — confirmed by an implementer hitting it while transcribing the
+first version of this spec's design verbatim.
+
+**The fix xilem already provides, already proven by `list`/`data_grid`:**
+`xilem_masonry::VirtualScroll`'s own `View` implementation
+(`xilem_masonry/src/view/virtual_scroll.rs`) receives `Fetch` with real
+ownership via `View::message` (`message.take_message::<VirtualScrollAction>()`,
+a completely different, higher-level mechanism from masonry's `on_action` —
+confirmed independent of masonry's action-bubbling/handled status by reading
+the actual dispatch: `xilem`'s driver (`xilem/src/driver.rs`) routes an
+action to whichever `View` registered the action's *source* `WidgetId` via
+`with_action_widget`/`record_action_source` at that widget's own `build()`,
+regardless of what any ancestor `Widget::on_action` does). It stores the
+owned action in its `ViewState` and returns `MessageResult::RequestRebuild`;
+the actual `will_handle_action`+`add_child`/`remove_child` work happens
+inside its own `rebuild()`, which has a real `ViewCtx`. `RequestRebuild`
+triggers a full window-view-tree `rebuild()` call (`self == prev`, no
+`app_logic` re-invocation, confirmed in `xilem/src/driver.rs`'s
+`handle_message_result`) — this is exactly the mechanism
+`src/collection/body_view.rs`'s `collection_body` already relies on today for
+`list`/`data_grid`'s virtualization, in production.
+
+**The catch, and why this isn't a drop-in:** `virtual_scroll(len, func)`'s
+`func: Fn(&mut State, usize) -> ChildrenViews` must return a real composed
+`ChildrenViews: WidgetView<State, Action>` for each visible row — not a plain
+masonry `Widget`. There is no existing helper in this codebase or in
+`xilem`/`xilem_masonry` to lift an already-built widget into a trivial
+`WidgetView` — every `WidgetView`-typed slot in this codebase is filled by an
+actual `View` impl (confirmed by exhaustive search). And `func`'s row content
+needs *something* to resolve `pos -> item text`, which pulls `items` into
+`State`-diffed View territory — but autocomplete's filtered suggestions are
+currently computed inside `AutocompleteWidget`'s own widget-level event
+handling (`compute_filtered`, driven by `self.contents`/`self.all_suggestions`,
+both widget-owned fields), then pushed to the mounted list imperatively via
+`mutate_later`/`mutate_child_later` — bypassing `SuggestionListView`'s
+`rebuild()` entirely (confirmed: its `rebuild()` doc says exactly this,
+`view.rs:174`, and its `build()` constructs an empty shell). Feeding real,
+diffed `items` into `virtual_scroll`'s closure requires the filtering to move
+from widget-event-time to View-build-time — a genuine, if contained,
+restructuring, not just a new file.
+
+The good news, found while working this out: `AutocompleteView`'s `contents`
+and `suggestions` fields **already** flow as real, rebuild-diffed View props
+today (`view.rs:324-341`: `AutocompleteWidget::set_contents`/
+`set_all_suggestions` are called from `rebuild()`, not `mutate_later`) — the
+text is host-controlled by contract (`view.rs:20-22`'s module doc) and the
+full candidate list is a normal constructor argument. So `compute_filtered`
+can move into `AutocompleteView::rebuild()`/`build()` using data that's
+*already there*; nothing new needs to be invented to get its inputs. What
+does need building: a small View wrapper around `OverlayListItem` (mirroring
+the existing `RowClickable`/`ClickableRow` pair in `row_click.rs` — a masonry
+`Widget` that submits an action, paired with a `View` that catches it via
+`message()` with real ownership, no re-emission needed since the row's own
+id is what gets registered), and a crate-internal function wrapping
+`xilem::view::virtual_scroll` directly (mirroring `collection_body`'s shape,
+much simplified — no selection/tree-nav/lazy-load/click-routing machinery).
+
+Confirmed with the user before proceeding, given this changes more of
+`AutocompleteWidget`'s existing architecture than the original task scope
+assumed (moving `compute_filtered` out of the widget, and reversing an
+existing "don't re-register the portal on keystroke" optimization in
+`AutocompleteView::rebuild()`, since items must now flow through that same
+registration path).
+
 What genuinely is reusable: **masonry's `VirtualScroll` widget itself**
 (`masonry_core::widgets::VirtualScroll`, re-exported via `masonry::widgets`),
 used directly rather than through `collection`'s `CollectionBodyWidget`
@@ -121,214 +215,246 @@ wrapper. Its real imperative API (verified against the pinned commit,
 
 ## Design
 
-### New: `src/collection/imperative_list.rs` — `CollectionListWidget<Item>`
+### `src/collection/item_row.rs` — `OverlayListItem` (already built, Task 1 — gains one addition)
 
-A `pub(crate)` masonry `Widget`, generic over `Item: Clone + Send + Sync +
-'static` (both current call sites use `ArcStr`). Ports `LabelList`'s model
-forward, backed by `VirtualScroll` instead of an unbounded `Vec<WidgetPod<_>>`:
+Already implemented and reviewed: a pointer-interactive row widget (hover,
+highlight-ring paint, submits its own text on click as `Widget::Action =
+ArcStr`), replacing the former paint-only `SuggestionItem`. This revision
+adds one thing not anticipated originally: `set_text(this: &mut WidgetMut<'_,
+Self>, text: ArcStr)`. Reason: with `virtual_scroll` (below) rebuilding
+already-materialized rows' *content* on every ordinary rebuild pass (its own
+internal contract, not new machinery we're adding), an existing row can be
+asked to show different text at the same index — e.g. a same-length filtered
+result on a new keystroke — without being torn down and rebuilt from scratch.
+`set_theme`/`set_highlighted` (already built) are unchanged.
 
-- Fields: owned `WidgetPod<VirtualScroll>` child; `items: Vec<Item>` (the full
-  list — needed to resolve content for newly-materialized rows and to compute
-  `highlighted`'s wrap bound); `item_rects: Vec<Rect>` for the *currently
-  materialized* window (built at layout, same hit-testing approach
-  `LabelList`/`MenuContent` already use); `hover_index: Option<usize>`;
-  `highlighted: Option<usize>`; `theme: Theme`; a stored `render_row: Arc<dyn Fn(&Item, bool, &Theme) -> NewWidget<W> + Send + Sync>`
-  (the `bool` is "is this row highlighted," matching `RenderRow`'s existing
-  selected-flag convention elsewhere in `collection`).
-- `accepts_focus() -> true` — **this widget itself is the single focus
-  target**, exactly like `LabelList` today. Item rows are plain,
-  non-interactive, non-focusable content widgets.
-- `set_items(this: &mut WidgetMut<'_, Self>, items: Vec<Item>)`: stores the
-  new `Vec`; calls `VirtualScroll::set_len` if the length changed; clamps
-  `highlighted`/`hover_index` past the new end (reusing
-  `clamp_scroll_index`'s pattern — see edge cases); then, regardless of
-  whether length changed, **refreshes every currently-materialized row's
-  content** in place (walk `children_ids()`, rebuild each via `render_row`) —
-  the length-unchanged case that `set_len` alone won't trigger a `Fetch` for.
-- `set_theme`, `set_selected_theme` forwarded to materialized rows, mirroring
-  `LabelList::set_theme`.
-- `move_highlight(this: &mut WidgetMut<'_, Self>, delta: isize)`: ports
-  `LabelList::move_highlight` (`widget.rs:404-424`) essentially verbatim —
-  `rem_euclid` wrap over `self.items.len()`, not just the materialized count.
-- `set_highlight(this: &mut WidgetMut<'_, Self>, index: Option<usize>)`: sets
-  `highlighted`, requests a repaint/accessibility update. Scroll-into-view for
-  the new highlight uses **index arithmetic** (`index * row_height`) rather
-  than reading `item_rects` (which only covers the current window) — every
-  row in this substrate is fixed-height, the same assumption
-  `RowClickable::request_scroll_by_rows` relies on elsewhere in `collection`
-  — then calls `VirtualScroll::scroll_to` if the target isn't already
-  materialized, or `ctx.request_scroll_to` directly if it is.
-- `on_action`: catches `VirtualScrollAction` from its `VirtualScroll` child.
-  On `Fetch`: `will_handle_action`, diff `old_active()`/`target()` via
-  `remove_child`/`add_child` (building new rows from `self.items[idx]` via
-  `render_row`), rebuild `item_rects` for the new window, mark handled (does
-  not bubble further). `Scroll` needs no reaction here (viewport-only
-  movement within the already-materialized window).
-- Click routing: `on_pointer_event` hit-tests via `item_rects` exactly as
-  `LabelList`/`MenuContent` already do (hover tracking, primary-up on a hit
-  row submits this widget's own selection action carrying the item — mirrors
-  `SuggestionSelected(ArcStr)`'s "carry the value, not a stale index"
-  rationale).
-- Keyboard: `on_text_event` ports `LabelList::on_text_event`'s
-  ArrowDown/ArrowUp (→ `move_highlight`), Home/End (→ `set_highlight(Some(0))`/
-  `set_highlight(Some(len-1))`), Enter (submit selection for `highlighted`).
-  Escape/Tab-interception and refocus-to-input/request-close plumbing stay
-  with the owning `SuggestionList`/`MenuContent`, not this widget — see below.
-- Accessibility: `accessibility_role() -> Role::ListBox`; `set_active_descendant`
-  when `highlighted` is `Some`, exactly as `LabelList` does today.
+### New: `src/collection/item_row_view.rs` — `OverlayListItemView`
 
-No `RowClickable`, `CollectionBodyWidget`, `SelectionState`, or
-`apply_row_click`/`apply_row_activate` involved — none of that machinery
-serves this single-focus-target model. `clamp_scroll_index`
-(`src/collection/scroll.rs`) is reused for the highlighted-index-past-the-end
-case.
+A small `View` wrapper around `OverlayListItem`, mirroring the existing
+`RowClickable`/`ClickableRow` pair in `src/collection/row_click.rs` (a
+masonry `Widget` that submits an action, paired with a `View` that catches it
+via `message()` with real ownership — the same shape, at a smaller scale,
+since `OverlayListItem` needs no click-modifier/selection-state translation,
+just "the row was clicked, run this callback with the text"):
 
-### New: `src/collection/item_row.rs` — `OverlayListItem`
+- `pub(crate) fn overlay_list_item<State, Action>(text: ArcStr, highlighted: bool, theme: &Theme, role: Role, on_select: impl Fn(&mut State, ArcStr) -> Action + Send + Sync + 'static) -> impl WidgetView<State, Action>`
+- `build()`: constructs `OverlayListItem::new(text, highlighted, theme, role)`, registers via `ctx.with_action_widget(...)` (exactly like `ClickableRow::build`).
+- `rebuild()`: diffs `text`/`highlighted`/`theme` against `prev`, calling `OverlayListItem::set_text`/`set_highlighted`/`set_theme` on change. (`role` never changes post-construction — no setter needed.)
+- `message()`: `message.take_message::<ArcStr>()` → `MessageResult::Action((self.on_select)(app_state, text))`. No re-emission needed anywhere else in the chain — `OverlayListItem`'s own registered id is exactly its action's source id, same as `RowClickable`'s.
 
-Replaces `SuggestionItem` and gives `MenuContent`'s bare `Label` rows the same
-shape. Both are, today, a paint-only wrapper around a `Label` — `SuggestionItem::paint`
-is already a no-op ("purely structural, the inner Label paints itself";
-`autocomplete/widget.rs:863-870`), with all hover/highlight painting done by
-the *parent* (`LabelList::paint`, from `item_rects`/`hover_index`/`highlighted`)
-— so unifying is a small, low-risk change: `MenuContent` gains the same thin
-wrapper `SuggestionItem` already has. A single
-`render_overlay_list_item(item: &ArcStr, highlighted: bool, theme: &Theme) -> NewWidget<OverlayListItem>`
-function is the `render_row` closure both `SuggestionList` and `MenuContent`
-pass to their `CollectionListWidget`. `CollectionListWidget` itself keeps
-owning the actual hover/highlight paint (against its own `item_rects`), same
-division of responsibility as today.
+### New: `src/collection/overlay_list_body.rs` — `overlay_list_body`
 
-### Rewritten: `SuggestionList` (`src/components/autocomplete/widget.rs`)
+A crate-internal function wrapping `xilem::view::virtual_scroll` directly
+(the same mechanism `collection_body` already uses for `list`/`data_grid`,
+confirmed via its own `View::message`/`rebuild` split — `message()` stores an
+owned `Fetch` action and returns `RequestRebuild`; `rebuild()` applies
+`will_handle_action`+`add_child`/`remove_child` with a real `ViewCtx`, no
+`Clone` or ownership problem since this is xilem's own, already-working
+implementation, not something this crate reimplements) — heavily simplified
+relative to `collection_body`: no `Item`/`State` generic beyond what
+`virtual_scroll` itself needs, no selection lens, no tree metadata, no
+lazy-load, no click-routing helpers (`apply_row_click`/`apply_row_activate`
+don't apply — see "Key insight"):
 
-`LabelList` is deleted; `SuggestionList` wraps `CollectionListWidget<ArcStr>`
-directly, **dropping the intermediate `ScrollView`** — `VirtualScroll` is
-itself a scrollable viewport (same as `list`/`data_grid`'s usage), so the
-extra `ScrollView<LabelList>` layer `SuggestionList` uses today
-(`widget.rs:128-153`) is no longer needed. `SuggestionList` keeps: its chrome
-(`paint`'s rounded-rect background/border), its `MAX_LIST_HEIGHT` (200px)
-measure cap, its `on_action` re-emission for portal routing (now catching
-`CollectionListWidget`'s selection action instead of `LabelList`'s), and the
-`text_area_handle`/`autocomplete_handle` state currently owned by `LabelList`
-(needed for `refocus_input`/`request_close` — relocates to `SuggestionList`
-since `LabelList` no longer exists to hold it) plus the Escape/Tab
-interception currently in `LabelList::on_text_event`.
+- `pub(crate) fn overlay_list_body<State, Action>(items: Arc<Vec<ArcStr>>, highlighted: Option<usize>, theme: &Theme, item_role: Role, on_select: impl Fn(&mut State, ArcStr) -> Action + Send + Sync + Clone + 'static) -> impl WidgetView<State, Action>`
+- Internally: `virtual_scroll(items.len(), move |_state, pos| { let text = items[pos].clone(); overlay_list_item(text, highlighted == Some(pos), &theme, item_role, on_select.clone()) })`.
+- `items`/`highlighted` are captured directly in the closure (not read from `State` via an accessor) — they're plain constructor arguments to `overlay_list_body`, supplied fresh by its caller (`SuggestionListView`/`MenuContentView`) on every rebuild where they've changed. This is what makes the "no App-state round-trip per keystroke, filtering is void_ui's own concern" property hold: `State` here is only present because `WidgetView<State, Action>` needs a type for eventual action routing, not because item content is derived from it.
 
-### Rewritten: `MenuContent` (`src/components/dropdown_button/menu_layer.rs`)
+### Repurposed: `src/collection/imperative_list.rs` — `CollectionListWidget`
 
-Rewritten around `CollectionListWidget<ArcStr>` the same way. Gains a height
-cap (`MAX_LIST_HEIGHT`, matching autocomplete's value) and real scrolling for
-the first time — previously `measure()` sized unbounded to
-`item_height * item_count`. `MenuItemSelected(usize)` stays the emitted
-action shape (index-based, as today); the index is resolved against
-`CollectionListWidget`'s stored `items` at the point of selection, same
-timing guarantee `apply_row_activate` elsewhere in `collection` relies on
-(resolve at the moment of the click, not deferred).
+No longer owns items, no longer builds `VirtualScroll` itself, no longer
+needs any `Fetch` handling — `overlay_list_body`'s own `virtual_scroll`
+child does all of that now. Becomes purely keyboard-nav/highlight/focus
+bookkeeping wrapping a View-supplied `VirtualScroll`, structurally parallel
+to `CollectionBodyWidget` wrapping its own `VirtualScroll` child:
+
+- `pub(crate) fn new(child: NewWidget<VirtualScroll>, item_count: usize, container_role: Role) -> Self` — takes an *already-built* `VirtualScroll` (from `overlay_list_body`'s element), not constructing one itself.
+- Fields: `child: WidgetPod<VirtualScroll>`, `item_count: usize` (kept in sync via a setter — needed for `move_highlight`'s wrap bound, since items themselves no longer live here), `active_start: usize`, `highlighted: Option<usize>`.
+- `set_item_count(this: &mut WidgetMut<'_, Self>, count: usize)`: clamps `highlighted` past the new end (reusing `clamp_scroll_index`'s pattern).
+- `move_highlight`/`set_highlight`: unchanged in spirit from the previous revision — `rem_euclid` wrap over `self.item_count` (not `items.len()`, since there's no `items` field anymore); scroll-into-view is index-based only (`VirtualScroll::scroll_to` when the target isn't materialized — this widget sits above `VirtualScroll`, so it can't request a descendant's minimal reveal the way `RowClickable` does elsewhere in `collection`). Pushes `highlighted` onto materialized rows via `VirtualScroll::child_mut`+`OverlayListItem::set_highlighted` — wait, rows are now `OverlayListItemView`'s elements, still concretely `OverlayListItem` widgets underneath, so this direct `WidgetMut`-based push still works exactly as before.
+- `accepts_focus() -> true`; keyboard handling (ArrowUp/Down/Home/End) — unchanged in spirit, using `item_count` instead of `items.len()`. Enter/click-selection are no longer this widget's concern at all — `OverlayListItemView`'s `on_select` callback (wired per-row, at `overlay_list_body`'s construction) handles selection directly; `CollectionListWidget` has nothing left to catch or re-emit.
+- Accessibility: `accessibility_role() -> container_role` (parameterized — `Role::ListBox` for autocomplete, `Role::Menu` for a dropdown); active-descendant tracks `highlighted`.
+
+### New: `src/collection/overlay_list.rs` — the View wrapping `CollectionListWidget`
+
+Structurally parallel to `CollectionBodyWidget`/`CollectionBodyView`'s
+existing split: a thin `View` whose `Element = Pod<CollectionListWidget>`,
+built by wrapping `overlay_list_body`'s own element:
+
+- `pub(crate) fn overlay_list<State, Action>(items: Arc<Vec<ArcStr>>, highlighted: Option<usize>, theme: &Theme, container_role: Role, item_role: Role, on_select: ...) -> impl WidgetView<State, Action>`
+- `build()`: `let (child_element, child_state) = overlay_list_body(...).build(ctx, state); Pod::new(CollectionListWidget::new(child_element.new_widget, items.len(), container_role))` (mirrors `CollectionBodyView::build`'s exact shape).
+- `rebuild()`: forwards to the child's `rebuild()` (via a `virtual_scroll_mut`-style accessor on `CollectionListWidget`, mirroring `CollectionBodyWidget::virtual_scroll_mut`); then, if `items.len()` changed, calls `CollectionListWidget::set_item_count`.
+- `message()`: forwards to the child's `message()` (mirrors `CollectionBodyView::message`) — this is where `Fetch` gets caught (by `virtual_scroll`, several layers down) and where a row's selection (`OverlayListItemView`'s own `Action`) resolves, entirely within the forwarded call chain — no interception needed at this level.
+
+### Rewritten: `SuggestionList`/`SuggestionListView` (`src/components/autocomplete/widget.rs`, `view.rs`)
+
+`LabelList`/`SuggestionItem` are deleted (superseded by the above).
+`SuggestionList` (the masonry widget) keeps only its chrome (rounded-rect
+background/border paint, `MAX_LIST_HEIGHT` measure cap) wrapping a
+`WidgetPod<CollectionListWidget>` — no more `ScrollView` (redundant,
+`VirtualScroll` is itself a scrollable viewport), no more `on_action`
+re-emission (nothing left to re-emit; selection resolves at the
+`OverlayListItemView`/`overlay_list_body` layer).
+
+`SuggestionListView` changes from an empty-shell-plus-`mutate_later` view to
+one that builds `overlay_list(...)` directly, wrapping its element the same
+way `SuggestionList`'s chrome needs. **`compute_filtered` moves from
+`AutocompleteWidget::handle_text_changed` (widget-event-time) into
+`AutocompleteView`** (view-build-time), computed from `self.contents`/
+`self.suggestions` — both already real, rebuild-diffed fields (`view.rs:324-341`)
+— and threaded down into `SuggestionListView`'s construction as `items:
+Arc<Vec<ArcStr>>`. `on_select` is wired here too: selecting a suggestion
+calls the host's `on_changed` with the selected text (the same outcome
+`SuggestionSelected` produces today, just resolved one layer differently).
+
+**Reverses an existing optimization, deliberately:** `AutocompleteView::rebuild()`
+currently re-registers the portal content (`portal.update(...)`) only on
+theme change, with an explicit comment that suggestion/keystroke changes
+"reach the mounted list directly through the widget layer... so
+re-registering for them would be pure churn" (`view.rs:343-347`). That
+comment's premise (items are pushed imperatively, so View-level
+re-registration would be redundant work) no longer holds once items are
+real View props — `portal.update` must now also fire when `contents`/
+`suggestions` (hence the filtered result) changes. This was an accepted,
+deliberate cost of moving to real View props, not an oversight.
+
+`AutocompleteWidget` loses `all_suggestions`/`all_suggestions_lower`/
+`filtered`/`compute_filtered` and the `mutate_child_later`/
+`queue_portal_repopulation` machinery that pushed items to `SuggestionList` —
+none of that has a job left once `AutocompleteView` computes and passes
+`items` directly. It keeps `contents`/cursor/open-state and whatever else is
+unrelated to suggestion filtering.
+
+### Rewritten: `MenuContent`/`MenuContentView` (`src/components/dropdown_button/menu_layer.rs`, `view.rs`)
+
+Same shape, smaller delta: `MenuContentView` **already** computes
+`item_labels` reactively via normal `rebuild()` diffing (`Arc::ptr_eq`
+against `self.items`, `view.rs:391-406`) — no filtering-relocation needed
+here, just building `overlay_list(...)` directly instead of wrapping a
+plain `MenuContent` widget that owned `VirtualScroll` imperatively.
+`MenuContent` (the masonry widget) keeps its background/border chrome
+wrapping `WidgetPod<CollectionListWidget>`, plus the new `MAX_LIST_HEIGHT`
+cap (previously unbounded — `measure()` sized to `item_height *
+item_count`). `MenuItemSelected(usize)` stays index-based; `on_select`
+resolves the index against `MenuContentView`'s own `items` at selection
+time (mirroring `apply_row_activate`'s "resolve at the moment of the click"
+rationale elsewhere in `collection`). `ThemedDropdownButton`'s in-tree
+fallback path (no portal scope ancestor) needs the equivalent restructuring
+— it currently constructs `MenuContent` directly and calls `set_items`
+imperatively; that becomes hosting `overlay_list(...)` too, or (if the
+in-tree path is meaningfully harder to convert) an explicit, separately-flagged
+decision to leave it non-virtualized for now, not a silent gap.
 
 ### Not touched
 
-`collection_body`, `CollectionBodyWidget`, `RowClickable`, `SelectionState`,
-`apply_row_click`/`apply_row_activate`, `list`, `data_grid` — none of this
-substrate is used by the new widget. `ThemedDropdownButton`'s in-tree
-fallback path (no portal scope ancestor — `widget.rs:178-208`) still
-constructs `MenuContent` directly as a permanent child of the trigger and
-calls its `set_items`; that call site's shape doesn't change, only what's on
-the other end of it.
+`collection_body`, `CollectionBodyWidget`/`CollectionBodyView`, `RowClickable`
+(pattern *mirrored*, not reused directly), `SelectionState`,
+`apply_row_click`/`apply_row_activate`, `list`, `data_grid`.
 
 ## Data flow
 
-1. **Population.** `AutocompleteWidget`/`MenuContentView`/`ThemedDropdownButton`
-   compute the full filtered/static `Vec<ArcStr>` (no longer capped at 20 for
-   autocomplete) exactly as today, then call `CollectionListWidget::set_items`
-   (same call sites that currently call `LabelList::set_items`/
-   `MenuContent::set_items`). Length-changed: `VirtualScroll::set_len`, then
-   whatever `Fetch` that triggers is handled reactively via `on_action`.
-   Length-unchanged: every currently-materialized row's content is refreshed
-   directly (no `Fetch` fires for this case).
-2. **Keyboard nav.** `CollectionListWidget` itself is focused throughout;
-   ArrowDown/Up call `move_highlight` (wraps via `rem_euclid` over the full
-   item count — no edge case, no substrate coordination needed). Highlight
-   change requests scroll-into-view by index arithmetic, re-anchoring
-   `VirtualScroll` if the target isn't already materialized.
-3. **Click/select.** Pointer press hit-tests `item_rects`; a hit on
-   primary-up submits this widget's own selection action carrying the item
-   value, caught by the owning `SuggestionList`/`MenuContent`'s `on_action`
-   and translated/forwarded exactly as today.
-4. **Virtualization.** `VirtualScroll` computes its own materialized range
-   during `layout()` and submits `Fetch` only when that range changes;
-   `CollectionListWidget::on_action` reacts by adding/removing rows and
-   rebuilding `item_rects`, never proactively.
+1. **Population.** `AutocompleteView`/`MenuContentView` compute the full
+   filtered/static `Vec<ArcStr>` from their own real, rebuild-diffed fields
+   (`compute_filtered(contents, suggestions)` for autocomplete; direct
+   `item_labels` diffing for the dropdown, unchanged) and pass `items:
+   Arc<Vec<ArcStr>>` into `overlay_list(...)`'s construction — a normal View
+   prop, no imperative push.
+2. **Virtualization.** `overlay_list_body`'s `virtual_scroll` child computes
+   its own materialized range in `layout()` and submits `Fetch` only when it
+   changes; xilem's View-message system (not masonry `on_action`) delivers it
+   with ownership to `virtual_scroll`'s own `message()`/`rebuild()` — the
+   proven mechanism `list`/`data_grid` already rely on.
+3. **Same-length content change** (a new keystroke's filtered result at the
+   same count). No `Fetch` fires (masonry's `VirtualScroll::set_len` is a
+   no-op for an unchanged length), but `virtual_scroll`'s own `rebuild()`
+   unconditionally rebuilds every currently-materialized row's *View* each
+   pass anyway (its own existing contract, not new machinery) — reaching
+   `OverlayListItemView::rebuild()`, which diffs `text` and calls
+   `OverlayListItem::set_text` if it changed.
+4. **Keyboard nav.** `CollectionListWidget` is the single focus target;
+   ArrowUp/Down/Home/End call `move_highlight`/`set_highlight`, wrapping via
+   `rem_euclid` over `item_count`. Highlight change scroll-into-view is
+   index-based (`VirtualScroll::scroll_to` when the target isn't
+   materialized).
+5. **Click/select.** `OverlayListItem` submits its own text on click;
+   `OverlayListItemView::message()` catches it with ownership (no
+   re-emission anywhere in the chain) and runs the `on_select` callback
+   wired at `overlay_list_body`'s construction, translating to the host's
+   real `Action`.
 
 ## Edge cases / error handling
 
-- **Empty item list.** `set_items(vec![])`: `set_len(0)` removes all
-  materialized rows via the resulting `Fetch`; `highlighted`/`hover_index`
-  clamp to `None`.
-- **Highlighted/hovered index past the new list's end** after items shrink.
-  Clamp via the same pattern `clamp_scroll_index` already provides.
-- **Rapid re-`set_items` calls** (fast typing). Each call is a complete,
-  synchronous content refresh of the current window plus (if needed) a
-  `set_len` — no stale-state risk, matching `LabelList::set_items`'s current
-  drain-and-rebuild guarantee.
-- **`Fetch` reaction ordering.** `will_handle_action` must run before any
-  `add_child`/`remove_child` for that action (masonry's own
-  `debug_assert!`s enforce this) — the plan must get this ordering right in
-  `on_action`, not just "eventually call both."
-- **Highlight moved to an unmaterialized target** (a large list, highlight
-  jumps beyond the current window via Home/End or fast repeated arrow
-  presses). `set_highlight`'s scroll-into-view must use index arithmetic
-  (not `item_rects`, which doesn't cover the target yet) and call
-  `VirtualScroll::scroll_to` to bring it into the materialized window before
-  the accessibility/active-descendant update references it.
+- **Empty item list.** `items.len() == 0`: `virtual_scroll`'s own `Fetch`
+  removes all materialized rows; `CollectionListWidget::set_item_count(0)`
+  clamps `highlighted` to `None`.
+- **Highlighted index past the new list's end** after items shrink. Clamp
+  via the same pattern `clamp_scroll_index` already provides, in
+  `set_item_count`.
+- **Rapid keystrokes.** Each `AutocompleteView::rebuild()` computes a fresh
+  `filtered` and passes it down; `virtual_scroll`'s own diffing/rebuild
+  handles whatever changed (length, content, or both) — no stale-state risk,
+  since this is now the same mechanism `list`/`data_grid` already rely on for
+  arbitrarily-fast state changes.
+- **`Fetch` reaction ordering.** Entirely `xilem_masonry`'s own concern now
+  (`will_handle_action` before add/remove, inside its own `rebuild()`) — not
+  something this crate's code needs to get right by hand.
+- **Highlight moved to an unmaterialized target** (Home/End on a large
+  list). `set_highlight`'s `VirtualScroll::scroll_to` call brings the target
+  into the materialized window; the resulting `Fetch` (handled by
+  `virtual_scroll`, not this widget) builds its row via the same
+  `overlay_list_item(...)` closure, already carrying the correct
+  `highlighted` flag.
+- **Portal re-registration on every keystroke** (autocomplete). A real,
+  accepted cost of this design — see "Rewritten: SuggestionList" above.
 - **`MenuContent`'s new height cap** changes previously-unbounded-height
-  dropdowns to a capped, scrollable viewport — a visible behavior change,
-  flagged here explicitly rather than as an incidental side effect.
+  dropdowns to a capped, scrollable viewport — a visible, intentional
+  behavior change.
 
 ## Testing plan
 
-- **Existing autocomplete test suite** must keep passing after relocating
-  `LabelList`'s state/logic into `SuggestionList` + `CollectionListWidget` —
-  except **`tab_into_listbox_and_arrow_keys_set_active_descendant`
-  (`widget.rs:2423-2518`) and `enter_in_listbox_selects_closes_and_returns_focus_to_input`
-  (`widget.rs:2620-2643`) need adaptation, not just a fixture swap**: both
-  assume `LabelList` is the focus target and hold
-  `text_area_handle`/`autocomplete_handle` directly — after the rewrite,
-  `CollectionListWidget` is the focus target (same role, same
-  active-descendant mechanism, just relocated) and `SuggestionList` holds the
-  handles. The *assertions* (Tab reaches a `Role::ListBox`, active-descendant
-  tracks highlight, Enter refocuses the input) should hold unchanged in
-  spirit; only the fixture wiring changes. `compute_filtered`'s existing
-  tests need updating for the removed `MAX_SUGGESTIONS` cap.
-- **New `CollectionListWidget` tests** (`src/collection/imperative_list.rs`):
-  `set_items` diffing (grow/shrink/replace, both same-length-content-refresh
-  and length-changed-via-Fetch paths exercised separately), `move_highlight`
-  wrap-around (already-correct logic, ported — port its existing implicit
-  coverage forward, no *new* wrap behavior to invent), highlight-past-the-end
-  clamp-on-shrink, scroll-into-view when the highlight jumps to an
-  unmaterialized target (the one genuinely new scroll case — mirroring
-  `body.rs`'s `arrow_down_past_the_viewport_edge_scrolls_the_new_focus_into_view`-style
-  assertions), and the `Fetch`-reaction ordering (`will_handle_action` before
-  add/remove).
+- **Existing autocomplete test suite** must keep passing after this
+  restructuring — `tab_into_listbox_and_arrow_keys_set_active_descendant`
+  and `enter_in_listbox_selects_closes_and_returns_focus_to_input` need
+  adaptation (fixture: `CollectionListWidget` is now the focus target,
+  `SuggestionList` no longer holds `text_area_handle`/`autocomplete_handle`
+  the same way since selection resolves at the View layer now — work out the
+  exact new home for refocus-on-select/close-on-select during
+  implementation, don't assume it's identical to the previous revision's
+  plan). `compute_filtered`'s tests move/adapt alongside its relocation to
+  `view.rs`, and update for the removed `MAX_SUGGESTIONS` cap.
+- **New `OverlayListItemView`/`overlay_list_body`/`overlay_list` tests**:
+  build/rebuild/message wiring (mirroring `row_click.rs`'s own test patterns
+  for `ClickableRow`, and `body_view.rs`'s for `CollectionBodyView`) — a
+  large list materializes a bounded window (the core virtualization
+  contract), a same-length content change updates existing rows' text
+  in-place (the `set_text` case this revision added), a length change
+  triggers `Fetch` correctly.
+- **New `CollectionListWidget` tests**: `move_highlight`/`set_highlight`
+  wrap-around and clamp-on-shrink (unchanged in spirit from the previous
+  revision, just against `item_count` instead of `items.len()`).
 - **New `MenuContent` height-cap test**: menu with many items measures to
   `MAX_LIST_HEIGHT`, not `item_height * item_count`.
 - **Manual gallery verification** (defer to the human — no claimed visual
-  verification): run the gallery's autocomplete and dropdown_button demo
-  panels with a large candidate list (hundreds of items) and confirm bounded
-  materialized widget count via a test harness assertion on
-  `VirtualScroll::children_ids().len()` (or `len()`) after `set_items` with a
-  large `Vec`, or the `profiling` feature/Tracy.
+  verification): autocomplete and dropdown_button demo panels with a large
+  candidate list, confirming bounded materialized widget count and that
+  keystroke responsiveness feels unchanged despite the portal-re-registration
+  change.
 
 ## Acceptance criteria (from #98, revised)
 
 - [ ] Autocomplete + dropdown_button overlay lists virtualize (bounded widget
       count regardless of item count) — verified with `MAX_SUGGESTIONS`
-      removed, so this is a real test of unbounded input, not masked by the
-      existing cap.
-- [ ] `SuggestionList` and `MenuContent` share the virtualization/hover/
-      highlight/scroll-into-view/click substrate (`CollectionListWidget` +
-      `OverlayListItem`) rather than duplicating it.
+      removed.
+- [ ] `SuggestionList` and `MenuContent` share the virtualization/highlight/
+      scroll-into-view/click substrate (`overlay_list`/`overlay_list_body`/
+      `CollectionListWidget`/`OverlayListItem`) rather than duplicating it.
 - [ ] Existing autocomplete + dropdown_button behavior/accessibility tests
-      still pass (with the two noted adaptations, not behavior changes).
-- [ ] Keyboard-highlight wrap-around at list ends is preserved (already
-      correct today; ported forward, not reimplemented).
+      still pass (with adaptation for the relocated focus/selection
+      machinery, not a behavior change).
+- [ ] Keyboard-highlight wrap-around at list ends is preserved.
 - [ ] `dropdown_button`'s menu gains a bounded, scrollable viewport
       (previously unbounded height) — a new, intentional behavior change.
+- [ ] Autocomplete's suggestion filtering flows as a real View prop
+      (`AutocompleteView`), not an imperative widget-to-widget push —
+      confirmed acceptable despite the portal-re-registration cost this adds
+      on every keystroke.
