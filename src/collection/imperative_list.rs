@@ -273,15 +273,19 @@ impl Widget for CollectionListWidget {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use masonry::accesskit::Role;
     use masonry::core::NewWidget;
     use masonry::core::keyboard::{Key, NamedKey};
-    use masonry::core::{TextEvent, WidgetMut};
+    use masonry::core::{TextEvent, WidgetId, WidgetMut};
     use masonry::testing::TestHarness;
     use masonry::theme::default_property_set;
-    use xilem::masonry::widgets::VirtualScroll as VirtualScrollWidget;
+    use xilem::masonry::widgets::{VirtualScroll as VirtualScrollWidget, VirtualScrollAction};
 
     use super::CollectionListWidget;
+    use crate::Theme;
+    use crate::collection::item_row::OverlayListItem;
 
     #[test]
     fn constructing_from_a_prebuilt_virtual_scroll_does_not_panic() {
@@ -310,6 +314,80 @@ mod tests {
 
     fn key_down(named: NamedKey) -> TextEvent {
         TextEvent::key_down(Key::Named(named))
+    }
+
+    /// Pumps the harness until `VirtualScroll` stops asking for row changes,
+    /// materializing each requested row as a real `OverlayListItem` (not a
+    /// bare `Label`) and recording its [`WidgetId`] keyed by row index.
+    /// Mirrors `body.rs`'s `drive_to_fixpoint`/`drive_to_fixpoint_clickable`
+    /// — `CollectionListWidget` itself never handles `Fetch` (that's
+    /// `overlay_list_body`'s job), so a unit test at this level has to drive
+    /// `VirtualScroll` directly, the same way `body.rs`'s tests do for
+    /// `CollectionBodyWidget`.
+    fn drive_to_fixpoint(
+        harness: &mut TestHarness<CollectionListWidget>,
+        rows: &mut HashMap<usize, WidgetId>,
+    ) {
+        let mut iteration = 0;
+        loop {
+            iteration += 1;
+            assert!(iteration <= 1000, "Took too long to reach fixpoint");
+            let Some((action, _id)) = harness.pop_action::<VirtualScrollAction>() else {
+                break;
+            };
+            let VirtualScrollAction::Fetch(action) = action else {
+                continue;
+            };
+            harness.edit_root_widget(|mut w| {
+                let mut vs = CollectionListWidget::virtual_scroll_mut(&mut w);
+                VirtualScrollWidget::will_handle_action(&mut vs, &action);
+                for idx in action.old_active().clone() {
+                    if !action.target().contains(&idx) {
+                        VirtualScrollWidget::remove_child(&mut vs, idx);
+                        rows.remove(&idx);
+                    }
+                }
+                for idx in action.target().clone() {
+                    if !action.old_active().contains(&idx) {
+                        let row = NewWidget::new(OverlayListItem::new(
+                            format!("row {idx}").into(),
+                            false,
+                            &Theme::default(),
+                            Role::ListBoxOption,
+                        ))
+                        .erased();
+                        let row_id = row.id();
+                        VirtualScrollWidget::add_child(&mut vs, idx, row);
+                        rows.insert(idx, row_id);
+                    }
+                }
+            });
+        }
+    }
+
+    /// Builds a list of materialized `OverlayListItem` rows (rather than
+    /// bare `Label`s), drives it to a fixpoint, and syncs `active_start` —
+    /// needed because `set_highlight` specifically calls
+    /// `OverlayListItem::set_highlighted` on a materialized child, so tests
+    /// exercising that path need the real row widget type in place, mirroring
+    /// why `body.rs`'s `harness_with_clickable_rows` uses `RowClickable`
+    /// rather than `Label`.
+    fn harness_with_materialized_rows(
+        count: usize,
+    ) -> (TestHarness<CollectionListWidget>, HashMap<usize, WidgetId>) {
+        let vs = NewWidget::new(VirtualScrollWidget::new(0, count));
+        let widget = CollectionListWidget::new(vs, count, Role::ListBox);
+        let mut h = TestHarness::create_with_size(
+            default_property_set(),
+            NewWidget::new(widget),
+            (200, 400),
+        );
+        let root = h.root_widget().id();
+        h.focus_on(Some(root));
+        let mut rows = HashMap::new();
+        drive_to_fixpoint(&mut h, &mut rows);
+        h.edit_root_widget(|mut w| CollectionListWidget::set_active_start(&mut w, 0));
+        (h, rows)
     }
 
     #[test]
@@ -397,5 +475,87 @@ mod tests {
         let highlighted =
             h.edit_root_widget(|w: WidgetMut<'_, CollectionListWidget>| w.widget.highlighted());
         assert_eq!(highlighted, Some(1));
+    }
+
+    /// The previously-untested core of `set_highlight`: when the target
+    /// index is inside the materialized window, it must reach the real
+    /// `OverlayListItem::set_highlighted` call on the corresponding child —
+    /// not just flip `self.highlighted`. Every prior test in this file built
+    /// its harness via `harness_with_count`, which never drains `Fetch`, so
+    /// `children_ids()` was always empty and this branch never actually ran.
+    #[test]
+    fn set_highlight_pushes_to_a_materialized_row_and_clears_the_previous_one() {
+        let (mut h, rows) = harness_with_materialized_rows(20);
+        assert!(
+            rows.len() >= 2,
+            "fixture must materialize at least two rows, got {:?}",
+            rows.keys().copied().collect::<Vec<_>>()
+        );
+        let idx_a = *rows.keys().min().unwrap();
+        let idx_b = *rows.keys().filter(|&&i| i != idx_a).min().unwrap();
+
+        h.edit_root_widget(|mut w| CollectionListWidget::set_highlight(&mut w, Some(idx_a)));
+        h.redraw();
+        assert_eq!(
+            h.access_node(rows[&idx_a])
+                .expect("row exists")
+                .is_selected(),
+            Some(true),
+            "set_highlight should push highlighted=true onto the materialized \
+             row's OverlayListItem (via node.set_selected)"
+        );
+
+        h.edit_root_widget(|mut w| CollectionListWidget::set_highlight(&mut w, Some(idx_b)));
+        h.redraw();
+        assert_eq!(
+            h.access_node(rows[&idx_a])
+                .expect("row exists")
+                .is_selected(),
+            Some(false),
+            "moving the highlight away should clear the previous row's \
+             highlighted state"
+        );
+        assert_eq!(
+            h.access_node(rows[&idx_b])
+                .expect("row exists")
+                .is_selected(),
+            Some(true),
+            "moving the highlight to a new materialized row should set its \
+             highlighted state"
+        );
+    }
+
+    /// The other previously-untested branch: when the target index is
+    /// outside the materialized window, `set_highlight` must call
+    /// `VirtualScroll::scroll_to` to re-anchor toward it. Asserted the same
+    /// way `body_view.rs`'s `scroll_to_moves_the_materialized_window_to_the_target`
+    /// does — by driving the harness to a fixpoint again and confirming the
+    /// materialized window actually moved to include the target, rather than
+    /// racing the action queue's timing.
+    #[test]
+    fn set_highlight_scrolls_to_the_target_when_it_is_not_materialized() {
+        const ITEM_COUNT: usize = 1000;
+        const TARGET: usize = 900;
+
+        let (mut h, mut rows) = harness_with_materialized_rows(ITEM_COUNT);
+        assert!(
+            !rows.contains_key(&TARGET),
+            "row {TARGET} should be outside the initial materialized window, got {:?}",
+            rows.keys().copied().collect::<Vec<_>>()
+        );
+
+        h.edit_root_widget(|mut w| CollectionListWidget::set_highlight(&mut w, Some(TARGET)));
+
+        // set_highlight only calls VirtualScroll::scroll_to (a re-anchor) —
+        // it doesn't materialize the row itself. Drive back to a fixpoint so
+        // the resulting Fetch actually runs and TARGET becomes materialized.
+        drive_to_fixpoint(&mut h, &mut rows);
+
+        assert!(
+            rows.contains_key(&TARGET),
+            "set_highlight on unmaterialized index {TARGET} should call \
+             VirtualScroll::scroll_to and re-anchor the materialized window \
+             to include it, but row {TARGET} never got materialized"
+        );
     }
 }
