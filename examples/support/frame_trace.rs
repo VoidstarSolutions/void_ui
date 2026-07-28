@@ -143,18 +143,20 @@ where
         match name {
             TEXT_SPAN => {
                 println!("[{:8.3}] ======== USER MARK (key) ========", self.stamp());
+                // Text dispatch just finished; whatever visual response it
+                // causes has to come from a later frame. Overwrite rather than
+                // keep-first so `pending_input` always reflects the input that
+                // most recently reached the widget tree, not a stale one from
+                // earlier in the same frame gap.
+                let mut shared = self.shared.lock().expect("frame-trace lock");
+                shared.pending_input = Some(Instant::now());
             }
             DISPATCH_SPAN => {
                 println!("[{:8.3}] pointer dispatch {:>9.3?}", self.stamp(), elapsed);
-            }
-            EVENT_SPAN => {
-                // An input event just finished being handled. Whatever visual
-                // response it causes has to come from a later frame.
                 let mut shared = self.shared.lock().expect("frame-trace lock");
-                if shared.pending_input.is_none() {
-                    shared.pending_input = Some(Instant::now());
-                }
+                shared.pending_input = Some(Instant::now());
             }
+            EVENT_SPAN => {}
             RENDER_SPAN => {
                 let waited = {
                     let mut shared = self.shared.lock().expect("frame-trace lock");
