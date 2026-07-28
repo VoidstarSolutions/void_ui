@@ -36,6 +36,10 @@ chrono = "0.4"
 lucide-icons = "1.17.0"
 masonry = { workspace = true }
 tracing = { workspace = true }
+# Optional: composed into the gallery's frame tracer (see `profiling` feature
+# below and `examples/support/frame_trace.rs`) so it can add a `TracyLayer` to
+# its own subscriber instead of shutting Tracy out entirely.
+tracing-tracy = { version = "0.11", optional = true }
 void-ui-macros = { path = "void-ui-macros", optional = true }
 xilem = { workspace = true }
 xilem_masonry = { workspace = true }
@@ -78,7 +82,14 @@ gallery = ["dep:void-ui-macros"]
 #
 # Losing the frame marker costs little in practice: the `paint` span fires once
 # per redraw, so counting `paint` zones counts frames.
-profiling = ["masonry/tracy"]
+#
+# Composes with `VOID_UI_TRACE_FRAMES=1` (the gallery's own text-based frame
+# tracer, `examples/support/frame_trace.rs`): that tracer finalizes the global
+# subscriber itself, which would otherwise make `try_init_tracing()` — and its
+# `TracyLayer` — a permanent no-op whenever both are requested together. Enable
+# `dep:tracing-tracy` here so `frame_trace::install_if_requested` can add the
+# same layer to its own registry instead.
+profiling = ["masonry/tracy", "dep:tracing-tracy"]
 
 [[example]]
 name = "gallery"

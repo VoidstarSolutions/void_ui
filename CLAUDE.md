@@ -74,6 +74,17 @@ when `masonry_core/tracy` is on. That gives, for free, a zone per pass —
 `layout`, `paint`, `compose`, `update_anim`, `update_pointer`, `update_focus`, …
 — from the `info_span!`s in `masonry_core/src/passes/`.
 
+The one place this needs care: the gallery's own text-based frame tracer
+(`VOID_UI_TRACE_FRAMES=1`, `examples/support/frame_trace.rs`) finalizes the
+global `tracing` subscriber itself, before `try_init_tracing()` ever runs — and
+`try_init_tracing()` is a no-op once a subscriber is set. Run both together
+without accounting for that and Tracy silently never connects. The fix is in
+`frame_trace.rs`'s `install_if_requested`: when the `profiling` feature is on,
+it composes `tracing_tracy::TracyLayer` into its own registry (`Cargo.toml`'s
+`profiling` feature pulls in `dep:tracing-tracy` for exactly this), so
+`VOID_UI_TRACE_FRAMES=1 cargo run --release --example gallery --features
+gallery,profiling` gets both the text trace and a live Tracy connection.
+
 To make our own widget code show up as named zones alongside those, add
 `info_span!`/`#[tracing::instrument]` in the relevant `widget.rs` — no extra
 wiring needed, the layer picks it up.

@@ -207,7 +207,10 @@ where
 /// Installs the frame tracer when `VOID_UI_TRACE_FRAMES=1`.
 ///
 /// Must run before the event loop starts: masonry installs its own subscriber
-/// via `try_init_tracing`, which is a no-op once one is already set.
+/// via `try_init_tracing`, which is a no-op once one is already set. That also
+/// means this has to compose the `profiling` feature's `TracyLayer` into its
+/// own registry when that feature is on — otherwise finalizing our subscriber
+/// here would permanently shut Tracy out, silently, for the rest of the run.
 pub fn install_if_requested() {
     if std::env::var("VOID_UI_TRACE_FRAMES").as_deref() != Ok("1") {
         return;
@@ -216,8 +219,13 @@ pub fn install_if_requested() {
     // through the whole gallery. The process lives as long as the tracer.
     let shared: &'static Mutex<Shared> = Box::leak(Box::new(Mutex::new(Shared::default())));
     let _ = SHARED.set(shared);
-    tracing_subscriber::registry()
-        .with(FrameTraceLayer::new(shared))
-        .init();
+
+    let registry = tracing_subscriber::registry().with(FrameTraceLayer::new(shared));
+    #[cfg(feature = "profiling")]
+    let registry = registry.with(tracing_tracy::TracyLayer::default());
+    registry.init();
+
     println!("frame tracing on — 'input -> frame' is click-to-repaint latency");
+    #[cfg(feature = "profiling")]
+    println!("also streaming to Tracy (profiling feature is on)");
 }
