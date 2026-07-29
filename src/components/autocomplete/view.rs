@@ -296,7 +296,7 @@ where
             if let Some(ac_id) = handle.widget_id() {
                 ctx.mutate_later(ac_id, |mut w| {
                     let mut ac = w.downcast::<AutocompleteWidget>();
-                    AutocompleteWidget::mark_closed_after_click(&mut ac);
+                    AutocompleteWidget::mark_closed_suppressing_reopen(&mut ac);
                 });
             }
         })
@@ -502,9 +502,17 @@ where
         // keystroke round-trips `contents` back unchanged (host-controlled),
         // so `set_contents` alone would never re-evaluate the matching set —
         // see `AutocompleteWidget::set_match_summary`'s doc comment.
+        //
+        // `just_opened` (closed → open this call) drives the portal branch
+        // below: see `AutocompleteWidget::set_match_summary`'s doc comment
+        // for the live crash a stale, still-stashed leftover row causes if a
+        // reopen just diffs against the suggestion list left over from
+        // before close instead of starting fresh.
+        let mut just_opened = false;
         if contents_changed || suggestions_changed {
             let filtered = compute_filtered(&self.suggestions, &self.contents);
-            AutocompleteWidget::set_match_summary(&mut element, filtered.first().cloned());
+            just_opened =
+                AutocompleteWidget::set_match_summary(&mut element, filtered.first().cloned());
         }
         if self.placeholder != prev.placeholder {
             AutocompleteWidget::set_placeholder(&mut element, self.placeholder.clone());
@@ -549,13 +557,42 @@ where
                     Arc::clone(&self.on_changed),
                 );
                 let content: Arc<PortalContentView<State, Action>> = Arc::new(list_view);
-                portal.update(
-                    *key,
-                    content,
-                    &self.theme,
-                    PortalPlacement::BareTrigger,
-                    SurfaceStyle::Popover,
-                );
+                if just_opened {
+                    // Deregister the old entry and register a fresh one
+                    // (a new key) instead of updating the existing one in
+                    // place: `portal.update` would diff the new content
+                    // against whatever `VirtualScroll` state the old entry
+                    // left behind, which — while closed — never got a
+                    // layout pass to reconcile a prior shrink (see
+                    // `AutocompleteWidget::set_match_summary`'s doc
+                    // comment). Deregister/register instead tears the old
+                    // entry down and mounts a genuinely fresh one, the same
+                    // way `teardown` already does, so the reopened list
+                    // starts with an empty, consistent `VirtualScroll`
+                    // rather than inheriting stale, still-stashed rows.
+                    portal.deregister(*key);
+                    *key = portal.register(
+                        content,
+                        &self.theme,
+                        PortalPlacement::BareTrigger,
+                        SurfaceStyle::Popover,
+                    );
+                    // `set_match_summary` (earlier in this `rebuild`)
+                    // already pushed visibility for the *old* key through
+                    // `AutocompleteWidget`'s `PortalBinding` — a no-op now
+                    // that entry's gone. Repoint the binding at the new key
+                    // and re-push, or the reopened dropdown mounts but never
+                    // actually shows.
+                    AutocompleteWidget::set_portal_key(&mut element, *key);
+                } else {
+                    portal.update(
+                        *key,
+                        content,
+                        &self.theme,
+                        PortalPlacement::BareTrigger,
+                        SurfaceStyle::Popover,
+                    );
+                }
             }
             ViewBinding::InTree {
                 handle,

@@ -176,13 +176,16 @@ impl<W: Widget> SuggestionList<W> {
         }
     }
 
-    /// Closes the dropdown via the same back-channel outside-press dismissal
-    /// already uses — works identically in both hosting modes.
+    /// Closes the dropdown and suppresses the reopen a subsequent
+    /// `refocus_input` would otherwise trigger — see
+    /// [`AutocompleteWidget::mark_closed_suppressing_reopen`] for why this
+    /// (not the plain, non-suppressing `mark_closed` the outside-press
+    /// dismissal path uses) is required here.
     fn request_close(&self, ctx: &mut EventCtx<'_>) {
         if let Some(ac_id) = self.handle.widget_id() {
-            ctx.mutate_later(ac_id, |mut w| {
+            ctx.mutate_later(ac_id, move |mut w| {
                 let mut ac = w.downcast::<AutocompleteWidget>();
-                AutocompleteWidget::mark_closed(&mut ac);
+                AutocompleteWidget::mark_closed_suppressing_reopen(&mut ac);
             });
         }
     }
@@ -535,9 +538,10 @@ pub struct AutocompleteWidget {
     /// typically also feeds `contents`/`suggestions` back as new View props,
     /// triggering `AutocompleteView::rebuild` → `set_match_summary` in the
     /// very same reactive cascade — both would reopen the list on their own.
-    /// Set by [`Self::select_suggestion`] and
-    /// [`super::view::build_list_view`]'s `on_activated` hook (via
-    /// [`Self::mark_closed_after_click`]). **Neither reopen check clears
+    /// Set by [`Self::select_suggestion`], by
+    /// [`super::view::build_list_view`]'s `on_activated` hook, and by
+    /// [`SuggestionList::on_text_event`]'s Enter/Escape/Tab handling (all
+    /// three via [`Self::mark_closed_suppressing_reopen`]). **Neither reopen check clears
     /// it** (a previous version had `open_on_focus` clear it on read, which
     /// broke the moment both checks fired in the same cascade: whichever
     /// ran first silently spent the flag, leaving the other unprotected).
@@ -863,6 +867,28 @@ impl AutocompleteWidget {
         }
     }
 
+    /// Repoints the portal binding at a freshly-registered entry — called by
+    /// `AutocompleteView::rebuild` right after it deregisters the old
+    /// suggestion-list entry and registers a new one on reopen (see that
+    /// call site's doc comment). No-op in-tree.
+    ///
+    /// `set_match_summary` (called earlier in the same `rebuild`, before the
+    /// view knows a key swap is needed) already pushed visibility for the
+    /// *old* key via `sync_portal_visibility` — a harmless no-op once that
+    /// entry is deregistered, since `PortalSlot::set_visible` silently
+    /// ignores an unknown key. This re-pushes visibility for the *new* key
+    /// (`PortalBinding::set_key` alone doesn't), so the reopened dropdown
+    /// actually shows instead of silently pointing at a dead entry.
+    pub(crate) fn set_portal_key(this: &mut WidgetMut<'_, Self>, key: u64) {
+        let open = this.widget.open;
+        if let Hosting::Portal { binding, .. } = &mut this.widget.hosting {
+            binding.set_key(key);
+            if open {
+                binding.open(&mut this.ctx, OverlayAnchor::BottomStart, OVERLAY_GAP_PX);
+            }
+        }
+    }
+
     /// Update the displayed text. Called from the view layer on rebuild when
     /// the host's `contents` value changes. Does *not* touch open/closed
     /// state or `first_suggestion` — see [`Self::set_match_summary`], called
@@ -907,7 +933,26 @@ impl AutocompleteWidget {
     /// keystroke round-trips `contents` back unchanged (host-controlled), but
     /// the matching set still needs to be re-evaluated on every such
     /// round-trip.
-    pub(crate) fn set_match_summary(this: &mut WidgetMut<'_, Self>, first: Option<ArcStr>) {
+    ///
+    /// Returns whether the dropdown just transitioned closed → open — see
+    /// `AutocompleteView::rebuild`'s use of this to force a fresh suggestion
+    /// list mount on reopen, rather than diffing against the one left over
+    /// from before close: while closed, a `VirtualScroll`-backed list's own
+    /// subtree is stashed and so never gets a layout pass, which is the only
+    /// place it reconciles a shrunk item count (a `VirtualScrollAction::Fetch`
+    /// round-trip removing now-excess rows). A row a *prior* shrink (e.g. a
+    /// selection collapsing the suggestions down to the one exact match)
+    /// left materialized-but-stashed can therefore still be sitting in the
+    /// list's child map, unremoved, when the dropdown reopens — and masonry's
+    /// `VirtualScroll::layout` unconditionally lays out every child it still
+    /// holds, panicking ("trying to compute layout of stashed widget") on
+    /// that leftover row before its removal ever gets a chance to run. Live,
+    /// reproduced crash: select a suggestion (shrinks + closes), then press
+    /// Backspace (a genuine keystroke, so `handle_text_changed` correctly
+    /// clears `suppress_focus_open` and this legitimately reopens with a
+    /// regrown list) — the reopen's own layout pass is the first to touch the
+    /// still-stashed leftover row from the selection's shrink.
+    pub(crate) fn set_match_summary(this: &mut WidgetMut<'_, Self>, first: Option<ArcStr>) -> bool {
         this.widget.first_suggestion = first;
         let has_matches = this.widget.first_suggestion.is_some();
         // Also open (not just stay open) when the field already has focus:
@@ -920,9 +965,9 @@ impl AutocompleteWidget {
         // on it — see that field's doc comment: a click-selection's own
         // `on_changed` round-trip lands here (via `AutocompleteView::rebuild`
         // → `set_match_summary`) in the very same cascade as the click, and
-        // without this guard it would reopen the dropdown `mark_closed_
-        // after_click` just closed, focus having already been restored to
-        // the field by the click's `on_activated` hook.
+        // without this guard it would reopen the dropdown
+        // `mark_closed_suppressing_reopen` just closed, focus having already
+        // been restored to the field by the click's `on_activated` hook.
         let focus_wants_open = this.ctx.has_focus_target() && !this.widget.suppress_focus_open;
         let should_open = (this.widget.open || focus_wants_open) && has_matches;
         let open_changed = this.widget.open != should_open;
@@ -938,6 +983,8 @@ impl AutocompleteWidget {
             }
             this.ctx.request_accessibility_update();
         }
+
+        open_changed && should_open
     }
 
     /// Update the placeholder text shown while the field is empty.
@@ -1005,10 +1052,11 @@ impl AutocompleteWidget {
     }
 
     /// Notify that the dropdown should close — the slot/overlay may already
-    /// be hidden (outside-press dismissal) or this may be the trigger doing
-    /// the hiding (Enter/Escape/Tab from `SuggestionList`, or a click
-    /// selection's `on_activated` hook in `super::view`); idempotent either
-    /// way.
+    /// be hidden (outside-press dismissal, via [`autocomplete_dismiss_hook`])
+    /// or this may be the trigger doing the hiding (called through
+    /// [`Self::mark_closed_suppressing_reopen`] by `SuggestionList`'s
+    /// Enter/Escape/Tab handling or a click selection's `on_activated` hook
+    /// in `super::view`); idempotent either way.
     pub(crate) fn mark_closed(this: &mut WidgetMut<'_, Self>) {
         if !this.widget.open {
             return;
@@ -1026,26 +1074,41 @@ impl AutocompleteWidget {
         this.ctx.request_accessibility_update();
     }
 
-    /// Closes the dropdown after a click-selection's synchronous refocus
-    /// (the `on_activated` hook `super::view::build_list_view` wires into
-    /// `overlay_list`, run from `OverlayListItem::on_pointer_event`). Unlike
-    /// [`Self::mark_closed`] on its own (used directly by outside-press
-    /// dismissal and by `SuggestionList::on_text_event`'s Enter/Escape/Tab,
-    /// where any refocus already happened *before* this runs, per masonry's
-    /// text-event pass ordering — event dispatch, then focus update, then
-    /// rewrite passes), masonry's *pointer*-event pass ordering runs
-    /// `mutate_later` callbacks (this one included) before the focus update
-    /// pass resolves the `ctx.set_focus(text_area_id)` call `on_activated`
-    /// already made — confirmed by driving a real click through
-    /// `TestHarness` and observing `mark_closed` run, then
-    /// `Update::ChildFocusChanged(true)` fire immediately after, both within
-    /// the same `mouse_button_release`. Without suppressing it, that
-    /// focus-in sees `open == false` (this method having just set it) and
-    /// immediately reopens the dropdown via [`Self::open_on_focus`]'s own
-    /// `!self.open` guard — the exact same "click creates a focus gap that
-    /// would otherwise reopen the list" problem [`Self::suppress_focus_open`]
-    /// already exists to solve for [`Self::select_suggestion`]'s call sites.
-    pub(crate) fn mark_closed_after_click(this: &mut WidgetMut<'_, Self>) {
+    /// Closes the dropdown and suppresses the focus-driven reopen that would
+    /// otherwise immediately follow a refocus back onto the text input.
+    ///
+    /// Two call sites need this, for two different pass-ordering reasons:
+    ///
+    /// - A click-selection's synchronous refocus (the `on_activated` hook
+    ///   `super::view::build_list_view` wires into `overlay_list`, run from
+    ///   `OverlayListItem::on_pointer_event`): masonry's *pointer*-event pass
+    ///   ordering runs `mutate_later` callbacks (this one included) before
+    ///   the focus update pass resolves the `ctx.set_focus(text_area_id)`
+    ///   call `on_activated` already made — confirmed by driving a real
+    ///   click through `TestHarness` and observing `mark_closed` run, then
+    ///   `Update::ChildFocusChanged(true)` fire immediately after, both
+    ///   within the same `mouse_button_release`. Without suppressing it,
+    ///   that focus-in sees `open == false` (this method having just set
+    ///   it) and immediately reopens the dropdown via
+    ///   [`Self::open_on_focus`]'s own `!self.open` guard.
+    /// - [`SuggestionList::on_text_event`]'s Enter/Escape/Tab handling: in
+    ///   portal mode the listbox lives outside `AutocompleteWidget`'s own
+    ///   subtree, so `refocus_input`'s `ctx.set_focus(text_area_id)` is a
+    ///   real focus transition and does fire `Update::ChildFocusChanged(true)`
+    ///   on this widget — after `mark_closed` already ran (text-event pass
+    ///   ordering resolves focus *after* event dispatch, so this is not the
+    ///   same race as the click case, but the outcome is identical: without
+    ///   suppression, `set_match_summary`/`open_on_focus` sees a live focus
+    ///   target and matching suggestions and reopens immediately). Live
+    ///   crash, confirmed via tracing: selecting a suggestion with the
+    ///   keyboard narrows `compute_filtered` down to the exact match in the
+    ///   same cascade as this reopen, so the reopen's layout request lands
+    ///   on `VirtualScroll` while a just-shrunk-out row is still tracked but
+    ///   `is_explicitly_stashed` — masonry's layout pass panics ("trying to
+    ///   compute layout of stashed widget") because nothing had suppressed
+    ///   the reopen to give the pending `Fetch`/`remove_child` a chance to
+    ///   run first.
+    pub(crate) fn mark_closed_suppressing_reopen(this: &mut WidgetMut<'_, Self>) {
         this.widget.suppress_focus_open = true;
         Self::mark_closed(this);
     }
@@ -1431,7 +1494,7 @@ mod accessibility_tests {
             if let Some(ac_id) = handle.widget_id() {
                 ctx.mutate_later(ac_id, |mut w| {
                     let mut ac = w.downcast::<AutocompleteWidget>();
-                    AutocompleteWidget::mark_closed_after_click(&mut ac);
+                    AutocompleteWidget::mark_closed_suppressing_reopen(&mut ac);
                 });
             }
         })
@@ -2090,6 +2153,56 @@ mod accessibility_tests {
             .access_node(fx.autocomplete_id)
             .expect("combobox node");
         assert_eq!(node.data().is_expanded(), Some(false), "closed after Enter");
+    }
+
+    /// Portal-mode regression test for a real crash: selecting a suggestion
+    /// via the keyboard (Tab into the listbox, `ArrowDown`, Enter) refocuses
+    /// the text input, and in portal mode that's a real cross-subtree focus
+    /// transition (the listbox lives in the scope's portal slot, not as this
+    /// widget's descendant). `enter_in_listbox_closes_and_returns_focus_to_input`
+    /// above only covers in-tree mode, where the listbox is a descendant and
+    /// this reopen path can't fire at all — see `AutocompleteWidget::
+    /// suppress_focus_open`'s doc comment — which is exactly how this bug
+    /// went uncovered.
+    ///
+    /// This fixture bypasses the view layer entirely (see
+    /// `harness_with_fruit_portal`'s doc comment), so nothing calls
+    /// `set_match_summary` automatically the way `AutocompleteView::rebuild`
+    /// does in production immediately after a selection's `on_changed`
+    /// round-trip — simulated here by calling it directly, still reporting
+    /// the same (unchanged, still-matching) suggestion. Before the fix,
+    /// `SuggestionList::on_text_event`'s Enter/Escape/Tab handling closed the
+    /// dropdown via the plain, non-suppressing `mark_closed`, so this
+    /// `set_match_summary` call — seeing a live focus target and a matching
+    /// `first_suggestion`, with nothing suppressing it — reopened the
+    /// dropdown. Live, that reopen raced `VirtualScroll`'s own item-count
+    /// shrink (selecting a suggestion narrows `compute_filtered`) and
+    /// panicked laying out a row it had just stashed but not yet removed
+    /// ("trying to compute layout of stashed widget"). Fixed by routing
+    /// through `mark_closed_suppressing_reopen`, which sets
+    /// `suppress_focus_open` before closing.
+    #[test]
+    fn enter_selection_in_portal_listbox_does_not_reopen_the_dropdown() {
+        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit_portal();
+
+        harness.focus_on(Some(text_area_id));
+        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
+        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowDown)));
+        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Enter)));
+
+        harness.edit_widget_with_id(autocomplete_id, |mut w| {
+            let mut ac = w.downcast::<AutocompleteWidget>();
+            AutocompleteWidget::set_match_summary(&mut ac, Some(ArcStr::from("Apple")));
+        });
+        harness.render();
+
+        let node = harness.access_node(autocomplete_id).expect("combobox node");
+        assert_eq!(
+            node.data().is_expanded(),
+            Some(false),
+            "selecting via keyboard must not leave the dropdown reopened once the \
+             view's post-selection rebuild re-evaluates the match summary"
+        );
     }
 
     /// Escape while focus is in the listbox closes the dropdown and returns
