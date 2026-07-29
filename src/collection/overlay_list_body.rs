@@ -39,7 +39,16 @@ where
     let theme = *theme;
     let len = items.len();
     virtual_scroll(len, move |_state: &mut State, pos: usize| {
-        let text = items[pos].clone();
+        // `pos` can momentarily exceed `items.len()` during a rebuild that
+        // shrinks the list (e.g. a click-selection that collapses
+        // autocomplete's suggestions down to the one exact match):
+        // `virtual_scroll`'s own `View::rebuild` refreshes every
+        // still-materialized row's content *before* the resulting `Fetch`
+        // trims the widget down to the new, shorter range. Indexing
+        // unconditionally here panics on that transitional call — mirrors
+        // `collection_body`'s identical guard for the same race
+        // (`body_view.rs`'s "pos past the end" comment).
+        let text = items.get(pos).cloned().unwrap_or_else(|| ArcStr::from(""));
         overlay_list_item(
             text,
             pos,
@@ -113,7 +122,7 @@ mod integration_tests {
     use masonry::core::{ArcStr, Widget as _};
     use masonry::testing::TestHarness;
     use masonry::theme::default_property_set;
-    use xilem::core::{DynMessage, Environment, MessageCtx, MessageResult, ViewId};
+    use xilem::core::{DynMessage, Environment, MessageCtx, MessageResult, View, ViewId};
     use xilem::masonry::widgets::VirtualScrollAction;
     use xilem::{ViewCtx, WidgetView};
 
@@ -276,5 +285,107 @@ mod integration_tests {
             assert!(matches!(result, MessageResult::Action(())));
         });
         assert_eq!(state.selected, Some(items[0].clone()));
+    }
+
+    /// Regression test for a real crash: `overlay_list_body`'s per-index
+    /// closure used to index `items[pos]` unconditionally, which panics
+    /// (`index out of bounds`) when `pos` momentarily exceeds the new,
+    /// shrunk `items.len()`. This is exactly what happens live in
+    /// autocomplete: clicking a suggestion collapses `compute_filtered`
+    /// down to the one exact match, and `xilem_masonry::view::virtual_scroll`'s
+    /// own `View::rebuild` refreshes every *already-materialized* row's
+    /// content against the new (shorter) `items` — via this closure —
+    /// before the resulting `Fetch` trims the widget down to match. So a
+    /// row materialized at, say, index 8 against a 1000-item list gets
+    /// asked to rebuild against a 1-item list in the very same `rebuild`
+    /// call, well before any `Fetch`/`add_child`/`remove_child` cleanup
+    /// runs. Reproduced directly (bypassing `drive_to_fixpoint`, which
+    /// would just re-fetch and hide the bug) by handing the *already
+    /// materialized-against-1000-items* widget a freshly built view over
+    /// only 1 item and calling `View::rebuild` once.
+    #[test]
+    fn rebuild_survives_the_item_list_shrinking_out_from_under_materialized_rows() {
+        const ITEM_COUNT: usize = 1000;
+        let items: Arc<Vec<ArcStr>> = Arc::new(
+            (0..ITEM_COUNT)
+                .map(|i| ArcStr::from(format!("item {i}")))
+                .collect(),
+        );
+        let theme = Theme::default();
+        let on_select: super::OnSelect<S, ()> = Arc::new(|_s: &mut S, _pos: usize, _t: ArcStr| ());
+
+        let view = overlay_list_body(
+            Arc::clone(&items),
+            None,
+            &theme,
+            Role::ListBoxOption,
+            Arc::clone(&on_select),
+            None,
+        );
+
+        let mut ctx = ViewCtx::new(
+            test_support::noop_proxy(),
+            test_support::current_thread_runtime(),
+        );
+        let mut state = S { selected: None };
+        let (pod, mut view_state) = view.build(&mut ctx, &mut state);
+        let mut harness =
+            TestHarness::create_with_size(default_property_set(), pod.new_widget, (200, 400));
+        drive_to_fixpoint(&view, &mut view_state, &mut ctx, &mut harness, &mut state);
+
+        let materialized_before = harness.root_widget().children_ids().len();
+        assert!(
+            materialized_before > 1,
+            "need more than 1 materialized row for this test to actually exercise the \
+             out-of-range case; got {materialized_before}"
+        );
+
+        // The shrunk list, and the new view built over it — mirrors
+        // `AutocompleteView::rebuild` building a fresh `overlay_list_body`
+        // from a freshly recomputed `filtered` every rebuild.
+        let shrunk_items: Arc<Vec<ArcStr>> = Arc::new(vec![items[0].clone()]);
+        let shrunk_view = overlay_list_body(
+            Arc::clone(&shrunk_items),
+            None,
+            &theme,
+            Role::ListBoxOption,
+            on_select,
+            None,
+        );
+
+        // This is the actual regression check: pre-fix, this panicked
+        // ("index out of bounds") the moment `virtual_scroll`'s `rebuild`
+        // reached any materialized row past index 0. Reaching the
+        // assertions below at all proves the fix.
+        harness.edit_root_widget(|element| {
+            shrunk_view.rebuild(&view, &mut view_state, &mut ctx, element, &mut state);
+        });
+
+        // Drive the resulting Fetch to completion and confirm the widget
+        // ends up in a sane, correctly-trimmed state, not just "didn't
+        // panic".
+        drive_to_fixpoint(
+            &shrunk_view,
+            &mut view_state,
+            &mut ctx,
+            &mut harness,
+            &mut state,
+        );
+        let materialized_ids: Vec<_> = harness
+            .root_widget()
+            .children_ids()
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!(
+            materialized_ids.len(),
+            1,
+            "after the shrink settles, exactly the 1 remaining item should be materialized"
+        );
+        harness.redraw();
+        let node = harness
+            .access_node(materialized_ids[0])
+            .expect("materialized row has an accessibility node");
+        assert_eq!(node.label(), Some("item 0".to_string()));
     }
 }
