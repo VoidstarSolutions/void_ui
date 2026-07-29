@@ -264,7 +264,13 @@ impl Widget for OverlayListItem {
         node: &mut Node,
     ) {
         node.set_label(self.text.to_string());
-        node.set_selected(self.highlighted);
+        // `aria-selected` (accesskit's `set_selected`) is a valid attribute
+        // for `Role::ListBoxOption` (autocomplete's rows) but not for
+        // `Role::MenuItem` (dropdown's rows) — the pre-virtualization
+        // paint-only menu rows never exposed per-row `aria-selected` either.
+        if self.role == Role::ListBoxOption {
+            node.set_selected(self.highlighted);
+        }
     }
 
     fn children_ids(&self) -> ChildrenIds {
