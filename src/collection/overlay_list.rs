@@ -33,6 +33,14 @@ use super::item_row_view::OnSelect;
 use super::overlay_list_body::overlay_list_body;
 use crate::Theme;
 
+// `accepts_focus` pushed this to 8 args, one over clippy's
+// `too_many_arguments` threshold — allowed rather than bundled into a
+// config struct, mirroring the precedent at
+// `components::date_picker::widget`/`components::slider::widget` (params
+// here are heterogeneous enough — an `Arc`, two `Role`s, two callback types,
+// a `bool` — that a bundling struct wouldn't read any more clearly than the
+// flat argument list).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn overlay_list<State, Action>(
     items: Arc<Vec<ArcStr>>,
     highlighted: Option<usize>,
@@ -41,6 +49,7 @@ pub(crate) fn overlay_list<State, Action>(
     item_role: Role,
     on_select: OnSelect<State, Action>,
     on_activated: Option<OnActivated>,
+    accepts_focus: bool,
 ) -> impl WidgetView<State, Action, Widget: Sized>
 where
     State: 'static,
@@ -58,6 +67,7 @@ where
         ),
         item_count,
         container_role,
+        accepts_focus,
         phantom: PhantomData,
     }
 }
@@ -66,6 +76,14 @@ struct OverlayListView<V, State, Action> {
     child: V,
     item_count: usize,
     container_role: Role,
+    /// Forwarded verbatim into `CollectionListWidget::new` — see that
+    /// widget's `accepts_focus` field doc for why this must be per-caller
+    /// rather than hardcoded. Not read anywhere else in this View: it never
+    /// changes across `rebuild`s for a given caller (autocomplete always
+    /// passes `true`, `dropdown_button` always passes `false`), so there is no
+    /// `set_accepts_focus`-style setter to call from `rebuild` the way
+    /// `container_role` doesn't have one either.
+    accepts_focus: bool,
     phantom: PhantomData<fn(State) -> Action>,
 }
 
@@ -97,6 +115,7 @@ where
                 child_element.new_widget,
                 self.item_count,
                 self.container_role,
+                self.accepts_focus,
             )),
             OverlayListViewState {
                 child_state,
@@ -202,6 +221,7 @@ mod tests {
             Role::ListBoxOption,
             on_select,
             None,
+            true,
         );
         assert_widget_view(&view);
     }
@@ -317,6 +337,7 @@ mod integration_tests {
             ),
             item_count: items.len(),
             container_role: Role::ListBox,
+            accepts_focus: true,
             phantom: PhantomData,
         };
 

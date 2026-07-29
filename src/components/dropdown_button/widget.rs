@@ -743,6 +743,33 @@ impl Widget for ThemedDropdownButton {
                 ctx.set_handled();
                 ctx.request_paint_only();
             }
+            // Keeps real keyboard focus on the trigger for the whole time
+            // the menu is open (the roving-highlight model documented on the
+            // struct and on `CollectionListWidget::accepts_focus`) by
+            // consuming Tab outright rather than leaving it unhandled.
+            //
+            // This is required in addition to `CollectionListWidget::
+            // accepts_focus` being `false`: that flag stops masonry's
+            // default unhandled-Tab focus search from landing on
+            // `CollectionListWidget` itself, but the search still descends
+            // into *its* children when it doesn't accept focus, and the
+            // `VirtualScroll` widget wrapped inside it (`masonry::widgets::
+            // VirtualScroll`) hardcodes `accepts_focus() -> true` for its
+            // own unrelated reasons (see that widget's doc comment — it
+            // wants PageDown to work with no focusable child). Left
+            // unhandled, Tab would still walk past `CollectionListWidget`
+            // and land inside the virtualized list on `VirtualScroll`
+            // itself — in portal mode that reproduces the exact keyboard
+            // trap this all guards against, since `VirtualScroll` there
+            // isn't a `ThemedDropdownButton` descendant and has no Escape
+            // handling of its own. Consuming Tab here, at the point where
+            // focus is still on the trigger (a `ThemedDropdownButton`
+            // ancestor bubbles into before any of that runs), stops
+            // masonry's default search from running at all, so it never
+            // gets the chance to descend into the menu subtree.
+            Key::Named(NamedKey::Tab) => {
+                ctx.set_handled();
+            }
             _ => {}
         }
     }
@@ -970,7 +997,10 @@ mod tests {
         use xilem::masonry::widgets::VirtualScroll as VirtualScrollWidget;
 
         let vs = NewWidget::new(VirtualScrollWidget::new(0, item_count));
-        let list = CollectionListWidget::new(vs, item_count, Role::Menu);
+        // `false`: matches the real `build_menu_view` call site
+        // (`view.rs`) — dropdown_button's roving-highlight-on-trigger model
+        // means this must never be a Tab stop.
+        let list = CollectionListWidget::new(vs, item_count, Role::Menu, false);
         NewWidget::new(MenuContent::new(NewWidget::new(list), theme)).erased()
     }
 
@@ -1310,6 +1340,217 @@ mod tests {
             open_changes,
             vec![false],
             "click selection should report exactly one close, no spurious reopen"
+        );
+    }
+
+    /// Regression test for the keyboard-trap review finding: with
+    /// `CollectionListWidget::accepts_focus` unconditionally `true`,
+    /// `ThemedDropdownButton` (which has no `Tab` arm in `on_text_event`,
+    /// unlike autocomplete's `SuggestionList`) let masonry's default
+    /// unhandled-Tab focus search land on the virtualized menu itself —
+    /// silently switching from the documented roving-highlight-on-trigger
+    /// model to the list's own independent keyboard-nav state. In-tree
+    /// variant: `AnchoredOverlay` orders its children `[trigger, overlay]`,
+    /// so an unhandled Tab's preorder walk from the focused trigger reaches
+    /// the menu next.
+    #[test]
+    fn tab_does_not_move_focus_into_the_menu_in_tree() {
+        use masonry::core::{NewWidget, PointerButton};
+        use masonry::kurbo::Point;
+        use masonry::testing::TestHarness;
+        use masonry::theme::default_property_set;
+
+        let theme = Theme::default();
+        let menu = dummy_menu_content(&theme, 3);
+        let widget = ThemedDropdownButton::new(
+            DropdownButtonConfig {
+                label_text: "Menu".into(),
+                icon: None,
+                items: vec!["A".into(), "B".into(), "C".into()],
+                variant: ButtonVariant::Default,
+                disabled: false,
+                theme,
+            },
+            menu,
+            DropdownButtonHandle::new(),
+        )
+        .with_open_state(false, false);
+
+        let mut h = TestHarness::create_with_size(
+            default_property_set(),
+            NewWidget::new(widget),
+            (300, 300),
+        );
+
+        // A real click opens the menu and focuses the trigger (masonry's
+        // default click-to-focus), mirroring
+        // `click_selection_via_on_activated_closes_the_menu_without_touching_focus`.
+        h.mouse_move(Point::new(10.0, 10.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+        assert!(
+            h.edit_root_widget(|wm| wm.widget.open),
+            "menu should be open after the trigger click"
+        );
+
+        drive_in_tree_menu_to_fixpoint(&mut h, &["A", "B", "C"], None);
+
+        let trigger_focus = h.focused_widget_id();
+        assert!(
+            trigger_focus.is_some(),
+            "clicking the trigger should have focused it"
+        );
+
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
+
+        let focus_after_tab = h.focused_widget_id();
+        let role_after_tab = focus_after_tab
+            .and_then(|id| h.access_node(id))
+            .map(|n| n.role());
+        assert_ne!(
+            role_after_tab,
+            Some(Role::Menu),
+            "Tab must not move focus into the virtualized menu — \
+             CollectionListWidget::accepts_focus must be false for dropdown_button"
+        );
+        assert_eq!(
+            focus_after_tab, trigger_focus,
+            "with no other focusable widget in the tree, an unhandled Tab \
+             (CollectionListWidget no longer being a stop) should leave \
+             focus exactly where it was, on the trigger"
+        );
+
+        // Escape must still close the menu — proves this doesn't regress
+        // into depending on the (now-removed) Tab-into-list focus path.
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Escape)));
+        assert!(
+            !h.edit_root_widget(|wm| wm.widget.open),
+            "Escape should still close the menu"
+        );
+    }
+
+    /// Portal-mode counterpart of `tab_does_not_move_focus_into_the_menu_in_tree`
+    /// — the review specifically flagged portal mode as the worse case:
+    /// `CollectionListWidget` is mounted under `OverlayScope`'s `PortalSlot`,
+    /// not under `ThemedDropdownButton` at all, so once focus lands inside it
+    /// there, Escape never bubbles back to `ThemedDropdownButton::on_text_event`
+    /// (which is where menu-close-on-Escape lives) and portal mode has no
+    /// focus-driven auto-close either — a genuine keyboard trap. Masonry's
+    /// unhandled-Tab search walks the *entire* window tree in preorder from
+    /// the focus anchor (confirmed against `find_next_focusable` in
+    /// `masonry_core::passes::update`), which is how it can reach the portal
+    /// slot's content even though it isn't a `ThemedDropdownButton` descendant.
+    #[test]
+    fn tab_does_not_move_focus_into_the_menu_in_portal_mode() {
+        use masonry::core::NewWidget;
+        use masonry::layout::AsUnit;
+        use masonry::testing::TestHarness;
+        use masonry::theme::default_property_set;
+
+        fn with_dropdown<R>(
+            h: &mut TestHarness<OverlayScope>,
+            f: impl FnOnce(&mut WidgetMut<'_, ThemedDropdownButton>) -> R,
+        ) -> R {
+            h.edit_root_widget(|mut wm| {
+                let mut content = OverlayScope::content_mut(&mut wm);
+                let mut align = content.downcast::<masonry::widgets::Align>();
+                let mut sized = masonry::widgets::Align::child_mut(&mut align);
+                let mut sized = sized.downcast::<masonry::widgets::SizedBox>();
+                let mut dropdown = masonry::widgets::SizedBox::child_mut(&mut sized)
+                    .expect("sized box has the dropdown child");
+                let mut dropdown = dropdown.downcast::<ThemedDropdownButton>();
+                f(&mut dropdown)
+            })
+        }
+
+        let theme = Theme::default();
+        let scope_handle = OverlayScopeHandle::new();
+        let key = 11;
+
+        let dropdown = ThemedDropdownButton::new_portal(
+            DropdownButtonConfig {
+                label_text: "Menu".into(),
+                icon: None,
+                items: vec!["A".into(), "B".into(), "C".into()],
+                variant: ButtonVariant::Default,
+                disabled: false,
+                theme,
+            },
+            DropdownButtonHandle::new(),
+            scope_handle.clone(),
+            key,
+        )
+        .with_open_state(false, false);
+        let sized = masonry::widgets::SizedBox::new(NewWidget::new(dropdown).erased())
+            .width(100.0.px())
+            .height(40.0.px())
+            .prepare();
+        let content =
+            masonry::widgets::Align::new(masonry::layout::UnitPoint::TOP_LEFT, sized.erased())
+                .prepare()
+                .erased();
+        let menu = dummy_menu_content(&theme, 3);
+        let scope = OverlayScope::new(
+            scope_handle,
+            content,
+            vec![(
+                key,
+                menu,
+                crate::overlay_portal::PortalPlacement::BareTrigger,
+            )],
+        );
+        let mut h = TestHarness::create_with_size(
+            default_property_set(),
+            NewWidget::new(scope),
+            (300, 300),
+        );
+
+        // `trigger` is a `WidgetPod<dyn Widget>` in portal mode (see
+        // `Hosting::Portal`), so its id is available without needing a
+        // `WidgetMut`/downcast at all — simpler than `with_trigger!` here
+        // since this test only needs the id, never mutates the trigger.
+        let trigger_id = with_dropdown(&mut h, |d| match &d.widget.hosting {
+            Hosting::Portal { trigger, .. } => trigger.id(),
+            Hosting::InTree { .. } => unreachable!("this fixture always uses Hosting::Portal"),
+        });
+        h.focus_on(Some(trigger_id));
+
+        with_dropdown(&mut h, |d| ThemedDropdownButton::set_open(d, true));
+        h.edit_root_widget(|mut wm| {
+            let slot = OverlayScope::portal_slot_mut(&mut wm);
+            assert!(
+                slot.widget.placed_rect(key).is_some(),
+                "menu should be visible once open"
+            );
+        });
+
+        assert_eq!(
+            h.focused_widget_id(),
+            Some(trigger_id),
+            "sanity: focus starts on the trigger"
+        );
+
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
+
+        let focus_after_tab = h.focused_widget_id();
+        let role_after_tab = focus_after_tab
+            .and_then(|id| h.access_node(id))
+            .map(|n| n.role());
+        assert_ne!(
+            role_after_tab,
+            Some(Role::Menu),
+            "Tab must not move focus into the portal-mounted virtualized menu — \
+             CollectionListWidget::accepts_focus must be false for dropdown_button"
+        );
+
+        // The actual keyboard trap the review flagged: Escape must still
+        // close the menu even though we never Tabbed into the list, and even
+        // though the list lives outside ThemedDropdownButton's own subtree
+        // in portal mode.
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Escape)));
+        assert!(
+            !with_dropdown(&mut h, |d| d.widget.open),
+            "Escape should still close the menu in portal mode"
         );
     }
 }

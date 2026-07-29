@@ -71,6 +71,20 @@ pub(crate) struct CollectionListWidget {
     /// there's no id to point at in that case).
     highlighted_row_id: Option<WidgetId>,
     container_role: Role,
+    /// Backs [`Widget::accepts_focus`]. Per-instance rather than hardcoded
+    /// because the two consumers of this widget want genuinely different
+    /// keyboard models: autocomplete's `SuggestionList` wants Tab to move
+    /// real keyboard focus into the listbox (`Role::ListBox`'s intended ARIA
+    /// pattern there), while `dropdown_button`'s `ThemedDropdownButton` keeps
+    /// real focus on its trigger the whole time and drives this widget
+    /// imperatively via `set_highlight`/`move_highlight` (a roving-highlight
+    /// model, matching how a native `<select>` doesn't expose its options as
+    /// separate Tab stops). When this is `false`, masonry's default
+    /// unhandled-Tab focus search skips straight past this widget instead of
+    /// landing on it — see `src/components/dropdown_button/widget.rs`'s
+    /// `tab_does_not_move_focus_into_the_menu_*` tests for the regression
+    /// this guards against.
+    accepts_focus: bool,
 }
 
 impl CollectionListWidget {
@@ -78,6 +92,7 @@ impl CollectionListWidget {
         child: NewWidget<VirtualScrollWidget>,
         item_count: usize,
         container_role: Role,
+        accepts_focus: bool,
     ) -> Self {
         Self {
             child: child.to_pod(),
@@ -86,6 +101,7 @@ impl CollectionListWidget {
             highlighted: None,
             highlighted_row_id: None,
             container_role,
+            accepts_focus,
         }
     }
 
@@ -224,7 +240,7 @@ impl Widget for CollectionListWidget {
     type Action = NoAction;
 
     fn accepts_focus(&self) -> bool {
-        true
+        self.accepts_focus
     }
 
     fn on_text_event(
@@ -362,7 +378,7 @@ mod tests {
     #[test]
     fn constructing_from_a_prebuilt_virtual_scroll_does_not_panic() {
         let vs = NewWidget::new(VirtualScrollWidget::new(0, 100));
-        let widget = CollectionListWidget::new(vs, 100, Role::ListBox);
+        let widget = CollectionListWidget::new(vs, 100, Role::ListBox, true);
         let harness = TestHarness::create_with_size(
             default_property_set(),
             NewWidget::new(widget),
@@ -371,9 +387,29 @@ mod tests {
         assert!(!harness.root_widget().as_dyn().children_ids().is_empty());
     }
 
+    /// `accepts_focus()` must reflect exactly the constructor parameter, not
+    /// a hardcoded value — this is the field the `dropdown_button`/`autocomplete`
+    /// keyboard-model split depends on (see the field's doc comment).
+    #[test]
+    fn accepts_focus_reflects_the_constructor_parameter() {
+        let vs = NewWidget::new(VirtualScrollWidget::new(0, 10));
+        let widget = CollectionListWidget::new(vs, 10, Role::ListBox, true);
+        assert!(
+            masonry::core::Widget::accepts_focus(&widget),
+            "constructed with accepts_focus: true"
+        );
+
+        let vs = NewWidget::new(VirtualScrollWidget::new(0, 10));
+        let widget = CollectionListWidget::new(vs, 10, Role::Menu, false);
+        assert!(
+            !masonry::core::Widget::accepts_focus(&widget),
+            "constructed with accepts_focus: false"
+        );
+    }
+
     fn harness_with_count(count: usize) -> TestHarness<CollectionListWidget> {
         let vs = NewWidget::new(VirtualScrollWidget::new(0, count));
-        let widget = CollectionListWidget::new(vs, count, Role::ListBox);
+        let widget = CollectionListWidget::new(vs, count, Role::ListBox, true);
         let mut h = TestHarness::create_with_size(
             default_property_set(),
             NewWidget::new(widget),
@@ -449,7 +485,7 @@ mod tests {
         count: usize,
     ) -> (TestHarness<CollectionListWidget>, HashMap<usize, WidgetId>) {
         let vs = NewWidget::new(VirtualScrollWidget::new(0, count));
-        let widget = CollectionListWidget::new(vs, count, Role::ListBox);
+        let widget = CollectionListWidget::new(vs, count, Role::ListBox, true);
         let mut h = TestHarness::create_with_size(
             default_property_set(),
             NewWidget::new(widget),

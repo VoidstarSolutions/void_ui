@@ -516,6 +516,14 @@ where
             Role::MenuItem,
             on_select,
             Some(on_activated),
+            // `ThemedDropdownButton` keeps real keyboard focus on its
+            // trigger the whole time and drives the menu imperatively via
+            // `set_highlight`/`move_highlight` (roving-highlight model,
+            // matching how a native `<select>` doesn't expose its options as
+            // separate Tab stops) — so this must NOT be a Tab stop. See
+            // `CollectionListWidget::accepts_focus`'s doc for the contrast
+            // with autocomplete, which passes `true`.
+            false,
         ),
         theme: *theme,
         phantom: PhantomData,

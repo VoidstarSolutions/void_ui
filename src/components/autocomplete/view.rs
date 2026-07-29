@@ -308,6 +308,12 @@ where
             Role::ListBoxOption,
             on_select,
             Some(on_activated),
+            // Autocomplete's `SuggestionList` wants Tab to move real
+            // keyboard focus into the listbox — `Role::ListBox`'s intended
+            // ARIA pattern here. See `CollectionListWidget::accepts_focus`'s
+            // doc for the contrast with dropdown_button's roving-highlight
+            // model, which passes `false`.
+            true,
         ),
         theme: *theme,
         handle,
