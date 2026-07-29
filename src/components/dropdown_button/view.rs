@@ -315,8 +315,11 @@ where
         // optimization: items now flow through this View path, not an
         // imperative `set_items` on the chrome widget, so re-registering on
         // an item-set or theme change is how the new content actually
-        // reaches the list at all.
-        let items_changed = !Arc::ptr_eq(&self.items, &prev.items);
+        // reaches the list at all. `items` is re-wrapped in a fresh `Arc` on
+        // every `render()` call, so pointer equality can never hold across
+        // rebuilds; `item_labels` is the real diff signal (as it already is
+        // for the `set_items` guard above).
+        let items_changed = self.item_labels != prev.item_labels;
         let list_changed = items_changed || self.theme != prev.theme;
         if !list_changed {
             return;
