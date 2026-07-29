@@ -32,6 +32,7 @@ use super::item_row::OnActivated;
 use super::item_row_view::OnSelect;
 use super::overlay_list_body::overlay_list_body;
 use crate::Theme;
+use crate::components::item_list;
 
 // `accepts_focus` pushed this to 8 args, one over clippy's
 // `too_many_arguments` threshold — allowed rather than bundled into a
@@ -58,12 +59,14 @@ where
     let item_count = items.len();
     // Estimated per-row height for `CollectionListWidget::measure`'s
     // content-based (`MaxContent`) sizing — see that field's doc comment for
-    // why it can't just ask `VirtualScroll` for this. `density.row_height`
-    // is the same baseline `data_grid`'s simple, single-line rows use
-    // (`src/components/data_grid/view.rs`); `OverlayListItem` rows are
-    // equally simple single-line text, so the `list` component's richer
-    // `* 4/3` scale-up (for two-line/avatar content) doesn't apply here.
-    let item_extent = f64::from(theme.density.row_height);
+    // why it can't just ask `VirtualScroll` for this. `item_list::item_height`
+    // is the shared "single-line list item row height" formula
+    // `src/components/item_list.rs` documents as used by autocomplete,
+    // dropdown menu, and context menu alike — `data_grid`'s `density.
+    // row_height` was tried first and rejected: it bakes in grid-cell
+    // padding `OverlayListItem` (a bare `Label`, no padding wrapper) doesn't
+    // have, which measurably overestimated real row height live.
+    let item_extent = item_list::item_height(&theme.density);
     OverlayListView {
         child: overlay_list_body(
             items,
@@ -273,6 +276,7 @@ mod integration_tests {
     use crate::Theme;
     use crate::collection::imperative_list::CollectionListWidget;
     use crate::collection::overlay_list_body::overlay_list_body;
+    use crate::components::item_list;
     use crate::test_support;
 
     struct S;
@@ -354,7 +358,7 @@ mod integration_tests {
             ),
             item_count: items.len(),
             container_role: Role::ListBox,
-            item_extent: f64::from(theme.density.row_height),
+            item_extent: item_list::item_height(&theme.density),
             accepts_focus: true,
             phantom: PhantomData,
         };
