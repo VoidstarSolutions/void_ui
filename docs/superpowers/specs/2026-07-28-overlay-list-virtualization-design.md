@@ -197,14 +197,15 @@ wrapper. Its real imperative API (verified against the pinned commit,
   the computed range differs from its stored active range — submits
   `VirtualScrollAction::Fetch` as a widget action via `ctx.submit_action`. A
   driver **cannot** proactively call `add_child`/`remove_child` from
-  `set_items`; it must react to `Fetch` as it bubbles up. Masonry's `Widget`
-  trait has an `on_action` hook for exactly this
-  (`core/widget.rs:218-225`: `fn on_action(&mut self, ctx: &mut ActionCtx<'_>, props: &mut PropertiesMut<'_>, action: &ErasedAction, source: WidgetId)`;
-  unhandled actions bubble further up the tree) — any plain widget ancestor
-  can catch a child's action this way, no View layer required. This is
-  exactly the mechanism `SuggestionList::on_action` already uses today
-  (`widget.rs:197-218`) to re-emit `LabelList`'s `SuggestionSelected` from its
-  own id.
+  `set_items`; it must react to `Fetch`. As established above ("Why
+  `on_action` can't work at all for `Fetch`"), that reaction cannot happen
+  through masonry's `Widget::on_action` bubbling — `VirtualScrollFetchAction`
+  isn't `Clone` and `on_action` only ever lends a shared, pass-scoped
+  reference. `Fetch` is instead delivered with real ownership through Xilem's
+  `View::message`, to whichever `View` registered the action's source
+  `WidgetId` via `with_action_widget`/`record_action_source` — the same
+  mechanism `xilem_masonry::VirtualScroll`'s own `View` impl and
+  `collection_body` already rely on in production.
 - Resizing alone (`set_len`) does **not** itself add/remove anything or
   refresh already-materialized rows' *content* — only a `Fetch` reaction does
   that for rows entering/leaving the window. A same-length `set_items` call
