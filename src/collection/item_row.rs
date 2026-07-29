@@ -20,7 +20,7 @@ use masonry::core::{
 #[cfg(test)]
 use masonry::core::NewWidget;
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Point, Size};
+use masonry::kurbo::{Axis, Point, RoundedRect, Size};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use masonry::properties::ContentColor;
 use masonry::widgets::Label;
@@ -59,6 +59,22 @@ pub(crate) struct OverlayListItem {
     theme: Theme,
     role: Role,
     on_activated: Option<OnActivated>,
+    /// Whether this row is currently the first/last in the (whole, not just
+    /// materialized) list — masonry's only subtree-clip primitive
+    /// (`ctx.set_clip_path`) is rectangle-only, so the container's own
+    /// rounded chrome can't clip a row's hover fill to match its curved
+    /// corners the way a non-virtualized menu (`context_menu`'s `MenuPanel`,
+    /// which owns every row as a direct child pod and paints their hover
+    /// fills itself, all within one clipped `paint()` call) can. That
+    /// approach doesn't transfer here: `CollectionListWidget` only directly
+    /// owns `VirtualScroll`, not the individual materialized rows
+    /// `VirtualScroll` owns internally, and masonry exposes no "get child
+    /// rect by index" accessor for a grandchild. So each edge row rounds its
+    /// *own* corners to match instead — set by `overlay_list_body`'s
+    /// per-index closure (`pos == 0` / `pos == items.len() - 1`), the same
+    /// place that already knows both without new plumbing.
+    round_top: bool,
+    round_bottom: bool,
 }
 
 impl OverlayListItem {
@@ -68,6 +84,8 @@ impl OverlayListItem {
         theme: &Theme,
         role: Role,
         on_activated: Option<OnActivated>,
+        round_top: bool,
+        round_bottom: bool,
     ) -> Self {
         let mut lbl = Label::new(text.clone())
             .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
@@ -80,6 +98,8 @@ impl OverlayListItem {
             theme: *theme,
             role,
             on_activated,
+            round_top,
+            round_bottom,
         }
     }
 }
@@ -102,12 +122,16 @@ pub(crate) fn render_overlay_list_item(
     role: Role,
     on_activated: Option<OnActivated>,
 ) -> NewWidget<dyn Widget> {
+    // Corner rounding doesn't matter for these test-only fixtures — always
+    // unrounded (matches a row that's neither first nor last).
     NewWidget::new(OverlayListItem::new(
         text.clone(),
         highlighted,
         theme,
         role,
         on_activated,
+        false,
+        false,
     ))
     .erased()
 }
@@ -124,6 +148,25 @@ impl OverlayListItem {
             );
         }
         this.ctx.request_paint_only();
+    }
+
+    /// Updates which corners this row rounds to match the container's own
+    /// chrome — needed because virtualization *recycles* row instances
+    /// across indices as the materialized window shifts (scroll, or a
+    /// shrinking filtered list), so a row that wasn't previously an edge row
+    /// can become one, and vice versa, without being torn down and rebuilt.
+    /// See the `round_top`/`round_bottom` fields' doc comment for why this
+    /// can't just be masonry-level clipping.
+    pub(crate) fn set_rounded_corners(
+        this: &mut WidgetMut<'_, Self>,
+        round_top: bool,
+        round_bottom: bool,
+    ) {
+        if this.widget.round_top != round_top || this.widget.round_bottom != round_bottom {
+            this.widget.round_top = round_top;
+            this.widget.round_bottom = round_bottom;
+            this.ctx.request_paint_only();
+        }
     }
 
     pub(crate) fn set_highlighted(this: &mut WidgetMut<'_, Self>, highlighted: bool) {
@@ -284,7 +327,14 @@ impl Widget for OverlayListItem {
         let p = &self.theme.palette;
         let rect = ctx.border_box();
         if ctx.is_hovered() {
-            painter.fill(rect, p.surface_2).draw();
+            // Round this row's own top/bottom corners to match the
+            // container's chrome when it's an edge row — see `round_top`'s
+            // doc comment for why the container can't clip this for us.
+            let radius = f64::from(self.theme.radius.small);
+            let top = if self.round_top { radius } else { 0.0 };
+            let bottom = if self.round_bottom { radius } else { 0.0 };
+            let fill_rect = RoundedRect::from_rect(rect, (top, top, bottom, bottom));
+            painter.fill(fill_rect, p.surface_2).draw();
         }
         if self.highlighted {
             paint_focus_ring_inset(painter, rect.size(), &self.theme);
@@ -329,7 +379,15 @@ mod tests {
     #[test]
     fn overlay_list_item_builds_in_a_harness_without_panicking() {
         let text: masonry::core::ArcStr = "Apple".into();
-        let widget = OverlayListItem::new(text, true, &Theme::default(), Role::ListBoxOption, None);
+        let widget = OverlayListItem::new(
+            text,
+            true,
+            &Theme::default(),
+            Role::ListBoxOption,
+            None,
+            false,
+            false,
+        );
         let _harness = TestHarness::create_with_size(
             default_property_set(),
             NewWidget::new(widget),
@@ -359,6 +417,8 @@ mod tests {
             &Theme::default(),
             Role::ListBoxOption,
             None,
+            false,
+            false,
         );
         let mut harness = TestHarness::create_with_size(
             default_property_set(),
@@ -386,6 +446,8 @@ mod tests {
             &crate::Theme::default(),
             Role::ListBoxOption,
             None,
+            false,
+            false,
         );
         let mut harness = TestHarness::create_with_size(
             default_property_set(),

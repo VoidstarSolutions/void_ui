@@ -521,6 +521,8 @@ mod tests {
                             &Theme::default(),
                             Role::ListBoxOption,
                             None,
+                            false,
+                            false,
                         ))
                         .erased();
                         let row_id = row.id();
