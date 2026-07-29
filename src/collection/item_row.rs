@@ -7,6 +7,8 @@
 //! rect for a materialized row once `VirtualScroll` owns real, continuous
 //! scrolling, but a row always knows its own bounds.
 
+use std::sync::Arc;
+
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
     AccessCtx, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, PaintCtx,
@@ -22,16 +24,46 @@ use masonry::widgets::Label;
 use crate::Theme;
 use crate::focus_ring::paint_focus_ring_inset;
 
+/// Synchronous, `EventCtx`-level side effect run immediately after a pointer
+/// click completes a row selection — before the resulting selection action
+/// even reaches the xilem driver. Exists because `on_select`
+/// (`item_row_view.rs`) fires later, from inside `View::message`, which only
+/// ever has `MutateCtx`-level access (no `EventCtx`/`ActionCtx`) — masonry's
+/// `set_focus`/`request_focus` are only available from `EventCtx`/`ActionCtx`
+/// (see `masonry_core::core::contexts`), so a consumer that needs to move
+/// real focus (e.g. autocomplete returning focus to its text field after a
+/// click-selection) has no way to do that from `on_select` at all. This hook
+/// gives it exactly one synchronous opportunity, at the same point the
+/// original click was detected — mirroring how the pre-virtualization
+/// `LabelList::on_pointer_event` used to call `refocus_input` directly,
+/// inline with submitting the selection action.
+///
+/// Only wired for pointer clicks: keyboard Enter-selection
+/// (`CollectionListWidget::on_text_event`) activates a row via a
+/// `mutate_self_later` closure, which is `MutateCtx`-only — there's no
+/// `EventCtx` available there either, so keyboard-driven refocus/close is
+/// each consumer's own responsibility at a layer that does have one
+/// (autocomplete's `SuggestionList::on_text_event` handles Enter/Escape/Tab
+/// directly via bubbling, entirely independent of this hook).
+pub(crate) type OnActivated = Arc<dyn for<'a> Fn(&mut EventCtx<'a>) + Send + Sync>;
+
 pub(crate) struct OverlayListItem {
     label: WidgetPod<Label>,
     text: ArcStr,
     highlighted: bool,
     theme: Theme,
     role: Role,
+    on_activated: Option<OnActivated>,
 }
 
 impl OverlayListItem {
-    pub(crate) fn new(text: ArcStr, highlighted: bool, theme: &Theme, role: Role) -> Self {
+    pub(crate) fn new(
+        text: ArcStr,
+        highlighted: bool,
+        theme: &Theme,
+        role: Role,
+        on_activated: Option<OnActivated>,
+    ) -> Self {
         let mut lbl = Label::new(text.clone())
             .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
             .prepare();
@@ -42,6 +74,7 @@ impl OverlayListItem {
             highlighted,
             theme: *theme,
             role,
+            on_activated,
         }
     }
 }
@@ -54,8 +87,16 @@ pub(crate) fn render_overlay_list_item(
     highlighted: bool,
     theme: &Theme,
     role: Role,
+    on_activated: Option<OnActivated>,
 ) -> NewWidget<dyn Widget> {
-    NewWidget::new(OverlayListItem::new(text.clone(), highlighted, theme, role)).erased()
+    NewWidget::new(OverlayListItem::new(
+        text.clone(),
+        highlighted,
+        theme,
+        role,
+        on_activated,
+    ))
+    .erased()
 }
 
 impl OverlayListItem {
@@ -97,6 +138,17 @@ impl OverlayListItem {
         this.ctx.request_layout();
         this.ctx.request_accessibility_update();
     }
+
+    /// Synthesizes the same selection action a pointer click would submit —
+    /// used by `CollectionListWidget::on_text_event`'s Enter handler to
+    /// select the highlighted row without a real pointer event. Deliberately
+    /// does not also run `on_activated` (that hook needs `EventCtx`, and this
+    /// runs from a `mutate_self_later` closure, which only has `MutateCtx`);
+    /// keyboard-driven refocus/close is each consumer's own responsibility
+    /// elsewhere (see `on_activated`'s doc comment).
+    pub(crate) fn activate(this: &mut WidgetMut<'_, Self>) {
+        this.ctx.submit_action::<ArcStr>(this.widget.text.clone());
+    }
 }
 
 impl Widget for OverlayListItem {
@@ -124,6 +176,9 @@ impl Widget for OverlayListItem {
                 ..
             }) if ctx.is_active() && ctx.is_hovered() => {
                 ctx.submit_action::<Self::Action>(self.text.clone());
+                if let Some(on_activated) = &self.on_activated {
+                    on_activated(ctx);
+                }
                 ctx.set_handled();
             }
             _ => {}
@@ -218,7 +273,7 @@ mod tests {
     #[test]
     fn overlay_list_item_builds_in_a_harness_without_panicking() {
         let text: masonry::core::ArcStr = "Apple".into();
-        let widget = OverlayListItem::new(text, true, &Theme::default(), Role::ListBoxOption);
+        let widget = OverlayListItem::new(text, true, &Theme::default(), Role::ListBoxOption, None);
         let _harness = TestHarness::create_with_size(
             default_property_set(),
             NewWidget::new(widget),
@@ -229,7 +284,8 @@ mod tests {
     #[test]
     fn render_overlay_list_item_returns_a_constructible_widget() {
         let text: masonry::core::ArcStr = "Apple".into();
-        let widget = render_overlay_list_item(&text, true, &Theme::default(), Role::ListBoxOption);
+        let widget =
+            render_overlay_list_item(&text, true, &Theme::default(), Role::ListBoxOption, None);
         // NewWidget<dyn Widget> can't go into TestHarness (which requires
         // Widget: Sized) — this just confirms the call succeeds and returns
         // a real widget (its id is obtainable) without panicking.
@@ -246,6 +302,7 @@ mod tests {
             false,
             &Theme::default(),
             Role::ListBoxOption,
+            None,
         );
         let mut harness = TestHarness::create_with_size(
             default_property_set(),
@@ -272,6 +329,7 @@ mod tests {
             false,
             &crate::Theme::default(),
             Role::ListBoxOption,
+            None,
         );
         let mut harness = TestHarness::create_with_size(
             default_property_set(),

@@ -35,7 +35,9 @@ pub(crate) use body_view::{
 };
 pub(crate) use click::{ItemsFn, OnActivate, SelectionLens, apply_row_activate, apply_row_click};
 pub(crate) use ids::{IdSource, nearing_end, scroll_range_end, visual_range_ids};
-pub(crate) use item_row::render_overlay_list_item;
+#[cfg(test)]
+pub(crate) use imperative_list::CollectionListWidget;
+pub(crate) use item_row::{OnActivated, render_overlay_list_item};
 pub(crate) use item_row_view::{OnSelect, overlay_list_item};
 pub(crate) use overlay_list::overlay_list;
 pub(crate) use overlay_list_body::overlay_list_body;

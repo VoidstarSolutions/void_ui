@@ -2,73 +2,61 @@
 //!
 //! Two widgets live here:
 //!
-//! - [`SuggestionList`] — item-list overlay, closely mirrors `MenuContent` from
-//!   the dropdown button. Handles hover, keyboard highlight painting, and fires
-//!   [`SuggestionSelected`] on click.
+//! - [`SuggestionList`] — pure chrome (rounded-rect background/border,
+//!   capped-height sizing) wrapping whatever `overlay_list(...)` (Task 5,
+//!   `crate::collection`) builds — a virtualized, keyboard-navigable listbox.
+//!   Hover/highlight painting, click selection, and keyboard highlight
+//!   movement all live in that shared substrate now
+//!   (`CollectionListWidget`/`OverlayListItem`); `SuggestionList` only still
+//!   owns Enter/Escape/Tab (refocus the text input + close the dropdown —
+//!   see its `on_text_event`).
 //! - [`AutocompleteWidget`] — composite host: when inside an [`crate::overlay_scope`]
 //!   its input chrome is a standalone child and the suggestion list lives in the
 //!   scope's always-on-top portal slot; otherwise falls back to an [`AnchoredOverlay`]
-//!   exactly as before. Intercepts `TextAction`, `InputCleared`, and
-//!   `SuggestionSelected` actions from its descendants and re-emits the single
-//!   public [`AutocompleteAction::TextChanged`] that the view layer consumes.
-
-use std::sync::{Arc, Mutex};
+//!   exactly as before. Intercepts `TextAction` and `InputCleared` actions from
+//!   its descendants and re-emits the single public
+//!   [`AutocompleteAction::TextChanged`] that the view layer consumes.
+//!
+//! Filtering (`compute_filtered`) and item content live entirely in
+//! `super::view` now — `overlay_list`'s `virtual_scroll` child needs real,
+//! rebuild-diffed item content, not an imperative push, so `AutocompleteView`
+//! computes the filtered slice at view-build/rebuild time and this widget
+//! only keeps the small summary it still needs synchronously (see
+//! [`AutocompleteWidget::first_suggestion`]).
 
 use masonry::accesskit::{HasPopup, Node, Role};
 use masonry::core::keyboard::{Key, KeyState, NamedKey};
 use masonry::core::{
     AccessCtx, ActionCtx, ArcStr, ChildrenIds, ComposeCtx, ErasedAction, EventCtx, LayoutCtx,
-    MeasureCtx, MutateCtx, NewWidget, NoAction, PaintCtx, PropertiesMut, PropertiesRef,
-    RegisterCtx, StyleProperty, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
-    WidgetPod,
+    MeasureCtx, NewWidget, NoAction, PaintCtx, PropertiesMut, PropertiesRef, RegisterCtx,
+    StyleProperty, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
 use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Point, Rect, RoundedRect, Size, Stroke};
-use masonry::layout::{LayoutSize, LenDef, LenReq, Length, SizeDef};
+use masonry::kurbo::{Axis, Point, RoundedRect, Size, Stroke};
+use masonry::layout::{LayoutSize, LenDef, LenReq, Length};
 use masonry::properties::{
     Background, BorderColor, BorderWidth, CaretColor, ContentColor, CornerRadius, Padding,
     PlaceholderColor, SelectionColor,
 };
-use masonry::widgets::{self, Label, Passthrough, SizedBox, TextAction};
+use masonry::widgets::{self, SizedBox, TextAction};
 
 use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
 use crate::components::input::widget::{InputCleared, InputFrame};
 use crate::components::input::{stripped_text_input_props, text_area_props};
-use crate::components::item_list;
-use crate::components::scroll_container::widget::{ContentClip, ScrollView};
-use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 use crate::overlay::OverlayAnchor;
 use crate::overlay::binding::{self, PortalBinding};
-use crate::overlay_portal::PortalSlot;
-use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
+use crate::overlay_scope::OverlayScopeHandle;
 
 /// Suggestion list border stroke width — hairline chrome, not density-scaled.
 const LIST_BORDER: f64 = 1.0;
-/// Inset of the keyboard-highlight ring from the item bounds — focus chrome, not density-scaled.
-const HIGHLIGHT_RING_INSET: f64 = FOCUS_RING_INSET;
-/// Minimum suggestion list width in logical pixels — a clamp, not a density-scaled dimension.
-const MIN_LIST_WIDTH: f64 = 80.0;
 /// Maximum visible height for the suggestion list before it scrolls, px — a clamp, not a density-scaled dimension.
 const MAX_LIST_HEIGHT: f64 = 200.0;
-/// Max results for a typed-prefix match. Browsing the unfiltered list (empty
-/// query) isn't capped — the list scrolls — but typing should narrow to a
-/// short, scannable set rather than every match in a huge dataset.
-const MAX_SUGGESTIONS: usize = 20;
 /// Gap between the input field and the suggestion list overlay, px — a fixed
 /// anchor offset, not a density-scaled spacing token.
 const OVERLAY_GAP_PX: f64 = 2.0;
 /// Gap as a [`Length`] (used by the in-tree `AnchoredOverlay`).
 const OVERLAY_GAP: Length = Length::const_px(OVERLAY_GAP_PX);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SuggestionSelected action
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Fired when the user selects a suggestion. Carries the text directly so the
-/// receiver never has to resolve a stale index against filtered state.
-#[derive(Debug, Clone)]
-pub(crate) struct SuggestionSelected(pub ArcStr);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AutocompleteAction
@@ -83,32 +71,36 @@ pub enum AutocompleteAction {
 
 widget_id_handle!(
     /// Self-filling handle to an [`AutocompleteWidget`]'s widget id, filled at
-    /// `Update::WidgetAdded`. Given to portal-mounted [`super::view::SuggestionListView`]
-    /// so an item selection can `mutate_later` back into the widget to close the
-    /// suggestion list and emit the selected text.
+    /// `Update::WidgetAdded`. Given to [`SuggestionList`] so Enter/Escape/Tab
+    /// can `mutate_later` back into the widget to close the suggestion list.
     AutocompleteHandle
 );
 
 widget_id_handle!(
-    /// Self-filling handle to a [`LabelList`]'s widget id, filled at
-    /// `Update::WidgetAdded`. Lets [`AutocompleteWidget`] expose `aria-controls`
-    /// pointing at the listbox. The active-descendant relationship is set
-    /// directly by [`LabelList`] itself (see its `accessibility` impl), since it
-    /// always has immediate, local access to which item is highlighted.
-    LabelListHandle
+    /// Self-filling handle to the listbox's widget id (the
+    /// `overlay_list(...)`-built `CollectionListWidget`, `Role::ListBox`),
+    /// filled by [`SuggestionList`] at `Update::WidgetAdded` from its own
+    /// (already-known) child id — see `SuggestionList::update`. Lets
+    /// [`AutocompleteWidget`] expose `aria-controls` pointing at the listbox
+    /// and move real focus into it on forward-Tab, regardless of hosting mode
+    /// (in portal mode there's no tree path from `AutocompleteWidget` to the
+    /// listbox at all).
+    ListboxHandle
 );
 
 widget_id_handle!(
-    /// Handle to the autocomplete's editable `TextArea`'s widget id. Unlike the
-    /// other handles here, this is filled *eagerly* at [`AutocompleteWidget`]
-    /// construction — `build_chrome` already reads the id synchronously off the
-    /// `NewWidget` it builds, no need to wait for `Update::WidgetAdded`. Lets
-    /// [`LabelList`] call `ctx.set_focus()` directly to return focus to the input
-    /// after Enter-selection or Escape, in both hosting modes — see the module
-    /// docs for why arrow-key navigation moved from "focus stays in the textbox"
-    /// (blocked: `TextArea` unconditionally claims arrow keys for cursor
-    /// movement, even on a single line, so an ancestor never sees them) to
-    /// "Tab moves focus into the open listbox".
+    /// Handle to the autocomplete's editable `TextArea`'s widget id. Unlike
+    /// [`AutocompleteHandle`]/[`ListboxHandle`], this is filled *eagerly* at
+    /// [`AutocompleteWidget`] construction — `build_chrome` already reads the
+    /// id synchronously off the `NewWidget` it builds, no need to wait for
+    /// `Update::WidgetAdded`. Lets [`SuggestionList`] call `ctx.set_focus()`
+    /// directly to return focus to the input after Enter/Escape/Tab, and lets
+    /// a click-selection's `on_activated` hook (`super::view`) do the same
+    /// synchronously from `OverlayListItem::on_pointer_event` — see the
+    /// module docs for why arrow-key navigation moved from "focus stays in
+    /// the textbox" (blocked: `TextArea` unconditionally claims arrow keys
+    /// for cursor movement, even on a single line, so an ancestor never sees
+    /// them) to "Tab moves focus into the open listbox".
     TextAreaHandle
 );
 
@@ -116,119 +108,146 @@ widget_id_handle!(
 // SuggestionList
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Filtered suggestion list overlay for the autocomplete.
+/// Pure chrome (rounded-rect background/border, capped-height sizing)
+/// wrapping whatever `overlay_list(...)` (`crate::collection`, Task 5)
+/// builds — a virtualized, keyboard-navigable listbox widget
+/// (`CollectionListWidget`).
 ///
-/// Paints its own rounded-rect chrome (background + border) and hosts a
-/// [`ScrollView`] wrapping [`LabelList`], which holds the actual item widgets
-/// and handles hover/highlight/click. Split this way because `AnchoredOverlay`
-/// and `PortalSlot` both size their overlay with `SizeDef::MIN`, and
-/// `ScrollView` reports zero size for `MinContent` — `SuggestionList` is the
-/// thing that reports a sensible (capped) size; `ScrollView` only sees
-/// `MaxContent` requests forwarded from `SuggestionList::measure`.
-pub(crate) struct SuggestionList {
-    scroll: WidgetPod<ScrollView<LabelList>>,
+/// Generic over the wrapped widget type `W` — mirroring
+/// `CollapsibleWidget<W>` (`components/collapsible/widget.rs`), not an
+/// erased `WidgetPod<dyn Widget>` — so `super::view::SuggestionListView`
+/// (generic over the child *view*) can forward `rebuild`/`teardown`/
+/// `message` straight through via `this.ctx.get_mut(&mut this.widget.list)`,
+/// with no downcast needed at all. `W` gets erased exactly once, one level
+/// up, wherever this widget is actually embedded: `AutocompleteWidget`'s
+/// in-tree `AnchoredOverlay` overlay slot and the portal's `Passthrough`
+/// wrapper both already take `NewWidget<dyn Widget>` (see
+/// `NewWidget::erased`), so genericity here costs nothing at those
+/// boundaries. `SuggestionListView`'s own `Element` needing to be a
+/// concrete, nameable-outside-the-view type is what rules out erasing
+/// *inside* this widget instead — see the design write-up for why: an
+/// erased `WidgetPod<dyn Widget>` field can't hand back a concretely-typed
+/// `Mut<'_, Pod<W>>` for the wrapped view's own `rebuild`/`message` to use.
+///
+/// Owns Enter/Escape/Tab: refocuses the text input and closes the dropdown
+/// (`on_text_event`) — selection itself, hover, highlight painting, and
+/// arrow-key navigation all live in the wrapped `CollectionListWidget`/
+/// `OverlayListItem` substrate now.
+pub(crate) struct SuggestionList<W: Widget> {
+    list: WidgetPod<W>,
     theme: Theme,
+    handle: AutocompleteHandle,
+    text_area_handle: TextAreaHandle,
+    listbox_handle: ListboxHandle,
 }
 
-impl SuggestionList {
+impl<W: Widget> SuggestionList<W> {
     pub(crate) fn new(
-        items: impl IntoIterator<Item = ArcStr>,
+        list: NewWidget<W>,
         theme: &Theme,
-        listbox_handle: LabelListHandle,
-        autocomplete_handle: AutocompleteHandle,
+        handle: AutocompleteHandle,
         text_area_handle: TextAreaHandle,
+        listbox_handle: ListboxHandle,
     ) -> Self {
-        let label_list = LabelList::new(
-            items,
-            theme,
-            listbox_handle,
-            autocomplete_handle,
-            text_area_handle,
-        );
-        let scroll = ScrollView::new(NewWidget::new(label_list), theme);
         Self {
-            scroll: NewWidget::new(scroll).to_pod(),
+            list: list.to_pod(),
             theme: *theme,
+            handle,
+            text_area_handle,
+            listbox_handle,
+        }
+    }
+
+    /// Returns a mutable reference to the wrapped listbox — lets
+    /// `super::view::SuggestionListView` forward `rebuild`/`teardown`/
+    /// `message` straight through.
+    pub(crate) fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, W> {
+        this.ctx.get_mut(&mut this.widget.list)
+    }
+
+    /// Returns focus to the input field, if its id is known yet.
+    fn refocus_input(&self, ctx: &mut EventCtx<'_>) {
+        if let Some(id) = self.text_area_handle.widget_id() {
+            ctx.set_focus(id);
+        }
+    }
+
+    /// Closes the dropdown via the same back-channel outside-press dismissal
+    /// already uses — works identically in both hosting modes.
+    fn request_close(&self, ctx: &mut EventCtx<'_>) {
+        if let Some(ac_id) = self.handle.widget_id() {
+            ctx.mutate_later(ac_id, |mut w| {
+                let mut ac = w.downcast::<AutocompleteWidget>();
+                AutocompleteWidget::mark_closed(&mut ac);
+            });
         }
     }
 }
 
-/// Navigate from a `ScrollView<LabelList>` `WidgetMut` down to the `LabelList`
-/// and invoke `f`.
-fn with_label_list<R>(
-    scroll: &mut WidgetMut<'_, ScrollView<LabelList>>,
-    f: impl FnOnce(&mut WidgetMut<'_, LabelList>) -> R,
-) -> R {
-    let mut clip = ScrollView::child_mut(scroll);
-    let mut list = ContentClip::child_mut(&mut clip);
-    f(&mut list)
-}
-
 // --- MARK: WIDGETMUT SETTERS
-impl SuggestionList {
+impl<W: Widget> SuggestionList<W> {
     pub(crate) fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
         if this.widget.theme == *theme {
             return;
         }
         this.widget.theme = *theme;
-        {
-            let mut scroll = this.ctx.get_mut(&mut this.widget.scroll);
-            ScrollView::set_theme(&mut scroll, theme);
-            with_label_list(&mut scroll, |list| LabelList::set_theme(list, theme));
-        }
-        this.ctx.request_layout();
         this.ctx.request_paint_only();
-    }
-
-    pub(crate) fn set_items(
-        this: &mut WidgetMut<'_, Self>,
-        items: impl IntoIterator<Item = ArcStr>,
-    ) {
-        let mut scroll = this.ctx.get_mut(&mut this.widget.scroll);
-        with_label_list(&mut scroll, |list| LabelList::set_items(list, items));
-        ScrollView::scroll_to_origin(&mut scroll);
     }
 }
 
 // --- MARK: IMPL WIDGET
-impl Widget for SuggestionList {
-    type Action = SuggestionSelected;
+impl<W: Widget> Widget for SuggestionList<W> {
+    type Action = NoAction;
 
-    fn on_action(
+    fn on_text_event(
         &mut self,
-        ctx: &mut ActionCtx<'_>,
+        ctx: &mut EventCtx<'_>,
         _props: &mut PropertiesMut<'_>,
-        action: &ErasedAction,
-        _source: WidgetId,
+        event: &TextEvent,
     ) {
-        // Re-emit from our own widget id so the xilem driver can route the action.
+        let TextEvent::Keyboard(key) = event else {
+            return;
+        };
+        if key.state != KeyState::Down {
+            return;
+        }
+        // Enter, Escape, or Tab (either direction): return focus to the text
+        // input explicitly and close, rather than letting masonry cycle
+        // focus starting from the listbox's actual tree position. The
+        // listbox may live in the portal slot, mounted elsewhere in the
+        // tree, so an unhandled Tab would make masonry search for the next
+        // focusable widget from there instead of from the autocomplete's
+        // page position, landing on the wrong widget in either direction.
+        // This lands back on the text field instead; a second real
+        // Tab/Shift+Tab from there cycles correctly since the input's tree
+        // position does match its page position.
         //
-        // The driver maps widget ids to view paths (registered by `with_action_widget`
-        // in `view::SuggestionListView::build`). In portal mode, `LabelList` is deep inside
-        // a `PortalSlot` subtree that is separate from `AutocompleteWidget`'s subtree,
-        // so the action from `LabelList.id` has no registered view path and is dropped
-        // with an "unknown widget" error. Re-emitting here promotes the action to
-        // `SuggestionList.id`, which IS registered, so it reaches `view::SuggestionListView::message`.
-        // In in-tree mode the re-emitted action bubbles to `AutocompleteWidget::on_action`
-        // which handles it — so it never reaches the driver at all.
-        if let Some(sel) = action.downcast_ref::<SuggestionSelected>() {
-            ctx.submit_action::<Self::Action>(sel.clone());
+        // Selection itself (Enter on a highlighted row) already happened
+        // before this handler runs: `CollectionListWidget::on_text_event`'s
+        // own Enter arm (which fires first, since this widget's child is
+        // the one that has real focus) submits the highlighted row's
+        // selection action and deliberately does not `set_handled()`, so
+        // the same keypress bubbles up here afterward.
+        if let Key::Named(NamedKey::Enter | NamedKey::Escape | NamedKey::Tab) = &key.key {
+            self.refocus_input(ctx);
+            self.request_close(ctx);
             ctx.set_handled();
         }
     }
 
-    fn update(
-        &mut self,
-        _ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &Update,
-    ) {
+    fn update(&mut self, _ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
+        // The child's `WidgetPod` id is known synchronously (no need to wait
+        // for the child's own `Update::WidgetAdded`) — see `TextAreaHandle`'s
+        // doc comment for the general pattern.
+        if let Update::WidgetAdded = event {
+            self.listbox_handle.set(self.list.id());
+        }
     }
 
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.scroll);
+        ctx.register_child(&mut self.list);
     }
 
     fn measure(
@@ -239,14 +258,10 @@ impl Widget for SuggestionList {
         _len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        // Always request the scroll view's *natural* (unconstrained) size —
-        // `ScrollView` reports zero for `MinContent`, so we can't forward
-        // whatever `len_req` we were given. Vertical gets capped below;
-        // horizontal (the list's width) is left as-is.
         let context_size = LayoutSize::maybe(axis.cross(), cross_length);
         let natural = ctx
             .compute_length(
-                &mut self.scroll,
+                &mut self.list,
                 LenDef::MaxContent,
                 context_size,
                 axis,
@@ -260,8 +275,8 @@ impl Widget for SuggestionList {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        ctx.run_layout(&mut self.scroll, size);
-        ctx.place_child(&mut self.scroll, Point::ORIGIN);
+        ctx.run_layout(&mut self.list, size);
+        ctx.place_child(&mut self.list, Point::ORIGIN);
     }
 
     fn paint(
@@ -292,628 +307,13 @@ impl Widget for SuggestionList {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.scroll.id()])
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// LabelList
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// The actual suggestion item widgets, scrolled by [`SuggestionList`]'s
-/// [`ScrollView`]. Tracks hover, draws a focus-ring for keyboard navigation,
-/// and fires [`SuggestionSelected`] on click. Closely mirrors `MenuContent`
-/// from the dropdown button.
-///
-/// `Role::ListBox`. Reports its own widget id via [`LabelListHandle`] (read by
-/// [`AutocompleteWidget`] for `aria-controls`) and, since it always has direct
-/// access to which item is highlighted, sets `aria-activedescendant` on its
-/// own node — accesskit's `ActiveDescendant` is documented for exactly this
-/// "composite widget whose active item changes while focus stays elsewhere"
-/// case, so no cross-widget id plumbing is needed for that part.
-pub(crate) struct LabelList {
-    labels: Vec<WidgetPod<SuggestionItem>>,
-    /// Parallel to `labels` — the text of each item. Used to resolve a
-    /// selected index to text at action-submit time, where `WidgetPod`
-    /// internals are not accessible.
-    label_texts: Vec<ArcStr>,
-    /// Item rects in this widget's local (natural, un-scrolled) coordinate
-    /// space — `ScrollView` applies the scroll offset via a transform, so
-    /// `EventCtx::to_window`/`to_local` already account for it.
-    item_rects: Vec<Rect>,
-    hover_index: Option<usize>,
-    /// Keyboard-highlighted row index. Driven by this widget's own
-    /// `on_text_event` once it has real focus (see [`Self::accepts_focus`]).
-    highlighted: Option<usize>,
-    theme: Theme,
-    handle: LabelListHandle,
-    /// Lets Enter/Escape return focus to the input — see [`TextAreaHandle`].
-    autocomplete_handle: AutocompleteHandle,
-    text_area_handle: TextAreaHandle,
-}
-
-impl LabelList {
-    fn new(
-        items: impl IntoIterator<Item = ArcStr>,
-        theme: &Theme,
-        handle: LabelListHandle,
-        autocomplete_handle: AutocompleteHandle,
-        text_area_handle: TextAreaHandle,
-    ) -> Self {
-        let items: Vec<ArcStr> = items.into_iter().collect();
-        let label_texts = items.clone();
-        let labels = items
-            .into_iter()
-            .map(|t| Self::make_item(t, theme))
-            .collect();
-        Self {
-            labels,
-            label_texts,
-            item_rects: Vec::new(),
-            hover_index: None,
-            highlighted: None,
-            theme: *theme,
-            handle,
-            autocomplete_handle,
-            text_area_handle,
-        }
-    }
-
-    fn make_item(text: ArcStr, theme: &Theme) -> WidgetPod<SuggestionItem> {
-        NewWidget::new(SuggestionItem::new(text, theme)).to_pod()
-    }
-
-    fn item_height(&self) -> f64 {
-        item_list::item_height(&self.theme.density)
-    }
-
-    fn pad_h(&self) -> f64 {
-        item_list::pad_h(&self.theme.density)
-    }
-
-    fn list_pad_v(&self) -> f64 {
-        item_list::menu_pad_v(&self.theme.density)
-    }
-
-    fn hit_item(&self, local: Point) -> Option<usize> {
-        item_list::hit_item(&self.item_rects, local)
-    }
-
-    fn to_local(ctx: &EventCtx<'_>, window_pos: Point) -> Point {
-        item_list::to_local(ctx, window_pos)
-    }
-
-    /// Returns focus to the input field, if its id is known yet.
-    fn refocus_input(&self, ctx: &mut EventCtx<'_>) {
-        if let Some(id) = self.text_area_handle.widget_id() {
-            ctx.set_focus(id);
-        }
-    }
-
-    /// Closes the dropdown via the same back-channel `portal_select`/outside-
-    /// press dismissal already use — works identically in both hosting modes.
-    fn request_close(&self, ctx: &mut EventCtx<'_>) {
-        if let Some(ac_id) = self.autocomplete_handle.widget_id() {
-            ctx.mutate_later(ac_id, |mut w| {
-                let mut ac = w.downcast::<AutocompleteWidget>();
-                AutocompleteWidget::mark_closed(&mut ac);
-            });
-        }
-    }
-
-    /// Moves the keyboard highlight by `delta` positions (wrapping), pushing
-    /// the `aria-selected` flag to the affected items and repainting.
-    fn move_highlight(&mut self, ctx: &mut EventCtx<'_>, delta: isize) {
-        let n = self.labels.len();
-        if n == 0 {
-            return;
-        }
-        let next = match self.highlighted {
-            None => {
-                if delta >= 0 {
-                    0
-                } else {
-                    n - 1
-                }
-            }
-            Some(i) => (i.cast_signed() + delta)
-                .rem_euclid(n.cast_signed())
-                .cast_unsigned(),
-        };
-        self.set_highlight(ctx, Some(next));
-    }
-
-    fn set_highlight(&mut self, ctx: &mut EventCtx<'_>, index: Option<usize>) {
-        if self.highlighted == index {
-            return;
-        }
-        let prev = self.highlighted;
-        self.highlighted = index;
-        if let Some(i) = prev
-            && let Some(label) = self.labels.get_mut(i)
-        {
-            ctx.mutate_child_later(label, |mut item| {
-                SuggestionItem::set_selected(&mut item, false);
-            });
-        }
-        if let Some(i) = index
-            && let Some(label) = self.labels.get_mut(i)
-        {
-            ctx.mutate_child_later(label, |mut item| {
-                SuggestionItem::set_selected(&mut item, true);
-            });
-        }
-        if let Some(i) = index {
-            // item_rects is cleared by set_items and repopulated in layout. If a
-            // keypress arrives before layout runs the vec is empty; fall back to
-            // computing the rect from theme metrics so the scroll request isn't lost.
-            let rect = self.item_rects.get(i).copied().unwrap_or_else(|| {
-                let item_h = self.item_height();
-                let i_f64 = f64::from(u32::try_from(i).unwrap_or(u32::MAX));
-                let y = self.list_pad_v() + i_f64 * item_h;
-                Rect::new(0.0, y, 0.0, y + item_h)
-            });
-            ctx.request_scroll_to(rect);
-        }
-        ctx.request_paint_only();
-        ctx.request_accessibility_update();
-    }
-}
-
-// --- MARK: WIDGETMUT SETTERS
-impl LabelList {
-    pub(crate) fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
-        if this.widget.theme == *theme {
-            return;
-        }
-        this.widget.theme = *theme;
-        for label in &mut this.widget.labels {
-            let mut item = this.ctx.get_mut(label);
-            SuggestionItem::set_theme(&mut item, theme);
-        }
-        this.ctx.request_layout();
-        this.ctx.request_paint_only();
-    }
-
-    pub(crate) fn set_items(
-        this: &mut WidgetMut<'_, Self>,
-        items: impl IntoIterator<Item = ArcStr>,
-    ) {
-        for label in this.widget.labels.drain(..) {
-            this.ctx.remove_child(label);
-        }
-        let theme = this.widget.theme;
-        let items: Vec<ArcStr> = items.into_iter().collect();
-        this.widget.label_texts.clone_from(&items);
-        this.widget.labels = items
-            .into_iter()
-            .map(|t| Self::make_item(t, &theme))
-            .collect();
-        this.widget.item_rects.clear();
-        this.widget.hover_index = None;
-        this.widget.highlighted = None;
-        this.ctx.children_changed();
-        this.ctx.request_layout();
-        this.ctx.request_paint_only();
-        this.ctx.request_accessibility_update();
-    }
-}
-
-// --- MARK: IMPL WIDGET
-impl Widget for LabelList {
-    type Action = SuggestionSelected;
-
-    fn accepts_pointer_interaction(&self) -> bool {
-        true
-    }
-
-    fn propagates_pointer_interaction(&self) -> bool {
-        false
-    }
-
-    /// Must be `true`, not just for `ctx.set_focus(listbox_id)` (forward-Tab
-    /// handling in [`AutocompleteWidget::on_text_event`]) — masonry's
-    /// accessibility pass only adds `accesskit::Action::Focus` to a widget's
-    /// a11y node when `accepts_focus()` is true, so screen readers/AT tools
-    /// that focus elements via the accessibility action API (rather than
-    /// raw key events) need this to reach the listbox at all.
-    ///
-    /// This does mean native backward-Tab search can treat this widget as a
-    /// valid Shift+Tab target when the input (not the list) holds focus —
-    /// in-tree, this widget lives in the same subtree as the input, so
-    /// backward cycling from the input could land here instead of exiting
-    /// to the previous page field. `on_text_event`'s explicit Shift+Tab
-    /// interception (for both hosting modes) exists specifically to
-    /// preempt that native search rather than relying on `accepts_focus`
-    /// to keep this widget out of it.
-    fn accepts_focus(&self) -> bool {
-        true
-    }
-
-    fn on_pointer_event(
-        &mut self,
-        ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &masonry::core::PointerEvent,
-    ) {
-        use masonry::core::{PointerButton, PointerButtonEvent, PointerEvent, PointerUpdate};
-        match event {
-            PointerEvent::Move(PointerUpdate { current, .. }) => {
-                let local = Self::to_local(ctx, current.logical_point());
-                let new_hover = self.hit_item(local);
-                if new_hover != self.hover_index {
-                    self.hover_index = new_hover;
-                    ctx.request_paint_only();
-                }
-            }
-            PointerEvent::Down(PointerButtonEvent {
-                button: Some(PointerButton::Primary),
-                ..
-            }) => {
-                ctx.capture_pointer();
-            }
-            // `is_active()` alone, not `is_hovered()`: masonry clears hovered
-            // status once a captured pointer drags outside this widget's
-            // bounds (is_active stays true throughout the capture). Gating on
-            // is_hovered() would skip this arm entirely for a press-drag-
-            // release-outside gesture — no selection, no set_handled(), and
-            // no close, since the scope's outside-press dismissal only fires
-            // on Down events landing outside, and this gesture's Down was
-            // inside (that's what started the capture). `hit_item` below
-            // already resolves to `None` for an outside release, so dropping
-            // the hover gate doesn't change behavior for a real miss.
-            PointerEvent::Up(PointerButtonEvent {
-                button: Some(PointerButton::Primary),
-                state,
-                ..
-            }) if ctx.is_active() => {
-                let local = Self::to_local(ctx, state.logical_point());
-                if let Some(i) = self.hit_item(local)
-                    && let Some(text) = self.label_texts.get(i)
-                {
-                    ctx.submit_action::<Self::Action>(SuggestionSelected(text.clone()));
-                    // Return focus to the input so the user can keep typing.
-                    self.refocus_input(ctx);
-                    ctx.set_handled();
-                }
-            }
-            PointerEvent::Leave(_) if self.hover_index.is_some() => {
-                self.hover_index = None;
-                ctx.request_paint_only();
-            }
-            _ => {}
-        }
-    }
-
-    fn on_text_event(
-        &mut self,
-        ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &TextEvent,
-    ) {
-        let TextEvent::Keyboard(key) = event else {
-            return;
-        };
-        if key.state != KeyState::Down {
-            return;
-        }
-        match &key.key {
-            Key::Named(NamedKey::ArrowDown) => {
-                self.move_highlight(ctx, 1);
-                ctx.set_handled();
-            }
-            Key::Named(NamedKey::ArrowUp) => {
-                self.move_highlight(ctx, -1);
-                ctx.set_handled();
-            }
-            Key::Named(NamedKey::Home) if !self.labels.is_empty() => {
-                self.set_highlight(ctx, Some(0));
-                ctx.set_handled();
-            }
-            Key::Named(NamedKey::End) if !self.labels.is_empty() => {
-                self.set_highlight(ctx, Some(self.labels.len() - 1));
-                ctx.set_handled();
-            }
-            Key::Named(NamedKey::Enter) => {
-                if let Some(i) = self.highlighted
-                    && let Some(text) = self.label_texts.get(i)
-                {
-                    ctx.submit_action::<Self::Action>(SuggestionSelected(text.clone()));
-                }
-                self.refocus_input(ctx);
-                self.request_close(ctx);
-                ctx.set_handled();
-            }
-            // Escape or Tab (either direction): return focus to the text
-            // input explicitly and close, rather than letting masonry cycle
-            // focus starting from the listbox's actual tree position. The
-            // listbox lives in the portal slot, mounted elsewhere in the
-            // tree, so an unhandled Tab would make masonry search for the
-            // next focusable widget from there instead of from the
-            // autocomplete's page position, landing on the wrong widget in
-            // either direction. This lands back on the text field instead;
-            // a second real Tab/Shift+Tab from there cycles correctly since
-            // the input's tree position does match its page position.
-            Key::Named(NamedKey::Escape | NamedKey::Tab) => {
-                self.refocus_input(ctx);
-                self.request_close(ctx);
-                ctx.set_handled();
-            }
-            _ => {}
-        }
-    }
-
-    fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        if let Update::WidgetAdded = event {
-            self.handle.set(ctx.widget_id());
-        }
-    }
-
-    fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
-
-    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        for label in &mut self.labels {
-            ctx.register_child(label);
-        }
-    }
-
-    fn measure(
-        &mut self,
-        ctx: &mut MeasureCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        axis: Axis,
-        len_req: LenReq,
-        _cross_length: Option<Length>,
-    ) -> Length {
-        let item_h = self.item_height();
-        let pad_h = self.pad_h();
-        let n = self.labels.len();
-        match axis {
-            Axis::Vertical => {
-                let n_f64 = f64::from(u32::try_from(n).unwrap_or(u32::MAX));
-                Length::px(self.list_pad_v() * 2.0 + item_h * n_f64)
-            }
-            Axis::Horizontal => {
-                // Each item's height is fixed at `item_h` regardless of any
-                // incoming cross-axis constraint (see the `Axis::Vertical` arm
-                // above, which also ignores inbound constraints and always
-                // reports the intrinsic height) — this must match `layout()`,
-                // which allocates exactly `item_h` per label. `pad_h` is
-                // horizontal padding and has no bearing on this vertical hint.
-                let row_height = Some(Length::px(item_h));
-                let mut max_w = MIN_LIST_WIDTH;
-                for label in &mut self.labels {
-                    let w = ctx
-                        .compute_length(
-                            label,
-                            len_req.into(),
-                            LayoutSize::maybe(Axis::Vertical, row_height),
-                            Axis::Horizontal,
-                            row_height,
-                        )
-                        .get();
-                    max_w = max_w.max(w);
-                }
-                Length::px(max_w + 2.0 * pad_h)
-            }
-        }
-    }
-
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        self.item_rects.clear();
-        let pad_h = self.pad_h();
-        let item_h = self.item_height();
-        let label_avail = Size::new((size.width - 2.0 * pad_h).max(0.0), item_h);
-
-        let mut y = self.list_pad_v();
-        for label in &mut self.labels {
-            let item_rect =
-                Rect::from_origin_size(Point::new(0.0, y), Size::new(size.width, item_h));
-            self.item_rects.push(item_rect);
-
-            let label_size = ctx.compute_size(label, SizeDef::fit(label_avail), label_avail.into());
-            ctx.run_layout(label, label_size);
-            let label_y = y + (item_h - label_size.height) * 0.5;
-            ctx.place_child(label, Point::new(pad_h, label_y));
-
-            y += item_h;
-        }
-    }
-
-    fn paint(
-        &mut self,
-        _ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        painter: &mut Painter<'_>,
-    ) {
-        let p = &self.theme.palette;
-
-        if let Some(i) = self.hover_index
-            && let Some(&rect) = self.item_rects.get(i)
-        {
-            painter.fill(rect, p.surface_2).draw();
-        }
-
-        if let Some(i) = self.highlighted
-            && let Some(&rect) = self.item_rects.get(i)
-        {
-            let inset = HIGHLIGHT_RING_INSET;
-            let ring = Rect::new(
-                rect.x0 + inset,
-                rect.y0 + inset,
-                rect.x1 - inset,
-                rect.y1 - inset,
-            );
-            paint_focus_ring(painter, ring, &self.theme);
-        }
-    }
-
-    fn accessibility_role(&self) -> Role {
-        Role::ListBox
-    }
-
-    fn accessibility(
-        &mut self,
-        _ctx: &mut AccessCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        node: &mut Node,
-    ) {
-        if let Some(i) = self.highlighted
-            && let Some(label) = self.labels.get(i)
-        {
-            node.set_active_descendant(label.id().into());
-        }
-    }
-
-    fn children_ids(&self) -> ChildrenIds {
-        let ids: Vec<_> = self.labels.iter().map(WidgetPod::id).collect();
-        ChildrenIds::from_slice(&ids)
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SuggestionItem
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Thin accessibility wrapper around a [`Label`]: exposes the item as
-/// `Role::ListBoxOption` with an explicit accessible name and `aria-selected`
-/// state, since `Label`'s own role can't be overridden from outside. Painting,
-/// hover, and the focus ring stay on [`LabelList`] — this widget adds no
-/// visuals of its own, just identity + state for assistive tech.
-pub(crate) struct SuggestionItem {
-    label: WidgetPod<Label>,
-    text: ArcStr,
-    selected: bool,
-}
-
-impl SuggestionItem {
-    fn new(text: ArcStr, theme: &Theme) -> Self {
-        let mut lbl = Label::new(text.clone())
-            .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
-            .prepare();
-        lbl.properties.insert(ContentColor::new(theme.palette.text));
-        Self {
-            label: lbl.to_pod(),
-            text,
-            selected: false,
-        }
-    }
-}
-
-// --- MARK: WIDGETMUT SETTERS
-impl SuggestionItem {
-    pub(crate) fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
-        let mut lbl = this.ctx.get_mut(&mut this.widget.label);
-        lbl.insert_prop(ContentColor::new(theme.palette.text));
-        Label::insert_style(
-            &mut lbl,
-            StyleProperty::FontSize(theme.density.ui_font_size),
-        );
-    }
-
-    pub(crate) fn set_selected(this: &mut WidgetMut<'_, Self>, selected: bool) {
-        if this.widget.selected != selected {
-            this.widget.selected = selected;
-            this.ctx.request_accessibility_update();
-        }
-    }
-}
-
-// --- MARK: IMPL WIDGET
-impl Widget for SuggestionItem {
-    type Action = NoAction;
-
-    fn update(
-        &mut self,
-        _ctx: &mut UpdateCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        _event: &Update,
-    ) {
-    }
-
-    fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
-
-    fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        ctx.register_child(&mut self.label);
-    }
-
-    fn measure(
-        &mut self,
-        ctx: &mut MeasureCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        axis: Axis,
-        len_req: LenReq,
-        cross_length: Option<Length>,
-    ) -> Length {
-        let context_size = LayoutSize::maybe(axis.cross(), cross_length);
-        ctx.compute_length(
-            &mut self.label,
-            len_req.into(),
-            context_size,
-            axis,
-            cross_length,
-        )
-    }
-
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        ctx.run_layout(&mut self.label, size);
-        ctx.place_child(&mut self.label, Point::ZERO);
-    }
-
-    fn paint(
-        &mut self,
-        _ctx: &mut PaintCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        _painter: &mut Painter<'_>,
-    ) {
-        // Purely structural — the inner `Label` paints itself.
-    }
-
-    fn accessibility_role(&self) -> Role {
-        Role::ListBoxOption
-    }
-
-    fn accessibility(
-        &mut self,
-        _ctx: &mut AccessCtx<'_>,
-        _props: &PropertiesRef<'_>,
-        node: &mut Node,
-    ) {
-        node.set_label(self.text.to_string());
-        node.set_selected(self.selected);
-    }
-
-    fn children_ids(&self) -> ChildrenIds {
-        ChildrenIds::from_slice(&[self.label.id()])
+        ChildrenIds::from_slice(&[self.list.id()])
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
-
-/// Case-insensitive prefix match, capped at [`MAX_SUGGESTIONS`].
-/// When `query` is empty, the first [`MAX_SUGGESTIONS`] entries are returned —
-/// the dropdown shows an initial window when the field first receives focus.
-/// The cap applies to the empty query too: the list is not virtualized, so an
-/// uncapped result would materialize one widget per entry (see the tracked
-/// follow-up to move this onto the shared virtualization substrate).
-///
-/// `all_lower` must be the pre-lowercased mirror of `all` (same length,
-/// same order). This avoids a `to_lowercase` allocation per item on the
-/// hot keystroke path.
-pub(crate) fn compute_filtered(all: &[ArcStr], all_lower: &[String], query: &str) -> Vec<ArcStr> {
-    if query.is_empty() {
-        return all.iter().take(MAX_SUGGESTIONS).cloned().collect();
-    }
-    let q = query.to_lowercase();
-    all.iter()
-        .zip(all_lower)
-        .filter(|(_, lower)| lower.starts_with(&q))
-        .map(|(s, _)| s.clone())
-        .take(MAX_SUGGESTIONS)
-        .collect()
-}
 
 /// Navigate from a `SizedBox` `WidgetMut` down to the `TextArea` child and
 /// invoke `f`. Used by both hosting modes (in-tree navigates through
@@ -971,36 +371,6 @@ fn apply_chrome_theme(sb: &mut WidgetMut<'_, SizedBox>, theme: &Theme) {
     });
 }
 
-/// Navigate to the `SuggestionList` in the in-tree overlay slot and invoke `f`.
-fn with_suggestion_list<R>(
-    w: &mut WidgetMut<'_, AnchoredOverlay>,
-    f: impl FnOnce(&mut WidgetMut<'_, SuggestionList>) -> R,
-) -> R {
-    let mut overlay = AnchoredOverlay::overlay_mut(w);
-    let mut list = overlay.downcast::<SuggestionList>();
-    f(&mut list)
-}
-
-/// Navigate to the portal-mounted `SuggestionList` for `key` — behind the
-/// scope's `PortalSlot` → `Passthrough` wrapping — and invoke `f`, when the
-/// slot child is currently mounted. The Portal-mode counterpart to
-/// [`with_suggestion_list`]; called from inside `mutate_later` closures so
-/// every setter drives the list through one downcast chain instead of five
-/// hand-copied ones.
-fn with_portal_list(
-    scope: &mut WidgetMut<'_, OverlayScope>,
-    key: u64,
-    f: impl FnOnce(&mut WidgetMut<'_, SuggestionList>),
-) {
-    let mut slot = OverlayScope::portal_slot_mut(scope);
-    if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
-        let mut pass = child.downcast::<Passthrough>();
-        let mut inner = Passthrough::child_mut(&mut pass);
-        let mut list = inner.downcast::<SuggestionList>();
-        f(&mut list);
-    }
-}
-
 /// Navigate to the `TextArea` via the in-tree `AnchoredOverlay` primary slot
 /// and invoke `f`.
 fn with_text_area<R>(
@@ -1045,12 +415,19 @@ enum Hosting {
 // AutocompleteWidget
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Construction inputs for [`AutocompleteWidget::new_portal`]; bundled to
-/// keep its argument count under clippy's `too_many_arguments` threshold.
+/// Construction inputs shared by [`AutocompleteWidget::new`] and
+/// [`AutocompleteWidget::new_portal`]; bundled to keep their argument counts
+/// under clippy's `too_many_arguments` threshold.
 pub(crate) struct AutocompleteConfig {
     pub(crate) contents: String,
     pub(crate) placeholder: ArcStr,
-    pub(crate) all_suggestions: Vec<ArcStr>,
+    /// The text of the highest-ranked (first) suggestion currently matching
+    /// `contents`, or `None` if nothing matches — the one piece of the
+    /// view-owned filtered set this widget still needs synchronously (for
+    /// `TextAction::Entered`'s "accept the top suggestion" shortcut, and to
+    /// know whether focusing/typing should open the dropdown at all). See
+    /// [`AutocompleteWidget::first_suggestion`].
+    pub(crate) first_suggestion: Option<ArcStr>,
     pub(crate) disabled: bool,
     pub(crate) theme: Theme,
 }
@@ -1067,27 +444,38 @@ pub(crate) struct AutocompleteConfig {
 ///   [`crate::overlay_portal::OverlayPortal`] via [`super::view::SuggestionListView`]
 ///   and mounted in the always-on-top portal slot, so it paints above siblings.
 ///
+/// Both hosting modes build their `SuggestionList` (and the `overlay_list`
+/// listbox it wraps) via `super::view::SuggestionListView` now — this widget
+/// never constructs one itself, only embeds an already-built element (see
+/// [`Self::new`]). Item content and filtering (`compute_filtered`) live
+/// entirely in `super::view::AutocompleteView` — a real, rebuild-diffed View
+/// prop — not here.
+///
 /// Intercepts actions from descendants and re-emits
 /// [`AutocompleteAction::TextChanged`] for the view layer.
 pub struct AutocompleteWidget {
     hosting: Hosting,
-    all_suggestions: Vec<ArcStr>,
-    /// Lower-case mirror of [`Self::all_suggestions`], pre-computed at
-    /// set time so `compute_filtered` never allocates on the hot path.
-    all_suggestions_lower: Vec<String>,
+    /// See [`AutocompleteConfig::first_suggestion`]. Kept in sync by
+    /// [`Self::set_match_summary`], which `super::view::AutocompleteView`
+    /// calls whenever `contents`/`suggestions` change (i.e. whenever the
+    /// view's own `compute_filtered` result could have changed) —
+    /// deliberately not folded into [`Self::set_contents`], since a typed
+    /// keystroke round-trips `contents` back unchanged (host-controlled) and
+    /// `set_contents` intentionally no-ops on that to avoid disturbing the
+    /// text area's cursor, but the matching set still needs to be
+    /// re-evaluated every time.
+    first_suggestion: Option<ArcStr>,
     /// Mirrors the host-controlled text, kept in sync via [`Self::set_contents`]
     /// and updated eagerly in action handlers for keyboard nav and selection.
     contents: String,
-    /// Pre-computed filtered slice of [`Self::all_suggestions`].
-    filtered: Vec<ArcStr>,
     open: bool,
     /// Suppresses the next [`Self::open_on_focus`] call so that click-based
     /// selection does not reopen the dropdown when focus returns to the input.
     ///
     /// Click creates a focus gap (`TextArea` → `None` → `TextArea`) that fires
     /// `ChildFocusChanged(true)` on this widget, which would normally reopen
-    /// the list. Set by [`Self::select_suggestion`] / [`Self::portal_select`]
-    /// and cleared by the first [`Self::open_on_focus`] that sees it.
+    /// the list. Set by [`Self::select_suggestion`] and cleared by the first
+    /// [`Self::open_on_focus`] that sees it.
     suppress_focus_open: bool,
     /// Set the moment `on_text_event`'s forward-Tab handler calls
     /// `ctx.set_focus(listbox_id)`, consumed by the very next
@@ -1103,38 +491,12 @@ pub struct AutocompleteWidget {
     theme: Theme,
     /// Resolves to the listbox's widget id once mounted, for `aria-controls`
     /// and for Tab-to-navigate (see [`Self::on_text_event`]).
-    listbox_handle: LabelListHandle,
-    /// Resolves to this widget's own id once mounted. Given to `LabelList` so
-    /// Escape can close the dropdown via [`Self::mark_closed`] regardless of
-    /// hosting mode (in portal mode there's no ancestor path back here).
+    listbox_handle: ListboxHandle,
+    /// Resolves to this widget's own id once mounted. Given to
+    /// `SuggestionList` so Enter/Escape/Tab can close the dropdown via
+    /// [`Self::mark_closed`] regardless of hosting mode (in portal mode
+    /// there's no ancestor path back here).
     handle: AutocompleteHandle,
-    /// Latest requested population for the portal-mounted `SuggestionList`,
-    /// shared with every queued `mutate_later` closure that would apply one.
-    ///
-    /// Several call sites (`open_on_focus`, `handle_text_changed`,
-    /// `set_contents`, `set_all_suggestions`) can each independently decide
-    /// the list needs repopulating — and since the portal-mounted list lives
-    /// outside this widget's own subtree, the only way to reach it is a
-    /// deferred `mutate_later` callback. Masonry drains *all* callbacks
-    /// queued during one input/action pass before it runs the
-    /// `register_children` pass that actually commits new children into the
-    /// widget arena (see `run_rewrite_passes`) — so if two of these call
-    /// sites fire from the same pass (e.g. accepting a suggestion narrows
-    /// the host's suggestion set, pushing a fresh `set_all_suggestions` call
-    /// in the same rebuild `select_suggestion` triggered), the second
-    /// callback's `remove_child` loop can end up trying to remove
-    /// `WidgetPod`s the first callback only just created — which are not
-    /// yet arena children at all, panicking with "`remove_child`: child not
-    /// found".
-    ///
-    /// Every call site writes its desired items here (last write wins) and
-    /// queues a closure that reads via `.take()` instead of capturing items
-    /// by value. Whichever closure actually runs first consumes the latest
-    /// value and applies it exactly once; any other closures queued in the
-    /// same pass find `None` and no-op. This guarantees at most one
-    /// remove-then-recreate cycle ever happens per settle batch, regardless
-    /// of how many call sites decided a repopulation was needed.
-    portal_pending_items: Arc<Mutex<Option<Vec<ArcStr>>>>,
 }
 
 impl AutocompleteWidget {
@@ -1188,55 +550,44 @@ impl AutocompleteWidget {
         (chrome_box, text_area_id)
     }
 
-    /// In-tree constructor (fallback, no scope ancestor).
+    /// In-tree constructor (fallback, no scope ancestor). `suggestion_list`
+    /// is the already-built, erased element `super::view::SuggestionListView`
+    /// (built by `AutocompleteView::build`) produced — this widget only
+    /// embeds it in the `AnchoredOverlay`'s overlay slot.
     #[must_use]
     pub(crate) fn new(
-        contents: &str,
-        placeholder: ArcStr,
-        all_suggestions: Vec<ArcStr>,
-        disabled: bool,
-        theme: &Theme,
+        config: AutocompleteConfig,
+        suggestion_list: NewWidget<dyn Widget>,
+        handle: AutocompleteHandle,
+        listbox_handle: ListboxHandle,
+        text_area_handle: &TextAreaHandle,
     ) -> Self {
-        let (chrome, text_area_id) = Self::build_chrome(contents, placeholder, disabled, theme);
-        let text_area_handle = TextAreaHandle::new();
-        text_area_handle.set(text_area_id);
-        let listbox_handle = LabelListHandle::new();
-        let handle = AutocompleteHandle::new();
-        let suggestion_list = SuggestionList::new(
-            [],
+        let AutocompleteConfig {
+            contents,
+            placeholder,
+            first_suggestion,
+            disabled,
             theme,
-            listbox_handle.clone(),
-            handle.clone(),
-            text_area_handle.clone(),
-        );
+        } = config;
+        let (chrome, text_area_id) = Self::build_chrome(&contents, placeholder, disabled, &theme);
+        text_area_handle.set(text_area_id);
 
-        let overlay = AnchoredOverlay::new(
-            chrome,
-            NewWidget::new(suggestion_list),
-            false,
-            OverlayAnchor::BottomStart,
-        )
-        .with_gap(OVERLAY_GAP);
-
-        let all_suggestions_lower: Vec<String> =
-            all_suggestions.iter().map(|s| s.to_lowercase()).collect();
-        let filtered = compute_filtered(&all_suggestions, &all_suggestions_lower, contents);
+        let overlay =
+            AnchoredOverlay::new(chrome, suggestion_list, false, OverlayAnchor::BottomStart)
+                .with_gap(OVERLAY_GAP);
 
         Self {
             hosting: Hosting::InTree {
                 overlay_host: NewWidget::new(overlay).to_pod(),
             },
-            all_suggestions,
-            all_suggestions_lower,
-            contents: contents.to_owned(),
-            filtered,
+            first_suggestion,
+            contents,
             open: false,
             suppress_focus_open: false,
             focus_moving_to_listbox: false,
-            theme: *theme,
+            theme,
             listbox_handle,
             handle,
-            portal_pending_items: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -1248,143 +599,78 @@ impl AutocompleteWidget {
         scope: OverlayScopeHandle,
         key: u64,
         handle: AutocompleteHandle,
-        listbox_handle: LabelListHandle,
+        listbox_handle: ListboxHandle,
         text_area_handle: &TextAreaHandle,
     ) -> Self {
         let AutocompleteConfig {
             contents,
             placeholder,
-            all_suggestions,
+            first_suggestion,
             disabled,
             theme,
         } = config;
         let (chrome, text_area_id) = Self::build_chrome(&contents, placeholder, disabled, &theme);
         text_area_handle.set(text_area_id);
-        let all_suggestions_lower: Vec<String> =
-            all_suggestions.iter().map(|s| s.to_lowercase()).collect();
-        let filtered = compute_filtered(&all_suggestions, &all_suggestions_lower, &contents);
 
         Self {
             hosting: Hosting::Portal {
                 chrome: chrome.to_pod(),
                 binding: PortalBinding::new(scope, key, autocomplete_dismiss_hook),
             },
-            all_suggestions,
-            all_suggestions_lower,
+            first_suggestion,
             contents,
-            filtered,
             open: false,
             suppress_focus_open: false,
             focus_moving_to_listbox: false,
             theme,
             listbox_handle,
             handle,
-            portal_pending_items: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Navigate to the in-tree `AnchoredOverlay`'s overlay slot content and
+    /// invoke `f`. The overlay slot holds erased `NewWidget<dyn Widget>`
+    /// content (a `Passthrough` wrapping `SuggestionList`, once
+    /// `super::view::AutocompleteView` builds it — see
+    /// `super::view::build_list_view`); `f` is expected to `downcast::<
+    /// Passthrough>()` before forwarding into the nested `SuggestionListView`
+    /// it wraps.
+    ///
+    /// Used by `AutocompleteView::rebuild`/`teardown`/`message` to forward
+    /// into the in-tree nested list view — portal mode never needs this
+    /// (its `SuggestionListView` is registered with, and dispatched by, the
+    /// scope's own portal registry instead). Panics if called in portal mode.
+    pub(crate) fn with_overlay_content<R>(
+        this: &mut WidgetMut<'_, Self>,
+        f: impl FnOnce(WidgetMut<'_, dyn Widget>) -> R,
+    ) -> R {
+        match &mut this.widget.hosting {
+            Hosting::InTree { overlay_host } => {
+                let mut h = this.ctx.get_mut(overlay_host);
+                let content = AnchoredOverlay::overlay_mut(&mut h);
+                f(content)
+            }
+            Hosting::Portal { .. } => {
+                unreachable!("with_overlay_content called in portal mode")
+            }
         }
     }
 }
 
-/// Latest-write into a [`AutocompleteWidget::portal_pending_items`] slot;
-/// see that field's doc comment for why this exists. A free function (rather
-/// than a `&self` method) so call sites can pass `&self.portal_pending_items`
-/// alongside a live `&mut self.hosting` borrow without conflict.
-fn set_portal_pending_items(pending: &Mutex<Option<Vec<ArcStr>>>, items: Vec<ArcStr>) {
-    *pending
-        .lock()
-        .expect("portal_pending_items mutex should not be poisoned") = Some(items);
-}
-
-/// Reads and clears `pending`; see
-/// [`AutocompleteWidget::portal_pending_items`] for why this exists.
-fn take_portal_pending_items(pending: &Mutex<Option<Vec<ArcStr>>>) -> Option<Vec<ArcStr>> {
-    pending
-        .lock()
-        .expect("portal_pending_items mutex should not be poisoned")
-        .take()
-}
-
-/// The context types `queue_portal_repopulation` is called from: `UpdateCtx`
-/// (`open_on_focus`), `ActionCtx` (`handle_text_changed`), and `MutateCtx`
-/// (`set_contents`/`set_all_suggestions`, via `WidgetMut::ctx`). masonry gives
-/// each an inherent `mutate_later`, not a shared trait, so this just forwards
-/// to whichever one the caller has.
-trait QueuesMutateLater {
-    fn queue_mutate_later(
-        &mut self,
-        target: WidgetId,
-        f: impl FnOnce(WidgetMut<'_, dyn Widget>) + Send + 'static,
-    );
-}
-
-impl QueuesMutateLater for UpdateCtx<'_> {
-    fn queue_mutate_later(
-        &mut self,
-        target: WidgetId,
-        f: impl FnOnce(WidgetMut<'_, dyn Widget>) + Send + 'static,
-    ) {
-        self.mutate_later(target, f);
-    }
-}
-
-impl QueuesMutateLater for ActionCtx<'_> {
-    fn queue_mutate_later(
-        &mut self,
-        target: WidgetId,
-        f: impl FnOnce(WidgetMut<'_, dyn Widget>) + Send + 'static,
-    ) {
-        self.mutate_later(target, f);
-    }
-}
-
-impl QueuesMutateLater for MutateCtx<'_> {
-    fn queue_mutate_later(
-        &mut self,
-        target: WidgetId,
-        f: impl FnOnce(WidgetMut<'_, dyn Widget>) + Send + 'static,
-    ) {
-        self.mutate_later(target, f);
-    }
-}
-
-/// Stores `items` in `pending` and queues a `mutate_later` on `scope_id` that
-/// drains the slot and pushes whatever's left into the portal-mounted
-/// `SuggestionList` for `key`. Shared by every call site that repopulates the
-/// portal-mode list — see [`AutocompleteWidget::portal_pending_items`] for why
-/// the store-then-drain indirection (rather than moving `items` directly into
-/// the closure) is needed.
-fn queue_portal_repopulation(
-    ctx: &mut impl QueuesMutateLater,
-    pending: &Arc<Mutex<Option<Vec<ArcStr>>>>,
-    scope_id: WidgetId,
-    key: u64,
-    items: Vec<ArcStr>,
-) {
-    set_portal_pending_items(pending, items);
-    let pending = Arc::clone(pending);
-    ctx.queue_mutate_later(scope_id, move |mut w| {
-        let Some(items) = take_portal_pending_items(&pending) else {
-            return;
-        };
-        let mut scope = w.downcast::<OverlayScope>();
-        with_portal_list(&mut scope, key, |list| {
-            SuggestionList::set_items(list, items);
-        });
-    });
-}
-
 // --- MARK: INTERNAL HELPERS
 impl AutocompleteWidget {
+    /// Opens the dropdown when focus enters the input field. Uses the
+    /// already-cached [`Self::first_suggestion`] rather than recomputing
+    /// anything — the view keeps it fresh on every rebuild, and nothing
+    /// async can have invalidated it since the last one (suggestions
+    /// arriving asynchronously while already focused is handled separately,
+    /// by [`Self::set_match_summary`]'s own `ctx.has_focus_target()` check).
     fn open_on_focus(&mut self, ctx: &mut UpdateCtx<'_>) {
         if self.suppress_focus_open {
             self.suppress_focus_open = false;
             return;
         }
-        self.filtered = compute_filtered(
-            &self.all_suggestions,
-            &self.all_suggestions_lower,
-            &self.contents,
-        );
-        if self.filtered.is_empty() {
+        if self.first_suggestion.is_none() {
             return;
         }
         // Bail before flipping `open` if the portal scope isn't mounted yet:
@@ -1399,24 +685,11 @@ impl AutocompleteWidget {
         self.open = true;
         match &mut self.hosting {
             Hosting::InTree { overlay_host } => {
-                let items = self.filtered.clone();
-                ctx.mutate_child_later(overlay_host, move |mut w| {
-                    with_suggestion_list(&mut w, |list| SuggestionList::set_items(list, items));
+                ctx.mutate_child_later(overlay_host, |mut w| {
                     AnchoredOverlay::set_overlay_visible(&mut w, true);
                 });
             }
             Hosting::Portal { binding, .. } => {
-                let scope_id = binding.scope_widget_id().expect("checked is_ready above");
-                let key = binding.key();
-                queue_portal_repopulation(
-                    ctx,
-                    &self.portal_pending_items,
-                    scope_id,
-                    key,
-                    self.filtered.clone(),
-                );
-                // Items were queued first; mutate callbacks run in submission
-                // order, so the visibility push below observes the fresh items.
                 binding.open(ctx, OverlayAnchor::BottomStart, OVERLAY_GAP_PX);
             }
         }
@@ -1428,7 +701,6 @@ impl AutocompleteWidget {
         match &mut self.hosting {
             Hosting::InTree { overlay_host } => {
                 ctx.mutate_child_later(overlay_host, |mut w| {
-                    with_suggestion_list(&mut w, |list| SuggestionList::set_items(list, []));
                     AnchoredOverlay::set_overlay_visible(&mut w, false);
                 });
             }
@@ -1436,66 +708,38 @@ impl AutocompleteWidget {
         }
     }
 
+    /// Reacts to a typed keystroke. Does *not* decide open/closed itself —
+    /// filtering moved to the view layer (`AutocompleteView::rebuild`,
+    /// `compute_filtered`), so submitting `TextChanged` here and letting the
+    /// resulting host round-trip (`on_changed` → new `contents` prop →
+    /// `AutocompleteView::rebuild` → [`Self::set_match_summary`]) settle the
+    /// open/closed state is enough: xilem processes an action and rebuilds
+    /// the tree synchronously, before the next paint, so there's no visible
+    /// staleness.
     fn handle_text_changed(&mut self, ctx: &mut ActionCtx<'_>, text: &str) {
         self.contents.clear();
         self.contents.push_str(text);
-        self.filtered = compute_filtered(&self.all_suggestions, &self.all_suggestions_lower, text);
-
-        let should_open = !self.filtered.is_empty();
-        let open_changed = self.open != should_open;
-        self.open = should_open;
-
-        match &mut self.hosting {
-            Hosting::InTree { overlay_host } => {
-                let items = self.filtered.clone();
-                ctx.mutate_child_later(overlay_host, move |mut w| {
-                    with_suggestion_list(&mut w, |list| {
-                        SuggestionList::set_items(list, items);
-                    });
-                    if open_changed {
-                        AnchoredOverlay::set_overlay_visible(&mut w, should_open);
-                    }
-                });
-            }
-            Hosting::Portal { binding, .. } => {
-                if let Some(scope_id) = binding.scope_widget_id() {
-                    let key = binding.key();
-                    queue_portal_repopulation(
-                        ctx,
-                        &self.portal_pending_items,
-                        scope_id,
-                        key,
-                        self.filtered.clone(),
-                    );
-                    if open_changed {
-                        if should_open {
-                            binding.open(ctx, OverlayAnchor::BottomStart, OVERLAY_GAP_PX);
-                        } else {
-                            binding.close(ctx);
-                        }
-                    }
-                }
-            }
-        }
-
         ctx.submit_action::<AutocompleteAction>(AutocompleteAction::TextChanged(text.to_owned()));
-        if open_changed {
-            ctx.request_accessibility_update();
-        }
         ctx.set_handled();
     }
 
+    /// Accepts a suggestion chosen while the *text field itself* has focus
+    /// (`TextAction::Entered`'s "accept the top suggestion" shortcut) — the
+    /// one remaining widget-level selection path, since focus never left the
+    /// input there's nothing to refocus. Selections made from inside the
+    /// open listbox (click, or Enter once Tab'd in) resolve through
+    /// `overlay_list`'s `on_select` instead (`super::view`), which calls the
+    /// host's `on_changed` directly — this method is not involved for that
+    /// path at all.
     fn select_suggestion(&mut self, ctx: &mut ActionCtx<'_>, selected: String) {
         let text = selected.clone();
         self.contents.clone_from(&selected);
-        self.filtered.clear();
         self.open = false;
         self.suppress_focus_open = true;
 
         match &mut self.hosting {
             Hosting::InTree { overlay_host } => {
                 ctx.mutate_child_later(overlay_host, move |mut w| {
-                    with_suggestion_list(&mut w, |list| SuggestionList::set_items(list, []));
                     AnchoredOverlay::set_overlay_visible(&mut w, false);
                     with_text_area(&mut w, |ta| widgets::TextArea::reset_text(ta, &text));
                 });
@@ -1539,8 +783,12 @@ impl AutocompleteWidget {
         }
     }
 
-    /// Update the displayed and filtered text. Called from the view layer on
-    /// rebuild when the host's `contents` value changes.
+    /// Update the displayed text. Called from the view layer on rebuild when
+    /// the host's `contents` value changes. Does *not* touch open/closed
+    /// state or `first_suggestion` — see [`Self::set_match_summary`], called
+    /// separately (and unconditionally, since this early-returns on an
+    /// unchanged value to avoid disturbing the text area's cursor mid-type,
+    /// which a typed keystroke's round-trip always is).
     pub(crate) fn set_contents(this: &mut WidgetMut<'_, Self>, contents: &str) {
         if this.widget.contents == contents {
             return;
@@ -1548,28 +796,9 @@ impl AutocompleteWidget {
         this.widget.contents.clear();
         this.widget.contents.push_str(contents);
 
-        let filtered = compute_filtered(
-            &this.widget.all_suggestions,
-            &this.widget.all_suggestions_lower,
-            contents,
-        );
-        // Also open (not just stay open) when the field already has focus:
-        // an external content change (e.g. host-driven autofill or restoring
-        // a draft into a controlled field) can happen while focused, and
-        // should surface matching suggestions the same way handle_text_changed
-        // does for a typed keystroke, rather than only ever narrowing/closing.
-        let should_open = (this.widget.open || this.ctx.has_focus_target()) && !filtered.is_empty();
-        let open_changed = this.widget.open != should_open;
-        this.widget.filtered.clone_from(&filtered);
-        this.widget.open = should_open;
-
         match &mut this.widget.hosting {
             Hosting::InTree { overlay_host } => {
                 let mut h = this.ctx.get_mut(overlay_host);
-                with_suggestion_list(&mut h, |list| SuggestionList::set_items(list, filtered));
-                if open_changed {
-                    AnchoredOverlay::set_overlay_visible(&mut h, should_open);
-                }
                 with_text_area(&mut h, |ta| {
                     let current = ta.widget.text().to_string();
                     if current != contents {
@@ -1577,85 +806,48 @@ impl AutocompleteWidget {
                     }
                 });
             }
-            Hosting::Portal { chrome, binding } => {
-                {
-                    let mut c = this.ctx.get_mut(chrome);
-                    let mut sb = c.downcast::<SizedBox>();
-                    with_text_area_in_chrome(&mut sb, |ta| {
-                        let current = ta.widget.text().to_string();
-                        if current != contents {
-                            widgets::TextArea::reset_text(ta, contents);
-                        }
-                    });
-                }
-                if let Some(scope_id) = binding.scope_widget_id() {
-                    let key = binding.key();
-                    queue_portal_repopulation(
-                        &mut this.ctx,
-                        &this.widget.portal_pending_items,
-                        scope_id,
-                        key,
-                        filtered.clone(),
-                    );
-                }
+            Hosting::Portal { chrome, .. } => {
+                let mut c = this.ctx.get_mut(chrome);
+                let mut sb = c.downcast::<SizedBox>();
+                with_text_area_in_chrome(&mut sb, |ta| {
+                    let current = ta.widget.text().to_string();
+                    if current != contents {
+                        widgets::TextArea::reset_text(ta, contents);
+                    }
+                });
             }
-        }
-
-        if open_changed {
-            Self::sync_portal_visibility(this);
-            this.ctx.request_accessibility_update();
         }
     }
 
-    /// Replace the full suggestion list. Filtered suggestions are recomputed
-    /// based on the current text.
-    pub(crate) fn set_all_suggestions(this: &mut WidgetMut<'_, Self>, suggestions: Vec<ArcStr>) {
-        if this.widget.all_suggestions == suggestions {
-            return;
-        }
-        this.widget.all_suggestions_lower = suggestions.iter().map(|s| s.to_lowercase()).collect();
-        this.widget.all_suggestions = suggestions;
-
-        let filtered = compute_filtered(
-            &this.widget.all_suggestions,
-            &this.widget.all_suggestions_lower,
-            &this.widget.contents,
-        );
+    /// Pushes the view-computed match summary — see
+    /// [`AutocompleteConfig::first_suggestion`] — and reconciles open/closed
+    /// state against it. Called by `AutocompleteView::rebuild` whenever
+    /// `contents` or `suggestions` changes, unconditionally (not gated on
+    /// `contents` equality the way [`Self::set_contents`] is): a typed
+    /// keystroke round-trips `contents` back unchanged (host-controlled), but
+    /// the matching set still needs to be re-evaluated on every such
+    /// round-trip.
+    pub(crate) fn set_match_summary(this: &mut WidgetMut<'_, Self>, first: Option<ArcStr>) {
+        this.widget.first_suggestion = first;
+        let has_matches = this.widget.first_suggestion.is_some();
         // Also open (not just stay open) when the field already has focus:
-        // suggestions can arrive asynchronously (e.g. a debounced/network
-        // fetch) after the user has already focused an initially-empty
-        // field, in which case open_on_focus already ran and bailed out
-        // with nothing to show. Without this, the dropdown would never
-        // appear until the user types or blurs and refocuses.
-        let should_open = (this.widget.open || this.ctx.has_focus_target()) && !filtered.is_empty();
+        // an external content/suggestions change (e.g. host-driven autofill,
+        // restoring a draft into a controlled field, or suggestions arriving
+        // asynchronously after an initially-empty field was already focused)
+        // should surface matching suggestions the same way a typed keystroke
+        // does, rather than only ever narrowing/closing.
+        let should_open = (this.widget.open || this.ctx.has_focus_target()) && has_matches;
         let open_changed = this.widget.open != should_open;
-        this.widget.filtered.clone_from(&filtered);
         this.widget.open = should_open;
 
-        match &mut this.widget.hosting {
-            Hosting::InTree { overlay_host } => {
-                let mut h = this.ctx.get_mut(overlay_host);
-                with_suggestion_list(&mut h, |list| SuggestionList::set_items(list, filtered));
-                if open_changed {
-                    AnchoredOverlay::set_overlay_visible(&mut h, should_open);
-                }
-            }
-            Hosting::Portal { binding, .. } => {
-                if let Some(scope_id) = binding.scope_widget_id() {
-                    let key = binding.key();
-                    queue_portal_repopulation(
-                        &mut this.ctx,
-                        &this.widget.portal_pending_items,
-                        scope_id,
-                        key,
-                        filtered.clone(),
-                    );
-                }
-            }
-        }
-
         if open_changed {
-            Self::sync_portal_visibility(this);
+            let is_portal = matches!(this.widget.hosting, Hosting::Portal { .. });
+            if is_portal {
+                Self::sync_portal_visibility(this);
+            } else if let Hosting::InTree { overlay_host } = &mut this.widget.hosting {
+                let mut h = this.ctx.get_mut(overlay_host);
+                AnchoredOverlay::set_overlay_visible(&mut h, should_open);
+            }
             this.ctx.request_accessibility_update();
         }
     }
@@ -1684,11 +876,9 @@ impl AutocompleteWidget {
         this.ctx.set_disabled(disabled);
         if disabled && this.widget.open {
             this.widget.open = false;
-            this.widget.filtered.clear();
             match &mut this.widget.hosting {
                 Hosting::InTree { overlay_host } => {
                     let mut h = this.ctx.get_mut(overlay_host);
-                    with_suggestion_list(&mut h, |list| SuggestionList::set_items(list, []));
                     AnchoredOverlay::set_overlay_visible(&mut h, false);
                 }
                 Hosting::Portal { binding, .. } => binding.close(&mut this.ctx),
@@ -1697,7 +887,11 @@ impl AutocompleteWidget {
         }
     }
 
-    /// Re-apply theme colors to the input chrome and suggestion list.
+    /// Re-apply theme colors to the input chrome. The suggestion list's own
+    /// theme flows through `super::view::SuggestionListView`'s `rebuild`
+    /// instead (both hosting modes now build/rebuild it as a real, nested
+    /// View — see `AutocompleteView`), so this widget doesn't need to reach
+    /// into it directly at all.
     pub(crate) fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
         if this.widget.theme == *theme {
             return;
@@ -1707,30 +901,14 @@ impl AutocompleteWidget {
         match &mut this.widget.hosting {
             Hosting::InTree { overlay_host } => {
                 let mut h = this.ctx.get_mut(overlay_host);
-                {
-                    let mut primary = AnchoredOverlay::primary_mut(&mut h);
-                    let mut sb = primary.downcast::<SizedBox>();
-                    apply_chrome_theme(&mut sb, theme);
-                }
-                with_suggestion_list(&mut h, |list| SuggestionList::set_theme(list, theme));
+                let mut primary = AnchoredOverlay::primary_mut(&mut h);
+                let mut sb = primary.downcast::<SizedBox>();
+                apply_chrome_theme(&mut sb, theme);
             }
-            Hosting::Portal { chrome, binding } => {
-                {
-                    let mut c = this.ctx.get_mut(chrome);
-                    let mut sb = c.downcast::<SizedBox>();
-                    apply_chrome_theme(&mut sb, theme);
-                }
-
-                if let Some(scope_id) = binding.scope_widget_id() {
-                    let key = binding.key();
-                    let theme_copy = *theme;
-                    this.ctx.mutate_later(scope_id, move |mut w| {
-                        let mut scope = w.downcast::<OverlayScope>();
-                        with_portal_list(&mut scope, key, |list| {
-                            SuggestionList::set_theme(list, &theme_copy);
-                        });
-                    });
-                }
+            Hosting::Portal { chrome, .. } => {
+                let mut c = this.ctx.get_mut(chrome);
+                let mut sb = c.downcast::<SizedBox>();
+                apply_chrome_theme(&mut sb, theme);
             }
         }
 
@@ -1738,16 +916,17 @@ impl AutocompleteWidget {
         this.ctx.request_paint_only();
     }
 
-    /// Notify that the portal slot was dismissed by an outside press. Syncs
-    /// `open`/`filtered` — the slot has already hidden itself.
+    /// Notify that the dropdown should close — the slot/overlay may already
+    /// be hidden (outside-press dismissal) or this may be the trigger doing
+    /// the hiding (Enter/Escape/Tab from `SuggestionList`, or a click
+    /// selection's `on_activated` hook in `super::view`); idempotent either
+    /// way.
     pub(crate) fn mark_closed(this: &mut WidgetMut<'_, Self>) {
         if !this.widget.open {
             return;
         }
         this.widget.open = false;
-        this.widget.filtered.clear();
 
-        // Also tell the scope/overlay to hide (idempotent if already hidden).
         match &mut this.widget.hosting {
             Hosting::InTree { overlay_host } => {
                 let mut w = this.ctx.get_mut(overlay_host);
@@ -1759,66 +938,33 @@ impl AutocompleteWidget {
         this.ctx.request_accessibility_update();
     }
 
-    /// Handle a suggestion selection that arrived from the portal
-    /// [`super::view::SuggestionListView`] via `mutate_later`. Updates widget
-    /// state, resets the text area, closes the portal slot, and submits
-    /// [`AutocompleteAction::TextChanged`].
-    pub(crate) fn portal_select(this: &mut WidgetMut<'_, Self>, text: String) {
-        this.widget.contents.clone_from(&text);
-        this.widget.filtered.clear();
-        this.widget.open = false;
-        // Do NOT set suppress_focus_open here. This function only runs once masonry
-        // flushes the mutate_later queued by SuggestionListView::message, and that
-        // flush happens strictly *after* the focus pass that fires ChildFocusChanged
-        // on this widget for the refocus_input() call in LabelList's Enter handler:
-        //
-        //   RenderRoot::handle_text_event (masonry_core/src/app/render_root.rs):
-        //     run_on_text_event_pass   — LabelList::on_text_event runs here,
-        //                                 calling ctx.set_focus(text_area_id)
-        //     run_update_focus_pass    — ChildFocusChanged(true) fires HERE,
-        //                                 with self.open still true
-        //     run_rewrite_passes()     — run_mutate_pass (first in the loop) is
-        //                                 what actually calls portal_select, i.e. HERE
-        //
-        // So ChildFocusChanged(true) always sees self.open == true and never calls
-        // open_on_focus — the flag would never be consumed, leaving it stuck and
-        // silently preventing the dropdown from opening on a later, real focus event.
-        // The self.open == true guard on ChildFocusChanged(true) already prevents the
-        // reopen without the flag, given this ordering.
-        //
-        // This ordering is a real masonry guarantee (RenderRoot::handle_text_event's
-        // fixed pass sequence), not incidental — but void_ui tracks masonry's `main`
-        // branch (see workspace Cargo.toml), so it could shift on a future upstream
-        // change without a compile break. If `enter_in_listbox_selects_closes_and_
-        // returns_focus_to_input` starts failing with the dropdown reopening after
-        // Enter-selection, re-check this ordering first.
-
-        let text_for_area = text.clone();
-
-        // Reset the text area in the chrome.
-        if let Hosting::Portal { chrome, .. } = &mut this.widget.hosting {
-            let mut c = this.ctx.get_mut(chrome);
-            let mut sb = c.downcast::<SizedBox>();
-            with_text_area_in_chrome(&mut sb, |ta| {
-                widgets::TextArea::reset_text(ta, &text_for_area);
-            });
-        }
-
-        // Close the portal slot.
-        match &mut this.widget.hosting {
-            Hosting::Portal { binding, .. } => binding.close(&mut this.ctx),
-            Hosting::InTree { .. } => unreachable!("portal_select called in in-tree mode"),
-        }
-
-        this.ctx
-            .submit_action::<AutocompleteAction>(AutocompleteAction::TextChanged(text));
-        this.ctx.request_paint_only();
-        this.ctx.request_accessibility_update();
+    /// Closes the dropdown after a click-selection's synchronous refocus
+    /// (the `on_activated` hook `super::view::build_list_view` wires into
+    /// `overlay_list`, run from `OverlayListItem::on_pointer_event`). Unlike
+    /// [`Self::mark_closed`] on its own (used directly by outside-press
+    /// dismissal and by `SuggestionList::on_text_event`'s Enter/Escape/Tab,
+    /// where any refocus already happened *before* this runs, per masonry's
+    /// text-event pass ordering — event dispatch, then focus update, then
+    /// rewrite passes), masonry's *pointer*-event pass ordering runs
+    /// `mutate_later` callbacks (this one included) before the focus update
+    /// pass resolves the `ctx.set_focus(text_area_id)` call `on_activated`
+    /// already made — confirmed by driving a real click through
+    /// `TestHarness` and observing `mark_closed` run, then
+    /// `Update::ChildFocusChanged(true)` fire immediately after, both within
+    /// the same `mouse_button_release`. Without suppressing it, that
+    /// focus-in sees `open == false` (this method having just set it) and
+    /// immediately reopens the dropdown via [`Self::open_on_focus`]'s own
+    /// `!self.open` guard — the exact same "click creates a focus gap that
+    /// would otherwise reopen the list" problem [`Self::suppress_focus_open`]
+    /// already exists to solve for [`Self::select_suggestion`]'s call sites.
+    pub(crate) fn mark_closed_after_click(this: &mut WidgetMut<'_, Self>) {
+        this.widget.suppress_focus_open = true;
+        Self::mark_closed(this);
     }
 }
 
 /// Dismiss hook registered with the portal slot (see
-/// [`crate::overlay_portal::DismissHook`]): syncs `open`/`filtered`
+/// [`crate::overlay_portal::DismissHook`]): syncs `open`
 /// after an outside-press dismissal via [`AutocompleteWidget::mark_closed`].
 pub(crate) fn autocomplete_dismiss_hook(mut w: WidgetMut<'_, dyn Widget>) {
     let mut ac = w.downcast::<AutocompleteWidget>();
@@ -1844,16 +990,16 @@ impl Widget for AutocompleteWidget {
                 }
                 // Enter over an open dropdown accepts the first suggestion —
                 // the near-universal combobox affordance (the listbox, once
-                // Tab-focused, has its own highlight-aware Enter handling in
-                // LabelList::on_text_event). `select_suggestion` fills the
-                // field, closes the popup, and consumes the key. When closed,
-                // it's left unhandled so an enclosing form can submit.
+                // Tab-focused, has its own highlight-aware Enter handling —
+                // see `CollectionListWidget::on_text_event` and
+                // `SuggestionList::on_text_event`). `select_suggestion` fills
+                // the field, closes the popup, and consumes the key. When
+                // closed, it's left unhandled so an enclosing form can submit.
                 TextAction::Entered(_) => {
                     if self.open
-                        && let Some(first) = self.filtered.first()
+                        && let Some(first) = self.first_suggestion.clone()
                     {
-                        let first = first.to_string();
-                        self.select_suggestion(ctx, first);
+                        self.select_suggestion(ctx, first.to_string());
                     }
                 }
             }
@@ -1868,30 +1014,24 @@ impl Widget for AutocompleteWidget {
                 // affordance). Emitting no TextChanged keeps the host's bound
                 // value intact — the field is not cleared.
                 self.open = false;
-                self.filtered.clear();
                 self.close_overlay_later(ctx);
             } else {
                 // No popup to dismiss: fall back to the bare-input clear
                 // behavior (InputFrame emits InputCleared on Escape), emptying
                 // the field and reporting the change.
                 self.contents.clear();
-                self.filtered.clear();
                 ctx.submit_action::<Self::Action>(AutocompleteAction::TextChanged(String::new()));
             }
             ctx.set_handled();
             ctx.request_paint_only();
             ctx.request_accessibility_update();
-            return;
-        }
-
-        // ── Suggestion selected by click (in-tree mode only) ──────────────────
-        if let Some(SuggestionSelected(text)) = action.downcast_ref::<SuggestionSelected>() {
-            self.select_suggestion(ctx, text.to_string());
         }
     }
 
     /// Tab moves real focus into the open listbox; once there,
-    /// [`LabelList::on_text_event`] handles arrow keys/Enter/Escape directly.
+    /// [`CollectionListWidget`](crate::collection)'s own `on_text_event`
+    /// handles arrow keys/Enter, and [`SuggestionList::on_text_event`]
+    /// handles Enter/Escape/Tab (refocus + close).
     ///
     /// Arrow/Home/End list-navigation can't be intercepted *here* while focus
     /// is still in the text field: masonry's built-in `TextArea`
@@ -1932,23 +1072,19 @@ impl Widget for AutocompleteWidget {
             ctx.set_handled();
         } else if key.key == Key::Named(NamedKey::Tab) && key.modifiers.shift() {
             // Explicitly consumed (set_handled), not left for masonry's
-            // native backward search: `LabelList::accepts_focus()` must
-            // return `true` (accesskit only exposes `Action::Focus` — and so
-            // AT-driven Tab navigation — to widgets that do), so native
-            // search can and does treat the listbox as a valid Shift+Tab
+            // native backward search: the listbox must return `true` from
+            // `accepts_focus()` (accesskit only exposes `Action::Focus` —
+            // and so AT-driven Tab navigation — to widgets that do), so
+            // native search can and does treat it as a valid Shift+Tab
             // target when the input holds focus, since in-tree it lives in
             // the same subtree as the input. Rather than fight that search,
             // close the dropdown here and consume the keypress; a second
             // real Shift+Tab, with the listbox no longer relevant, then
             // cycles backward correctly on its own.
             self.open = false;
-            self.filtered.clear();
             match &mut self.hosting {
                 Hosting::InTree { overlay_host } => {
                     ctx.mutate_child_later(overlay_host, |mut w| {
-                        with_suggestion_list(&mut w, |list| {
-                            SuggestionList::set_items(list, []);
-                        });
                         AnchoredOverlay::set_overlay_visible(&mut w, false);
                     });
                 }
@@ -1968,13 +1104,9 @@ impl Widget for AutocompleteWidget {
             // Close when stashed mid-open.
             Update::StashedChanged(true) if self.open => {
                 self.open = false;
-                self.filtered.clear();
                 match &mut self.hosting {
                     Hosting::InTree { overlay_host } => {
                         ctx.mutate_child_later(overlay_host, |mut w| {
-                            with_suggestion_list(&mut w, |list| {
-                                SuggestionList::set_items(list, []);
-                            });
                             AnchoredOverlay::set_overlay_visible(&mut w, false);
                         });
                     }
@@ -1991,9 +1123,9 @@ impl Widget for AutocompleteWidget {
             //
             // Skip if a pointer-capture is active — that means the user
             // pressed Down on a list item and the pointer-Up (click-select)
-            // hasn't fired yet.  Closing here would clear `self.filtered`
-            // and prevent the subsequent `SuggestionSelected` action from
-            // finding the item, so the text field never auto-fills.
+            // hasn't fired yet. Closing here would race the click-selection's
+            // own `on_activated` hook (`super::view`), which itself closes
+            // the dropdown.
             Update::ChildFocusChanged(false) => {
                 // In portal mode the listbox lives outside our subtree, so
                 // Tab-ing forward into it also fires this event. That's an
@@ -2027,13 +1159,9 @@ impl Widget for AutocompleteWidget {
                     return;
                 }
                 self.open = false;
-                self.filtered.clear();
                 match &mut self.hosting {
                     Hosting::InTree { overlay_host } => {
                         ctx.mutate_child_later(overlay_host, |mut w| {
-                            with_suggestion_list(&mut w, |list| {
-                                SuggestionList::set_items(list, []);
-                            });
                             AnchoredOverlay::set_overlay_visible(&mut w, false);
                         });
                     }
@@ -2043,7 +1171,9 @@ impl Widget for AutocompleteWidget {
                 ctx.request_accessibility_update();
             }
             // Open the dropdown when focus enters the input field.
-            Update::ChildFocusChanged(true) if !self.open && !self.all_suggestions.is_empty() => {
+            // `open_on_focus` itself bails out when `first_suggestion` is
+            // `None`, so there's no need to duplicate that check here.
+            Update::ChildFocusChanged(true) if !self.open => {
                 self.open_on_focus(ctx);
             }
             _ => {}
@@ -2163,65 +1293,20 @@ impl Widget for AutocompleteWidget {
 }
 
 #[cfg(test)]
-mod scroll_tests {
-    use masonry::kurbo::Vec2;
-    use masonry::testing::TestHarness;
-
-    use super::*;
-
-    /// Real rendering proof that the `ScrollView`-backed `SuggestionList`
-    /// actually scrolls: more items than fit in `MAX_LIST_HEIGHT`, drive a
-    /// real wheel event through `TestHarness`, and compare painted pixels —
-    /// not internal state — before and after.
-    #[test]
-    fn wheel_scroll_changes_painted_content() {
-        let theme = Theme::default();
-        let items: Vec<ArcStr> = (0..30).map(|i| ArcStr::from(format!("Item {i}"))).collect();
-        let list = SuggestionList::new(
-            items,
-            &theme,
-            LabelListHandle::default(),
-            AutocompleteHandle::default(),
-            TextAreaHandle::default(),
-        );
-
-        let mut harness = TestHarness::create_with_size(
-            masonry::theme::default_property_set(),
-            NewWidget::new(list),
-            (200, 200),
-        );
-
-        // Hover a point inside the top padding (above any item rect) so the
-        // wheel events below don't also toggle hover-highlight paint.
-        harness.mouse_move((100.0, 1.0));
-        let top = harness.render().clone();
-
-        harness.mouse_wheel(Vec2::new(0.0, -1_000_000.0));
-        let scrolled_one_way = harness.render().clone();
-
-        harness.mouse_wheel(Vec2::new(0.0, 2_000_000.0));
-        let scrolled_other_way = harness.render().clone();
-
-        assert_ne!(
-            top, scrolled_one_way,
-            "wheel scroll did not change painted content at all"
-        );
-        assert_ne!(
-            scrolled_one_way, scrolled_other_way,
-            "scrolling to the opposite extreme produced identical pixels"
-        );
-    }
-}
-
-#[cfg(test)]
 mod accessibility_tests {
+    use masonry::accesskit::Role;
     use masonry::core::keyboard::{Code, Key, KeyboardEvent, Modifiers, NamedKey};
     use masonry::core::{NewWidget, PointerButton, TextEvent, WidgetRef};
     use masonry::testing::TestHarness;
-    use masonry::widgets::TextArea;
+    use masonry::widgets::{Passthrough, TextArea};
+    use xilem::masonry::widgets::{VirtualScroll as VirtualScrollWidget, VirtualScrollAction};
 
     use super::*;
-    use crate::overlay_portal::PortalPlacement;
+    use crate::collection::{CollectionListWidget, OnActivated, render_overlay_list_item};
+    use crate::overlay_portal::{PortalPlacement, PortalSlot};
+    use crate::overlay_scope::OverlayScope;
+
+    const FRUITS: [&str; 3] = ["Apple", "Banana", "Cherry"];
 
     fn find_text_area(widget: WidgetRef<'_, dyn Widget>) -> Option<WidgetRef<'_, TextArea<true>>> {
         if let Some(area) = widget.downcast::<TextArea<true>>() {
@@ -2239,18 +1324,90 @@ mod accessibility_tests {
         widget.children().into_iter().find_map(find_autocomplete)
     }
 
-    /// Builds an in-tree autocomplete with 3 fixed suggestions and locates
-    /// its combobox/text-area ids, ready for focus/keyboard driving.
-    fn harness_with_fruit() -> (TestHarness<AutocompleteWidget>, WidgetId, WidgetId) {
-        let theme = Theme::default();
-        let suggestions: Vec<ArcStr> = ["Apple", "Banana", "Cherry"]
-            .into_iter()
-            .map(ArcStr::from)
-            .collect();
-        let widget =
-            AutocompleteWidget::new("", ArcStr::from("Pick a fruit"), suggestions, false, &theme);
+    /// A synchronous, `EventCtx`-level hook matching what
+    /// `super::view::build_list_view` wires in production: refocus the text
+    /// input, then close the dropdown via `mark_closed`. Built directly here
+    /// (rather than through the view layer, which these widget-level tests
+    /// deliberately bypass — see [`harness_with_fruit`]'s doc comment) so
+    /// click-selection tests can exercise the real refocus/close mechanism.
+    fn make_on_activated(
+        handle: &AutocompleteHandle,
+        text_area_handle: &TextAreaHandle,
+    ) -> OnActivated {
+        let handle = handle.clone();
+        let text_area_handle = text_area_handle.clone();
+        std::sync::Arc::new(move |ctx: &mut EventCtx<'_>| {
+            if let Some(id) = text_area_handle.widget_id() {
+                ctx.set_focus(id);
+            }
+            if let Some(ac_id) = handle.widget_id() {
+                ctx.mutate_later(ac_id, |mut w| {
+                    let mut ac = w.downcast::<AutocompleteWidget>();
+                    AutocompleteWidget::mark_closed_after_click(&mut ac);
+                });
+            }
+        })
+    }
 
-        let harness = TestHarness::create_with_size(
+    /// Handles threaded through an in-tree fixture, so tests can build an
+    /// `on_activated` hook or drive materialization after construction.
+    #[allow(
+        dead_code,
+        reason = "handles kept for symmetry/future use by callers that need them"
+    )]
+    struct Fixture {
+        harness: TestHarness<AutocompleteWidget>,
+        autocomplete_id: WidgetId,
+        text_area_id: WidgetId,
+        handle: AutocompleteHandle,
+        text_area_handle: TextAreaHandle,
+    }
+
+    /// Builds an in-tree autocomplete with 3 fixed suggestions ("Apple",
+    /// "Banana", "Cherry"). The suggestion list starts as an *empty*, real
+    /// `CollectionListWidget` (mirroring what `AutocompleteView` actually
+    /// builds via `overlay_list`) — call [`Fixture::drive_to_fixpoint`] to
+    /// materialize real, clickable `OverlayListItem` rows.
+    ///
+    /// Item content/selection wiring (`on_activated`) is supplied directly
+    /// at the widget layer here, not through `AutocompleteView` — these
+    /// tests exercise `AutocompleteWidget`/`SuggestionList`'s own
+    /// Tab/Enter/Escape/click handling in isolation from the view layer's
+    /// `on_select`/`on_changed` plumbing, which has its own coverage in
+    /// `crate::collection::overlay_list_body`'s
+    /// `overlay_list_body_virtualizes_and_routes_selection_through_real_view_messages`
+    /// test (`on_select` firing through a real View message chain — the exact
+    /// mechanism `AutocompleteView::build_list_view`'s own `on_select`
+    /// closure, a one-line forward to `on_changed`, relies on).
+    fn harness_with_fruit() -> Fixture {
+        let theme = Theme::default();
+        let handle = AutocompleteHandle::new();
+        let listbox_handle = ListboxHandle::new();
+        let text_area_handle = TextAreaHandle::new();
+        let vs = VirtualScrollWidget::new(0, FRUITS.len());
+        let list = CollectionListWidget::new(NewWidget::new(vs), FRUITS.len(), Role::ListBox);
+        let suggestion_list = SuggestionList::new(
+            NewWidget::new(list),
+            &theme,
+            handle.clone(),
+            text_area_handle.clone(),
+            listbox_handle.clone(),
+        );
+        let widget = AutocompleteWidget::new(
+            AutocompleteConfig {
+                contents: String::new(),
+                placeholder: ArcStr::from("Pick a fruit"),
+                first_suggestion: Some(ArcStr::from("Apple")),
+                disabled: false,
+                theme,
+            },
+            NewWidget::new(suggestion_list).erased(),
+            handle.clone(),
+            listbox_handle,
+            &text_area_handle,
+        );
+
+        let mut harness = TestHarness::create_with_size(
             masonry::theme::default_property_set(),
             NewWidget::new(widget),
             (300, 300),
@@ -2260,22 +1417,82 @@ mod accessibility_tests {
         let text_area_id = find_text_area(harness.root_widget().as_dyn())
             .expect("autocomplete should host a TextArea")
             .id();
-        (harness, autocomplete_id, text_area_id)
+
+        drive_in_tree(&mut harness, None);
+
+        Fixture {
+            harness,
+            autocomplete_id,
+            text_area_id,
+            handle,
+            text_area_handle,
+        }
+    }
+
+    /// Like [`harness_with_fruit`] but seeds the field with `initial` text
+    /// and an already-resolved `first_suggestion` (a simple prefix match
+    /// against [`FRUITS`], mirroring what `AutocompleteView`'s own
+    /// `compute_filtered` would produce), so text-preserving keyboard
+    /// behavior (Escape, Enter) can be exercised without needing a full
+    /// materialized listbox.
+    fn harness_with_fruit_contents(initial: &str) -> Fixture {
+        let theme = Theme::default();
+        let handle = AutocompleteHandle::new();
+        let listbox_handle = ListboxHandle::new();
+        let text_area_handle = TextAreaHandle::new();
+        let first_suggestion = FRUITS
+            .iter()
+            .find(|f| f.to_lowercase().starts_with(&initial.to_lowercase()))
+            .map(|f| ArcStr::from(*f));
+        let vs = VirtualScrollWidget::new(0, FRUITS.len());
+        let list = CollectionListWidget::new(NewWidget::new(vs), FRUITS.len(), Role::ListBox);
+        let suggestion_list = SuggestionList::new(
+            NewWidget::new(list),
+            &theme,
+            handle.clone(),
+            text_area_handle.clone(),
+            listbox_handle.clone(),
+        );
+        let widget = AutocompleteWidget::new(
+            AutocompleteConfig {
+                contents: initial.to_owned(),
+                placeholder: ArcStr::from("Pick a fruit"),
+                first_suggestion,
+                disabled: false,
+                theme,
+            },
+            NewWidget::new(suggestion_list).erased(),
+            handle.clone(),
+            listbox_handle,
+            &text_area_handle,
+        );
+        let mut harness = TestHarness::create_with_size(
+            masonry::theme::default_property_set(),
+            NewWidget::new(widget),
+            (300, 300),
+        );
+        let autocomplete_id = harness.root_id();
+        let text_area_id = find_text_area(harness.root_widget().as_dyn())
+            .expect("autocomplete should host a TextArea")
+            .id();
+        drive_in_tree(&mut harness, None);
+        Fixture {
+            harness,
+            autocomplete_id,
+            text_area_id,
+            handle,
+            text_area_handle,
+        }
     }
 
     /// Builds a portal-mode autocomplete with 3 fixed suggestions, wired
     /// into a real `OverlayScope` the way the view layer assembles it
-    /// (mirrors `popover::widget::tests::portal_scope_with_host`), and
-    /// locates its combobox/text-area ids.
+    /// (mirrors `popover::widget::tests::portal_scope_with_host`).
     fn harness_with_fruit_portal() -> (TestHarness<OverlayScope>, WidgetId, WidgetId) {
         let theme = Theme::default();
-        let suggestions: Vec<ArcStr> = ["Apple", "Banana", "Cherry"]
-            .into_iter()
-            .map(ArcStr::from)
-            .collect();
         let scope_handle = OverlayScopeHandle::new();
         let handle = AutocompleteHandle::new();
-        let listbox_handle = LabelListHandle::new();
+        let listbox_handle = ListboxHandle::new();
         let text_area_handle = TextAreaHandle::new();
         let key = 1;
 
@@ -2283,7 +1500,7 @@ mod accessibility_tests {
             AutocompleteConfig {
                 contents: String::new(),
                 placeholder: ArcStr::from("Pick a fruit"),
-                all_suggestions: suggestions,
+                first_suggestion: Some(ArcStr::from("Apple")),
                 disabled: false,
                 theme,
             },
@@ -2293,13 +1510,21 @@ mod accessibility_tests {
             listbox_handle.clone(),
             &text_area_handle,
         );
-        let suggestion_list =
-            SuggestionList::new([], &theme, listbox_handle, handle, text_area_handle);
-        // Matches what the view layer produces: `PortalContentView` is typed
-        // to a `Pod<Passthrough>` element, and the widget-side mutate_later
-        // closures (open_on_focus, handle_text_changed, ...) all navigate
-        // `PortalSlot::child_mut` -> downcast::<Passthrough> ->
-        // Passthrough::child_mut -> downcast::<SuggestionList>.
+        let vs = VirtualScrollWidget::new(0, FRUITS.len());
+        let list = CollectionListWidget::new(NewWidget::new(vs), FRUITS.len(), Role::ListBox);
+        let suggestion_list = SuggestionList::new(
+            NewWidget::new(list),
+            &theme,
+            handle,
+            text_area_handle,
+            listbox_handle,
+        );
+        // Matches what the view layer produces: portal content is a
+        // `Pod<Passthrough>` element (the same `AnyElement<Pod<W>, ViewCtx>
+        // for Pod<Passthrough>` blanket `overlay_list`/`SuggestionList` rely
+        // on generally — see `super::view::SuggestionListView`'s doc
+        // comment), so widget-side navigation downcasts through
+        // `Passthrough`.
         let passthrough = Passthrough::new(NewWidget::new(suggestion_list).erased());
 
         let scope = OverlayScope::new(
@@ -2311,7 +1536,7 @@ mod accessibility_tests {
                 PortalPlacement::BareTrigger,
             )],
         );
-        let harness = TestHarness::create_with_size(
+        let mut harness = TestHarness::create_with_size(
             masonry::theme::default_property_set(),
             NewWidget::new(scope),
             (300, 300),
@@ -2323,7 +1548,112 @@ mod accessibility_tests {
         let text_area_id = find_text_area(harness.root_widget().as_dyn())
             .expect("autocomplete should host a TextArea")
             .id();
+
+        drive_portal(&mut harness, key, None);
+
         (harness, autocomplete_id, text_area_id)
+    }
+
+    /// Drains `VirtualScrollAction::Fetch` requests from `harness`'s action
+    /// queue, materializing real `OverlayListItem` rows (via
+    /// `render_overlay_list_item`, carrying `on_activated`) for [`FRUITS`] —
+    /// mirrors `crate::collection::imperative_list`'s own
+    /// `drive_to_fixpoint`/`harness_with_materialized_rows`, one or two
+    /// levels deeper (through `AnchoredOverlay`/`PortalSlot` →
+    /// `SuggestionList` → `CollectionListWidget` → `VirtualScroll`).
+    /// `navigate` reaches the `SuggestionList<CollectionListWidget>` from
+    /// the harness root — the two hosting modes navigate differently, so
+    /// it's supplied by the caller.
+    fn drive_to_fixpoint<W: Widget>(
+        harness: &mut TestHarness<W>,
+        on_activated: Option<&OnActivated>,
+        navigate: impl Fn(
+            &mut WidgetMut<'_, W>,
+            &mut dyn FnMut(&mut WidgetMut<'_, SuggestionList<CollectionListWidget>>),
+        ),
+    ) {
+        let mut iteration = 0;
+        loop {
+            iteration += 1;
+            assert!(iteration <= 1000, "Took too long to reach fixpoint");
+            let Some((action, _id)) = harness.pop_action::<VirtualScrollAction>() else {
+                break;
+            };
+            let VirtualScrollAction::Fetch(action) = action else {
+                continue;
+            };
+            harness.edit_root_widget(|mut root| {
+                navigate(&mut root, &mut |list| {
+                    let mut collection = SuggestionList::child_mut(list);
+                    {
+                        let mut vs = CollectionListWidget::virtual_scroll_mut(&mut collection);
+                        VirtualScrollWidget::will_handle_action(&mut vs, &action);
+                        for idx in action.old_active().clone() {
+                            if !action.target().contains(&idx) {
+                                VirtualScrollWidget::remove_child(&mut vs, idx);
+                            }
+                        }
+                        for idx in action.target().clone() {
+                            if !action.old_active().contains(&idx) {
+                                let row = render_overlay_list_item(
+                                    &ArcStr::from(FRUITS[idx]),
+                                    false,
+                                    &Theme::default(),
+                                    Role::ListBoxOption,
+                                    on_activated.cloned(),
+                                );
+                                VirtualScrollWidget::add_child(&mut vs, idx, row);
+                            }
+                        }
+                    }
+                    // `overlay_list`'s wrapping View normally keeps this in
+                    // sync every rebuild (see `imperative_list`'s module
+                    // doc) — these tests bypass the view layer entirely, so
+                    // they have to do it themselves, exactly like
+                    // `crate::collection::imperative_list`'s own
+                    // `harness_with_materialized_rows` does.
+                    CollectionListWidget::set_active_start(&mut collection, action.target().start);
+                });
+            });
+        }
+    }
+
+    /// Drives an in-tree fixture's listbox to a materialization fixpoint.
+    /// Must be called *after* the dropdown is actually visible (focused) —
+    /// `AnchoredOverlay`'s overlay slot is stashed (zero effective layout)
+    /// until then, so `VirtualScroll`'s fetch requests while stashed settle
+    /// on an empty/near-empty window; a real request for the full visible
+    /// range only fires once the slot is un-stashed and laid out for real.
+    /// Idempotent (a no-op once nothing is pending), so it's safe to call
+    /// again after each interaction that might have re-anchored the list.
+    fn drive_in_tree(
+        harness: &mut TestHarness<AutocompleteWidget>,
+        on_activated: Option<&OnActivated>,
+    ) {
+        drive_to_fixpoint(harness, on_activated, |root, f| {
+            AutocompleteWidget::with_overlay_content(root, |mut content| {
+                let mut list = content.downcast::<SuggestionList<CollectionListWidget>>();
+                f(&mut list);
+            });
+        });
+    }
+
+    /// Portal-mode counterpart to [`drive_in_tree`] — same stashed-until-
+    /// visible caveat applies.
+    fn drive_portal(
+        harness: &mut TestHarness<OverlayScope>,
+        key: u64,
+        on_activated: Option<&OnActivated>,
+    ) {
+        drive_to_fixpoint(harness, on_activated, |root, f| {
+            let mut slot = OverlayScope::portal_slot_mut(root);
+            if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
+                let mut pass = child.downcast::<Passthrough>();
+                let mut inner = Passthrough::child_mut(&mut pass);
+                let mut list = inner.downcast::<SuggestionList<CollectionListWidget>>();
+                f(&mut list);
+            }
+        });
     }
 
     /// Real proof that clicking a plain, non-interactive sibling widget
@@ -2336,17 +1666,35 @@ mod accessibility_tests {
     /// since `Label` opts out of pointer interaction) and clears focus
     /// whenever that resolved target isn't in the focused widget's own
     /// ancestor path — regardless of whether the literal clicked widget
-    /// itself accepts focus. Same mechanism `ThemedPopover::update`
-    /// documents and relies on for its own in-tree fallback.
+    /// itself accepts focus.
     #[test]
     fn clicking_a_non_focusable_sibling_closes_the_in_tree_dropdown() {
         let theme = Theme::default();
-        let suggestions: Vec<ArcStr> = ["Apple", "Banana", "Cherry"]
-            .into_iter()
-            .map(ArcStr::from)
-            .collect();
-        let autocomplete =
-            AutocompleteWidget::new("", ArcStr::from("Pick a fruit"), suggestions, false, &theme);
+        let handle = AutocompleteHandle::new();
+        let listbox_handle = ListboxHandle::new();
+        let text_area_handle = TextAreaHandle::new();
+        let vs = VirtualScrollWidget::new(0, FRUITS.len());
+        let list = CollectionListWidget::new(NewWidget::new(vs), FRUITS.len(), Role::ListBox);
+        let suggestion_list = SuggestionList::new(
+            NewWidget::new(list),
+            &theme,
+            handle.clone(),
+            text_area_handle.clone(),
+            listbox_handle.clone(),
+        );
+        let autocomplete = AutocompleteWidget::new(
+            AutocompleteConfig {
+                contents: String::new(),
+                placeholder: ArcStr::from("Pick a fruit"),
+                first_suggestion: Some(ArcStr::from("Apple")),
+                disabled: false,
+                theme,
+            },
+            NewWidget::new(suggestion_list).erased(),
+            handle,
+            listbox_handle,
+            &text_area_handle,
+        );
         let label_widget = NewWidget::new(widgets::Label::new("Elsewhere on the page"));
         let label_id = label_widget.id();
 
@@ -2379,10 +1727,6 @@ mod accessibility_tests {
             "focusing the field should open the dropdown"
         );
 
-        // `mouse_click_on`/`mouse_move_to` refuse a widget that doesn't
-        // accept pointer events (by design, `Label` doesn't) — compute the
-        // window-space center manually instead, matching what a real click
-        // on that visible label would resolve to.
         let label_ref = harness.get_widget_with_id(label_id);
         let label_size = label_ref.ctx().border_box().size();
         let label_center = label_ref
@@ -2410,22 +1754,27 @@ mod accessibility_tests {
     }
 
     /// Real accessibility-tree proof, driven through the actual masonry
-    /// focus/keyboard pipeline (not internal state): focusing the field opens
-    /// the popup and wires the ARIA combobox relationship (`expanded` +
-    /// `controls` -> a real `Role::ListBox` node). Arrow-key list navigation
-    /// can't be driven from the textbox (masonry's `TextArea` unconditionally
-    /// claims those keys for cursor movement before any ancestor sees them —
-    /// see [`AutocompleteWidget::on_text_event`]), so Tab must move real
-    /// focus into the listbox first; from there, arrow keys move
-    /// `active_descendant` to real `Role::ListBoxOption` nodes with the right
-    /// accessible name and `aria-selected`.
+    /// focus/keyboard pipeline: focusing the field opens the popup and wires
+    /// the ARIA combobox relationship (`expanded` + `controls` -> a real
+    /// `Role::ListBox` node). Arrow-key list navigation can't be driven from
+    /// the textbox (masonry's `TextArea` unconditionally claims those keys
+    /// for cursor movement before any ancestor sees them — see
+    /// [`AutocompleteWidget::on_text_event`]), so Tab must move real focus
+    /// into the listbox first; from there, arrow keys move
+    /// `active_descendant` to real `Role::ListBoxOption` nodes — the
+    /// index/highlight bookkeeping itself is `CollectionListWidget`'s own
+    /// (exhaustively covered by `crate::collection::imperative_list`'s own
+    /// tests), so this only confirms the wiring reaches it.
     #[test]
     fn tab_into_listbox_and_arrow_keys_set_active_descendant() {
-        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit();
+        let mut fx = harness_with_fruit();
 
-        harness.render();
+        fx.harness.render();
         {
-            let node = harness.access_node(autocomplete_id).expect("combobox node");
+            let node = fx
+                .harness
+                .access_node(fx.autocomplete_id)
+                .expect("combobox node");
             assert_eq!(node.role(), Role::ComboBox);
             assert_eq!(
                 node.data().has_popup(),
@@ -2437,11 +1786,6 @@ mod accessibility_tests {
                 Some(false),
                 "closed before focus"
             );
-            // aria-controls is deliberately absent here: the listbox is
-            // stashed while collapsed (excluded from the a11y tree), so
-            // pointing aria-controls at it would be a dangling reference —
-            // see the comment on the `push_controlled` call in
-            // `AutocompleteWidget::accessibility`.
             assert_eq!(
                 node.controls().count(),
                 0,
@@ -2449,11 +1793,14 @@ mod accessibility_tests {
             );
         }
 
-        // Focusing the text field opens the dropdown and wires aria-controls.
-        harness.focus_on(Some(text_area_id));
-        harness.render();
+        fx.harness.focus_on(Some(fx.text_area_id));
+        fx.harness.render();
+        drive_in_tree(&mut fx.harness, None);
         {
-            let node = harness.access_node(autocomplete_id).expect("combobox node");
+            let node = fx
+                .harness
+                .access_node(fx.autocomplete_id)
+                .expect("combobox node");
             assert_eq!(node.data().is_expanded(), Some(true));
             let controlled: Vec<_> = node.controls().collect();
             assert_eq!(
@@ -2466,26 +1813,20 @@ mod accessibility_tests {
                 controlled[0].active_descendant().is_none(),
                 "no keyboard highlight yet"
             );
-            // Regression coverage: LabelList::accepts_focus() must stay
-            // `true` (a raw-keyboard-only test wouldn't catch a regression
-            // here — masonry's accessibility pass only grants
-            // accesskit::Action::Focus, which AT tools use to move focus,
-            // to widgets that accept focus).
             assert!(
                 controlled[0]
                     .data()
                     .supports_action(masonry::accesskit::Action::Focus),
-                "the listbox must be focusable via the accessibility action API, \
-                 not just raw keyboard Tab, for AT-driven navigation to reach it"
+                "the listbox must be focusable via the accessibility action API"
             );
         }
 
-        // Tab moves real focus into the listbox (not the next form field).
-        // Verify by checking the newly-focused widget's accessibility role.
-        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
-        let focused_role = harness
+        fx.harness
+            .process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
+        let focused_role = fx
+            .harness
             .focused_widget_id()
-            .and_then(|id| harness.access_node(id))
+            .and_then(|id| fx.harness.access_node(id))
             .map(|n| n.role());
         assert_eq!(
             focused_role,
@@ -2493,12 +1834,14 @@ mod accessibility_tests {
             "Tab should move focus into the open listbox"
         );
 
-        // ArrowDown highlights "Apple": active-descendant resolves to a real
-        // ListBoxOption node with the right name and aria-selected.
-        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowDown)));
-        harness.render();
+        fx.harness
+            .process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowDown)));
+        fx.harness.render();
         {
-            let node = harness.access_node(autocomplete_id).expect("combobox node");
+            let node = fx
+                .harness
+                .access_node(fx.autocomplete_id)
+                .expect("combobox node");
             let listbox = node.controls().next().expect("controls the listbox");
             let active = listbox.active_descendant().expect("active descendant set");
             assert_eq!(active.role(), Role::ListBoxOption);
@@ -2506,11 +1849,14 @@ mod accessibility_tests {
             assert_eq!(active.is_selected(), Some(true));
         }
 
-        // ArrowDown again moves the relationship to "Banana".
-        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowDown)));
-        harness.render();
+        fx.harness
+            .process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowDown)));
+        fx.harness.render();
         {
-            let node = harness.access_node(autocomplete_id).expect("combobox node");
+            let node = fx
+                .harness
+                .access_node(fx.autocomplete_id)
+                .expect("combobox node");
             let listbox = node.controls().next().expect("controls the listbox");
             let active = listbox.active_descendant().expect("active descendant set");
             assert_eq!(active.label().as_deref(), Some("Banana"));
@@ -2518,23 +1864,18 @@ mod accessibility_tests {
     }
 
     /// Shift+Tab pressed from the text input (dropdown open, never having
-    /// Tab'd into the listbox) must not land real focus on the listbox: with
-    /// `LabelList::accepts_focus()` correctly `true` (required for AT
-    /// focusability, see the previous test), masonry's native backward
-    /// search would otherwise treat the in-tree listbox as a valid target
-    /// since it shares the input's subtree. `on_text_event`'s explicit
-    /// Shift+Tab interception closes the dropdown and consumes the keypress
-    /// instead, so focus stays on the input rather than jumping into
-    /// (now-closing) list content.
+    /// Tab'd into the listbox) must not land real focus on the listbox:
+    /// `on_text_event`'s explicit Shift+Tab interception closes the dropdown
+    /// and consumes the keypress instead.
     #[test]
     fn shift_tab_from_input_closes_dropdown_instead_of_focusing_listbox() {
-        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit();
+        let mut fx = harness_with_fruit();
 
-        harness.focus_on(Some(text_area_id));
-        harness.render();
+        fx.harness.focus_on(Some(fx.text_area_id));
+        fx.harness.render();
         assert_eq!(
-            harness
-                .access_node(autocomplete_id)
+            fx.harness
+                .access_node(fx.autocomplete_id)
                 .expect("combobox node")
                 .data()
                 .is_expanded(),
@@ -2546,18 +1887,18 @@ mod accessibility_tests {
             modifiers: Modifiers::SHIFT,
             ..KeyboardEvent::key_down(Key::Named(NamedKey::Tab), Code::Unidentified)
         });
-        harness.process_text_event(shift_tab);
-        harness.render();
+        fx.harness.process_text_event(shift_tab);
+        fx.harness.render();
 
         assert_eq!(
-            harness.focused_widget_id(),
-            Some(text_area_id),
+            fx.harness.focused_widget_id(),
+            Some(fx.text_area_id),
             "Shift+Tab from the input should leave focus on the input, not jump \
              into the listbox"
         );
         assert_eq!(
-            harness
-                .access_node(autocomplete_id)
+            fx.harness
+                .access_node(fx.autocomplete_id)
                 .expect("combobox node")
                 .data()
                 .is_expanded(),
@@ -2568,16 +1909,7 @@ mod accessibility_tests {
 
     /// Portal-mode-specific regression: forward Tab from the input must move
     /// real focus into the (portal-mounted) listbox *without* closing the
-    /// dropdown. In portal mode the listbox lives outside the autocomplete's
-    /// own subtree, so this transfer does fire `ChildFocusChanged(false)` on
-    /// the widget — `on_text_event` sets `focus_moving_to_listbox` right
-    /// before calling `ctx.set_focus`, and the handler must recognize that
-    /// and skip closing. It previously tried to detect this via
-    /// `ctx.focus_target_id() == listbox_id`, which never matched: masonry
-    /// updates `global_state.focused_widget` *after* dispatching
-    /// `ChildFocusChanged`, so that accessor still read the old value at the
-    /// point the handler ran, and the dropdown closed out from under the
-    /// user on every forward Tab.
+    /// dropdown.
     #[test]
     fn tab_into_portal_listbox_does_not_close_dropdown() {
         let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit_portal();
@@ -2613,80 +1945,136 @@ mod accessibility_tests {
         );
     }
 
-    /// Pressing Enter while focus is in the listbox selects the highlighted
-    /// item, closes the dropdown, and returns real focus to the text field —
-    /// driven through the real focus/keyboard pipeline, not internal state.
+    /// Pressing Enter while focus is in the listbox closes the dropdown and
+    /// returns real focus to the text field — driven through the real
+    /// focus/keyboard pipeline. `SuggestionList::on_text_event` does this
+    /// unconditionally on Enter/Escape/Tab (see its doc comment), independent
+    /// of whether a row was highlighted/activated — that part is
+    /// `CollectionListWidget`'s own job (covered by
+    /// `crate::collection::imperative_list`'s tests) and, for the
+    /// `on_select` -> `on_changed` leg specifically, by
+    /// `overlay_list_body`'s real-View-message test.
     #[test]
-    fn enter_in_listbox_selects_closes_and_returns_focus_to_input() {
-        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit();
+    fn enter_in_listbox_closes_and_returns_focus_to_input() {
+        let mut fx = harness_with_fruit();
 
-        harness.focus_on(Some(text_area_id));
-        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
-        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowDown)));
-        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Enter)));
+        fx.harness.focus_on(Some(fx.text_area_id));
+        fx.harness
+            .process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
+        fx.harness
+            .process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowDown)));
+        fx.harness
+            .process_text_event(TextEvent::key_down(Key::Named(NamedKey::Enter)));
 
         assert_eq!(
-            harness.focused_widget_id(),
-            Some(text_area_id),
-            "Enter-selection should return focus to the input"
+            fx.harness.focused_widget_id(),
+            Some(fx.text_area_id),
+            "Enter should return focus to the input"
         );
-        let area = find_text_area(harness.root_widget().as_dyn()).expect("TextArea");
-        assert_eq!(area.text().to_string(), "Apple");
 
-        harness.render();
-        let node = harness.access_node(autocomplete_id).expect("combobox node");
+        fx.harness.render();
+        let node = fx
+            .harness
+            .access_node(fx.autocomplete_id)
+            .expect("combobox node");
+        assert_eq!(node.data().is_expanded(), Some(false), "closed after Enter");
+    }
+
+    /// Escape while focus is in the listbox closes the dropdown and returns
+    /// real focus to the text field, without selecting.
+    #[test]
+    fn escape_in_listbox_closes_and_returns_focus_to_input() {
+        let mut fx = harness_with_fruit();
+
+        fx.harness.focus_on(Some(fx.text_area_id));
+        fx.harness
+            .process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
+        fx.harness
+            .process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowDown)));
+        fx.harness
+            .process_text_event(TextEvent::key_down(Key::Named(NamedKey::Escape)));
+
+        assert_eq!(
+            fx.harness.focused_widget_id(),
+            Some(fx.text_area_id),
+            "Escape should return focus to the input"
+        );
+        let area = find_text_area(fx.harness.root_widget().as_dyn()).expect("TextArea");
+        assert_eq!(area.text().to_string(), "", "Escape must not select");
+
+        fx.harness.render();
+        let node = fx
+            .harness
+            .access_node(fx.autocomplete_id)
+            .expect("combobox node");
         assert_eq!(
             node.data().is_expanded(),
             Some(false),
-            "closed after selection"
+            "closed after Escape"
         );
     }
 
-    /// After an in-tree Enter-selection, blurring and re-focusing the field
-    /// must reopen the dropdown. `select_suggestion` sets
-    /// `suppress_focus_open` to swallow the reopen that would otherwise
-    /// follow its own `refocus_input()` call, but masonry's pass ordering
-    /// for `handle_text_event` resolves the corresponding
-    /// `ChildFocusChanged(true)` *before* `select_suggestion` itself runs
-    /// (actions are processed later, in `run_rewrite_passes`) — so that
-    /// event sees `self.open` still `true` and never consumes the flag,
-    /// leaving it stuck and silently blocking every future open. See the
-    /// unconditional reset in `update()`'s `ChildFocusChanged(false)` arm.
+    /// Clicking a materialized row runs its `on_activated` hook — the same
+    /// synchronous, `EventCtx`-level mechanism `AutocompleteView::
+    /// build_list_view` wires in production — returning focus to the input
+    /// and closing the dropdown, exactly like Enter/Escape/Tab. Proves the
+    /// refocus/close mechanism works for *click* selection specifically:
+    /// `on_select` (which actually updates the bound text) fires later from
+    /// `View::message`, which has no `EventCtx` at all — see
+    /// `crate::collection::item_row::OnActivated`'s doc comment for why this
+    /// had to be a separate, synchronous hook.
     #[test]
-    fn reopens_after_selection_then_blur_and_refocus() {
-        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit();
+    fn click_selection_refocuses_and_closes() {
+        let handle = AutocompleteHandle::new();
+        let text_area_handle = TextAreaHandle::new();
+        let on_activated = make_on_activated(&handle, &text_area_handle);
 
-        harness.focus_on(Some(text_area_id));
-        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
-        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowDown)));
-        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Enter)));
+        let theme = Theme::default();
+        let listbox_handle = ListboxHandle::new();
+        let vs = VirtualScrollWidget::new(0, FRUITS.len());
+        let list = CollectionListWidget::new(NewWidget::new(vs), FRUITS.len(), Role::ListBox);
+        let suggestion_list = SuggestionList::new(
+            NewWidget::new(list),
+            &theme,
+            handle.clone(),
+            text_area_handle.clone(),
+            listbox_handle.clone(),
+        );
+        let widget = AutocompleteWidget::new(
+            AutocompleteConfig {
+                contents: String::new(),
+                placeholder: ArcStr::from("Pick a fruit"),
+                first_suggestion: Some(ArcStr::from("Apple")),
+                disabled: false,
+                theme,
+            },
+            NewWidget::new(suggestion_list).erased(),
+            handle,
+            listbox_handle,
+            &text_area_handle,
+        );
+        let mut harness = TestHarness::create_with_size(
+            masonry::theme::default_property_set(),
+            NewWidget::new(widget),
+            (300, 300),
+        );
+        let autocomplete_id = harness.root_id();
+        let text_area_id = find_text_area(harness.root_widget().as_dyn())
+            .expect("autocomplete should host a TextArea")
+            .id();
 
-        harness.focus_on(None);
         harness.focus_on(Some(text_area_id));
         harness.render();
-
+        drive_in_tree(&mut harness, Some(&on_activated));
+        harness.render();
         assert_eq!(
             harness
                 .access_node(autocomplete_id)
-                .expect("combobox node")
+                .expect("combobox")
                 .data()
                 .is_expanded(),
-            Some(true),
-            "re-focusing after a selection should reopen the dropdown, not leave it \
-             permanently stuck closed"
+            Some(true)
         );
-    }
-
-    /// Same leak, via a click-based selection instead of Enter — click and
-    /// keyboard selection go through different masonry pass orderings
-    /// (`handle_pointer_event` vs `handle_text_event`), so both paths need
-    /// their own coverage.
-    #[test]
-    fn reopens_after_click_selection_then_blur_and_refocus() {
-        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit();
-
-        harness.focus_on(Some(text_area_id));
-        harness.render();
 
         let mut first_item_id = None;
         harness.inspect_widgets(|w| {
@@ -2700,30 +2088,170 @@ mod accessibility_tests {
         harness.mouse_button_press(Some(PointerButton::Primary));
         harness.mouse_button_release(Some(PointerButton::Primary));
 
-        harness.focus_on(None);
-        harness.focus_on(Some(text_area_id));
-        harness.render();
-
         assert_eq!(
-            harness
-                .access_node(autocomplete_id)
-                .expect("combobox node")
+            harness.focused_widget_id(),
+            Some(text_area_id),
+            "click selection should return focus to the input"
+        );
+        harness.render();
+        let node = harness.access_node(autocomplete_id).expect("combobox");
+        assert_eq!(
+            node.data().is_expanded(),
+            Some(false),
+            "closed after click-select"
+        );
+    }
+
+    /// Escape while the dropdown is open (focus still in the text field, not
+    /// the listbox) must dismiss the popup only — leaving the typed text
+    /// intact and *not* emitting a text change that would reset the host's
+    /// bound value.
+    #[test]
+    fn escape_in_field_closes_dropdown_without_clearing_text() {
+        let mut fx = harness_with_fruit_contents("App");
+
+        fx.harness.focus_on(Some(fx.text_area_id));
+        fx.harness.render();
+        assert_eq!(
+            fx.harness
+                .access_node(fx.autocomplete_id)
+                .expect("combobox")
                 .data()
                 .is_expanded(),
             Some(true),
-            "re-focusing after a click selection should reopen the dropdown"
+            "focusing a field with matches should open the dropdown",
         );
+        drive_in_tree(&mut fx.harness, None);
+        while fx.harness.pop_action_erased().is_some() {}
+
+        fx.harness
+            .process_text_event(TextEvent::key_down(Key::Named(NamedKey::Escape)));
+        fx.harness.render();
+
+        assert_eq!(
+            fx.harness
+                .access_node(fx.autocomplete_id)
+                .expect("combobox")
+                .data()
+                .is_expanded(),
+            Some(false),
+            "Escape should close the open dropdown",
+        );
+        assert!(
+            fx.harness.pop_action::<AutocompleteAction>().is_none(),
+            "Escape-to-close must not emit a text change — it dismisses the \
+             popup, it does not clear the field",
+        );
+        let ac = find_autocomplete(fx.harness.root_widget().as_dyn()).expect("autocomplete");
+        assert_eq!(ac.contents, "App", "typed text must survive Escape");
+    }
+
+    /// Escape with no dropdown open falls back to the bare-input clear
+    /// behavior: there's no popup to dismiss, so it empties the field.
+    #[test]
+    fn escape_with_closed_dropdown_still_clears_the_field() {
+        // "zzz" matches nothing, so focusing never opens the dropdown.
+        let mut fx = harness_with_fruit_contents("zzz");
+
+        fx.harness.focus_on(Some(fx.text_area_id));
+        fx.harness.render();
+        assert_eq!(
+            fx.harness
+                .access_node(fx.autocomplete_id)
+                .expect("combobox")
+                .data()
+                .is_expanded(),
+            Some(false),
+            "no matches -> dropdown stays closed",
+        );
+        while fx.harness.pop_action::<AutocompleteAction>().is_some() {}
+
+        fx.harness
+            .process_text_event(TextEvent::key_down(Key::Named(NamedKey::Escape)));
+        fx.harness.render();
+
+        let (action, _) = fx
+            .harness
+            .pop_action::<AutocompleteAction>()
+            .expect("Escape with no popup should clear and report the change");
+        let AutocompleteAction::TextChanged(text) = action;
+        assert_eq!(text, "", "Escape with no open dropdown clears the field");
+        let ac = find_autocomplete(fx.harness.root_widget().as_dyn()).expect("autocomplete");
+        assert!(ac.contents.is_empty(), "field should be cleared");
+    }
+
+    /// Pressing Enter in the text field while the dropdown is open accepts
+    /// the top suggestion (`AutocompleteWidget::first_suggestion`, pushed by
+    /// the view layer — here supplied directly at construction), fills the
+    /// field, closes the popup, and reports the change.
+    #[test]
+    fn enter_in_field_selects_first_suggestion() {
+        let mut fx = harness_with_fruit();
+
+        fx.harness.focus_on(Some(fx.text_area_id));
+        fx.harness.render();
+        drive_in_tree(&mut fx.harness, None);
+        while fx.harness.pop_action_erased().is_some() {}
+
+        fx.harness
+            .process_text_event(TextEvent::key_down(Key::Named(NamedKey::Enter)));
+        fx.harness.render();
+
+        let area = find_text_area(fx.harness.root_widget().as_dyn()).expect("TextArea");
+        assert_eq!(
+            area.text().to_string(),
+            "Apple",
+            "Enter should accept the top suggestion",
+        );
+        assert_eq!(
+            fx.harness
+                .access_node(fx.autocomplete_id)
+                .expect("combobox")
+                .data()
+                .is_expanded(),
+            Some(false),
+            "accepting a suggestion closes the dropdown",
+        );
+        let (action, _) = fx
+            .harness
+            .pop_action::<AutocompleteAction>()
+            .expect("accepting a suggestion should report the change");
+        let AutocompleteAction::TextChanged(text) = action;
+        assert_eq!(text, "Apple");
     }
 
     /// Suggestions delivered asynchronously (e.g. a debounced fetch) after
     /// the field already has focus must open the dropdown themselves —
-    /// `open_on_focus` already ran and bailed out when the field was
-    /// focused with no suggestions yet, so nothing else would open it.
+    /// pushed via `set_match_summary`, the same setter `AutocompleteView`
+    /// calls whenever the view-computed matching set changes.
     #[test]
-    fn async_suggestions_open_dropdown_while_already_focused() {
+    fn async_match_summary_opens_dropdown_while_already_focused() {
         let theme = Theme::default();
-        let widget =
-            AutocompleteWidget::new("", ArcStr::from("Pick a fruit"), Vec::new(), false, &theme);
+        let handle = AutocompleteHandle::new();
+        let listbox_handle = ListboxHandle::new();
+        let text_area_handle = TextAreaHandle::new();
+        let vs = VirtualScrollWidget::new(0, 0);
+        let list = CollectionListWidget::new(NewWidget::new(vs), 0, Role::ListBox);
+        let suggestion_list = SuggestionList::new(
+            NewWidget::new(list),
+            &theme,
+            handle.clone(),
+            text_area_handle.clone(),
+            listbox_handle.clone(),
+        );
+        let widget = AutocompleteWidget::new(
+            AutocompleteConfig {
+                contents: String::new(),
+                placeholder: ArcStr::from("Pick a fruit"),
+                first_suggestion: None,
+                disabled: false,
+                theme,
+            },
+            NewWidget::new(suggestion_list).erased(),
+            handle,
+            listbox_handle,
+            &text_area_handle,
+        );
         let mut harness = TestHarness::create_with_size(
             masonry::theme::default_property_set(),
             NewWidget::new(widget),
@@ -2746,12 +2274,8 @@ mod accessibility_tests {
             "no suggestions yet, so focusing shouldn't open anything"
         );
 
-        let suggestions: Vec<ArcStr> = ["Apple", "Banana", "Cherry"]
-            .into_iter()
-            .map(ArcStr::from)
-            .collect();
         harness.edit_root_widget(|mut root| {
-            AutocompleteWidget::set_all_suggestions(&mut root, suggestions);
+            AutocompleteWidget::set_match_summary(&mut root, Some(ArcStr::from("Apple")));
         });
 
         harness.render();
@@ -2762,366 +2286,60 @@ mod accessibility_tests {
                 .data()
                 .is_expanded(),
             Some(true),
-            "suggestions arriving while the field is focused should open the dropdown"
+            "a matching set arriving while the field is focused should open the dropdown"
         );
     }
 
     /// An external content change (e.g. host-driven autofill into a
     /// controlled field) while the field already has focus must open the
     /// dropdown itself if the new text matches suggestions — not just narrow
-    /// or close an already-open one.
+    /// or close an already-open one. `set_contents` only syncs the displayed
+    /// text; `set_match_summary` (as the view layer would call it on the
+    /// same rebuild) is what actually opens/closes.
     #[test]
-    fn set_contents_opens_dropdown_while_already_focused() {
-        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit();
+    fn set_contents_and_match_summary_open_dropdown_while_already_focused() {
+        let mut fx = harness_with_fruit();
 
-        harness.focus_on(Some(text_area_id));
-        harness.render();
+        fx.harness.focus_on(Some(fx.text_area_id));
+        fx.harness.render();
         assert_eq!(
-            harness
-                .access_node(autocomplete_id)
-                .expect("combobox node")
+            fx.harness
+                .access_node(fx.autocomplete_id)
+                .expect("combobox")
                 .data()
                 .is_expanded(),
             Some(true),
             "focusing an empty field with suggestions available should open it"
         );
 
-        // Type nothing further, but simulate an external reset to no match,
-        // closing the dropdown while focus remains on the field.
-        harness.edit_root_widget(|mut root| {
+        fx.harness.edit_root_widget(|mut root| {
             AutocompleteWidget::set_contents(&mut root, "zzz");
+            AutocompleteWidget::set_match_summary(&mut root, None);
         });
-        harness.render();
+        fx.harness.render();
         assert_eq!(
-            harness
-                .access_node(autocomplete_id)
-                .expect("combobox node")
+            fx.harness
+                .access_node(fx.autocomplete_id)
+                .expect("combobox")
                 .data()
                 .is_expanded(),
             Some(false),
-            "content change to a non-matching value should close the dropdown"
+            "a match summary reporting no matches should close the dropdown"
         );
 
-        // Now an external content change to a matching value, still focused,
-        // must reopen it.
-        harness.edit_root_widget(|mut root| {
+        fx.harness.edit_root_widget(|mut root| {
             AutocompleteWidget::set_contents(&mut root, "Ap");
+            AutocompleteWidget::set_match_summary(&mut root, Some(ArcStr::from("Apple")));
         });
-        harness.render();
+        fx.harness.render();
         assert_eq!(
-            harness
-                .access_node(autocomplete_id)
-                .expect("combobox node")
+            fx.harness
+                .access_node(fx.autocomplete_id)
+                .expect("combobox")
                 .data()
                 .is_expanded(),
             Some(true),
             "external content change to a matching value while focused should reopen the dropdown"
-        );
-    }
-
-    /// Escape while focus is in the listbox closes the dropdown without
-    /// selecting and returns real focus to the text field.
-    #[test]
-    fn escape_in_listbox_closes_without_selecting_and_returns_focus_to_input() {
-        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit();
-
-        harness.focus_on(Some(text_area_id));
-        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
-        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowDown)));
-        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Escape)));
-
-        assert_eq!(
-            harness.focused_widget_id(),
-            Some(text_area_id),
-            "Escape should return focus to the input"
-        );
-        let area = find_text_area(harness.root_widget().as_dyn()).expect("TextArea");
-        assert_eq!(area.text().to_string(), "", "Escape must not select");
-
-        harness.render();
-        let node = harness.access_node(autocomplete_id).expect("combobox node");
-        assert_eq!(
-            node.data().is_expanded(),
-            Some(false),
-            "closed after Escape"
-        );
-    }
-
-    /// Clicking an item in the open list auto-fills the text field even
-    /// though the pointer-down clears keyboard focus before pointer-up fires.
-    /// Previously, `ChildFocusChanged(false)` would close the dropdown and
-    /// clear `filtered` between the two half-events, so `SuggestionSelected`
-    /// arrived with no matching item and the field was never updated.
-    #[test]
-    fn click_selection_fills_the_text_field() {
-        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit();
-
-        // Focus the input — opens the dropdown.
-        harness.focus_on(Some(text_area_id));
-        harness.render();
-        {
-            let node = harness.access_node(autocomplete_id).expect("combobox");
-            assert_eq!(node.data().is_expanded(), Some(true));
-        }
-
-        // Find the first SuggestionItem (ListBoxOption) in the widget tree.
-        let mut first_item_id = None;
-        harness.inspect_widgets(|w| {
-            if first_item_id.is_none() && w.accessibility_role() == Role::ListBoxOption {
-                first_item_id = Some(w.id());
-            }
-        });
-
-        let item_id = first_item_id.expect("dropdown should have rendered list items");
-
-        // Use unchecked move + manual press/release to bypass the harness's
-        // "widget must be visible in the render layer" constraint (the item
-        // lives inside a clipped ScrollView, which confuses the bounding-box
-        // check even though it is genuinely hittable).
-        harness.mouse_move_to_unchecked(item_id);
-        harness.mouse_button_press(Some(masonry::core::PointerButton::Primary));
-        harness.mouse_button_release(Some(masonry::core::PointerButton::Primary));
-
-        let area = find_text_area(harness.root_widget().as_dyn()).expect("TextArea");
-        assert_eq!(
-            area.text().to_string(),
-            "Apple",
-            "click should auto-fill the text field"
-        );
-        assert_eq!(
-            harness.focused_widget_id(),
-            Some(text_area_id),
-            "focus returns to input after click"
-        );
-        harness.render();
-        let node = harness.access_node(autocomplete_id).expect("combobox");
-        assert_eq!(
-            node.data().is_expanded(),
-            Some(false),
-            "closed after click-select"
-        );
-    }
-
-    /// The portal-mounted `SuggestionList` is built empty by the view layer
-    /// (`SuggestionListView` no longer carries a `filtered` mirror); the widget
-    /// is the single source of truth and must populate it via `set_items` when
-    /// the dropdown opens. `harness_with_fruit_portal` mirrors the view by
-    /// building the list with `[]`, so this proves the widget — not the view —
-    /// fills the list on open.
-    #[test]
-    fn portal_dropdown_populates_items_from_widget() {
-        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit_portal();
-
-        harness.focus_on(Some(text_area_id));
-        harness.render();
-        assert_eq!(
-            harness
-                .access_node(autocomplete_id)
-                .expect("combobox")
-                .data()
-                .is_expanded(),
-            Some(true),
-            "focusing should open the portal dropdown",
-        );
-
-        let mut option_count = 0;
-        harness.inspect_widgets(|w| {
-            if w.accessibility_role() == Role::ListBoxOption {
-                option_count += 1;
-            }
-        });
-        assert_eq!(
-            option_count, 3,
-            "the widget must populate the empty portal list with all suggestions",
-        );
-    }
-
-    /// Like [`harness_with_fruit`] but seeds the field with `initial` text, so
-    /// text-preserving keyboard behavior (Escape, Enter) can be exercised.
-    fn harness_with_fruit_contents(
-        initial: &str,
-    ) -> (TestHarness<AutocompleteWidget>, WidgetId, WidgetId) {
-        let theme = Theme::default();
-        let suggestions: Vec<ArcStr> = ["Apple", "Banana", "Cherry"]
-            .into_iter()
-            .map(ArcStr::from)
-            .collect();
-        let widget = AutocompleteWidget::new(
-            initial,
-            ArcStr::from("Pick a fruit"),
-            suggestions,
-            false,
-            &theme,
-        );
-        let harness = TestHarness::create_with_size(
-            masonry::theme::default_property_set(),
-            NewWidget::new(widget),
-            (300, 300),
-        );
-        let autocomplete_id = harness.root_id();
-        let text_area_id = find_text_area(harness.root_widget().as_dyn())
-            .expect("autocomplete should host a TextArea")
-            .id();
-        (harness, autocomplete_id, text_area_id)
-    }
-
-    /// Escape while the dropdown is open must dismiss the popup only — the
-    /// standard combobox affordance — leaving the typed text intact and *not*
-    /// emitting a text change that would reset the host's bound value.
-    #[test]
-    fn escape_in_field_closes_dropdown_without_clearing_text() {
-        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit_contents("App");
-
-        // Focus opens the dropdown: compute_filtered("App") -> ["Apple"].
-        harness.focus_on(Some(text_area_id));
-        harness.render();
-        assert_eq!(
-            harness
-                .access_node(autocomplete_id)
-                .expect("combobox")
-                .data()
-                .is_expanded(),
-            Some(true),
-            "focusing a field with matches should open the dropdown",
-        );
-        while harness.pop_action::<AutocompleteAction>().is_some() {}
-
-        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Escape)));
-        harness.render();
-
-        assert_eq!(
-            harness
-                .access_node(autocomplete_id)
-                .expect("combobox")
-                .data()
-                .is_expanded(),
-            Some(false),
-            "Escape should close the open dropdown",
-        );
-        assert!(
-            harness.pop_action::<AutocompleteAction>().is_none(),
-            "Escape-to-close must not emit a text change — it dismisses the \
-             popup, it does not clear the field",
-        );
-        let ac = find_autocomplete(harness.root_widget().as_dyn()).expect("autocomplete");
-        assert_eq!(ac.contents, "App", "typed text must survive Escape");
-    }
-
-    /// Escape with no dropdown open falls back to the bare-input clear
-    /// behavior: there's no popup to dismiss, so it empties the field.
-    #[test]
-    fn escape_with_closed_dropdown_still_clears_the_field() {
-        // "zzz" matches nothing, so focusing never opens the dropdown.
-        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit_contents("zzz");
-
-        harness.focus_on(Some(text_area_id));
-        harness.render();
-        assert_eq!(
-            harness
-                .access_node(autocomplete_id)
-                .expect("combobox")
-                .data()
-                .is_expanded(),
-            Some(false),
-            "no matches -> dropdown stays closed",
-        );
-        while harness.pop_action::<AutocompleteAction>().is_some() {}
-
-        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Escape)));
-        harness.render();
-
-        let (action, _) = harness
-            .pop_action::<AutocompleteAction>()
-            .expect("Escape with no popup should clear and report the change");
-        let AutocompleteAction::TextChanged(text) = action;
-        assert_eq!(text, "", "Escape with no open dropdown clears the field");
-        let ac = find_autocomplete(harness.root_widget().as_dyn()).expect("autocomplete");
-        assert!(ac.contents.is_empty(), "field should be cleared");
-    }
-
-    /// Pressing Enter in the text field while the dropdown is open accepts the
-    /// first suggestion (the near-universal combobox affordance), fills the
-    /// field, closes the popup, and reports the change.
-    #[test]
-    fn enter_in_field_selects_first_suggestion() {
-        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit();
-
-        harness.focus_on(Some(text_area_id));
-        harness.render();
-        while harness.pop_action::<AutocompleteAction>().is_some() {}
-
-        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Enter)));
-        harness.render();
-
-        let area = find_text_area(harness.root_widget().as_dyn()).expect("TextArea");
-        assert_eq!(
-            area.text().to_string(),
-            "Apple",
-            "Enter should accept the first suggestion",
-        );
-        assert_eq!(
-            harness
-                .access_node(autocomplete_id)
-                .expect("combobox")
-                .data()
-                .is_expanded(),
-            Some(false),
-            "accepting a suggestion closes the dropdown",
-        );
-        let (action, _) = harness
-            .pop_action::<AutocompleteAction>()
-            .expect("accepting a suggestion should report the change");
-        let AutocompleteAction::TextChanged(text) = action;
-        assert_eq!(text, "Apple");
-    }
-
-    /// Reproduces a real crash confirmed live: two calls that each want to
-    /// repopulate the portal-mounted suggestion list, issued back-to-back
-    /// before masonry has run a `register_children` pass in between (i.e.
-    /// both `mutate_later` callbacks queued into the same drain batch — see
-    /// `run_rewrite_passes` in `masonry_core`, which drains *all* queued
-    /// callbacks before committing new children to the widget arena).
-    ///
-    /// Before the `portal_pending_items` fix, the second call's
-    /// `remove_child` loop would operate on `WidgetPod`s the first call had
-    /// only just created — not yet arena children — panicking with
-    /// "`remove_child`: child not found". This drives that exact scenario
-    /// directly (two `set_all_suggestions` calls inside one
-    /// `edit_widget_with_id` closure, so both queue before either runs)
-    /// rather than depending on a specific UI interaction sequence to
-    /// trigger it.
-    #[test]
-    fn two_suggestion_repopulations_in_one_pass_do_not_panic() {
-        let (mut harness, autocomplete_id, text_area_id) = harness_with_fruit_portal();
-
-        harness.focus_on(Some(text_area_id));
-        harness.render();
-
-        // Both lists must differ from the initial `["Apple", "Banana",
-        // "Cherry"]` (and from each other) — `set_all_suggestions` no-ops on
-        // an unchanged list, which would defeat the point of queuing two
-        // real repopulations.
-        let first: Vec<ArcStr> = ["Apple", "Banana", "Cherry", "Date"]
-            .into_iter()
-            .map(ArcStr::from)
-            .collect();
-        let second: Vec<ArcStr> = ["Banana", "Cherry"].into_iter().map(ArcStr::from).collect();
-        harness.edit_widget_with_id(autocomplete_id, |mut w| {
-            let mut autocomplete = w.downcast::<AutocompleteWidget>();
-            AutocompleteWidget::set_all_suggestions(&mut autocomplete, first);
-            AutocompleteWidget::set_all_suggestions(&mut autocomplete, second);
-        });
-        harness.render();
-
-        let mut option_count = 0;
-        harness.inspect_widgets(|w| {
-            if w.accessibility_role() == Role::ListBoxOption {
-                option_count += 1;
-            }
-        });
-        assert_eq!(
-            option_count, 2,
-            "only the second (latest) population should be applied"
         );
     }
 }

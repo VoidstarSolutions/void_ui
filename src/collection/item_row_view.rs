@@ -13,7 +13,7 @@ use masonry::core::ArcStr;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
-use super::item_row::OverlayListItem;
+use super::item_row::{OnActivated, OverlayListItem};
 use crate::Theme;
 
 /// Boxed row-selection handler: `(state, selected text) -> Action`. Unlike
@@ -30,6 +30,12 @@ struct OverlayListItemView<State, Action> {
     theme: Theme,
     role: Role,
     on_select: OnSelect<State, Action>,
+    /// See `item_row::OnActivated`'s doc comment — an optional, `EventCtx`-
+    /// level side effect run synchronously when a pointer click completes
+    /// selection (e.g. autocomplete returning focus to its text field).
+    /// Practically static per component instance (not diffed on rebuild,
+    /// matching `role`, which also isn't diffed below).
+    on_activated: Option<OnActivated>,
     phantom: PhantomData<fn(State) -> Action>,
 }
 
@@ -39,6 +45,7 @@ pub(crate) fn overlay_list_item<State, Action>(
     theme: &Theme,
     role: Role,
     on_select: OnSelect<State, Action>,
+    on_activated: Option<OnActivated>,
 ) -> impl WidgetView<State, Action> + use<State, Action>
 where
     State: 'static,
@@ -50,6 +57,7 @@ where
         theme: *theme,
         role,
         on_select,
+        on_activated,
         phantom: PhantomData,
     }
 }
@@ -65,8 +73,13 @@ where
     type ViewState = ();
 
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
-        let widget =
-            OverlayListItem::new(self.text.clone(), self.highlighted, &self.theme, self.role);
+        let widget = OverlayListItem::new(
+            self.text.clone(),
+            self.highlighted,
+            &self.theme,
+            self.role,
+            self.on_activated.clone(),
+        );
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, ())
     }
@@ -131,6 +144,7 @@ mod tests {
             &Theme::default(),
             Role::ListBoxOption,
             on_select,
+            None,
         );
         assert_widget_view(&view);
     }

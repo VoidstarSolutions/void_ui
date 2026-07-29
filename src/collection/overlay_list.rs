@@ -28,6 +28,7 @@ use xilem::masonry::widgets::{VirtualScroll as VirtualScrollWidget, VirtualScrol
 use xilem::{Pod, ViewCtx, WidgetView};
 
 use super::imperative_list::CollectionListWidget;
+use super::item_row::OnActivated;
 use super::item_row_view::OnSelect;
 use super::overlay_list_body::overlay_list_body;
 use crate::Theme;
@@ -39,14 +40,22 @@ pub(crate) fn overlay_list<State, Action>(
     container_role: Role,
     item_role: Role,
     on_select: OnSelect<State, Action>,
-) -> impl WidgetView<State, Action>
+    on_activated: Option<OnActivated>,
+) -> impl WidgetView<State, Action, Widget: Sized>
 where
     State: 'static,
     Action: 'static,
 {
     let item_count = items.len();
     OverlayListView {
-        child: overlay_list_body(items, highlighted, theme, item_role, on_select),
+        child: overlay_list_body(
+            items,
+            highlighted,
+            theme,
+            item_role,
+            on_select,
+            on_activated,
+        ),
         item_count,
         container_role,
         phantom: PhantomData,
@@ -192,6 +201,7 @@ mod tests {
             Role::ListBox,
             Role::ListBoxOption,
             on_select,
+            None,
         );
         assert_widget_view(&view);
     }
@@ -303,6 +313,7 @@ mod integration_tests {
                 &theme,
                 Role::ListBoxOption,
                 on_select,
+                None,
             ),
             item_count: items.len(),
             container_role: Role::ListBox,

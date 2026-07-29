@@ -38,7 +38,7 @@
 use masonry::accesskit::Role;
 use masonry::core::{
     AccessCtx, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
-    PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Widget, WidgetMut, WidgetPod,
+    PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Widget, WidgetId, WidgetMut, WidgetPod,
     keyboard::{Key, KeyState, NamedKey},
 };
 use masonry::imaging::Painter;
@@ -57,6 +57,19 @@ pub(crate) struct CollectionListWidget {
     /// sync via [`Self::set_active_start`] rather than a parameter.
     active_start: usize,
     highlighted: Option<usize>,
+    /// The materialized [`WidgetId`] of the currently-highlighted row, if
+    /// any — kept in sync by [`Self::set_highlight`], which is the only
+    /// place with a live, materialized `WidgetMut` for it. This widget owns
+    /// no item content and so has no other way to resolve "the id of row
+    /// `highlighted`" from `&mut self` alone (no `ctx` access) in
+    /// [`Widget::accessibility`], which is exactly where it's needed: to set
+    /// `aria-activedescendant` on this widget's own node, mirroring the
+    /// pre-virtualization `LabelList::accessibility`'s
+    /// `node.set_active_descendant(label.id().into())`. `None` whenever
+    /// `highlighted` is `None` *or* its row isn't currently materialized
+    /// (matches `set_highlight`'s own materialized-window bounds check —
+    /// there's no id to point at in that case).
+    highlighted_row_id: Option<WidgetId>,
     container_role: Role,
 }
 
@@ -71,6 +84,7 @@ impl CollectionListWidget {
             item_count,
             active_start: 0,
             highlighted: None,
+            highlighted_row_id: None,
             container_role,
         }
     }
@@ -159,22 +173,30 @@ impl CollectionListWidget {
             let mut vs = this.ctx.get_mut(&mut this.widget.child);
             VirtualScrollWidget::scroll_to(&mut vs, i);
         }
-        let mut vs = this.ctx.get_mut(&mut this.widget.child);
-        if let Some(i) = prev
-            && let Some(k) = i.checked_sub(active_start)
-            && k < vs.widget.children_ids().len()
+        let mut new_highlighted_row_id = None;
         {
-            let mut row = VirtualScrollWidget::child_mut(&mut vs, i);
-            OverlayListItem::set_highlighted(&mut row.downcast(), false);
+            let mut vs = this.ctx.get_mut(&mut this.widget.child);
+            if let Some(i) = prev
+                && let Some(k) = i.checked_sub(active_start)
+                && k < vs.widget.children_ids().len()
+            {
+                let mut row = VirtualScrollWidget::child_mut(&mut vs, i);
+                OverlayListItem::set_highlighted(&mut row.downcast(), false);
+            }
+            if let Some(i) = index
+                && (active_start..active_start + materialized_count).contains(&i)
+                && let Some(k) = i.checked_sub(active_start)
+                && k < vs.widget.children_ids().len()
+            {
+                let mut row = VirtualScrollWidget::child_mut(&mut vs, i);
+                let row_id = row.ctx.widget_id();
+                let mut item = row.downcast::<OverlayListItem>();
+                OverlayListItem::set_highlighted(&mut item, true);
+                new_highlighted_row_id = Some(row_id);
+            }
         }
-        if let Some(i) = index
-            && (active_start..active_start + materialized_count).contains(&i)
-            && let Some(k) = i.checked_sub(active_start)
-            && k < vs.widget.children_ids().len()
-        {
-            let mut row = VirtualScrollWidget::child_mut(&mut vs, i);
-            OverlayListItem::set_highlighted(&mut row.downcast(), true);
-        }
+        this.widget.highlighted_row_id = new_highlighted_row_id;
+        this.ctx.request_accessibility_update();
     }
 }
 
@@ -219,6 +241,33 @@ impl Widget for CollectionListWidget {
                 });
                 ctx.set_handled();
             }
+            // Selects the highlighted row (if any) by synthesizing the same
+            // action a pointer click would submit — see
+            // `OverlayListItem::activate`. Deliberately does *not*
+            // `set_handled()`: this widget owns no concept of "close the
+            // popup" or "return focus to a trigger" (consumer-specific —
+            // autocomplete's `SuggestionList` and the future dropdown menu
+            // chrome each want their own version of that), so Enter is left
+            // to keep bubbling to whatever chrome wraps this list, exactly
+            // like Escape/Tab (neither handled here at all) already do.
+            Key::Named(NamedKey::Enter) => {
+                ctx.mutate_self_later(|mut this| {
+                    let mut this: WidgetMut<'_, Self> = this.downcast();
+                    let Some(i) = this.widget.highlighted else {
+                        return;
+                    };
+                    let active_start = this.widget.active_start;
+                    let materialized_count = {
+                        let vs = this.ctx.get_mut(&mut this.widget.child);
+                        vs.widget.children_ids().len()
+                    };
+                    if (active_start..active_start + materialized_count).contains(&i) {
+                        let mut vs = this.ctx.get_mut(&mut this.widget.child);
+                        let mut row = VirtualScrollWidget::child_mut(&mut vs, i);
+                        OverlayListItem::activate(&mut row.downcast());
+                    }
+                });
+            }
             _ => {}
         }
     }
@@ -262,8 +311,11 @@ impl Widget for CollectionListWidget {
         &mut self,
         _ctx: &mut AccessCtx<'_>,
         _props: &PropertiesRef<'_>,
-        _node: &mut masonry::accesskit::Node,
+        node: &mut masonry::accesskit::Node,
     ) {
+        if let Some(id) = self.highlighted_row_id {
+            node.set_active_descendant(id.into());
+        }
     }
 
     fn children_ids(&self) -> ChildrenIds {
@@ -354,6 +406,7 @@ mod tests {
                             false,
                             &Theme::default(),
                             Role::ListBoxOption,
+                            None,
                         ))
                         .erased();
                         let row_id = row.id();

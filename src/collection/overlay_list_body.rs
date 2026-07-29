@@ -14,6 +14,7 @@ use masonry::core::ArcStr;
 use xilem::WidgetView;
 use xilem::view::virtual_scroll;
 
+use super::item_row::OnActivated;
 use super::item_row_view::{OnSelect, overlay_list_item};
 use crate::Theme;
 
@@ -29,6 +30,7 @@ pub(crate) fn overlay_list_body<State, Action>(
     theme: &Theme,
     item_role: Role,
     on_select: OnSelect<State, Action>,
+    on_activated: Option<OnActivated>,
 ) -> impl WidgetView<State, Action, Widget = xilem::masonry::widgets::VirtualScroll>
 where
     State: 'static,
@@ -44,6 +46,7 @@ where
             &theme,
             item_role,
             Arc::clone(&on_select),
+            on_activated.clone(),
         )
     })
 }
@@ -73,6 +76,7 @@ mod tests {
             &Theme::default(),
             Role::ListBoxOption,
             on_select,
+            None,
         );
         assert_widget_view(&view);
     }
@@ -190,6 +194,7 @@ mod integration_tests {
             &theme,
             Role::ListBoxOption,
             on_select,
+            None,
         );
 
         run_body(&view, &items);
