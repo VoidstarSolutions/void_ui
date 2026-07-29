@@ -192,7 +192,13 @@ mod tests {
 
         let theme = Theme::default();
         let vs = NewWidget::new(VirtualScrollWidget::new(0, 200));
-        let list = CollectionListWidget::new(vs, 200, Role::Menu, false);
+        let list = CollectionListWidget::new(
+            vs,
+            200,
+            Role::Menu,
+            false,
+            f64::from(theme.density.row_height),
+        );
         let menu = NewWidget::new(MenuContent::new(NewWidget::new(list), &theme));
         let menu_id = menu.id();
         // Wrapped in `Align` (root sizing otherwise forces the root widget
@@ -221,7 +227,13 @@ mod tests {
     fn set_theme_is_a_noop_when_the_theme_is_unchanged() {
         let theme = Theme::default();
         let vs = NewWidget::new(VirtualScrollWidget::new(0, 3));
-        let list = CollectionListWidget::new(vs, 3, Role::Menu, false);
+        let list = CollectionListWidget::new(
+            vs,
+            3,
+            Role::Menu,
+            false,
+            f64::from(theme.density.row_height),
+        );
         let menu = MenuContent::new(NewWidget::new(list), &theme);
         let mut h =
             TestHarness::create_with_size(default_property_set(), NewWidget::new(menu), (300, 300));

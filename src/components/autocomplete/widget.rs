@@ -1423,7 +1423,13 @@ mod accessibility_tests {
         let listbox_handle = ListboxHandle::new();
         let text_area_handle = TextAreaHandle::new();
         let vs = VirtualScrollWidget::new(0, FRUITS.len());
-        let list = CollectionListWidget::new(NewWidget::new(vs), FRUITS.len(), Role::ListBox, true);
+        let list = CollectionListWidget::new(
+            NewWidget::new(vs),
+            FRUITS.len(),
+            Role::ListBox,
+            true,
+            f64::from(theme.density.row_height),
+        );
         let suggestion_list = SuggestionList::new(
             NewWidget::new(list),
             &theme,
@@ -1483,7 +1489,13 @@ mod accessibility_tests {
             .find(|f| f.to_lowercase().starts_with(&initial.to_lowercase()))
             .map(|f| ArcStr::from(*f));
         let vs = VirtualScrollWidget::new(0, FRUITS.len());
-        let list = CollectionListWidget::new(NewWidget::new(vs), FRUITS.len(), Role::ListBox, true);
+        let list = CollectionListWidget::new(
+            NewWidget::new(vs),
+            FRUITS.len(),
+            Role::ListBox,
+            true,
+            f64::from(theme.density.row_height),
+        );
         let suggestion_list = SuggestionList::new(
             NewWidget::new(list),
             &theme,
@@ -1549,7 +1561,13 @@ mod accessibility_tests {
             &text_area_handle,
         );
         let vs = VirtualScrollWidget::new(0, FRUITS.len());
-        let list = CollectionListWidget::new(NewWidget::new(vs), FRUITS.len(), Role::ListBox, true);
+        let list = CollectionListWidget::new(
+            NewWidget::new(vs),
+            FRUITS.len(),
+            Role::ListBox,
+            true,
+            f64::from(theme.density.row_height),
+        );
         let suggestion_list = SuggestionList::new(
             NewWidget::new(list),
             &theme,
@@ -1712,7 +1730,13 @@ mod accessibility_tests {
         let listbox_handle = ListboxHandle::new();
         let text_area_handle = TextAreaHandle::new();
         let vs = VirtualScrollWidget::new(0, FRUITS.len());
-        let list = CollectionListWidget::new(NewWidget::new(vs), FRUITS.len(), Role::ListBox, true);
+        let list = CollectionListWidget::new(
+            NewWidget::new(vs),
+            FRUITS.len(),
+            Role::ListBox,
+            true,
+            f64::from(theme.density.row_height),
+        );
         let suggestion_list = SuggestionList::new(
             NewWidget::new(list),
             &theme,
@@ -2070,7 +2094,13 @@ mod accessibility_tests {
         let theme = Theme::default();
         let listbox_handle = ListboxHandle::new();
         let vs = VirtualScrollWidget::new(0, FRUITS.len());
-        let list = CollectionListWidget::new(NewWidget::new(vs), FRUITS.len(), Role::ListBox, true);
+        let list = CollectionListWidget::new(
+            NewWidget::new(vs),
+            FRUITS.len(),
+            Role::ListBox,
+            true,
+            f64::from(theme.density.row_height),
+        );
         let suggestion_list = SuggestionList::new(
             NewWidget::new(list),
             &theme,
@@ -2167,7 +2197,13 @@ mod accessibility_tests {
         let theme = Theme::default();
         let listbox_handle = ListboxHandle::new();
         let vs = VirtualScrollWidget::new(0, FRUITS.len());
-        let list = CollectionListWidget::new(NewWidget::new(vs), FRUITS.len(), Role::ListBox, true);
+        let list = CollectionListWidget::new(
+            NewWidget::new(vs),
+            FRUITS.len(),
+            Role::ListBox,
+            true,
+            f64::from(theme.density.row_height),
+        );
         let suggestion_list = SuggestionList::new(
             NewWidget::new(list),
             &theme,
@@ -2261,7 +2297,13 @@ mod accessibility_tests {
         let theme = Theme::default();
         let listbox_handle = ListboxHandle::new();
         let vs = VirtualScrollWidget::new(0, FRUITS.len());
-        let list = CollectionListWidget::new(NewWidget::new(vs), FRUITS.len(), Role::ListBox, true);
+        let list = CollectionListWidget::new(
+            NewWidget::new(vs),
+            FRUITS.len(),
+            Role::ListBox,
+            true,
+            f64::from(theme.density.row_height),
+        );
         let suggestion_list = SuggestionList::new(
             NewWidget::new(list),
             &theme,
@@ -2480,7 +2522,13 @@ mod accessibility_tests {
         let listbox_handle = ListboxHandle::new();
         let text_area_handle = TextAreaHandle::new();
         let vs = VirtualScrollWidget::new(0, 0);
-        let list = CollectionListWidget::new(NewWidget::new(vs), 0, Role::ListBox, true);
+        let list = CollectionListWidget::new(
+            NewWidget::new(vs),
+            0,
+            Role::ListBox,
+            true,
+            f64::from(theme.density.row_height),
+        );
         let suggestion_list = SuggestionList::new(
             NewWidget::new(list),
             &theme,

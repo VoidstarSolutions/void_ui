@@ -71,6 +71,14 @@ pub(crate) struct CollectionListWidget {
     /// there's no id to point at in that case).
     highlighted_row_id: Option<WidgetId>,
     container_role: Role,
+    /// Estimated per-row height, in px, used *only* to answer content-based
+    /// (`MaxContent`/`MinContent`) [`Widget::measure`] requests along the
+    /// scroll axis — never for real per-row layout, which
+    /// `VirtualScroll`'s own `layout` pass already gets right from each
+    /// materialized row's actual measured height. See
+    /// [`Widget::measure`]'s doc comment on this type for why real content
+    /// measurement is unavailable here.
+    item_extent: f64,
     /// Backs [`Widget::accepts_focus`]. Per-instance rather than hardcoded
     /// because the two consumers of this widget want genuinely different
     /// keyboard models: autocomplete's `SuggestionList` wants Tab to move
@@ -93,6 +101,7 @@ impl CollectionListWidget {
         item_count: usize,
         container_role: Role,
         accepts_focus: bool,
+        item_extent: f64,
     ) -> Self {
         Self {
             child: child.to_pod(),
@@ -101,6 +110,7 @@ impl CollectionListWidget {
             highlighted: None,
             highlighted_row_id: None,
             container_role,
+            item_extent,
             accepts_focus,
         }
     }
@@ -316,6 +326,22 @@ impl Widget for CollectionListWidget {
         ctx.register_child(&mut self.child);
     }
 
+    /// `VirtualScroll` (masonry) can't compute a real content-based size —
+    /// it would have to materialize every item to measure it, defeating
+    /// virtualization — so its own `measure` unconditionally returns a fixed
+    /// 100px for `MaxContent`/`MinContent` regardless of `item_count` (see
+    /// its doc comment in the pinned masonry source). Forwarding straight to
+    /// it here made this widget's own natural size just as wrong, which
+    /// meant callers that ask "how tall do you want to be" to auto-size a
+    /// container to content (`SuggestionList`/`MenuContent`'s `measure`,
+    /// clamped by `MAX_LIST_HEIGHT`) got a constant answer no matter how few
+    /// items remained — a real, live-reproduced bug (the popover stayed
+    /// oversized after typing narrowed the results down to one match).
+    /// Fixed by estimating the vertical content-based size ourselves from
+    /// `item_count * item_extent` instead of asking the child — `FitContent`
+    /// (a real, already-placed size, not a content query) and the cross
+    /// axis still forward to the child exactly as before, since neither of
+    /// those is affected by this limitation.
     fn measure(
         &mut self,
         ctx: &mut MeasureCtx<'_>,
@@ -324,6 +350,10 @@ impl Widget for CollectionListWidget {
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
+        if axis == Axis::Vertical && matches!(len_req, LenReq::MaxContent | LenReq::MinContent) {
+            let item_count = f64::from(u32::try_from(self.item_count).unwrap_or(u32::MAX));
+            return Length::px(item_count * self.item_extent);
+        }
         let context_size = LayoutSize::maybe(axis.cross(), cross_length);
         ctx.compute_length(
             &mut self.child,
@@ -382,7 +412,13 @@ mod tests {
     #[test]
     fn constructing_from_a_prebuilt_virtual_scroll_does_not_panic() {
         let vs = NewWidget::new(VirtualScrollWidget::new(0, 100));
-        let widget = CollectionListWidget::new(vs, 100, Role::ListBox, true);
+        let widget = CollectionListWidget::new(
+            vs,
+            100,
+            Role::ListBox,
+            true,
+            f64::from(Theme::default().density.row_height),
+        );
         let harness = TestHarness::create_with_size(
             default_property_set(),
             NewWidget::new(widget),
@@ -397,14 +433,26 @@ mod tests {
     #[test]
     fn accepts_focus_reflects_the_constructor_parameter() {
         let vs = NewWidget::new(VirtualScrollWidget::new(0, 10));
-        let widget = CollectionListWidget::new(vs, 10, Role::ListBox, true);
+        let widget = CollectionListWidget::new(
+            vs,
+            10,
+            Role::ListBox,
+            true,
+            f64::from(Theme::default().density.row_height),
+        );
         assert!(
             masonry::core::Widget::accepts_focus(&widget),
             "constructed with accepts_focus: true"
         );
 
         let vs = NewWidget::new(VirtualScrollWidget::new(0, 10));
-        let widget = CollectionListWidget::new(vs, 10, Role::Menu, false);
+        let widget = CollectionListWidget::new(
+            vs,
+            10,
+            Role::Menu,
+            false,
+            f64::from(Theme::default().density.row_height),
+        );
         assert!(
             !masonry::core::Widget::accepts_focus(&widget),
             "constructed with accepts_focus: false"
@@ -413,7 +461,13 @@ mod tests {
 
     fn harness_with_count(count: usize) -> TestHarness<CollectionListWidget> {
         let vs = NewWidget::new(VirtualScrollWidget::new(0, count));
-        let widget = CollectionListWidget::new(vs, count, Role::ListBox, true);
+        let widget = CollectionListWidget::new(
+            vs,
+            count,
+            Role::ListBox,
+            true,
+            f64::from(Theme::default().density.row_height),
+        );
         let mut h = TestHarness::create_with_size(
             default_property_set(),
             NewWidget::new(widget),
@@ -489,7 +543,13 @@ mod tests {
         count: usize,
     ) -> (TestHarness<CollectionListWidget>, HashMap<usize, WidgetId>) {
         let vs = NewWidget::new(VirtualScrollWidget::new(0, count));
-        let widget = CollectionListWidget::new(vs, count, Role::ListBox, true);
+        let widget = CollectionListWidget::new(
+            vs,
+            count,
+            Role::ListBox,
+            true,
+            f64::from(Theme::default().density.row_height),
+        );
         let mut h = TestHarness::create_with_size(
             default_property_set(),
             NewWidget::new(widget),

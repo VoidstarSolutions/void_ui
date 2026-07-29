@@ -56,6 +56,14 @@ where
     Action: 'static,
 {
     let item_count = items.len();
+    // Estimated per-row height for `CollectionListWidget::measure`'s
+    // content-based (`MaxContent`) sizing — see that field's doc comment for
+    // why it can't just ask `VirtualScroll` for this. `density.row_height`
+    // is the same baseline `data_grid`'s simple, single-line rows use
+    // (`src/components/data_grid/view.rs`); `OverlayListItem` rows are
+    // equally simple single-line text, so the `list` component's richer
+    // `* 4/3` scale-up (for two-line/avatar content) doesn't apply here.
+    let item_extent = f64::from(theme.density.row_height);
     OverlayListView {
         child: overlay_list_body(
             items,
@@ -67,6 +75,7 @@ where
         ),
         item_count,
         container_role,
+        item_extent,
         accepts_focus,
         phantom: PhantomData,
     }
@@ -76,6 +85,13 @@ struct OverlayListView<V, State, Action> {
     child: V,
     item_count: usize,
     container_role: Role,
+    /// Forwarded verbatim into `CollectionListWidget::new`'s `item_extent`
+    /// param — see that field's doc comment. Not diffed on `rebuild` for the
+    /// same reason `container_role` isn't: `Theme` changes push through
+    /// `overlay_list_body`'s own child rows, not through this container's
+    /// measure estimate, and a live density swap mid-session isn't a
+    /// scenario this substrate optimizes for elsewhere either.
+    item_extent: f64,
     /// Forwarded verbatim into `CollectionListWidget::new` — see that
     /// widget's `accepts_focus` field doc for why this must be per-caller
     /// rather than hardcoded. Not read anywhere else in this View: it never
@@ -116,6 +132,7 @@ where
                 self.item_count,
                 self.container_role,
                 self.accepts_focus,
+                self.item_extent,
             )),
             OverlayListViewState {
                 child_state,
@@ -337,6 +354,7 @@ mod integration_tests {
             ),
             item_count: items.len(),
             container_role: Role::ListBox,
+            item_extent: f64::from(theme.density.row_height),
             accepts_focus: true,
             phantom: PhantomData,
         };

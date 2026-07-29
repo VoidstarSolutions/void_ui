@@ -1000,7 +1000,13 @@ mod tests {
         // `false`: matches the real `build_menu_view` call site
         // (`view.rs`) — dropdown_button's roving-highlight-on-trigger model
         // means this must never be a Tab stop.
-        let list = CollectionListWidget::new(vs, item_count, Role::Menu, false);
+        let list = CollectionListWidget::new(
+            vs,
+            item_count,
+            Role::Menu,
+            false,
+            f64::from(theme.density.row_height),
+        );
         NewWidget::new(MenuContent::new(NewWidget::new(list), theme)).erased()
     }
 
