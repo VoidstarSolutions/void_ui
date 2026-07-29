@@ -11,10 +11,14 @@ use std::sync::Arc;
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
-    AccessCtx, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, PaintCtx,
-    PointerButton, PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx,
-    StyleProperty, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
+    AccessCtx, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, PaintCtx, PointerButton,
+    PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, StyleProperty,
+    Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
+// Only `render_overlay_list_item` (test-only, see below) needs `NewWidget` at
+// this module scope — `mod tests` imports its own copy separately.
+#[cfg(test)]
+use masonry::core::NewWidget;
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Size};
 use masonry::layout::{LayoutSize, LenReq, Length};
@@ -79,9 +83,17 @@ impl OverlayListItem {
     }
 }
 
-/// The row-content builder both `SuggestionList` and `MenuContent` pass to
-/// their `CollectionListWidget`. `role` is the per-row accessibility role
-/// (`Role::ListBoxOption` for autocomplete, `Role::MenuItem` for a dropdown).
+/// Builds a plain, imperatively-constructed `NewWidget<dyn Widget>` row.
+/// Test-only: production row content goes through `overlay_list_item`/
+/// `OverlayListItemView` instead (a real `View`, not a bare widget — see
+/// `item_row_view.rs`), since `overlay_list_body`'s `virtual_scroll` needs
+/// `WidgetView`-typed content. Kept as a `pub(crate)` convenience for
+/// `autocomplete::widget`'s and `dropdown_button::widget`'s own
+/// `#[cfg(test)]` fixtures, which materialize rows directly at the widget
+/// layer without standing up a full `ViewCtx`. `role` is the per-row
+/// accessibility role (`Role::ListBoxOption` for autocomplete,
+/// `Role::MenuItem` for a dropdown).
+#[cfg(test)]
 pub(crate) fn render_overlay_list_item(
     text: &ArcStr,
     highlighted: bool,

@@ -114,7 +114,11 @@ impl CollectionListWidget {
         this.ctx.get_mut(&mut this.widget.child)
     }
 
-    /// The currently-highlighted global index, if any.
+    /// The currently-highlighted global index, if any. Test-only — no
+    /// production caller needs the raw index outside `set_highlight`'s own
+    /// bookkeeping; production code reads highlight state via `accessibility()`
+    /// (through `highlighted_row_id`) instead.
+    #[cfg(test)]
     pub(crate) fn highlighted(&self) -> Option<usize> {
         self.highlighted
     }

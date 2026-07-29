@@ -51,12 +51,14 @@ pub(crate) use ids::{IdSource, nearing_end, scroll_range_end, visual_range_ids};
 pub(crate) use imperative_list::CollectionListWidget;
 // `render_overlay_list_item` has no non-test production callers (production
 // code reaches rows only through `overlay_list`/`overlay_list_body`'s own
-// View-driven `virtual_scroll` closure) — kept unconditionally reachable
-// (not `#[cfg(test)]`-gated) because both `autocomplete::widget`'s and
-// `dropdown_button::widget`'s own `#[cfg(test)]` modules materialize rows
-// with it directly to build widget-level test fixtures without going
-// through the view layer.
-pub(crate) use item_row::{OnActivated, render_overlay_list_item};
+// View-driven `virtual_scroll` closure) — `#[cfg(test)]`-gated here, which
+// is safe even though `autocomplete::widget`'s and `dropdown_button::widget`'s
+// own `#[cfg(test)]` modules import it too: `cfg(test)` is one crate-wide
+// compilation flag, not scoped per module, so it stays reachable from any
+// other module's own `#[cfg(test)]` code during a test build.
+pub(crate) use item_row::OnActivated;
+#[cfg(test)]
+pub(crate) use item_row::render_overlay_list_item;
 pub(crate) use item_row_view::OnSelect;
 pub(crate) use overlay_list::overlay_list;
 pub(crate) use row_click::{LeadingHitZone, TreeRowMeta};
