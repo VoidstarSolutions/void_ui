@@ -157,16 +157,22 @@ where
             self.child
                 .rebuild(&prev.child, &mut view_state.child_state, ctx, vs, app_state);
         }
+        // Materialization for `view_state.active_start` (captured by the
+        // most recent `message()` peek, if any) has now caught up — the
+        // child's own `rebuild` just ran above — so push it down first, every
+        // rebuild, not just when it changed: `CollectionListWidget` has no
+        // other way to learn this (see its module doc), and the push is
+        // cheap (no repaint/relayout — see `set_active_start`'s doc). This
+        // must happen *before* `set_item_count`: a shrinking count can clamp
+        // the highlight through `set_highlight`, which resolves the
+        // highlighted row against `active_start` — running that against the
+        // still-stale value from the previous rebuild could disagree with
+        // what the child's `virtual_scroll` actually has materialized this
+        // pass.
+        CollectionListWidget::set_active_start(&mut element, view_state.active_start);
         if self.item_count != prev.item_count {
             CollectionListWidget::set_item_count(&mut element, self.item_count);
         }
-        // Materialization for `view_state.active_start` (captured by the
-        // most recent `message()` peek, if any) has now caught up — the
-        // child's own `rebuild` just ran above — so push it down. Every
-        // rebuild, not just when it changed: `CollectionListWidget` has no
-        // other way to learn this (see its module doc), and the push is
-        // cheap (no repaint/relayout — see `set_active_start`'s doc).
-        CollectionListWidget::set_active_start(&mut element, view_state.active_start);
     }
 
     fn teardown(
