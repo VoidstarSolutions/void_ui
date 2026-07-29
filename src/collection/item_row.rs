@@ -239,16 +239,32 @@ impl Widget for OverlayListItem {
     ) -> Length {
         match axis {
             Axis::Vertical => Length::px(item_list::item_height(&self.theme.density)),
-            Axis::Horizontal => {
-                let context_size = LayoutSize::maybe(Axis::Vertical, cross_length);
-                ctx.compute_length(
-                    &mut self.label,
-                    len_req.into(),
-                    context_size,
-                    Axis::Horizontal,
-                    cross_length,
-                )
-            }
+            // Horizontal: a row is a block — it always fills the width
+            // `VirtualScroll` actually offers it, not just what its label
+            // text needs, so the hover/highlight fill in `paint()` (which
+            // uses `ctx.border_box()`) spans the row's full width rather
+            // than stopping at the text. `VirtualScroll::layout`'s per-row
+            // `SizeDef::fit(size)` asks each row for `LenReq::FitContent
+            // (available_width)` on this axis — "shrink-to-fit, up to this
+            // bound" — so simply forwarding that to the label (as this used
+            // to) reports back the label's own narrower natural width
+            // instead of claiming the full offer. `MaxContent`/`MinContent`
+            // requests (a genuine "how wide do you *want* to be" query, used
+            // e.g. by `SuggestionList`'s own intrinsic-width measure) still
+            // forward to the label, which is the real answer for those.
+            Axis::Horizontal => match len_req {
+                LenReq::FitContent(space) => space,
+                LenReq::MaxContent | LenReq::MinContent => {
+                    let context_size = LayoutSize::maybe(Axis::Vertical, cross_length);
+                    ctx.compute_length(
+                        &mut self.label,
+                        len_req.into(),
+                        context_size,
+                        Axis::Horizontal,
+                        cross_length,
+                    )
+                }
+            },
         }
     }
 
