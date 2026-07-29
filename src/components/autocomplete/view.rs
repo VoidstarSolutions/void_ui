@@ -283,7 +283,9 @@ where
     Action: 'static,
 {
     let on_select: OnSelect<State, Action> =
-        Arc::new(move |state: &mut State, text: ArcStr| (on_changed)(state, text.to_string()));
+        Arc::new(move |state: &mut State, _pos: usize, text: ArcStr| {
+            (on_changed)(state, text.to_string())
+        });
     let on_activated: OnActivated = {
         let text_area_handle = text_area_handle.clone();
         let handle = handle.clone();

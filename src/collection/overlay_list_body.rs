@@ -42,6 +42,7 @@ where
         let text = items[pos].clone();
         overlay_list_item(
             text,
+            pos,
             highlighted == Some(pos),
             &theme,
             item_role,
@@ -69,7 +70,7 @@ mod tests {
     #[test]
     fn overlay_list_body_builds_a_widget_view() {
         let items: Arc<Vec<ArcStr>> = Arc::new(vec!["Apple".into(), "Banana".into()]);
-        let on_select = Arc::new(|_s: &mut S, _text: ArcStr| ());
+        let on_select = Arc::new(|_s: &mut S, _pos: usize, _text: ArcStr| ());
         let view = overlay_list_body(
             items,
             None,
@@ -180,7 +181,7 @@ mod integration_tests {
                 .collect(),
         );
         let theme = Theme::default();
-        let on_select = Arc::new(|state: &mut S, text: ArcStr| {
+        let on_select = Arc::new(|state: &mut S, _pos: usize, text: ArcStr| {
             state.selected = Some(text);
         });
 

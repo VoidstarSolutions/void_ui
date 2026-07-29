@@ -428,34 +428,35 @@ where
 type BoxedListViewState<State, Action> =
     <Box<AnyWidgetView<State, Action>> as View<State, Action, ViewCtx>>::ViewState;
 
-/// Resolves a click-selected item's text back to its callback and invokes
+/// Resolves a click-selected item back to its callback by index and invokes
 /// it — the "resolve at the moment of the click" pattern `collection::
-/// apply_row_activate` uses elsewhere, needed here because `overlay_list`'s
-/// `on_select` only ever carries the row's displayed `ArcStr`, not its
-/// index (see `crate::collection::item_row_view::OnSelect`). Falls back to
-/// index 0 (with a `tracing::error!`) if no item matches `text`, which
-/// should be unreachable in practice: `text` can only be a row's own
-/// content at the moment a live pointer click on that row completed, and
-/// `items` is the same list that row was built from. A genuinely empty
-/// `items` can never reach this function at all, since there would be no
-/// row to click.
+/// apply_row_activate` uses elsewhere. Indexing (rather than text-matching)
+/// is required here because two menu items can share a label: `overlay_list`
+/// now carries the row's own index through `on_select`
+/// (`crate::collection::item_row_view::OnSelect`), so this resolves the
+/// *exact* row that was clicked rather than the first row with matching
+/// text. Falls back to index 0 (with a `tracing::error!`) if `pos` is out of
+/// range for `items`, which should be unreachable in practice: `pos` can
+/// only be a row's own index at the moment a live pointer click on that row
+/// completed, and `items` is the same list that row was built from — a
+/// stale closure outliving a shrunk `items` list mid-flight is the only
+/// theoretical way to reach it. A genuinely empty `items` can never reach
+/// this function at all, since there would be no row to click.
 fn invoke_selected<State, Action>(
     items: &[(ArcStr, ItemCallback<State, Action>)],
-    text: &ArcStr,
+    pos: usize,
     state: &mut State,
 ) -> Action {
-    let idx = items
-        .iter()
-        .position(|(label, _)| label == text)
-        .unwrap_or_else(|| {
-            tracing::error!(
-                text = %text,
-                "MenuContentView on_select: no item in the current item list matches the \
-                 selected text; falling back to index 0 — this should be unreachable"
-            );
-            0
-        });
-    let (_, cb) = &items[idx];
+    let Some((_, cb)) = items.get(pos) else {
+        tracing::error!(
+            pos,
+            len = items.len(),
+            "MenuContentView on_select: index out of range for the current item list — this \
+             should be unreachable"
+        );
+        let (_, cb) = &items[0];
+        return cb(state);
+    };
     cb(state)
 }
 
@@ -463,7 +464,7 @@ fn invoke_selected<State, Action>(
 /// and both `build`/`rebuild` — a plain value constructed fresh every call,
 /// mirroring `autocomplete::view::build_list_view`.
 ///
-/// `on_select` resolves the selected text back to its callback via
+/// `on_select` resolves the selected row's index back to its callback via
 /// [`invoke_selected`] and calls it directly — the final host `Action`,
 /// skipping the old `MenuItemSelected` masonry-action hop entirely, now that
 /// resolution happens in the View layer. `on_activated` is the synchronous,
@@ -494,7 +495,9 @@ where
         Arc::new(items.iter().map(|(label, _)| label.clone()).collect());
     let on_select: OnSelect<State, Action> = {
         let items = Arc::clone(items);
-        Arc::new(move |state: &mut State, text: ArcStr| invoke_selected(&items, &text, state))
+        Arc::new(move |state: &mut State, pos: usize, _text: ArcStr| {
+            invoke_selected(&items, pos, state)
+        })
     };
     let on_activated: OnActivated = {
         let handle = handle.clone();
@@ -610,7 +613,7 @@ where
 mod tests {
     use super::*;
 
-    /// Real behavior of the text->callback resolution `build_menu_view`'s
+    /// Real behavior of the index->callback resolution `build_menu_view`'s
     /// `on_select` closure relies on — extracted into a standalone,
     /// directly-testable function so this doesn't need a full `ViewCtx`/
     /// `View::message` harness (that end-to-end path, generically, is
@@ -618,7 +621,7 @@ mod tests {
     /// `overlay_list_body_virtualizes_and_routes_selection_through_real_view_messages`
     /// test).
     #[test]
-    fn invoke_selected_resolves_by_text_and_calls_the_matching_callback() {
+    fn invoke_selected_resolves_by_index_and_calls_the_matching_callback() {
         let items: Vec<(ArcStr, ItemCallback<i32, i32>)> = vec![
             (
                 "A".into(),
@@ -636,20 +639,53 @@ mod tests {
             ),
         ];
         let mut state = 0;
-        let result = invoke_selected(&items, &ArcStr::from("B"), &mut state);
+        let result = invoke_selected(&items, 1, &mut state);
         assert_eq!(result, 20, "should invoke item B's callback, not item A's");
         assert_eq!(state, 2);
     }
 
     #[test]
-    fn invoke_selected_falls_back_to_index_0_when_text_matches_nothing() {
+    fn invoke_selected_falls_back_to_index_0_when_pos_is_out_of_range() {
         let items: Vec<(ArcStr, ItemCallback<i32, i32>)> =
             vec![("A".into(), Box::new(|_s: &mut i32| 10))];
         let mut state = 0;
-        let result = invoke_selected(&items, &ArcStr::from("Nonexistent"), &mut state);
+        let result = invoke_selected(&items, 5, &mut state);
         assert_eq!(
             result, 10,
             "unreachable-in-practice fallback should not panic"
         );
+    }
+
+    /// Proves the bug this fix closes: two items with the same label
+    /// resolved to different callbacks depending on which index was
+    /// clicked. Before this fix, `invoke_selected` scanned `items` for a
+    /// text match and always found index 0 first, so clicking the second
+    /// "Duplicate" row silently invoked the first row's callback.
+    #[test]
+    fn invoke_selected_resolves_the_second_of_two_duplicate_labeled_items_correctly() {
+        let items: Vec<(ArcStr, ItemCallback<i32, i32>)> = vec![
+            (
+                "Duplicate".into(),
+                Box::new(|s: &mut i32| {
+                    *s += 1;
+                    10
+                }),
+            ),
+            (
+                "Duplicate".into(),
+                Box::new(|s: &mut i32| {
+                    *s += 2;
+                    20
+                }),
+            ),
+        ];
+        let mut state = 0;
+        let result = invoke_selected(&items, 1, &mut state);
+        assert_eq!(
+            result, 20,
+            "should invoke index 1's callback, not index 0's, even though both \
+             items share the same label"
+        );
+        assert_eq!(state, 2);
     }
 }

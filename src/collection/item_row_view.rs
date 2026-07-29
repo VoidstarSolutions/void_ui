@@ -16,19 +16,28 @@ use xilem::{Pod, ViewCtx, WidgetView};
 use super::item_row::{OnActivated, OverlayListItem};
 use crate::Theme;
 
-/// Boxed row-selection handler: `(state, selected text) -> Action`. Unlike
-/// `ClickableRow`'s `on_click` (which requires `Action: Default` and always
-/// signals via `Action::default()`), this returns the *real* action the host
-/// wants — mirroring `AutocompleteView`'s existing `OnChanged` shape
-/// (`autocomplete/view.rs:45`), since a row selection is a real, meaningful
-/// event, not a "something changed, rerun" marker.
-pub(crate) type OnSelect<State, Action> = Arc<dyn Fn(&mut State, ArcStr) -> Action + Send + Sync>;
+/// Boxed row-selection handler: `(state, row index, selected text) ->
+/// Action`. Unlike `ClickableRow`'s `on_click` (which requires `Action:
+/// Default` and always signals via `Action::default()`), this returns the
+/// *real* action the host wants — mirroring `AutocompleteView`'s existing
+/// `OnChanged` shape (`autocomplete/view.rs:45`), since a row selection is a
+/// real, meaningful event, not a "something changed, rerun" marker. The
+/// index lets callers resolve the selected row unambiguously even when two
+/// rows share the same displayed text (`ArcStr` is kept alongside it since
+/// some consumers — autocomplete — have a genuinely text-based selection
+/// semantic and want it directly).
+pub(crate) type OnSelect<State, Action> =
+    Arc<dyn Fn(&mut State, usize, ArcStr) -> Action + Send + Sync>;
 
 struct OverlayListItemView<State, Action> {
     text: ArcStr,
     highlighted: bool,
     theme: Theme,
     role: Role,
+    /// This row's position in the item list. Static per row instance (a
+    /// given `OverlayListItemView` is always rebuilt against the same
+    /// index), so — like `role`/`on_activated` — never diffed in `rebuild`.
+    pos: usize,
     on_select: OnSelect<State, Action>,
     /// See `item_row::OnActivated`'s doc comment — an optional, `EventCtx`-
     /// level side effect run synchronously when a pointer click completes
@@ -41,6 +50,7 @@ struct OverlayListItemView<State, Action> {
 
 pub(crate) fn overlay_list_item<State, Action>(
     text: ArcStr,
+    pos: usize,
     highlighted: bool,
     theme: &Theme,
     role: Role,
@@ -56,6 +66,7 @@ where
         highlighted,
         theme: *theme,
         role,
+        pos,
         on_select,
         on_activated,
         phantom: PhantomData,
@@ -115,7 +126,7 @@ where
         app_state: &mut State,
     ) -> MessageResult<Action> {
         if let Some(boxed) = message.take_message::<ArcStr>() {
-            return MessageResult::Action((self.on_select)(app_state, *boxed));
+            return MessageResult::Action((self.on_select)(app_state, self.pos, *boxed));
         }
         tracing::error!(?message, "unexpected message in OverlayListItemView");
         MessageResult::Stale
@@ -137,9 +148,11 @@ mod tests {
 
     #[test]
     fn overlay_list_item_builds_a_widget_view() {
-        let on_select: super::OnSelect<S, ()> = std::sync::Arc::new(|_s: &mut S, _text: ArcStr| ());
+        let on_select: super::OnSelect<S, ()> =
+            std::sync::Arc::new(|_s: &mut S, _pos: usize, _text: ArcStr| ());
         let view = overlay_list_item(
             "Apple".into(),
+            0,
             false,
             &Theme::default(),
             Role::ListBoxOption,
