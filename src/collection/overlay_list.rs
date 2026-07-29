@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn overlay_list_builds_a_widget_view() {
         let items: Arc<Vec<ArcStr>> = Arc::new(vec!["Apple".into(), "Banana".into()]);
-        let on_select = Arc::new(|_s: &mut S, _pos: usize, _text: ArcStr| ());
+        let on_select = Arc::new(|_s: &mut S, _pos: usize, _text: ArcStr| Some(()));
         let view = overlay_list(
             items,
             None,
@@ -342,7 +342,7 @@ mod integration_tests {
                 .collect(),
         );
         let theme = Theme::default();
-        let on_select = Arc::new(|_s: &mut S, _pos: usize, _text: ArcStr| ());
+        let on_select = Arc::new(|_s: &mut S, _pos: usize, _text: ArcStr| Some(()));
 
         // Built directly rather than via `overlay_list()` — see
         // `drive_to_fixpoint`'s doc comment for why — but otherwise

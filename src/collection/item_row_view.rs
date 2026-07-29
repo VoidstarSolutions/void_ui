@@ -25,9 +25,13 @@ use crate::Theme;
 /// index lets callers resolve the selected row unambiguously even when two
 /// rows share the same displayed text (`ArcStr` is kept alongside it since
 /// some consumers — autocomplete — have a genuinely text-based selection
-/// semantic and want it directly).
+/// semantic and want it directly). Returns `None` when the click can't be
+/// resolved to a real callback at all (e.g. `dropdown_button`'s `items` shrank
+/// out from under a stale, already-in-flight selection message down to
+/// nothing to resolve against) — `message()` below turns that into
+/// `MessageResult::Nop` rather than forcing callers to fabricate an `Action`.
 pub(crate) type OnSelect<State, Action> =
-    Arc<dyn Fn(&mut State, usize, ArcStr) -> Action + Send + Sync>;
+    Arc<dyn Fn(&mut State, usize, ArcStr) -> Option<Action> + Send + Sync>;
 
 struct OverlayListItemView<State, Action> {
     text: ArcStr,
@@ -126,7 +130,10 @@ where
         app_state: &mut State,
     ) -> MessageResult<Action> {
         if let Some(boxed) = message.take_message::<ArcStr>() {
-            return MessageResult::Action((self.on_select)(app_state, self.pos, *boxed));
+            return match (self.on_select)(app_state, self.pos, *boxed) {
+                Some(action) => MessageResult::Action(action),
+                None => MessageResult::Nop,
+            };
         }
         tracing::error!(?message, "unexpected message in OverlayListItemView");
         MessageResult::Stale
@@ -149,7 +156,7 @@ mod tests {
     #[test]
     fn overlay_list_item_builds_a_widget_view() {
         let on_select: super::OnSelect<S, ()> =
-            std::sync::Arc::new(|_s: &mut S, _pos: usize, _text: ArcStr| ());
+            std::sync::Arc::new(|_s: &mut S, _pos: usize, _text: ArcStr| Some(()));
         let view = overlay_list_item(
             "Apple".into(),
             0,

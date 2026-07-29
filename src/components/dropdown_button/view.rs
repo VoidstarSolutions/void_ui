@@ -435,18 +435,23 @@ type BoxedListViewState<State, Action> =
 /// now carries the row's own index through `on_select`
 /// (`crate::collection::item_row_view::OnSelect`), so this resolves the
 /// *exact* row that was clicked rather than the first row with matching
-/// text. Falls back to index 0 (with a `tracing::error!`) if `pos` is out of
-/// range for `items`, which should be unreachable in practice: `pos` can
-/// only be a row's own index at the moment a live pointer click on that row
-/// completed, and `items` is the same list that row was built from — a
-/// stale closure outliving a shrunk `items` list mid-flight is the only
-/// theoretical way to reach it. A genuinely empty `items` can never reach
-/// this function at all, since there would be no row to click.
+/// text. Falls back to the first item (with a `tracing::error!`) if `pos` is
+/// out of range for a non-empty `items` — `pos` can only be a row's own
+/// index at the moment a live pointer click on that row completed, and
+/// `items` is (re-resolved fresh at message time against) the same kind of
+/// list that row was built from, so this should be unreachable in practice:
+/// a stale closure outliving a shrunk `items` list mid-flight is the only
+/// theoretical way to reach it. `items` shrinking all the way to empty in
+/// that same window is the same race, just further along — `overlay_list_body`
+/// hits an analogous "pos past the end" case for row *rendering* (see its
+/// `on_select` closure's doc comment) — so unlike that fallback-to-index-0
+/// case, an empty `items` returns `None` instead of indexing a slice that
+/// isn't there to index.
 fn invoke_selected<State, Action>(
     items: &[(ArcStr, ItemCallback<State, Action>)],
     pos: usize,
     state: &mut State,
-) -> Action {
+) -> Option<Action> {
     let Some((_, cb)) = items.get(pos) else {
         tracing::error!(
             pos,
@@ -454,10 +459,10 @@ fn invoke_selected<State, Action>(
             "MenuContentView on_select: index out of range for the current item list — this \
              should be unreachable"
         );
-        let (_, cb) = &items[0];
-        return cb(state);
+        let (_, cb) = items.first()?;
+        return Some(cb(state));
     };
-    cb(state)
+    Some(cb(state))
 }
 
 /// Builds the (opaque-typed) `MenuContentView` shared by both hosting modes
@@ -640,7 +645,11 @@ mod tests {
         ];
         let mut state = 0;
         let result = invoke_selected(&items, 1, &mut state);
-        assert_eq!(result, 20, "should invoke item B's callback, not item A's");
+        assert_eq!(
+            result,
+            Some(20),
+            "should invoke item B's callback, not item A's"
+        );
         assert_eq!(state, 2);
     }
 
@@ -651,9 +660,23 @@ mod tests {
         let mut state = 0;
         let result = invoke_selected(&items, 5, &mut state);
         assert_eq!(
-            result, 10,
+            result,
+            Some(10),
             "unreachable-in-practice fallback should not panic"
         );
+    }
+
+    #[test]
+    fn invoke_selected_returns_none_for_an_empty_item_list_instead_of_panicking() {
+        let items: Vec<(ArcStr, ItemCallback<i32, i32>)> = vec![];
+        let mut state = 0;
+        let result = invoke_selected(&items, 0, &mut state);
+        assert_eq!(
+            result, None,
+            "an empty items list has no callback to fall back to — must not index a slice \
+             that isn't there"
+        );
+        assert_eq!(state, 0, "no callback should have run");
     }
 
     /// Proves the bug this fix closes: two items with the same label
@@ -682,7 +705,8 @@ mod tests {
         let mut state = 0;
         let result = invoke_selected(&items, 1, &mut state);
         assert_eq!(
-            result, 20,
+            result,
+            Some(20),
             "should invoke index 1's callback, not index 0's, even though both \
              items share the same label"
         );
