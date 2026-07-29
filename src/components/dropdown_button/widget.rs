@@ -1553,4 +1553,162 @@ mod tests {
             "Escape should still close the menu in portal mode"
         );
     }
+
+    /// Builds an open, in-tree `ThemedDropdownButton` with `item_count` items
+    /// inside a harness, with the trigger already focused (a real click, same
+    /// as every other test in this module) — the shared setup for the
+    /// arrow-nav / Enter-select tests below.
+    fn harness_with_open_menu(
+        item_count: usize,
+        item_labels: Vec<ArcStr>,
+    ) -> masonry::testing::TestHarness<ThemedDropdownButton> {
+        use masonry::core::{NewWidget, PointerButton};
+        use masonry::kurbo::Point;
+        use masonry::testing::TestHarness;
+        use masonry::theme::default_property_set;
+
+        let theme = Theme::default();
+        let menu = dummy_menu_content(&theme, item_count);
+        let widget = ThemedDropdownButton::new(
+            DropdownButtonConfig {
+                label_text: "Menu".into(),
+                icon: None,
+                items: item_labels,
+                variant: ButtonVariant::Default,
+                disabled: false,
+                theme,
+            },
+            menu,
+            DropdownButtonHandle::new(),
+        )
+        .with_open_state(false, false);
+
+        let mut h = TestHarness::create_with_size(
+            default_property_set(),
+            NewWidget::new(widget),
+            (300, 300),
+        );
+
+        h.mouse_move(Point::new(10.0, 10.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+        assert!(
+            h.edit_root_widget(|wm| wm.widget.open),
+            "menu should be open after the trigger click"
+        );
+        h
+    }
+
+    /// Covers `move_highlight`'s forward-nav branch (lines ~624-642): from no
+    /// highlight, `ArrowDown` lands on index 0; from index 0, `ArrowDown`
+    /// lands on index 1. Zero coverage of arrow-key navigation existed before
+    /// this test — every existing keyboard test only exercised Tab/Escape.
+    #[test]
+    fn arrow_down_moves_the_highlight_from_none_through_indices() {
+        let mut h = harness_with_open_menu(3, vec!["A".into(), "B".into(), "C".into()]);
+
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowDown)));
+        assert_eq!(
+            h.edit_root_widget(|wm| wm.widget.highlighted),
+            Some(0),
+            "ArrowDown from no highlight should land on the first item"
+        );
+
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowDown)));
+        assert_eq!(
+            h.edit_root_widget(|wm| wm.widget.highlighted),
+            Some(1),
+            "a second ArrowDown should move to the next item"
+        );
+    }
+
+    /// Covers `move_highlight`'s documented wrap behavior (lines ~624-642) —
+    /// `ArrowUp` from no highlight wraps to the last item, and `ArrowUp` from
+    /// the first item wraps to the last item too — plus `on_text_event`'s
+    /// Home/End handling (already implemented, previously untested), which
+    /// jump straight to the first/last index regardless of current
+    /// highlight.
+    #[test]
+    fn arrow_up_wraps_and_home_end_jump_to_the_list_bounds() {
+        let mut h = harness_with_open_menu(3, vec!["A".into(), "B".into(), "C".into()]);
+
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowUp)));
+        assert_eq!(
+            h.edit_root_widget(|wm| wm.widget.highlighted),
+            Some(2),
+            "ArrowUp from no highlight should wrap to the last item"
+        );
+
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Home)));
+        assert_eq!(
+            h.edit_root_widget(|wm| wm.widget.highlighted),
+            Some(0),
+            "Home should jump to the first item"
+        );
+
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowUp)));
+        assert_eq!(
+            h.edit_root_widget(|wm| wm.widget.highlighted),
+            Some(2),
+            "ArrowUp from the first item should wrap to the last item"
+        );
+
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::End)));
+        assert_eq!(
+            h.edit_root_widget(|wm| wm.widget.highlighted),
+            Some(2),
+            "End should jump to the last item"
+        );
+    }
+
+    /// Covers `on_action`'s `ButtonPress` branch (lines ~667-683) — the one
+    /// path with zero coverage before this test, and the most likely to have
+    /// a real bug given it's freshly rewritten, duplicated-from-
+    /// `move_highlight` logic. `ButtonPress` only fires from a real
+    /// `ButtonPress` action bubbling up from the wrapped trigger button, so
+    /// this simulates a *real* keyboard activation of the trigger — a key-up
+    /// of Enter while it's focused — exactly the mechanism
+    /// `crate::components::button::widget`'s own
+    /// `space_and_enter_activate_when_focused` test proves submits
+    /// `ButtonPress { button: None }` (see `ThemedButton::on_text_event`'s
+    /// `keyboard_activate` branch). The trigger is already focused here (a
+    /// real pointer click opened the menu, and `ThemedButton::on_pointer_event`
+    /// requests focus on press), so `h.process_text_event` alone reaches it
+    /// via masonry's normal focused-widget dispatch — no direct action
+    /// injection needed.
+    #[test]
+    fn enter_with_a_highlighted_item_selects_it_and_closes_the_menu() {
+        let mut h = harness_with_open_menu(3, vec!["A".into(), "B".into(), "C".into()]);
+
+        h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::ArrowDown)));
+        assert_eq!(h.edit_root_widget(|wm| wm.widget.highlighted), Some(0));
+
+        h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
+
+        // The action queue also carries `VirtualScrollAction::Fetch` requests
+        // from the real, virtualized menu content `dummy_menu_content` builds
+        // — same caveat `portal_selection_close_respects_controlled_mode`
+        // documents — so filter via `pop_action_erased`'s `downcast` instead
+        // of assuming every queued action is a `DropdownButtonAction`.
+        let item_selected = std::iter::from_fn(|| h.pop_action_erased())
+            .filter_map(|(action, _)| action.downcast::<DropdownButtonAction>().ok())
+            .find_map(|action| match *action {
+                DropdownButtonAction::ItemSelected(i) => Some(i),
+                DropdownButtonAction::OpenChanged(_) => None,
+            });
+        assert_eq!(
+            item_selected,
+            Some(0),
+            "Enter with the first item highlighted should submit ItemSelected(0)"
+        );
+        assert!(
+            !h.edit_root_widget(|wm| wm.widget.open),
+            "Enter-selecting an item should close the menu (uncontrolled mode)"
+        );
+        assert_eq!(
+            h.edit_root_widget(|wm| wm.widget.highlighted),
+            None,
+            "the highlight should clear once the menu closes"
+        );
+    }
 }
