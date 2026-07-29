@@ -49,19 +49,9 @@ where
         // `collection_body`'s identical guard for the same race
         // (`body_view.rs`'s "pos past the end" comment).
         let text = items.get(pos).cloned().unwrap_or_else(|| ArcStr::from(""));
-        // Whether this row is the whole list's first/last item right now —
-        // see `OverlayListItem::round_top`'s doc comment for why each edge
-        // row rounds its own corners instead of the container clipping
-        // them. `len.checked_sub(1)` avoids underflowing for an empty list
-        // (unreachable in practice — `virtual_scroll` never invokes this
-        // closure with `len == 0` — but cheap to make impossible outright).
-        let round_top = pos == 0;
-        let round_bottom = len.checked_sub(1) == Some(pos);
         overlay_list_item(
             text,
             pos,
-            round_top,
-            round_bottom,
             highlighted == Some(pos),
             &theme,
             item_role,

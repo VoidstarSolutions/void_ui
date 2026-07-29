@@ -38,14 +38,6 @@ struct OverlayListItemView<State, Action> {
     /// given `OverlayListItemView` is always rebuilt against the same
     /// index), so — like `role`/`on_activated` — never diffed in `rebuild`.
     pos: usize,
-    /// Whether this row is the first/last in the whole list right now —
-    /// see `OverlayListItem::round_top`'s doc comment. Unlike `pos`, this
-    /// *is* diffed in `rebuild`: virtualization recycles row instances
-    /// across indices, so the same `OverlayListItemView`/element pair can
-    /// stop or start being an edge row across rebuilds (e.g. a shrinking
-    /// filtered list) without being torn down.
-    round_top: bool,
-    round_bottom: bool,
     on_select: OnSelect<State, Action>,
     /// See `item_row::OnActivated`'s doc comment — an optional, `EventCtx`-
     /// level side effect run synchronously when a pointer click completes
@@ -56,12 +48,9 @@ struct OverlayListItemView<State, Action> {
     phantom: PhantomData<fn(State) -> Action>,
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn overlay_list_item<State, Action>(
     text: ArcStr,
     pos: usize,
-    round_top: bool,
-    round_bottom: bool,
     highlighted: bool,
     theme: &Theme,
     role: Role,
@@ -78,8 +67,6 @@ where
         theme: *theme,
         role,
         pos,
-        round_top,
-        round_bottom,
         on_select,
         on_activated,
         phantom: PhantomData,
@@ -103,8 +90,6 @@ where
             &self.theme,
             self.role,
             self.on_activated.clone(),
-            self.round_top,
-            self.round_bottom,
         );
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, ())
@@ -126,9 +111,6 @@ where
         }
         if self.theme != prev.theme {
             OverlayListItem::set_theme(&mut element, &self.theme);
-        }
-        if self.round_top != prev.round_top || self.round_bottom != prev.round_bottom {
-            OverlayListItem::set_rounded_corners(&mut element, self.round_top, self.round_bottom);
         }
     }
 
@@ -171,8 +153,6 @@ mod tests {
         let view = overlay_list_item(
             "Apple".into(),
             0,
-            true,
-            false,
             false,
             &Theme::default(),
             Role::ListBoxOption,
