@@ -35,7 +35,7 @@ use masonry::core::{
     AccessCtx, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx, PropertiesMut,
     PropertiesRef, RegisterCtx, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
-use masonry::imaging::Painter;
+use masonry::imaging::{ClipRef, Painter};
 use masonry::kurbo::{Axis, Point, RoundedRect, Size, Stroke};
 use masonry::layout::{LayoutSize, LenDef, LenReq, Length};
 
@@ -130,23 +130,49 @@ impl<W: Widget> Widget for MenuContent<W> {
         ctx.place_child(&mut self.list, Point::ORIGIN);
     }
 
-    fn paint(
+    /// Paints the rounded background/border chrome, then pushes a
+    /// same-shaped clip covering `paint()` and every child's own paint
+    /// (materialized `OverlayListItem` rows), popped in
+    /// [`Self::post_paint`] — mirrors
+    /// `autocomplete::widget::SuggestionList::pre_paint` exactly; see its
+    /// doc comment for why this (masonry's `set_clip_path` is rect-only,
+    /// but `pre_paint`/`post_paint` are documented as unconstrained by it,
+    /// so a manual `Painter::push_clip`/`pop_clip` pair bracketing them
+    /// achieves a real rounded subtree clip) rather than a per-row
+    /// first/last-index corner-rounding hack, which is unsound once a menu
+    /// scrolls (`MAX_LIST_HEIGHT`-clamped, many items).
+    fn pre_paint(
         &mut self,
         ctx: &mut PaintCtx<'_>,
         _props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
         let p = &self.theme.palette;
-
-        // Background/border chrome — the only thing this widget still
-        // paints itself; hover/highlight fills now live on the materialized
-        // `OverlayListItem` rows (`crate::collection::item_row`).
         let corner = f64::from(self.theme.radius.small);
         let bg_rect = RoundedRect::from_origin_size(Point::ORIGIN, ctx.border_box().size(), corner);
         painter.fill(bg_rect, p.surface_hi).draw();
         painter
             .stroke(bg_rect, &Stroke::new(BORDER_WIDTH), p.border_strong)
             .draw();
+        painter.push_clip(ClipRef::fill(bg_rect));
+    }
+
+    fn paint(
+        &mut self,
+        _ctx: &mut PaintCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        _painter: &mut Painter<'_>,
+    ) {
+    }
+
+    /// Closes the clip [`Self::pre_paint`] opened.
+    fn post_paint(
+        &mut self,
+        _ctx: &mut PaintCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        painter: &mut Painter<'_>,
+    ) {
+        painter.pop_clip();
     }
 
     fn accessibility_role(&self) -> Role {

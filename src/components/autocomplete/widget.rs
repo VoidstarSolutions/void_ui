@@ -31,7 +31,7 @@ use masonry::core::{
     MeasureCtx, NewWidget, NoAction, PaintCtx, PropertiesMut, PropertiesRef, RegisterCtx,
     StyleProperty, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
-use masonry::imaging::Painter;
+use masonry::imaging::{ClipRef, Painter};
 use masonry::kurbo::{Axis, Point, RoundedRect, Size, Stroke};
 use masonry::layout::{LayoutSize, LenDef, LenReq, Length};
 use masonry::properties::{
@@ -283,7 +283,37 @@ impl<W: Widget> Widget for SuggestionList<W> {
         ctx.place_child(&mut self.list, Point::ORIGIN);
     }
 
-    fn paint(
+    /// Paints the rounded background/border chrome, then pushes a
+    /// same-shaped clip that stays active through `paint()` and every
+    /// child's own paint (popped in [`Self::post_paint`]) — the reason this
+    /// (and not `paint`) is where the clip is pushed: masonry's
+    /// `LayoutCtx::set_clip_path` is the framework-level subtree-clip
+    /// mechanism, but it's hardcoded to a plain `Rect`
+    /// (`masonry_core::passes::paint`'s paint pass always records it as
+    /// `Geometry::Rect`), so it can't express this rounded shape. `pre_paint`
+    /// (documented as unconstrained by `set_clip_path`, for exactly this
+    /// "paint the shape that defines the clip" case) plus a manual
+    /// `Painter::push_clip`/`pop_clip` pair — which *does* accept an
+    /// arbitrary `GeometryRef`, including `RoundedRect` directly
+    /// (`imaging::GeometryRef::RoundedRect` — confirmed against the pinned
+    /// `imaging` crate source) — achieves it instead. Verified against
+    /// `masonry_core::passes::paint::paint_widget`'s actual compositing
+    /// order that this works: each widget's `pre_paint`/`paint`/`post_paint`
+    /// scenes, and every child's full paint (`pre_paint`+`paint`+
+    /// `post_paint`, recursively), all append into one shared, per-window
+    /// scene collector in that exact sequence — so an unbalanced
+    /// `push_clip` left open at the end of `pre_paint` genuinely stays
+    /// active across everything appended after it, until the matching
+    /// `pop_clip` in `post_paint` (which runs *after* every child has been
+    /// painted) closes it. This replaced a per-row "round my own corners if
+    /// I'm first/last in the list" approach that was unsound for a scrolled,
+    /// `MAX_LIST_HEIGHT`-clamped list: the row actually sitting at the
+    /// visual bottom edge there is essentially never the last item in the
+    /// full list, so index-based corner rounding rounded the wrong row (or
+    /// none at all) once a list scrolled — this clip is a real geometric
+    /// mask, so it's correct regardless of scroll position or which rows
+    /// happen to be materialized.
+    fn pre_paint(
         &mut self,
         ctx: &mut PaintCtx<'_>,
         _props: &PropertiesRef<'_>,
@@ -296,6 +326,26 @@ impl<W: Widget> Widget for SuggestionList<W> {
         painter
             .stroke(bg_rect, &Stroke::new(LIST_BORDER), p.border_strong)
             .draw();
+        painter.push_clip(ClipRef::fill(bg_rect));
+    }
+
+    fn paint(
+        &mut self,
+        _ctx: &mut PaintCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        _painter: &mut Painter<'_>,
+    ) {
+    }
+
+    /// Closes the clip [`Self::pre_paint`] opened, now that every child has
+    /// been painted (see that method's doc comment for the full mechanism).
+    fn post_paint(
+        &mut self,
+        _ctx: &mut PaintCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        painter: &mut Painter<'_>,
+    ) {
+        painter.pop_clip();
     }
 
     fn accessibility_role(&self) -> Role {
