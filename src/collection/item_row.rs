@@ -21,11 +21,12 @@ use masonry::core::{
 use masonry::core::NewWidget;
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Size};
-use masonry::layout::{LayoutSize, LenReq, Length};
+use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 use masonry::properties::ContentColor;
 use masonry::widgets::Label;
 
 use crate::Theme;
+use crate::components::item_list;
 use crate::focus_ring::paint_focus_ring_inset;
 
 /// Synchronous, `EventCtx`-level side effect run immediately after a pointer
@@ -214,6 +215,20 @@ impl Widget for OverlayListItem {
         ctx.register_child(&mut self.label);
     }
 
+    /// Vertical: a fixed, explicit row height from `item_list::item_height`
+    /// — the same "single-line list item row height" formula
+    /// `context_menu::MenuItemNode` already uses for its own rows — rather
+    /// than the label's own bare natural height. This row previously had no
+    /// vertical padding at all (label height only), which produced a real,
+    /// live-reproduced bug: `CollectionListWidget::measure` estimates the
+    /// *container's* natural height as `item_count * item_list::item_height`
+    /// (see its doc comment), and with rows genuinely shorter than that
+    /// per-row budget, `VirtualScroll` only filled part of it — leaving
+    /// unfilled space at the bottom of the (correctly-sized, per that
+    /// formula) container. Giving rows a real height matching the same
+    /// formula the container's estimate already assumes closes that gap at
+    /// the source, and also fixes the rows themselves rendering with an
+    /// uncomfortably small click target (no breathing room around the text).
     fn measure(
         &mut self,
         ctx: &mut MeasureCtx<'_>,
@@ -222,19 +237,26 @@ impl Widget for OverlayListItem {
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        let context_size = LayoutSize::maybe(axis.cross(), cross_length);
-        ctx.compute_length(
-            &mut self.label,
-            len_req.into(),
-            context_size,
-            axis,
-            cross_length,
-        )
+        match axis {
+            Axis::Vertical => Length::px(item_list::item_height(&self.theme.density)),
+            Axis::Horizontal => {
+                let context_size = LayoutSize::maybe(Axis::Vertical, cross_length);
+                ctx.compute_length(
+                    &mut self.label,
+                    len_req.into(),
+                    context_size,
+                    Axis::Horizontal,
+                    cross_length,
+                )
+            }
+        }
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        ctx.run_layout(&mut self.label, size);
-        ctx.place_child(&mut self.label, Point::ZERO);
+        let label_size = ctx.compute_size(&mut self.label, SizeDef::fit(size), size.into());
+        ctx.run_layout(&mut self.label, label_size);
+        let label_y = (size.height - label_size.height) * 0.5;
+        ctx.place_child(&mut self.label, Point::new(0.0, label_y));
     }
 
     fn paint(
