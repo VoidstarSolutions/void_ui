@@ -256,23 +256,39 @@ impl Widget for OverlayListItem {
                 LenReq::FitContent(space) => space,
                 LenReq::MaxContent | LenReq::MinContent => {
                     let context_size = LayoutSize::maybe(Axis::Vertical, cross_length);
-                    ctx.compute_length(
-                        &mut self.label,
-                        len_req.into(),
-                        context_size,
-                        Axis::Horizontal,
-                        cross_length,
-                    )
+                    let label_width = ctx
+                        .compute_length(
+                            &mut self.label,
+                            len_req.into(),
+                            context_size,
+                            Axis::Horizontal,
+                            cross_length,
+                        )
+                        .get();
+                    Length::px(label_width + 2.0 * item_list::pad_h(&self.theme.density))
                 }
             },
         }
     }
 
+    /// Insets the label by `item_list::pad_h` on both sides — the same
+    /// "horizontal inset for list item content" formula `context_menu`'s
+    /// rows already use, matching the vertical padding `item_list::
+    /// item_height` gives this row's own height (see `measure`'s doc
+    /// comment). Without it the text ran flush to the row's edges, visually
+    /// inconsistent with the breathing room the vertical fix already gave
+    /// each row.
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let label_size = ctx.compute_size(&mut self.label, SizeDef::fit(size), size.into());
+        let pad_h = item_list::pad_h(&self.theme.density);
+        let label_avail = Size::new((size.width - 2.0 * pad_h).max(0.0), size.height);
+        let label_size = ctx.compute_size(
+            &mut self.label,
+            SizeDef::fit(label_avail),
+            label_avail.into(),
+        );
         ctx.run_layout(&mut self.label, label_size);
         let label_y = (size.height - label_size.height) * 0.5;
-        ctx.place_child(&mut self.label, Point::new(0.0, label_y));
+        ctx.place_child(&mut self.label, Point::new(pad_h, label_y));
     }
 
     fn paint(
