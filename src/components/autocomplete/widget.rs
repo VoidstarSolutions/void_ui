@@ -51,7 +51,11 @@ use crate::overlay_scope::OverlayScopeHandle;
 /// Suggestion list border stroke width — hairline chrome, not density-scaled.
 const LIST_BORDER: f64 = 1.0;
 /// Maximum visible height for the suggestion list before it scrolls, px — a clamp, not a density-scaled dimension.
-const MAX_LIST_HEIGHT: f64 = 200.0;
+///
+/// `pub(crate)` (not private): `dropdown_button::menu_layer::MenuContent`
+/// reuses the same cap for its own vertical `measure()`, mirroring this
+/// module's `SuggestionList` — re-exported from `super::MAX_LIST_HEIGHT`.
+pub(crate) const MAX_LIST_HEIGHT: f64 = 200.0;
 /// Gap between the input field and the suggestion list overlay, px — a fixed
 /// anchor offset, not a density-scaled spacing token.
 const OVERLAY_GAP_PX: f64 = 2.0;

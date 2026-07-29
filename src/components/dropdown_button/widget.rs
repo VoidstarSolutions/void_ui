@@ -34,9 +34,10 @@ use masonry::peniko::Color;
 use masonry::properties::ContentColor;
 use masonry::widgets::{ButtonPress, Label, Passthrough};
 
-use super::menu_layer::{MenuContent, MenuItemSelected};
+use super::menu_layer::MenuContent;
 use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
+use crate::collection::CollectionListWidget;
 use crate::components::button::ButtonVariant;
 use crate::components::button::widget::ThemedButton;
 use crate::components::icon::IconName;
@@ -59,11 +60,13 @@ widget_id_handle!(
     /// Self-filling handle to a [`ThemedDropdownButton`]'s widget id, filled at
     /// `Update::WidgetAdded` — mirrors [`OverlayScopeHandle`]'s bootstrapping.
     ///
-    /// Given to a portal-mounted [`super::view::MenuContentView`] so an item
-    /// selection can `mutate_later` back into the dropdown to close the menu and
-    /// clear the keyboard highlight: in portal mode the menu is not a descendant
-    /// of the dropdown, so normal action bubbling never reaches
-    /// [`ThemedDropdownButton::on_action`].
+    /// Given to `super::view::build_menu_view`'s `on_activated` hook (both
+    /// hosting modes now, not just portal — see `super::view::MenuBinding`)
+    /// so a click selection can `mutate_later` back into the dropdown to
+    /// close the menu: item selection resolves entirely through
+    /// `overlay_list`'s View-layer `on_select`/`on_activated` now, which
+    /// never bubbles a masonry action to [`ThemedDropdownButton::on_action`]
+    /// at all, in either hosting mode.
     DropdownButtonHandle
 );
 
@@ -172,35 +175,40 @@ impl ThemedDropdownButton {
         NewWidget::new(trigger).erased()
     }
 
-    /// In-tree constructor (fallback, no scope ancestor): `MenuContent` is
-    /// permanently mounted in an `AnchoredOverlay` below the trigger.
+    /// In-tree constructor (fallback, no scope ancestor): `menu_content` is
+    /// the already-built, erased element `super::view::MenuContentView`
+    /// (built by `DropdownButtonView::build`) produced — this widget only
+    /// embeds it in the `AnchoredOverlay`'s overlay slot, permanently
+    /// mounted below the trigger. Mirrors
+    /// `crate::components::autocomplete::widget::AutocompleteWidget::new`.
     #[must_use]
-    pub fn new(
-        label_text: ArcStr,
-        icon: Option<IconName>,
-        items: Vec<ArcStr>,
-        variant: ButtonVariant,
-        disabled: bool,
-        theme: &Theme,
+    pub(crate) fn new(
+        config: DropdownButtonConfig,
+        menu_content: NewWidget<dyn Widget>,
+        handle: DropdownButtonHandle,
     ) -> Self {
-        let trigger = Self::build_trigger(&label_text, icon, variant, disabled, theme);
-        let overlay_host = AnchoredOverlay::new(
-            trigger,
-            NewWidget::new(MenuContent::new(items.clone(), theme)),
-            false,
-            OverlayAnchor::BottomStart,
-        );
+        let DropdownButtonConfig {
+            label_text,
+            icon,
+            items,
+            variant,
+            disabled,
+            theme,
+        } = config;
+        let trigger = Self::build_trigger(&label_text, icon, variant, disabled, &theme);
+        let overlay_host =
+            AnchoredOverlay::new(trigger, menu_content, false, OverlayAnchor::BottomStart);
         Self {
             hosting: Hosting::InTree {
                 overlay_host: NewWidget::new(overlay_host).to_pod(),
             },
-            handle: DropdownButtonHandle::new(),
+            handle,
             label: label_text,
             icon,
             items,
             variant,
             disabled,
-            theme: *theme,
+            theme,
             open: false,
             controlled: false,
             highlighted: None,
@@ -251,6 +259,35 @@ impl ThemedDropdownButton {
         self.open = open;
         self.controlled = controlled;
         self
+    }
+
+    /// Navigate to the in-tree `AnchoredOverlay`'s overlay slot content and
+    /// invoke `f`. The overlay slot holds erased `NewWidget<dyn Widget>`
+    /// content (a `Passthrough` wrapping `MenuContent`, once
+    /// `super::view::DropdownButtonView` builds it — see
+    /// `super::view::build_menu_view`); `f` is expected to
+    /// `downcast::<Passthrough>()` before forwarding into the nested
+    /// `MenuContentView` it wraps.
+    ///
+    /// Used by `DropdownButtonView::rebuild`/`teardown`/`message` to forward
+    /// into the in-tree nested list view — portal mode never needs this (its
+    /// `MenuContentView` is registered with, and dispatched by, the scope's
+    /// own portal registry instead). Panics if called in portal mode.
+    /// Mirrors `AutocompleteWidget::with_overlay_content`.
+    pub(crate) fn with_overlay_content<R>(
+        this: &mut WidgetMut<'_, Self>,
+        f: impl FnOnce(WidgetMut<'_, dyn Widget>) -> R,
+    ) -> R {
+        match &mut this.widget.hosting {
+            Hosting::InTree { overlay_host } => {
+                let mut h = this.ctx.get_mut(overlay_host);
+                let content = AnchoredOverlay::overlay_mut(&mut h);
+                f(content)
+            }
+            Hosting::Portal { .. } => {
+                unreachable!("with_overlay_content called in portal mode")
+            }
+        }
     }
 
     fn text_color_for(theme: &Theme, variant: ButtonVariant, disabled: bool) -> Color {
@@ -311,12 +348,12 @@ impl ThemedDropdownButton {
                 Self::refresh_icon_props(&mut trigger, icon_color, theme);
             });
 
-            if let Hosting::InTree { overlay_host } = &mut this.widget.hosting {
-                let mut overlay_host = this.ctx.get_mut(overlay_host);
-                let mut menu = AnchoredOverlay::overlay_mut(&mut overlay_host);
-                let mut menu = menu.downcast::<MenuContent>();
-                MenuContent::set_theme(&mut menu, theme);
-            }
+            // The menu's own theme flows through `super::view::
+            // MenuContentView`'s `rebuild` instead (both hosting modes now
+            // build/rebuild it as a real, nested View — see
+            // `DropdownButtonView`), so this widget doesn't need to reach
+            // into it directly at all — mirrors `AutocompleteWidget::
+            // set_theme`.
         }
     }
 
@@ -395,19 +432,13 @@ impl ThemedDropdownButton {
         }
     }
 
-    /// Replace the item list. In-tree this updates the permanently-mounted
-    /// `MenuContent` directly; in portal mode the registered
-    /// `MenuContentView` rebuilds its own `MenuContent` via the scope's
-    /// registry diff, so only our copy of `items` (used for Home/End bounds
-    /// checks) is updated here.
+    /// Replace the item list. Item *content* now flows entirely through
+    /// `super::view::DropdownButtonView::rebuild`'s forward into the nested
+    /// `MenuContentView` (both hosting modes — see its doc comment), so this
+    /// only updates our own copy of `items`, used for Home/End bounds checks
+    /// and `move_highlight`'s wrap length.
     pub fn set_items(this: &mut WidgetMut<'_, Self>, items: Vec<ArcStr>) {
-        this.widget.items.clone_from(&items);
-        if let Hosting::InTree { overlay_host } = &mut this.widget.hosting {
-            let mut overlay_host = this.ctx.get_mut(overlay_host);
-            let mut menu = AnchoredOverlay::overlay_mut(&mut overlay_host);
-            let mut menu = menu.downcast::<MenuContent>();
-            MenuContent::set_items(&mut menu, items);
-        }
+        this.widget.items = items;
     }
 
     pub fn set_icon(this: &mut WidgetMut<'_, Self>, icon: Option<IconName>) {
@@ -447,13 +478,15 @@ impl ThemedDropdownButton {
         }
     }
 
-    /// Close after a portal-mounted `MenuContentView` handled an ordinary
-    /// item selection (see `super::view::MenuContentView::message`, which
-    /// calls this via `mutate_later(handle)`). Unlike [`Self::mark_closed`],
-    /// nothing has pre-hidden the slot content here — this *is* the close —
-    /// so it must honor controlled mode exactly like the in-tree
-    /// `MenuItemSelected` branch of `on_action`: gate the mutation behind
-    /// `!controlled`, always report the `OpenChanged(false)` desire.
+    /// Close after a *click* completes an ordinary item selection, in either
+    /// hosting mode (see `super::view::build_menu_view`'s `on_activated`
+    /// hook, which calls this via `mutate_later(handle)` from
+    /// `OverlayListItem::on_pointer_event`). Unlike [`Self::mark_closed`],
+    /// nothing has pre-hidden the menu content here — this *is* the close —
+    /// so it must honor controlled mode exactly like `on_action`'s
+    /// `ButtonPress` handling of a keyboard Enter-select-highlighted-item:
+    /// gate the mutation behind `!controlled`, always report the
+    /// `OpenChanged(false)` desire.
     pub(crate) fn close_for_selection(this: &mut WidgetMut<'_, Self>) {
         if !this.widget.open {
             return;
@@ -539,15 +572,30 @@ impl ThemedDropdownButton {
         }
     }
 
-    /// Push `index` into the `MenuContent` widget for painting, then store it.
+    /// Push `index` into the wrapped `CollectionListWidget` for
+    /// painting/scroll-into-view, then store it.
+    ///
+    /// Reaches all the way into `CollectionListWidget::set_highlight`
+    /// (`crate::collection`), not just `MenuContent` itself — unlike the
+    /// pre-virtualization `MenuContent::set_highlighted`, which owned its
+    /// own highlight-painting state directly. `ThemedDropdownButton` keeps
+    /// real keyboard focus on its trigger button throughout the whole menu
+    /// interaction (roving-highlight model), so `CollectionListWidget`'s own
+    /// `on_text_event` arrow-key handling never fires here (it would only
+    /// run if the listbox itself had real focus, as in autocomplete's
+    /// Tab-into-listbox model) — this external push is the only way the
+    /// highlight ever reaches it. See `crate::collection`'s
+    /// `CollectionListWidget` re-export doc comment for why this needs the
+    /// type nameable outside `crate::collection` at all.
     fn set_highlight(&mut self, ctx: &mut EventCtx<'_>, index: Option<usize>) {
         self.highlighted = index;
         match &mut self.hosting {
             Hosting::InTree { overlay_host } => {
                 ctx.mutate_child_later(overlay_host, move |mut w| {
                     let mut menu = AnchoredOverlay::overlay_mut(&mut w);
-                    let mut menu = menu.downcast::<MenuContent>();
-                    MenuContent::set_highlighted(&mut menu, index);
+                    let mut menu = menu.downcast::<MenuContent<CollectionListWidget>>();
+                    let mut list = MenuContent::child_mut(&mut menu);
+                    CollectionListWidget::set_highlight(&mut list, index);
                 });
             }
             Hosting::Portal { binding, .. } => {
@@ -561,8 +609,9 @@ impl ThemedDropdownButton {
                     if let Some(mut child) = PortalSlot::child_mut(&mut slot, key) {
                         let mut pass = child.downcast::<Passthrough>();
                         let mut menu = Passthrough::child_mut(&mut pass);
-                        let mut menu = menu.downcast::<MenuContent>();
-                        MenuContent::set_highlighted(&mut menu, index);
+                        let mut menu = menu.downcast::<MenuContent<CollectionListWidget>>();
+                        let mut list = MenuContent::child_mut(&mut menu);
+                        CollectionListWidget::set_highlight(&mut list, index);
                     }
                 });
             }
@@ -602,9 +651,12 @@ impl Widget for ThemedDropdownButton {
     /// Space/Enter while it's focused) toggles the menu, or — if the menu is
     /// open with a keyboard highlight — selects that item directly (Enter
     /// goes to the focused trigger, not the menu, regardless of hosting
-    /// mode). A `MenuItemSelected` from `MenuContent` only bubbles here in
-    /// in-tree mode (the menu is our descendant); in portal mode it's handled
-    /// by `MenuContentView::message` instead.
+    /// mode). Pointer-driven item selection no longer bubbles a masonry
+    /// action here at all (in either hosting mode) — it resolves entirely
+    /// through `super::view::MenuContentView`'s `on_select`/`on_activated`,
+    /// which call the item's callback directly and close the menu via
+    /// `Self::close_for_selection` (see `super::view::build_menu_view`'s
+    /// doc comment).
     fn on_action(
         &mut self,
         ctx: &mut ActionCtx<'_>,
@@ -642,18 +694,6 @@ impl Widget for ThemedDropdownButton {
                 }
                 ctx.submit_action::<Self::Action>(DropdownButtonAction::OpenChanged(desired));
             }
-            ctx.set_handled();
-            ctx.request_paint_only();
-            return;
-        }
-        if let Some(&MenuItemSelected(index)) = action.downcast_ref::<MenuItemSelected>() {
-            if !self.controlled {
-                self.open = false;
-                self.highlighted = None;
-                self.close_menu(ctx);
-            }
-            ctx.submit_action::<Self::Action>(DropdownButtonAction::ItemSelected(index));
-            ctx.submit_action::<Self::Action>(DropdownButtonAction::OpenChanged(false));
             ctx.set_handled();
             ctx.request_paint_only();
         }
@@ -918,6 +958,22 @@ mod tests {
         );
     }
 
+    /// Builds an erased `MenuContent<CollectionListWidget>` with `item_count`
+    /// items — the same shape `super::view::DropdownButtonView` builds via
+    /// `overlay_list(...)`, for widget-level tests that don't go through the
+    /// view layer.
+    fn dummy_menu_content(
+        theme: &Theme,
+        item_count: usize,
+    ) -> masonry::core::NewWidget<dyn Widget> {
+        use masonry::core::NewWidget;
+        use xilem::masonry::widgets::VirtualScroll as VirtualScrollWidget;
+
+        let vs = NewWidget::new(VirtualScrollWidget::new(0, item_count));
+        let list = CollectionListWidget::new(vs, item_count, Role::Menu);
+        NewWidget::new(MenuContent::new(NewWidget::new(list), theme)).erased()
+    }
+
     #[test]
     fn controlled_mode_reports_open_changed_without_self_toggling() {
         use masonry::core::NewWidget;
@@ -927,13 +983,18 @@ mod tests {
         use xilem::view::PointerButton;
 
         let theme = Theme::default();
+        let menu = dummy_menu_content(&theme, 2);
         let widget = ThemedDropdownButton::new(
-            "Menu".into(),
-            None,
-            vec!["A".into(), "B".into()],
-            ButtonVariant::Default,
-            false,
-            &theme,
+            DropdownButtonConfig {
+                label_text: "Menu".into(),
+                icon: None,
+                items: vec!["A".into(), "B".into()],
+                variant: ButtonVariant::Default,
+                disabled: false,
+                theme,
+            },
+            menu,
+            DropdownButtonHandle::new(),
         )
         .with_open_state(false, true);
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(widget));
@@ -1015,7 +1076,7 @@ mod tests {
             masonry::widgets::Align::new(masonry::layout::UnitPoint::TOP_LEFT, sized.erased())
                 .prepare()
                 .erased();
-        let menu = NewWidget::new(MenuContent::new(vec!["A".into(), "B".into()], &theme)).erased();
+        let menu = dummy_menu_content(&theme, 2);
         let scope = OverlayScope::new(
             scope_handle,
             content,
@@ -1053,8 +1114,15 @@ mod tests {
                 "slot child must stay visible while the host keeps open=true"
             );
         });
-        let open_changed = std::iter::from_fn(|| h.pop_action::<DropdownButtonAction>())
-            .filter_map(|(a, _)| match a {
+        // The action queue also now carries `VirtualScrollAction::Fetch`
+        // requests from the real, virtualized menu content `dummy_menu_content`
+        // builds (unlike the pre-rewrite plain-label `MenuContent`) — filter
+        // via `pop_action_erased`'s `downcast` (which returns the value back
+        // on a type mismatch instead of panicking, unlike `pop_action::<T>`)
+        // rather than assuming every queued action is a `DropdownButtonAction`.
+        let open_changed = std::iter::from_fn(|| h.pop_action_erased())
+            .filter_map(|(action, _)| action.downcast::<DropdownButtonAction>().ok())
+            .filter_map(|action| match *action {
                 DropdownButtonAction::OpenChanged(v) => Some(v),
                 DropdownButtonAction::ItemSelected(_) => None,
             })
@@ -1063,6 +1131,185 @@ mod tests {
             open_changed,
             Some(false),
             "selection must still report the OpenChanged(false) desire"
+        );
+    }
+
+    /// Drains `VirtualScrollAction::Fetch` requests from `harness`'s action
+    /// queue, materializing real `OverlayListItem` rows for `labels`, the
+    /// same way `super::view::build_menu_view`'s `overlay_list(...)` call
+    /// would. Mirrors `crate::collection::imperative_list`'s own
+    /// `drive_to_fixpoint`, reached one level deeper through
+    /// `AnchoredOverlay` -> `MenuContent<CollectionListWidget>`.
+    fn drive_in_tree_menu_to_fixpoint(
+        h: &mut masonry::testing::TestHarness<ThemedDropdownButton>,
+        labels: &[&str],
+        on_activated: Option<&crate::collection::OnActivated>,
+    ) {
+        use xilem::masonry::widgets::{VirtualScroll as VirtualScrollWidget, VirtualScrollAction};
+
+        let mut iteration = 0;
+        loop {
+            iteration += 1;
+            assert!(iteration <= 1000, "Took too long to reach fixpoint");
+            // Unlike `crate::collection::imperative_list`'s own
+            // `drive_to_fixpoint` (which drives an isolated
+            // `CollectionListWidget` harness whose action queue only ever
+            // holds `VirtualScrollAction`s), this drives a full
+            // `ThemedDropdownButton`, whose queue may also carry
+            // `DropdownButtonAction` (e.g. the `OpenChanged(true)` from the
+            // trigger click that opened the menu before this runs) — filter
+            // via `pop_action_erased`'s `downcast` instead of assuming every
+            // queued action is a `VirtualScrollAction`.
+            let Some((action, _id)) =
+                std::iter::from_fn(|| h.pop_action_erased()).find_map(|(action, id)| {
+                    action
+                        .downcast::<VirtualScrollAction>()
+                        .ok()
+                        .map(|action| (*action, id))
+                })
+            else {
+                break;
+            };
+            let VirtualScrollAction::Fetch(action) = action else {
+                continue;
+            };
+            h.edit_root_widget(|mut root| {
+                ThemedDropdownButton::with_overlay_content(&mut root, |mut content| {
+                    let mut menu = content.downcast::<MenuContent<CollectionListWidget>>();
+                    let mut list = MenuContent::child_mut(&mut menu);
+                    {
+                        let mut vs = CollectionListWidget::virtual_scroll_mut(&mut list);
+                        VirtualScrollWidget::will_handle_action(&mut vs, &action);
+                        for idx in action.old_active().clone() {
+                            if !action.target().contains(&idx) {
+                                VirtualScrollWidget::remove_child(&mut vs, idx);
+                            }
+                        }
+                        for idx in action.target().clone() {
+                            if !action.old_active().contains(&idx) {
+                                let row = crate::collection::render_overlay_list_item(
+                                    &ArcStr::from(labels[idx]),
+                                    false,
+                                    &Theme::default(),
+                                    Role::MenuItem,
+                                    on_activated.cloned(),
+                                );
+                                VirtualScrollWidget::add_child(&mut vs, idx, row);
+                            }
+                        }
+                    }
+                    CollectionListWidget::set_active_start(&mut list, action.target().start);
+                });
+            });
+        }
+    }
+
+    /// Clicking a materialized row runs its `on_activated` hook — the same
+    /// mechanism `super::view::build_menu_view` wires in production — which
+    /// closes the menu via `Self::close_for_selection`.
+    ///
+    /// Checked directly against a real click (rather than assumed): masonry's
+    /// own default pointer-down handling clears focus from the trigger the
+    /// moment a row is clicked, since `OverlayListItem` (like the old,
+    /// pre-rewrite plain-label menu rows before it) never calls
+    /// `ctx.request_focus()` and isn't in the trigger's ancestor chain — same
+    /// mechanism as autocomplete's own
+    /// `clicking_a_non_focusable_sibling_closes_the_in_tree_dropdown` test.
+    /// Unlike autocomplete, though, `ThemedDropdownButton` has no
+    /// `Update::ChildFocusChanged(true)` handler at all (no
+    /// focus-enters-subtree auto-reopen logic, unlike autocomplete's
+    /// `open_on_focus`), so that focus-clearing has nothing to trigger a
+    /// reopen from — there is no `suppress_focus_open`-style pass-ordering
+    /// hazard for a `dropdown_button` counterpart to forget. This test proves
+    /// that directly: the menu stays closed, and only a single `Closed`
+    /// transition is reported, not a close immediately followed by a
+    /// spurious reopen.
+    #[test]
+    fn click_selection_via_on_activated_closes_the_menu_without_touching_focus() {
+        use masonry::core::{NewWidget, PointerButton};
+        use masonry::kurbo::Point;
+        use masonry::testing::TestHarness;
+        use masonry::theme::default_property_set;
+
+        let theme = Theme::default();
+        let handle = DropdownButtonHandle::new();
+        let on_activated: crate::collection::OnActivated = {
+            let handle = handle.clone();
+            std::sync::Arc::new(move |ctx: &mut EventCtx<'_>| {
+                if let Some(id) = handle.widget_id() {
+                    ctx.mutate_later(id, |mut w| {
+                        let mut dropdown = w.downcast::<ThemedDropdownButton>();
+                        ThemedDropdownButton::close_for_selection(&mut dropdown);
+                    });
+                }
+            })
+        };
+
+        let menu = dummy_menu_content(&theme, 2);
+        let widget = ThemedDropdownButton::new(
+            DropdownButtonConfig {
+                label_text: "Menu".into(),
+                icon: None,
+                items: vec!["A".into(), "B".into()],
+                variant: ButtonVariant::Default,
+                disabled: false,
+                theme,
+            },
+            menu,
+            handle,
+        )
+        .with_open_state(false, false);
+
+        let mut h = TestHarness::create_with_size(
+            default_property_set(),
+            NewWidget::new(widget),
+            (300, 300),
+        );
+
+        // Open via a real click on the trigger — mirrors
+        // `controlled_mode_reports_open_changed_without_self_toggling`.
+        h.mouse_move(Point::new(10.0, 10.0));
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+        assert!(
+            h.edit_root_widget(|wm| wm.widget.open),
+            "an uncontrolled dropdown should self-open on trigger click"
+        );
+
+        drive_in_tree_menu_to_fixpoint(&mut h, &["A", "B"], Some(&on_activated));
+
+        let mut first_item_id = None;
+        h.inspect_widgets(|w| {
+            if first_item_id.is_none() && w.accessibility_role() == Role::MenuItem {
+                first_item_id = Some(w.id());
+            }
+        });
+        let item_id = first_item_id.expect("menu should have rendered items");
+
+        h.mouse_move_to_unchecked(item_id);
+        h.mouse_button_press(Some(PointerButton::Primary));
+        h.mouse_button_release(Some(PointerButton::Primary));
+
+        assert!(
+            !h.edit_root_widget(|wm| wm.widget.open),
+            "click selection should close the menu via on_activated -> close_for_selection"
+        );
+
+        // No spurious reopen: the only `OpenChanged` transitions reported
+        // after the row click are close ones (ideally exactly one `false`),
+        // never a `true` sneaking back in behind it — which is what a
+        // pass-ordering hazard analogous to autocomplete's would produce.
+        let open_changes: Vec<bool> = std::iter::from_fn(|| h.pop_action_erased())
+            .filter_map(|(action, _)| action.downcast::<DropdownButtonAction>().ok())
+            .filter_map(|action| match *action {
+                DropdownButtonAction::OpenChanged(v) => Some(v),
+                DropdownButtonAction::ItemSelected(_) => None,
+            })
+            .collect();
+        assert_eq!(
+            open_changes,
+            vec![false],
+            "click selection should report exactly one close, no spurious reopen"
         );
     }
 }

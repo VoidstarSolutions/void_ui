@@ -27,14 +27,17 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use masonry::core::ArcStr;
+use masonry::accesskit::Role;
+use masonry::core::{ArcStr, EventCtx};
+use masonry::widgets::Passthrough;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
-use xilem::{Pod, ViewCtx};
+use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
-use super::menu_layer::{MenuContent, MenuItemSelected};
+use super::menu_layer::MenuContent;
 use super::widget::{
     DropdownButtonAction, DropdownButtonConfig, DropdownButtonHandle, ThemedDropdownButton,
 };
+use crate::collection::{OnActivated, OnSelect, overlay_list};
 use crate::components::button::ButtonVariant;
 use crate::overlay::SurfaceStyle;
 use crate::overlay_portal::{OverlayPortal, PortalContentView, PortalPlacement, portal_from_env};
@@ -170,15 +173,28 @@ pub struct DropdownButtonView<State, Action> {
 impl<State, Action> ViewMarker for DropdownButtonView<State, Action> {}
 
 /// Where this dropdown's menu is bound: the nearest scope's portal
-/// (registered by key; the scope's view mounts/rebuilds it), or in-tree under
-/// our own `ThemedDropdownButton` (fallback, handled entirely by the widget).
+/// (registered by key; the scope's view mounts/rebuilds it), or in-tree
+/// under our own `ThemedDropdownButton`'s `AnchoredOverlay` overlay slot.
+///
+/// Unlike the pre-virtualization split, *both* modes now build/rebuild the
+/// menu content as a real, nested `MenuContentView` (`overlay_list` needs a
+/// real, rebuild-diffed View to virtualize at all, not a one-off `.build()`
+/// call) — mirroring the in-tree/portal unification Task 6 required for
+/// autocomplete's `SuggestionListView`.
 enum MenuBinding<State: 'static, Action: 'static> {
     Portal {
         portal: OverlayPortal<State, Action>,
         key: u64,
         handle: DropdownButtonHandle,
     },
-    InTree,
+    InTree {
+        handle: DropdownButtonHandle,
+        /// Persisted `View::ViewState` for the nested `MenuContentView`,
+        /// built/rebuilt directly against `ThemedDropdownButton`'s
+        /// `AnchoredOverlay` overlay slot — see
+        /// `ThemedDropdownButton::with_overlay_content`.
+        list_state: BoxedListViewState<State, Action>,
+    },
 }
 
 /// View state for `DropdownButtonView`: just the menu binding (see
@@ -197,15 +213,11 @@ where
     type Element = Pod<ThemedDropdownButton>;
     type ViewState = DropdownButtonViewState<State, Action>;
 
-    fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
+    fn build(&self, ctx: &mut ViewCtx, state: &mut State) -> (Self::Element, Self::ViewState) {
         let portal = portal_from_env::<State, Action>(ctx);
+        let handle = DropdownButtonHandle::new();
         if let Some(portal) = portal {
-            let handle = DropdownButtonHandle::new();
-            let menu_view = MenuContentView {
-                items: self.items.clone(),
-                dropdown_handle: handle.clone(),
-                theme: self.theme,
-            };
+            let menu_view = build_menu_view(&self.items, &self.theme, &handle);
             let content: Arc<PortalContentView<State, Action>> = Arc::new(menu_view);
             let key = portal.register(
                 content,
@@ -239,20 +251,26 @@ where
                 },
             )
         } else {
+            let list_view = build_menu_view(&self.items, &self.theme, &handle).boxed();
+            let (list_element, list_state) = list_view.build(ctx, state);
             let widget = ThemedDropdownButton::new(
-                self.label.clone(),
-                self.icon,
-                self.item_labels.clone(),
-                self.variant,
-                self.disabled,
-                &self.theme,
+                DropdownButtonConfig {
+                    label_text: self.label.clone(),
+                    icon: self.icon,
+                    items: self.item_labels.clone(),
+                    variant: self.variant,
+                    disabled: self.disabled,
+                    theme: self.theme,
+                },
+                list_element.new_widget.erased(),
+                handle.clone(),
             )
             .with_open_state(self.open.unwrap_or(false), self.open.is_some());
             let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
             (
                 element,
                 DropdownButtonViewState {
-                    binding: MenuBinding::InTree,
+                    binding: MenuBinding::InTree { handle, list_state },
                 },
             )
         }
@@ -262,9 +280,9 @@ where
         &self,
         prev: &Self,
         view_state: &mut Self::ViewState,
-        _ctx: &mut ViewCtx,
+        ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
-        _app_state: &mut State,
+        state: &mut State,
     ) {
         if self.theme != prev.theme {
             ThemedDropdownButton::set_theme(&mut element, &self.theme);
@@ -291,22 +309,26 @@ where
             ThemedDropdownButton::set_open(&mut element, open);
         }
 
-        if let MenuBinding::Portal {
-            portal,
-            key,
-            handle,
-        } = &mut view_state.binding
-        {
-            // Content rebuild happens when the scope's view diffs the
-            // registry (after our subtree's rebuild returns) — we only
-            // refresh the registered view value here, mirroring
-            // `PopoverView::rebuild`'s `ContentBinding::Portal` arm.
-            if !Arc::ptr_eq(&self.items, &prev.items) || self.theme != prev.theme {
-                let menu_view = MenuContentView {
-                    items: self.items.clone(),
-                    dropdown_handle: handle.clone(),
-                    theme: self.theme,
-                };
+        // Forward into the menu content (both hosting modes) whenever
+        // anything it depends on changed — mirrors `AutocompleteView::
+        // rebuild`'s reversal of the old theme-only re-registration
+        // optimization: items now flow through this View path, not an
+        // imperative `set_items` on the chrome widget, so re-registering on
+        // an item-set or theme change is how the new content actually
+        // reaches the list at all.
+        let items_changed = !Arc::ptr_eq(&self.items, &prev.items);
+        let list_changed = items_changed || self.theme != prev.theme;
+        if !list_changed {
+            return;
+        }
+
+        match &mut view_state.binding {
+            MenuBinding::Portal {
+                portal,
+                key,
+                handle,
+            } => {
+                let menu_view = build_menu_view(&self.items, &self.theme, handle);
                 let content: Arc<PortalContentView<State, Action>> = Arc::new(menu_view);
                 portal.update(
                     *key,
@@ -316,6 +338,14 @@ where
                     SurfaceStyle::Popover,
                 );
             }
+            MenuBinding::InTree { handle, list_state } => {
+                let prev_list_view = build_menu_view(&prev.items, &prev.theme, handle).boxed();
+                let list_view = build_menu_view(&self.items, &self.theme, handle).boxed();
+                ThemedDropdownButton::with_overlay_content(&mut element, |mut content| {
+                    let passthrough = content.downcast::<Passthrough>();
+                    list_view.rebuild(&prev_list_view, list_state, ctx, passthrough, state);
+                });
+            }
         }
     }
 
@@ -323,10 +353,19 @@ where
         &self,
         view_state: &mut Self::ViewState,
         ctx: &mut ViewCtx,
-        element: Mut<'_, Self::Element>,
+        mut element: Mut<'_, Self::Element>,
     ) {
-        if let MenuBinding::Portal { portal, key, .. } = &mut view_state.binding {
-            portal.deregister(*key);
+        match &mut view_state.binding {
+            MenuBinding::Portal { portal, key, .. } => {
+                portal.deregister(*key);
+            }
+            MenuBinding::InTree { handle, list_state } => {
+                let list_view = build_menu_view(&self.items, &self.theme, handle).boxed();
+                ThemedDropdownButton::with_overlay_content(&mut element, |mut content| {
+                    let passthrough = content.downcast::<Passthrough>();
+                    list_view.teardown(list_state, ctx, passthrough);
+                });
+            }
         }
         ctx.teardown_action_source(element);
     }
@@ -335,110 +374,274 @@ where
         &self,
         view_state: &mut Self::ViewState,
         message: &mut MessageCtx,
-        _element: Mut<'_, Self::Element>,
+        mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        let _ = &view_state.binding;
-        match message.take_message::<DropdownButtonAction>() {
-            Some(action) => match *action {
-                DropdownButtonAction::ItemSelected(i) => {
-                    if let Some((_, cb)) = self.items.get(i) {
-                        MessageResult::Action(cb(app_state))
-                    } else {
-                        MessageResult::Stale
-                    }
-                }
+        // A message addressed to *this* view's own `ThemedDropdownButton`
+        // arrives fully routed (empty remaining path) — that's
+        // `DropdownButtonAction`, submitted directly by the widget. A
+        // message with a non-empty path is bound for the nested in-tree
+        // `MenuContentView` (only possible in-tree: portal mode's
+        // `MenuContentView` lives in a *separate* view subtree — the
+        // scope's own portal registry — dispatched by `OverlayScope`
+        // directly, never routed through here at all). Same guard shape as
+        // `AutocompleteView::message`.
+        if message.remaining_path().is_empty() {
+            let Some(action) = message.take_message::<DropdownButtonAction>() else {
+                tracing::error!(?message, "unexpected message in DropdownButtonView");
+                return MessageResult::Stale;
+            };
+            return match *action {
+                DropdownButtonAction::ItemSelected(i) => match self.items.get(i) {
+                    Some((_, cb)) => MessageResult::Action(cb(app_state)),
+                    None => MessageResult::Stale,
+                },
                 DropdownButtonAction::OpenChanged(open) => match &self.on_open_change {
                     Some(f) => MessageResult::Action(f(app_state, open)),
                     None => MessageResult::Nop,
                 },
-            },
-            None => MessageResult::Stale,
+            };
         }
+
+        let MenuBinding::InTree { handle, list_state } = &mut view_state.binding else {
+            tracing::error!(
+                ?message,
+                "DropdownButtonView received a routed message in portal mode, which should be \
+                 impossible — portal-mode MenuContentView messages are dispatched by \
+                 OverlayScope directly, never through here"
+            );
+            return MessageResult::Stale;
+        };
+        let list_view = build_menu_view(&self.items, &self.theme, handle).boxed();
+        ThemedDropdownButton::with_overlay_content(&mut element, |mut content| {
+            let passthrough = content.downcast::<Passthrough>();
+            list_view.message(list_state, message, passthrough, app_state)
+        })
     }
 }
 
-/// The content view registered with the scope's [`OverlayPortal`] for a
-/// portal-mode dropdown menu — wraps [`MenuContent`] and, on item selection,
-/// both calls the item's callback (producing `Action`) and notifies the
-/// owning [`ThemedDropdownButton`] (via [`DropdownButtonHandle`]) to close
-/// the menu and clear the keyboard highlight. The menu is not a descendant of
-/// the dropdown in this mode, so normal action bubbling never reaches
-/// `ThemedDropdownButton::on_action`.
-struct MenuContentView<State, Action> {
-    items: Arc<Vec<(ArcStr, ItemCallback<State, Action>)>>,
-    dropdown_handle: DropdownButtonHandle,
-    theme: Theme,
+/// `DropdownButtonViewState`'s persisted state for the in-tree nested
+/// `MenuContentView` — the `View::ViewState` of a `Box<AnyWidgetView<State,
+/// Action>>`, named via projection (mirrors `AutocompleteViewState`'s
+/// `BoxedListViewState`) so this doesn't have to depend on `xilem_core`'s
+/// internal `AnyViewState` type, which isn't part of its public API surface.
+type BoxedListViewState<State, Action> =
+    <Box<AnyWidgetView<State, Action>> as View<State, Action, ViewCtx>>::ViewState;
+
+/// Resolves a click-selected item's text back to its callback and invokes
+/// it — the "resolve at the moment of the click" pattern `collection::
+/// apply_row_activate` uses elsewhere, needed here because `overlay_list`'s
+/// `on_select` only ever carries the row's displayed `ArcStr`, not its
+/// index (see `crate::collection::item_row_view::OnSelect`). Falls back to
+/// index 0 (with a `tracing::error!`) if no item matches `text`, which
+/// should be unreachable in practice: `text` can only be a row's own
+/// content at the moment a live pointer click on that row completed, and
+/// `items` is the same list that row was built from. A genuinely empty
+/// `items` can never reach this function at all, since there would be no
+/// row to click.
+fn invoke_selected<State, Action>(
+    items: &[(ArcStr, ItemCallback<State, Action>)],
+    text: &ArcStr,
+    state: &mut State,
+) -> Action {
+    let idx = items
+        .iter()
+        .position(|(label, _)| label == text)
+        .unwrap_or_else(|| {
+            tracing::error!(
+                text = %text,
+                "MenuContentView on_select: no item in the current item list matches the \
+                 selected text; falling back to index 0 — this should be unreachable"
+            );
+            0
+        });
+    let (_, cb) = &items[idx];
+    cb(state)
 }
 
-impl<State, Action> ViewMarker for MenuContentView<State, Action> {}
-
-impl<State, Action> View<State, Action, ViewCtx> for MenuContentView<State, Action>
+/// Builds the (opaque-typed) `MenuContentView` shared by both hosting modes
+/// and both `build`/`rebuild` — a plain value constructed fresh every call,
+/// mirroring `autocomplete::view::build_list_view`.
+///
+/// `on_select` resolves the selected text back to its callback via
+/// [`invoke_selected`] and calls it directly — the final host `Action`,
+/// skipping the old `MenuItemSelected` masonry-action hop entirely, now that
+/// resolution happens in the View layer. `on_activated` is the synchronous,
+/// `EventCtx`-level side effect that closes the menu right after a *click*
+/// completes a row selection (`ThemedDropdownButton::close_for_selection`,
+/// via `mutate_later`) — unlike autocomplete's `on_activated`, this doesn't
+/// also need to move focus: `ThemedDropdownButton` keeps real keyboard focus
+/// on its trigger button throughout (no Tab-into-listbox model, no focus
+/// gap), so there is nothing to refocus and no `suppress_focus_open`-style
+/// hazard to guard against — see `ThemedDropdownButton::set_highlight`'s
+/// doc comment and the module-level docs on `crate::collection`'s
+/// `CollectionListWidget` re-export for the fuller picture of how
+/// `dropdown_button`'s keyboard model differs from autocomplete's. Keyboard
+/// selection (Enter on a highlighted item while the trigger has focus)
+/// doesn't go through `on_select`/`on_activated` at all — it's resolved
+/// entirely inside `ThemedDropdownButton::on_action`'s own `ButtonPress`
+/// handling, using its own `highlighted` field.
+fn build_menu_view<State, Action>(
+    items: &Arc<Vec<(ArcStr, ItemCallback<State, Action>)>>,
+    theme: &Theme,
+    handle: &DropdownButtonHandle,
+) -> MenuContentView<impl WidgetView<State, Action, Widget: Sized>, State, Action>
 where
     State: 'static,
     Action: 'static,
 {
-    type Element = Pod<MenuContent>;
-    type ViewState = ();
+    let item_labels: Arc<Vec<ArcStr>> =
+        Arc::new(items.iter().map(|(label, _)| label.clone()).collect());
+    let on_select: OnSelect<State, Action> = {
+        let items = Arc::clone(items);
+        Arc::new(move |state: &mut State, text: ArcStr| invoke_selected(&items, &text, state))
+    };
+    let on_activated: OnActivated = {
+        let handle = handle.clone();
+        Arc::new(move |ctx: &mut EventCtx<'_>| {
+            if let Some(id) = handle.widget_id() {
+                ctx.mutate_later(id, |mut w| {
+                    let mut dropdown = w.downcast::<ThemedDropdownButton>();
+                    ThemedDropdownButton::close_for_selection(&mut dropdown);
+                });
+            }
+        })
+    };
+    MenuContentView {
+        child: overlay_list(
+            item_labels,
+            None,
+            theme,
+            Role::Menu,
+            Role::MenuItem,
+            on_select,
+            Some(on_activated),
+        ),
+        theme: *theme,
+        phantom: PhantomData,
+    }
+}
 
-    fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
-        let item_labels: Vec<ArcStr> = self.items.iter().map(|(lbl, _)| lbl.clone()).collect();
-        let widget = MenuContent::new(item_labels, &self.theme);
+/// Xilem view wrapping [`MenuContent`], built directly by
+/// [`DropdownButtonView`] in both hosting modes (see its module doc):
+/// registered with the overlay scope's portal when a scope ancestor exists,
+/// or nested directly inside `DropdownButtonView`'s own element (behind
+/// `AnchoredOverlay`'s overlay slot) otherwise. Generic over the child view
+/// `V` — `overlay_list(...)`'s own (opaque) return type — mirroring
+/// `autocomplete::view::SuggestionListView`: the wrapped widget
+/// ([`MenuContent<W>`]) stays generic too, so `rebuild`/`teardown`/`message`
+/// can forward straight into the child view's own `Mut<'_, Pod<W>>` with no
+/// downcast at all.
+struct MenuContentView<V, State, Action> {
+    child: V,
+    theme: Theme,
+    phantom: PhantomData<fn(State) -> Action>,
+}
+
+impl<V, State, Action> ViewMarker for MenuContentView<V, State, Action> {}
+
+impl<V, State, Action> View<State, Action, ViewCtx> for MenuContentView<V, State, Action>
+where
+    V: WidgetView<State, Action>,
+    V::Widget: masonry::core::FromDynWidget + Sized,
+    State: 'static,
+    Action: 'static,
+{
+    type Element = Pod<MenuContent<V::Widget>>;
+    type ViewState = V::ViewState;
+
+    fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
+        let (child_pod, child_state) = self.child.build(ctx, app_state);
+        let widget = MenuContent::new(child_pod.new_widget, &self.theme);
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
-        (element, ())
+        (element, child_state)
     }
 
     fn rebuild(
         &self,
         prev: &Self,
-        (): &mut Self::ViewState,
-        _ctx: &mut ViewCtx,
+        view_state: &mut Self::ViewState,
+        ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
-        _app_state: &mut State,
+        app_state: &mut State,
     ) {
         if self.theme != prev.theme {
             MenuContent::set_theme(&mut element, &self.theme);
         }
-        if !Arc::ptr_eq(&self.items, &prev.items) {
-            let item_labels: Vec<ArcStr> = self.items.iter().map(|(lbl, _)| lbl.clone()).collect();
-            MenuContent::set_items(&mut element, item_labels);
-        }
+        let child = MenuContent::child_mut(&mut element);
+        self.child
+            .rebuild(&prev.child, view_state, ctx, child, app_state);
     }
 
     fn teardown(
         &self,
-        (): &mut Self::ViewState,
+        view_state: &mut Self::ViewState,
         ctx: &mut ViewCtx,
-        element: Mut<'_, Self::Element>,
+        mut element: Mut<'_, Self::Element>,
     ) {
+        {
+            let child = MenuContent::child_mut(&mut element);
+            self.child.teardown(view_state, ctx, child);
+        }
         ctx.teardown_action_source(element);
     }
 
     fn message(
         &self,
-        (): &mut Self::ViewState,
+        view_state: &mut Self::ViewState,
         message: &mut MessageCtx,
         mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        match message.take_message::<MenuItemSelected>() {
-            Some(boxed) => {
-                let MenuItemSelected(index) = *boxed;
-                if let Some(dropdown_id) = self.dropdown_handle.widget_id() {
-                    element.ctx.mutate_later(dropdown_id, |mut w| {
-                        let mut dropdown = w.downcast::<ThemedDropdownButton>();
-                        // Not `mark_closed`: nothing pre-hid the slot content
-                        // here — this IS the close — so it must honor
-                        // controlled mode.
-                        ThemedDropdownButton::close_for_selection(&mut dropdown);
-                    });
-                }
-                match self.items.get(index) {
-                    Some((_, cb)) => MessageResult::Action(cb(app_state)),
-                    None => MessageResult::Stale,
-                }
-            }
-            None => MessageResult::Stale,
-        }
+        let child = MenuContent::child_mut(&mut element);
+        self.child.message(view_state, message, child, app_state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Real behavior of the text->callback resolution `build_menu_view`'s
+    /// `on_select` closure relies on — extracted into a standalone,
+    /// directly-testable function so this doesn't need a full `ViewCtx`/
+    /// `View::message` harness (that end-to-end path, generically, is
+    /// covered by `crate::collection::overlay_list_body`'s own
+    /// `overlay_list_body_virtualizes_and_routes_selection_through_real_view_messages`
+    /// test).
+    #[test]
+    fn invoke_selected_resolves_by_text_and_calls_the_matching_callback() {
+        let items: Vec<(ArcStr, ItemCallback<i32, i32>)> = vec![
+            (
+                "A".into(),
+                Box::new(|s: &mut i32| {
+                    *s += 1;
+                    10
+                }),
+            ),
+            (
+                "B".into(),
+                Box::new(|s: &mut i32| {
+                    *s += 2;
+                    20
+                }),
+            ),
+        ];
+        let mut state = 0;
+        let result = invoke_selected(&items, &ArcStr::from("B"), &mut state);
+        assert_eq!(result, 20, "should invoke item B's callback, not item A's");
+        assert_eq!(state, 2);
+    }
+
+    #[test]
+    fn invoke_selected_falls_back_to_index_0_when_text_matches_nothing() {
+        let items: Vec<(ArcStr, ItemCallback<i32, i32>)> =
+            vec![("A".into(), Box::new(|_s: &mut i32| 10))];
+        let mut state = 0;
+        let result = invoke_selected(&items, &ArcStr::from("Nonexistent"), &mut state);
+        assert_eq!(
+            result, 10,
+            "unreachable-in-practice fallback should not panic"
+        );
     }
 }
