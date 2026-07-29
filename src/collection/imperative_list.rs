@@ -103,6 +103,16 @@ impl CollectionListWidget {
         self.highlighted
     }
 
+    /// Test-only accessor for the cached id `accessibility()` reads to set
+    /// `aria-activedescendant`. Exists so tests can assert the *id* stays in
+    /// sync with `highlighted`, not just the index — see the
+    /// `set_item_count_shrinking_clamps_the_highlighted_row_id_too` and
+    /// `set_item_count_to_zero_clears_the_highlighted_row_id` tests below.
+    #[cfg(test)]
+    pub(crate) fn highlighted_row_id(&self) -> Option<WidgetId> {
+        self.highlighted_row_id
+    }
+
     /// Updates the slice-position offset of the first currently-materialized
     /// row. Cheap — like `CollectionBodyWidget::set_row_meta`, it only
     /// affects the next keyboard-nav/highlight call, so no repaint/relayout
@@ -117,13 +127,23 @@ impl CollectionListWidget {
     /// list is empty), reusing `clamp_scroll_index`'s pattern
     /// (`src/collection/scroll.rs`) — it already implements exactly this
     /// "clamp to the last valid index, or `None` if there is none" contract.
+    ///
+    /// Applies the clamped value through [`Self::set_highlight`] rather than
+    /// writing `this.widget.highlighted` directly, so a shrink that changes
+    /// the highlighted index (or clears it) keeps `highlighted_row_id` and
+    /// the materialized row's own highlight paint flag in sync too —
+    /// `set_highlight` is the only place with a live `WidgetMut` onto the
+    /// materialized row, and it already does exactly this bookkeeping
+    /// (including requesting the accessibility update) for every other
+    /// caller.
     pub(crate) fn set_item_count(this: &mut WidgetMut<'_, Self>, count: usize) {
         this.widget.item_count = count;
         if let Some(i) = this.widget.highlighted {
-            this.widget.highlighted = clamp_scroll_index(
+            let clamped = clamp_scroll_index(
                 u64::try_from(i).unwrap_or(u64::MAX),
                 u64::try_from(count).unwrap_or(u64::MAX),
             );
+            Self::set_highlight(this, clamped);
         }
     }
 
@@ -515,6 +535,91 @@ mod tests {
             highlighted,
             Some(1),
             "highlight clamps to the new last valid index (2 items -> index 1)"
+        );
+    }
+
+    /// The bug this task fixes: `set_item_count`'s shrink-clamp used to write
+    /// `this.widget.highlighted` directly, leaving `highlighted_row_id` (what
+    /// `accessibility()` reads for `aria-activedescendant`) and the
+    /// materialized row's own visual highlight-ring flag both pointed at the
+    /// *old* row. Reachable via autocomplete: arrow-highlight a suggestion,
+    /// then type more characters so the filtered list shrinks. Asserts the
+    /// cached id and the visual ring both follow the clamp, not just the
+    /// index (the pre-existing shrink tests above only ever checked the
+    /// index).
+    #[test]
+    fn set_item_count_shrinking_updates_the_highlighted_row_id_and_visual_ring() {
+        let (mut h, rows) = harness_with_materialized_rows(5);
+        assert_eq!(
+            rows.len(),
+            5,
+            "fixture must materialize every row for this test"
+        );
+
+        h.edit_root_widget(|mut w| CollectionListWidget::set_highlight(&mut w, Some(4)));
+        h.redraw();
+        let highlighted_row_id = h.edit_root_widget(|w: WidgetMut<'_, CollectionListWidget>| {
+            w.widget.highlighted_row_id()
+        });
+        assert_eq!(highlighted_row_id, Some(rows[&4]));
+
+        h.edit_root_widget(|mut w| CollectionListWidget::set_item_count(&mut w, 2));
+        h.redraw();
+
+        let highlighted =
+            h.edit_root_widget(|w: WidgetMut<'_, CollectionListWidget>| w.widget.highlighted());
+        assert_eq!(
+            highlighted,
+            Some(1),
+            "index still clamps to the new last valid index (2 items -> index 1)"
+        );
+
+        let highlighted_row_id = h.edit_root_widget(|w: WidgetMut<'_, CollectionListWidget>| {
+            w.widget.highlighted_row_id()
+        });
+        assert_eq!(
+            highlighted_row_id,
+            Some(rows[&1]),
+            "highlighted_row_id must follow the clamped index to the row \
+             that's actually highlighted now, not stay pointed at stale row 4"
+        );
+
+        assert_eq!(
+            h.access_node(rows[&4]).expect("row exists").is_selected(),
+            Some(false),
+            "the old highlighted row's visual highlight ring must clear too"
+        );
+        assert_eq!(
+            h.access_node(rows[&1]).expect("row exists").is_selected(),
+            Some(true),
+            "the row the highlight clamped to should carry the visual ring"
+        );
+    }
+
+    /// Same bug, the count-0 branch: shrinking to empty must clear
+    /// `highlighted_row_id` (not just `highlighted`) and the previously
+    /// highlighted row's visual ring, or `accessibility()` would report a
+    /// dangling `aria-activedescendant` for a row that may no longer even be
+    /// materialized.
+    #[test]
+    fn set_item_count_to_zero_clears_the_highlighted_row_id_and_visual_ring() {
+        let (mut h, rows) = harness_with_materialized_rows(3);
+        h.edit_root_widget(|mut w| CollectionListWidget::set_highlight(&mut w, Some(1)));
+        h.redraw();
+
+        h.edit_root_widget(|mut w| CollectionListWidget::set_item_count(&mut w, 0));
+        h.redraw();
+
+        let highlighted_row_id = h.edit_root_widget(|w: WidgetMut<'_, CollectionListWidget>| {
+            w.widget.highlighted_row_id()
+        });
+        assert_eq!(highlighted_row_id, None);
+
+        assert_eq!(
+            h.access_node(rows[&1]).expect("row exists").is_selected(),
+            Some(false),
+            "clearing the highlight on count 0 must clear the old row's \
+             visual ring too"
         );
     }
 
