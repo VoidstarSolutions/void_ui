@@ -473,13 +473,28 @@ pub struct AutocompleteWidget {
     /// and updated eagerly in action handlers for keyboard nav and selection.
     contents: String,
     open: bool,
-    /// Suppresses the next [`Self::open_on_focus`] call so that click-based
-    /// selection does not reopen the dropdown when focus returns to the input.
+    /// Suppresses both of the two independent "reopen because focus is back
+    /// on the input" paths — [`Self::open_on_focus`] (via
+    /// `ChildFocusChanged(true)`) and [`Self::set_match_summary`]'s own
+    /// `ctx.has_focus_target()` check — so that a click-based selection
+    /// doesn't reopen the dropdown it just closed.
     ///
-    /// Click creates a focus gap (`TextArea` → `None` → `TextArea`) that fires
-    /// `ChildFocusChanged(true)` on this widget, which would normally reopen
-    /// the list. Set by [`Self::select_suggestion`] and cleared by the first
-    /// [`Self::open_on_focus`] that sees it.
+    /// Click creates a focus gap (`TextArea` → `None` → `TextArea`) that
+    /// fires `ChildFocusChanged(true)`, and the *same* click's `on_select`
+    /// (routed through `overlay_list`, calling the host's `on_changed`)
+    /// typically also feeds `contents`/`suggestions` back as new View props,
+    /// triggering `AutocompleteView::rebuild` → `set_match_summary` in the
+    /// very same reactive cascade — both would reopen the list on their own.
+    /// Set by [`Self::select_suggestion`] and
+    /// [`super::view::build_list_view`]'s `on_activated` hook (via
+    /// [`Self::mark_closed_after_click`]). **Neither reopen check clears
+    /// it** (a previous version had `open_on_focus` clear it on read, which
+    /// broke the moment both checks fired in the same cascade: whichever
+    /// ran first silently spent the flag, leaving the other unprotected).
+    /// Cleared instead by [`Self::handle_text_changed`] (a genuine new
+    /// keystroke ends the "just selected, ignore focus echoes" window) and
+    /// by `Update::ChildFocusChanged(false)` (a real blur — see that arm's
+    /// comment for why an unconditional clear there is safe).
     suppress_focus_open: bool,
     /// Set the moment `on_text_event`'s forward-Tab handler calls
     /// `ctx.set_focus(listbox_id)`, consumed by the very next
@@ -668,10 +683,12 @@ impl AutocompleteWidget {
     /// anything — the view keeps it fresh on every rebuild, and nothing
     /// async can have invalidated it since the last one (suggestions
     /// arriving asynchronously while already focused is handled separately,
-    /// by [`Self::set_match_summary`]'s own `ctx.has_focus_target()` check).
+    /// by [`Self::set_match_summary`]'s own `ctx.has_focus_target()` check,
+    /// which reads — but, like this method, does not clear —
+    /// [`Self::suppress_focus_open`]; see that field's doc comment for why
+    /// clearing it here used to be wrong).
     fn open_on_focus(&mut self, ctx: &mut UpdateCtx<'_>) {
         if self.suppress_focus_open {
-            self.suppress_focus_open = false;
             return;
         }
         if self.first_suggestion.is_none() {
@@ -723,6 +740,15 @@ impl AutocompleteWidget {
     fn handle_text_changed(&mut self, ctx: &mut ActionCtx<'_>, text: &str) {
         self.contents.clear();
         self.contents.push_str(text);
+        // A genuine new keystroke ends any "just click-selected, ignore
+        // focus echoes" window a prior selection may have opened — see
+        // `suppress_focus_open`'s doc comment. This only ever fires for a
+        // real edit bubbling up from the child `TextArea`'s own change
+        // notification, never for a host-driven `TextArea::reset_text`
+        // (`set_contents`/`select_suggestion` call that directly, bypassing
+        // this action entirely) — so it can't be the click-selection's own
+        // echo re-arming itself.
+        self.suppress_focus_open = false;
         ctx.submit_action::<AutocompleteAction>(AutocompleteAction::TextChanged(text.to_owned()));
         ctx.set_handled();
     }
@@ -839,8 +865,16 @@ impl AutocompleteWidget {
         // restoring a draft into a controlled field, or suggestions arriving
         // asynchronously after an initially-empty field was already focused)
         // should surface matching suggestions the same way a typed keystroke
-        // does, rather than only ever narrowing/closing.
-        let should_open = (this.widget.open || this.ctx.has_focus_target()) && has_matches;
+        // does, rather than only ever narrowing/closing. Gated on
+        // `!suppress_focus_open` for the same reason `open_on_focus` gates
+        // on it — see that field's doc comment: a click-selection's own
+        // `on_changed` round-trip lands here (via `AutocompleteView::rebuild`
+        // → `set_match_summary`) in the very same cascade as the click, and
+        // without this guard it would reopen the dropdown `mark_closed_
+        // after_click` just closed, focus having already been restored to
+        // the field by the click's `on_activated` hook.
+        let focus_wants_open = this.ctx.has_focus_target() && !this.widget.suppress_focus_open;
+        let should_open = (this.widget.open || focus_wants_open) && has_matches;
         let open_changed = this.widget.open != should_open;
         this.widget.open = should_open;
 
@@ -2103,6 +2137,217 @@ mod accessibility_tests {
             node.data().is_expanded(),
             Some(false),
             "closed after click-select"
+        );
+    }
+
+    /// Regression test for a real, live-reproduced bug: `click_selection_
+    /// refocuses_and_closes` above proves the click itself closes the
+    /// dropdown, but in production the *same* click also drives the host's
+    /// `on_changed` (`super::view::build_list_view`'s `on_select`), which
+    /// round-trips back as a new `contents`/`suggestions` prop through
+    /// `AutocompleteView::rebuild` → `set_contents`/`set_match_summary` — in
+    /// the very same reactive cascade as the click, with focus already
+    /// restored to the text field. `set_match_summary` has its own,
+    /// independent "reopen if focused and matches exist" check, separate
+    /// from `open_on_focus`'s `ChildFocusChanged`-driven one that the click
+    /// selection already correctly suppresses — so a selection that leaves
+    /// an exact self-match (the overwhelmingly common case: the selected
+    /// text always matches itself) reopened the dropdown it had just closed.
+    /// This simulates that exact round-trip directly (widget-level, since
+    /// `AutocompleteView::rebuild` isn't reachable from a bare
+    /// `TestHarness<AutocompleteWidget>`) by calling `set_contents`/
+    /// `set_match_summary` right after the click, exactly as
+    /// `AutocompleteView::rebuild` would.
+    #[test]
+    fn click_selection_stays_closed_after_the_resulting_on_changed_round_trip() {
+        let handle = AutocompleteHandle::new();
+        let text_area_handle = TextAreaHandle::new();
+        let on_activated = make_on_activated(&handle, &text_area_handle);
+
+        let theme = Theme::default();
+        let listbox_handle = ListboxHandle::new();
+        let vs = VirtualScrollWidget::new(0, FRUITS.len());
+        let list = CollectionListWidget::new(NewWidget::new(vs), FRUITS.len(), Role::ListBox, true);
+        let suggestion_list = SuggestionList::new(
+            NewWidget::new(list),
+            &theme,
+            handle.clone(),
+            text_area_handle.clone(),
+            listbox_handle.clone(),
+        );
+        let widget = AutocompleteWidget::new(
+            AutocompleteConfig {
+                contents: String::new(),
+                placeholder: ArcStr::from("Pick a fruit"),
+                first_suggestion: Some(ArcStr::from("Apple")),
+                disabled: false,
+                theme,
+            },
+            NewWidget::new(suggestion_list).erased(),
+            handle,
+            listbox_handle,
+            &text_area_handle,
+        );
+        let mut harness = TestHarness::create_with_size(
+            masonry::theme::default_property_set(),
+            NewWidget::new(widget),
+            (300, 300),
+        );
+        let autocomplete_id = harness.root_id();
+        let text_area_id = find_text_area(harness.root_widget().as_dyn())
+            .expect("autocomplete should host a TextArea")
+            .id();
+
+        harness.focus_on(Some(text_area_id));
+        harness.render();
+        drive_in_tree(&mut harness, Some(&on_activated));
+
+        let mut first_item_id = None;
+        harness.inspect_widgets(|w| {
+            if first_item_id.is_none() && w.accessibility_role() == Role::ListBoxOption {
+                first_item_id = Some(w.id());
+            }
+        });
+        let item_id = first_item_id.expect("dropdown should have rendered list items");
+
+        harness.mouse_move_to_unchecked(item_id);
+        harness.mouse_button_press(Some(PointerButton::Primary));
+        harness.mouse_button_release(Some(PointerButton::Primary));
+        harness.render();
+        assert_eq!(
+            harness
+                .access_node(autocomplete_id)
+                .expect("combobox")
+                .data()
+                .is_expanded(),
+            Some(false),
+            "sanity: closed immediately after the click, same as \
+             click_selection_refocuses_and_closes"
+        );
+
+        // The part that broke live: `AutocompleteView::rebuild` reacting to
+        // the click's own `on_changed("Apple")` landing back as `contents ==
+        // "Apple"` — an exact self-match, so `set_match_summary` sees
+        // `has_matches == true` with focus already back on the text field.
+        harness.edit_root_widget(|mut w| {
+            AutocompleteWidget::set_contents(&mut w, "Apple");
+            AutocompleteWidget::set_match_summary(&mut w, Some(ArcStr::from("Apple")));
+        });
+        harness.render();
+        assert_eq!(
+            harness
+                .access_node(autocomplete_id)
+                .expect("combobox")
+                .data()
+                .is_expanded(),
+            Some(false),
+            "the on_changed round-trip that follows a click-selection must not \
+             reopen the dropdown it just closed"
+        );
+    }
+
+    /// The suppression a click-selection sets up must not persist forever —
+    /// a genuine new keystroke (not the click's own `on_changed` echo) has
+    /// to be able to reopen the dropdown normally afterward. Regression
+    /// guard for the fix to the bug above: naively never clearing
+    /// `suppress_focus_open` (instead of re-arming it on real typing via
+    /// `handle_text_changed`) would have silently broken this.
+    #[test]
+    fn typing_after_a_click_selection_can_reopen_the_dropdown() {
+        let handle = AutocompleteHandle::new();
+        let text_area_handle = TextAreaHandle::new();
+        let on_activated = make_on_activated(&handle, &text_area_handle);
+
+        let theme = Theme::default();
+        let listbox_handle = ListboxHandle::new();
+        let vs = VirtualScrollWidget::new(0, FRUITS.len());
+        let list = CollectionListWidget::new(NewWidget::new(vs), FRUITS.len(), Role::ListBox, true);
+        let suggestion_list = SuggestionList::new(
+            NewWidget::new(list),
+            &theme,
+            handle.clone(),
+            text_area_handle.clone(),
+            listbox_handle.clone(),
+        );
+        let widget = AutocompleteWidget::new(
+            AutocompleteConfig {
+                contents: String::new(),
+                placeholder: ArcStr::from("Pick a fruit"),
+                first_suggestion: Some(ArcStr::from("Apple")),
+                disabled: false,
+                theme,
+            },
+            NewWidget::new(suggestion_list).erased(),
+            handle,
+            listbox_handle,
+            &text_area_handle,
+        );
+        let mut harness = TestHarness::create_with_size(
+            masonry::theme::default_property_set(),
+            NewWidget::new(widget),
+            (300, 300),
+        );
+        let autocomplete_id = harness.root_id();
+        let text_area_id = find_text_area(harness.root_widget().as_dyn())
+            .expect("autocomplete should host a TextArea")
+            .id();
+
+        harness.focus_on(Some(text_area_id));
+        harness.render();
+        drive_in_tree(&mut harness, Some(&on_activated));
+
+        let mut first_item_id = None;
+        harness.inspect_widgets(|w| {
+            if first_item_id.is_none() && w.accessibility_role() == Role::ListBoxOption {
+                first_item_id = Some(w.id());
+            }
+        });
+        let item_id = first_item_id.expect("dropdown should have rendered list items");
+
+        harness.mouse_move_to_unchecked(item_id);
+        harness.mouse_button_press(Some(PointerButton::Primary));
+        harness.mouse_button_release(Some(PointerButton::Primary));
+        harness.render();
+        harness.edit_root_widget(|mut w| {
+            AutocompleteWidget::set_contents(&mut w, "Apple");
+            AutocompleteWidget::set_match_summary(&mut w, Some(ArcStr::from("Apple")));
+        });
+        harness.render();
+        assert_eq!(
+            harness
+                .access_node(autocomplete_id)
+                .expect("combobox")
+                .data()
+                .is_expanded(),
+            Some(false),
+            "sanity: still closed right after selection, as above"
+        );
+
+        // A real character keystroke into the (still-focused) text field —
+        // the actual `TextArea` → `TextAction::Changed` → `AutocompleteWidget
+        // ::on_action` → `handle_text_changed` bubbling path a live keypress
+        // takes, re-arming `suppress_focus_open` (see `handle_text_changed`'s
+        // doc comment) — proven via `masonry`'s own `TextArea` tests to
+        // produce a real `TextAction::Changed`, not a synthesized one.
+        harness.process_text_event(TextEvent::key_down(Key::Character("x".into())));
+        // The resulting round-trip (simulating what `AutocompleteView::
+        // rebuild` would do once the host's `on_changed` feeds the new
+        // contents back) should now be free to reopen — reusing "Apple" as
+        // the match is enough to prove re-arming worked; the exact resulting
+        // text content isn't what's under test here.
+        harness.edit_root_widget(|mut w| {
+            AutocompleteWidget::set_match_summary(&mut w, Some(ArcStr::from("Apple")));
+        });
+        harness.render();
+        assert_eq!(
+            harness
+                .access_node(autocomplete_id)
+                .expect("combobox")
+                .data()
+                .is_expanded(),
+            Some(true),
+            "a genuine new keystroke after a click-selection should be able \
+             to reopen the dropdown for its own matches"
         );
     }
 
