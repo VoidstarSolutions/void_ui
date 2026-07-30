@@ -1,205 +1,89 @@
-//! `MenuContent` — item-list widget hosted inside `ThemedDropdownButton`'s
-//! `overlay_host: AnchoredOverlay`.
+//! `MenuContent` — pure chrome (rounded-rect background/border, capped-height
+//! sizing) wrapping whatever `overlay_list(...)` (`crate::collection`, Task
+//! 5) builds — a virtualized, keyboard-navigable listbox widget
+//! (`CollectionListWidget`). Mirrors
+//! `crate::components::autocomplete::widget::SuggestionList`'s shape
+//! exactly: hover/highlight painting, click selection, and materialization
+//! all live in that shared substrate now; this widget only still paints its
+//! own background/border chrome and caps the vertical natural size.
 //!
-//! Handles layout of label children, per-item hover tracking, chrome
-//! painting, and selection — selection is reported to the trigger via
-//! [`MenuItemSelected`], which bubbles through [`Widget::on_action`] to
-//! [`ThemedDropdownButton::on_action`](super::widget::ThemedDropdownButton).
+//! Generic over the wrapped widget type `W` — mirroring `SuggestionList<W>`
+//! (`autocomplete/widget.rs`) and `CollapsibleWidget<W>`
+//! (`components/collapsible/widget.rs`), not an erased `WidgetPod<dyn
+//! Widget>` — so `super::view::MenuContentView` (generic over the child
+//! *view*) can forward `rebuild`/`teardown`/`message` straight through via
+//! `this.ctx.get_mut(&mut this.widget.list)`, with no downcast needed at
+//! all. `W` gets erased exactly once, one level up, wherever this widget is
+//! actually embedded: `ThemedDropdownButton`'s in-tree `AnchoredOverlay`
+//! overlay slot and the portal's `Passthrough` wrapper both already take
+//! `NewWidget<dyn Widget>`, so genericity here costs nothing at those
+//! boundaries.
+//!
+//! Unlike `SuggestionList`, this widget owns no keyboard handling of its own
+//! at all (no Enter/Escape/Tab): `ThemedDropdownButton` keeps real keyboard
+//! focus on its trigger button throughout the whole menu interaction
+//! (roving-highlight model, not autocomplete's Tab-into-listbox model), so
+//! arrow-key navigation is driven entirely by `ThemedDropdownButton::
+//! on_text_event`, which reaches into the wrapped `CollectionListWidget` via
+//! [`MenuContent::child_mut`] to push highlight state — see its doc comment
+//! and `crate::collection`'s re-export of `CollectionListWidget` for why
+//! that widget needs to be nameable outside `crate::collection` at all here,
+//! unlike autocomplete.
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
-    AccessCtx, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, PaintCtx, PointerButton,
-    PointerButtonEvent, PointerEvent, PointerUpdate, PropertiesMut, PropertiesRef, RegisterCtx,
-    StyleProperty, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
+    AccessCtx, ChildrenIds, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx, PropertiesMut,
+    PropertiesRef, RegisterCtx, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
-use masonry::imaging::Painter;
-use masonry::kurbo::{Axis, Point, Rect, RoundedRect, Size, Stroke};
-use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
-use masonry::properties::ContentColor;
-use masonry::widgets::Label;
+use masonry::imaging::{ClipRef, Painter};
+use masonry::kurbo::{Axis, Point, RoundedRect, Size, Stroke};
+use masonry::layout::{LayoutSize, LenDef, LenReq, Length};
 
 use crate::Theme;
-use crate::components::item_list;
-use crate::focus_ring::{FOCUS_RING_INSET, paint_focus_ring};
 
 /// Border width of the menu's background chrome — hairline chrome, not density-scaled.
 const BORDER_WIDTH: f64 = 1.0;
-/// Inset of the keyboard-highlight ring from its item's bounds — focus chrome, not density-scaled.
-const HIGHLIGHT_RING_INSET: f64 = FOCUS_RING_INSET;
-/// Minimum menu width in logical pixels, ensuring a readable popup even when
-/// all item labels are very short — a clamp, not a density-scaled dimension.
-const MIN_MENU_WIDTH: f64 = 80.0;
 
-/// Action emitted when the user selects item `0` (the index) from the menu.
-///
-/// Bubbles up to [`ThemedDropdownButton::on_action`](super::widget::ThemedDropdownButton),
-/// which closes the menu and re-emits a [`super::widget::DropdownButtonAction::ItemSelected`].
-#[derive(Debug)]
-pub struct MenuItemSelected(pub usize);
-
-/// Item-list widget for a dropdown menu.
-///
-/// Lays out one [`Label`] per item, tracks hover, paints its own
-/// background/border chrome, and fires [`MenuItemSelected`] on selection.
-pub struct MenuContent {
-    labels: Vec<WidgetPod<dyn Widget>>,
-    /// Rects populated during `layout()` — used for hit-testing in local coords.
-    item_rects: Vec<Rect>,
-    hover_index: Option<usize>,
-    /// Keyboard-highlighted item for the roving-tab-stop navigation model.
-    /// Driven externally by `ThemedDropdownButton` in response to arrow keys;
-    /// painted as a focus ring distinct from the pointer-hover fill.
-    highlighted: Option<usize>,
+/// Chrome widget for a dropdown menu: background/border painting and a
+/// capped-height `measure()`. Wraps whatever `overlay_list(...)` built.
+pub(crate) struct MenuContent<W: Widget> {
+    list: WidgetPod<W>,
     theme: Theme,
 }
 
-impl MenuContent {
+impl<W: Widget> MenuContent<W> {
     #[must_use]
-    pub fn new(items: impl IntoIterator<Item = ArcStr>, theme: &Theme) -> Self {
-        let labels = items
-            .into_iter()
-            .map(|text| Self::make_label(&text, theme))
-            .collect();
+    pub(crate) fn new(list: NewWidget<W>, theme: &Theme) -> Self {
         Self {
-            labels,
-            item_rects: Vec::new(),
-            hover_index: None,
-            highlighted: None,
+            list: list.to_pod(),
             theme: *theme,
         }
     }
 
-    fn make_label(text: &ArcStr, theme: &Theme) -> WidgetPod<dyn Widget> {
-        let mut lbl = Label::new(text.clone())
-            .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
-            .prepare();
-        lbl.properties.insert(ContentColor::new(theme.palette.text));
-        lbl.erased().to_pod()
-    }
-
-    fn item_height(&self) -> f64 {
-        item_list::item_height(&self.theme.density)
-    }
-
-    fn pad_h(&self) -> f64 {
-        item_list::pad_h(&self.theme.density)
-    }
-
-    fn menu_pad_v(&self) -> f64 {
-        item_list::menu_pad_v(&self.theme.density)
-    }
-
-    fn hit_item(&self, local_pos: Point) -> Option<usize> {
-        item_list::hit_item(&self.item_rects, local_pos)
-    }
-
-    fn to_local(ctx: &EventCtx<'_>, window_pos: Point) -> Point {
-        item_list::to_local(ctx, window_pos)
+    /// Returns a mutable reference to the wrapped listbox — lets
+    /// `super::view::MenuContentView` forward `rebuild`/`teardown`/
+    /// `message` straight through, and lets `ThemedDropdownButton::
+    /// set_highlight` reach `CollectionListWidget::set_highlight` directly
+    /// (see the module doc for why `dropdown_button`, unlike autocomplete,
+    /// needs this from outside the view layer too).
+    pub(crate) fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, W> {
+        this.ctx.get_mut(&mut this.widget.list)
     }
 }
 
 // --- MARK: WIDGETMUT SETTERS
-impl MenuContent {
-    /// Restyle existing labels and store the new theme — needed because, unlike
-    /// before, `MenuContent` is now a permanent child rather than rebuilt fresh
-    /// each time the menu opens.
-    pub fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
+impl<W: Widget> MenuContent<W> {
+    pub(crate) fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
         if this.widget.theme == *theme {
             return;
         }
         this.widget.theme = *theme;
-        for label in &mut this.widget.labels {
-            let mut lbl = this.ctx.get_mut(label);
-            lbl.insert_prop(ContentColor::new(theme.palette.text));
-            let mut lbl = lbl.downcast::<Label>();
-            Label::insert_style(
-                &mut lbl,
-                StyleProperty::FontSize(theme.density.ui_font_size),
-            );
-        }
-        this.ctx.request_layout();
         this.ctx.request_paint_only();
-    }
-
-    /// Replace the item list — needed for the same reason as `set_theme`:
-    /// `MenuContent` persists across opens, so a live item-list change must
-    /// be reflected even while the menu has never been (re)opened.
-    pub fn set_items(this: &mut WidgetMut<'_, Self>, items: impl IntoIterator<Item = ArcStr>) {
-        for label in this.widget.labels.drain(..) {
-            this.ctx.remove_child(label);
-        }
-        let theme = this.widget.theme;
-        this.widget.labels = items
-            .into_iter()
-            .map(|text| Self::make_label(&text, &theme))
-            .collect();
-        this.widget.hover_index = None;
-        this.widget.highlighted = None;
-        this.ctx.children_changed();
-        this.ctx.request_layout();
-        this.ctx.request_paint_only();
-    }
-
-    /// Set the keyboard-highlighted item index (from the roving-tab-stop arrow
-    /// navigation in `ThemedDropdownButton`). Pass `None` to clear highlighting.
-    pub(super) fn set_highlighted(this: &mut WidgetMut<'_, Self>, index: Option<usize>) {
-        if this.widget.highlighted != index {
-            this.widget.highlighted = index;
-            this.ctx.request_paint_only();
-        }
     }
 }
 
-impl Widget for MenuContent {
-    type Action = MenuItemSelected;
-
-    fn accepts_pointer_interaction(&self) -> bool {
-        true
-    }
-
-    fn propagates_pointer_interaction(&self) -> bool {
-        false
-    }
-
-    fn on_pointer_event(
-        &mut self,
-        ctx: &mut EventCtx<'_>,
-        _props: &mut PropertiesMut<'_>,
-        event: &PointerEvent,
-    ) {
-        match event {
-            PointerEvent::Move(PointerUpdate { current, .. }) => {
-                let local = Self::to_local(ctx, current.logical_point());
-                let new_hover = self.hit_item(local);
-                if new_hover != self.hover_index {
-                    self.hover_index = new_hover;
-                    ctx.request_paint_only();
-                }
-            }
-            PointerEvent::Down(PointerButtonEvent {
-                button: Some(PointerButton::Primary),
-                ..
-            }) => {
-                ctx.capture_pointer();
-            }
-            PointerEvent::Up(PointerButtonEvent {
-                button: Some(PointerButton::Primary),
-                state,
-                ..
-            }) if ctx.is_active() && ctx.is_hovered() => {
-                let local = Self::to_local(ctx, state.logical_point());
-                if let Some(i) = self.hit_item(local) {
-                    ctx.submit_action::<Self::Action>(MenuItemSelected(i));
-                    ctx.set_handled();
-                }
-            }
-            PointerEvent::Leave(_) if self.hover_index.is_some() => {
-                self.hover_index = None;
-                ctx.request_paint_only();
-            }
-            _ => {}
-        }
-    }
+impl<W: Widget> Widget for MenuContent<W> {
+    type Action = NoAction;
 
     fn update(
         &mut self,
@@ -212,9 +96,7 @@ impl Widget for MenuContent {
     fn property_changed(&mut self, _ctx: &mut UpdateCtx<'_>, _property_type: std::any::TypeId) {}
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        for label in &mut self.labels {
-            ctx.register_child(label);
-        }
+        ctx.register_child(&mut self.list);
     }
 
     fn measure(
@@ -222,101 +104,83 @@ impl Widget for MenuContent {
         ctx: &mut MeasureCtx<'_>,
         _props: &PropertiesRef<'_>,
         axis: Axis,
-        len_req: LenReq,
+        _len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        let item_h = self.item_height();
-        let pad_h = self.pad_h();
-        let n = self.labels.len();
+        let context_size = LayoutSize::maybe(axis.cross(), cross_length);
+        let natural = ctx
+            .compute_length(
+                &mut self.list,
+                LenDef::MaxContent,
+                context_size,
+                axis,
+                cross_length,
+            )
+            .get();
         match axis {
             Axis::Vertical => {
-                let n_f64 = f64::from(u32::try_from(n).unwrap_or(u32::MAX));
-                Length::px(self.menu_pad_v() * 2.0 + item_h * n_f64)
+                Length::px(natural.min(crate::components::autocomplete::MAX_LIST_HEIGHT))
             }
-            Axis::Horizontal => {
-                let inner_cross =
-                    cross_length.map(|c| Length::px((c.get() - 2.0 * pad_h).max(0.0)));
-                let mut max_w = MIN_MENU_WIDTH;
-                for label in &mut self.labels {
-                    let w = ctx
-                        .compute_length(
-                            label,
-                            len_req.into(),
-                            LayoutSize::maybe(Axis::Vertical, inner_cross),
-                            Axis::Horizontal,
-                            inner_cross,
-                        )
-                        .get();
-                    max_w = max_w.max(w);
-                }
-                Length::px(max_w + 2.0 * pad_h)
-            }
+            Axis::Horizontal => Length::px(natural),
         }
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        self.item_rects.clear();
-
-        let pad_h = self.pad_h();
-        let item_h = self.item_height();
-        let label_available = Size::new((size.width - 2.0 * pad_h).max(0.0), item_h);
-
-        let mut y = self.menu_pad_v();
-        for label in &mut self.labels {
-            let item_rect =
-                Rect::from_origin_size(Point::new(0.0, y), Size::new(size.width, item_h));
-            self.item_rects.push(item_rect);
-
-            let label_size =
-                ctx.compute_size(label, SizeDef::fit(label_available), label_available.into());
-            ctx.run_layout(label, label_size);
-            let label_y = y + (item_h - label_size.height) * 0.5;
-            ctx.place_child(label, Point::new(pad_h, label_y));
-
-            y += item_h;
-        }
+        ctx.run_layout(&mut self.list, size);
+        ctx.place_child(&mut self.list, Point::ORIGIN);
     }
 
-    fn paint(
+    /// Paints the rounded background/border chrome, then pushes a
+    /// same-shaped clip covering `paint()` and every child's own paint
+    /// (materialized `OverlayListItem` rows), popped in
+    /// [`Self::post_paint`] — mirrors
+    /// `autocomplete::widget::SuggestionList::pre_paint` exactly; see its
+    /// doc comment for why this (masonry's `set_clip_path` is rect-only,
+    /// but `pre_paint`/`post_paint` are documented as unconstrained by it,
+    /// so a manual `Painter::push_clip`/`pop_clip` pair bracketing them
+    /// achieves a real rounded subtree clip) rather than a per-row
+    /// first/last-index corner-rounding hack, which is unsound once a menu
+    /// scrolls (`MAX_LIST_HEIGHT`-clamped, many items).
+    fn pre_paint(
         &mut self,
         ctx: &mut PaintCtx<'_>,
         _props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
         let p = &self.theme.palette;
-
-        // Background/border chrome — formerly drawn by the wrapping
-        // `PopoverLayer` (`popover_layer.rs::paint`); `MenuContent` now paints
-        // it directly since it's hosted in-tree, with no such wrapper.
         let corner = f64::from(self.theme.radius.small);
         let bg_rect = RoundedRect::from_origin_size(Point::ORIGIN, ctx.border_box().size(), corner);
         painter.fill(bg_rect, p.surface_hi).draw();
         painter
             .stroke(bg_rect, &Stroke::new(BORDER_WIDTH), p.border_strong)
             .draw();
+        painter.push_clip(ClipRef::fill(bg_rect));
+    }
 
-        if let Some(i) = self.hover_index
-            && let Some(&rect) = self.item_rects.get(i)
-        {
-            painter.fill(rect, p.surface_2).draw();
-        }
+    fn paint(
+        &mut self,
+        _ctx: &mut PaintCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        _painter: &mut Painter<'_>,
+    ) {
+    }
 
-        if let Some(i) = self.highlighted
-            && let Some(&rect) = self.item_rects.get(i)
-        {
-            let inset = HIGHLIGHT_RING_INSET;
-            let ring_rect = Rect::new(
-                rect.x0 + inset,
-                rect.y0 + inset,
-                rect.x1 - inset,
-                rect.y1 - inset,
-            );
-            paint_focus_ring(painter, ring_rect, &self.theme);
-        }
+    /// Closes the clip [`Self::pre_paint`] opened.
+    fn post_paint(
+        &mut self,
+        _ctx: &mut PaintCtx<'_>,
+        _props: &PropertiesRef<'_>,
+        painter: &mut Painter<'_>,
+    ) {
+        painter.pop_clip();
     }
 
     fn accessibility_role(&self) -> Role {
-        Role::Menu
+        // Not `Role::Menu` — `overlay_list`'s own `CollectionListWidget`
+        // (constructed with `container_role: Role::Menu`) owns that now,
+        // same split as `SuggestionList`/`Role::GenericContainer` vs
+        // `CollectionListWidget`/`Role::ListBox`.
+        Role::GenericContainer
     }
 
     fn accessibility(
@@ -328,74 +192,81 @@ impl Widget for MenuContent {
     }
 
     fn children_ids(&self) -> ChildrenIds {
-        let ids: Vec<_> = self.labels.iter().map(WidgetPod::id).collect();
-        ChildrenIds::from_slice(&ids)
+        ChildrenIds::from_slice(&[self.list.id()])
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use masonry::core::NewWidget;
+    use masonry::testing::TestHarness;
+    use masonry::theme::default_property_set;
+    use xilem::masonry::widgets::VirtualScroll as VirtualScrollWidget;
+
     use super::*;
+    use crate::collection::CollectionListWidget;
 
-    /// Builds a `MenuContent` and seeds `item_rects` directly, as if a
-    /// layout pass had already run — `hit_item` only reads that field.
-    fn menu_with_rects(rects: Vec<Rect>) -> MenuContent {
+    /// The height cap this task adds: `measure()` previously sized to
+    /// `item_height * item_count` unbounded (pre-virtualization
+    /// `MenuContent::measure`); a menu with 200 items must now measure
+    /// capped at `MAX_LIST_HEIGHT`, not to the full (much taller) natural
+    /// content height.
+    #[test]
+    fn measure_caps_vertical_height_at_max_list_height() {
+        use masonry::layout::UnitPoint;
+        use masonry::widgets::Align;
+
         let theme = Theme::default();
-        let items: Vec<ArcStr> = rects.iter().map(|_| ArcStr::from("item")).collect();
-        let mut menu = MenuContent::new(items, &theme);
-        menu.item_rects = rects;
-        menu
+        let vs = NewWidget::new(VirtualScrollWidget::new(0, 200));
+        let list = CollectionListWidget::new(
+            vs,
+            200,
+            Role::Menu,
+            false,
+            f64::from(theme.density.row_height),
+        );
+        let menu = NewWidget::new(MenuContent::new(NewWidget::new(list), &theme));
+        let menu_id = menu.id();
+        // Wrapped in `Align` (root sizing otherwise forces the root widget
+        // to fill the whole window, masking `measure()`'s own natural/capped
+        // size entirely) so `menu`'s own laid-out size reflects what
+        // `measure()` actually returned — mirrors
+        // `ThemedDropdownButton`'s own test fixtures' use of `Align` for the
+        // same reason (`widget.rs`'s `portal_selection_close_respects_controlled_mode`).
+        let root = Align::new(UnitPoint::TOP_LEFT, menu.erased());
+        let mut h = TestHarness::create_with_size(
+            default_property_set(),
+            NewWidget::new(root),
+            (300, 4000),
+        );
+        h.render();
+        let size = h.get_widget_with_id(menu_id).ctx().border_box().size();
+        assert!(
+            size.height <= crate::components::autocomplete::MAX_LIST_HEIGHT + 0.5,
+            "200 items should measure capped at MAX_LIST_HEIGHT ({}), got {}",
+            crate::components::autocomplete::MAX_LIST_HEIGHT,
+            size.height
+        );
     }
 
     #[test]
-    fn hit_item_finds_the_containing_rect() {
-        let menu = menu_with_rects(vec![
-            Rect::new(0.0, 0.0, 100.0, 20.0),
-            Rect::new(0.0, 20.0, 100.0, 40.0),
-        ]);
-        assert_eq!(menu.hit_item(Point::new(50.0, 10.0)), Some(0));
-        assert_eq!(menu.hit_item(Point::new(50.0, 30.0)), Some(1));
-    }
-
-    #[test]
-    fn hit_item_returns_none_outside_all_rects() {
-        let menu = menu_with_rects(vec![Rect::new(0.0, 0.0, 100.0, 20.0)]);
-        assert_eq!(
-            menu.hit_item(Point::new(50.0, 50.0)),
-            None,
-            "below the list"
+    fn set_theme_is_a_noop_when_the_theme_is_unchanged() {
+        let theme = Theme::default();
+        let vs = NewWidget::new(VirtualScrollWidget::new(0, 3));
+        let list = CollectionListWidget::new(
+            vs,
+            3,
+            Role::Menu,
+            false,
+            f64::from(theme.density.row_height),
         );
-        assert_eq!(
-            menu.hit_item(Point::new(-10.0, 10.0)),
-            None,
-            "left of the list"
-        );
-    }
-
-    #[test]
-    fn hit_item_on_an_empty_list_is_always_none() {
-        let menu = menu_with_rects(Vec::new());
-        assert_eq!(menu.hit_item(Point::new(0.0, 0.0)), None);
-    }
-
-    #[test]
-    fn hit_item_resolves_a_shared_edge_to_the_rect_that_owns_it() {
-        // `Rect::contains` is half-open ([x0,x1) x [y0,y1)), so a point sitting
-        // exactly on the boundary between two adjacent rects belongs to
-        // whichever one's range includes that edge — never both, never neither.
-        let menu = menu_with_rects(vec![
-            Rect::new(0.0, 0.0, 100.0, 20.0),
-            Rect::new(0.0, 20.0, 100.0, 40.0),
-        ]);
-        assert_eq!(
-            menu.hit_item(Point::new(50.0, 0.0)),
-            Some(0),
-            "top edge of rect 0"
-        );
-        assert_eq!(
-            menu.hit_item(Point::new(50.0, 20.0)),
-            Some(1),
-            "shared edge belongs to rect 1, not rect 0"
-        );
+        let menu = MenuContent::new(NewWidget::new(list), &theme);
+        let mut h =
+            TestHarness::create_with_size(default_property_set(), NewWidget::new(menu), (300, 300));
+        // No assertion beyond "doesn't panic" — set_theme's early-return
+        // path just needs to be exercised; behavior-visible coverage for
+        // the changed case lives at the `ThemedDropdownButton::set_theme`
+        // level now (theme forwarding moved to the view layer).
+        h.edit_root_widget(|mut w| MenuContent::set_theme(&mut w, &theme));
     }
 }

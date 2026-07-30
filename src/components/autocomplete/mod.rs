@@ -25,3 +25,4 @@ pub(crate) mod widget;
 
 pub use view::{Autocomplete, AutocompleteView, autocomplete};
 pub use widget::AutocompleteAction;
+pub(crate) use widget::MAX_LIST_HEIGHT;

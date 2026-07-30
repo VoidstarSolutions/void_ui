@@ -30,15 +30,18 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use masonry::core::ArcStr;
+use masonry::accesskit::Role;
+use masonry::core::{ArcStr, EventCtx};
+use masonry::widgets::Passthrough;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
-use xilem::{Pod, ViewCtx, WidgetView};
+use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::widget::{
-    AutocompleteAction, AutocompleteConfig, AutocompleteHandle, AutocompleteWidget,
-    LabelListHandle, SuggestionList, SuggestionSelected, TextAreaHandle,
+    AutocompleteAction, AutocompleteConfig, AutocompleteHandle, AutocompleteWidget, ListboxHandle,
+    SuggestionList, TextAreaHandle,
 };
 use crate::Theme;
+use crate::collection::{OnActivated, OnSelect, overlay_list};
 use crate::overlay::SurfaceStyle;
 use crate::overlay_portal::{OverlayPortal, PortalContentView, PortalPlacement, portal_from_env};
 
@@ -101,7 +104,7 @@ impl<F> Autocomplete<F> {
     pub fn render<State, Action>(
         self,
         theme: &Theme,
-    ) -> impl WidgetView<State, Action> + use<F, State, Action>
+    ) -> impl WidgetView<State, Action, Widget: Sized> + use<F, State, Action>
     where
         State: 'static,
         Action: 'static,
@@ -119,87 +122,217 @@ impl<F> Autocomplete<F> {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SuggestionListView — portal content view
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Xilem view registered with the overlay scope's portal when a scope ancestor
-/// exists. Wraps [`SuggestionList`] and routes [`SuggestionSelected`] actions
-/// back to the owning [`AutocompleteWidget`] via [`AutocompleteHandle`].
+/// Returns every candidate matching `query` (case-insensitive prefix match),
+/// or the full list when `query` is empty. Moved here from
+/// `AutocompleteWidget` (widget-event-time) because `SuggestionListView` now
+/// needs the result as a real View prop, computed at view-build/rebuild time
+/// from `AutocompleteView`'s own `contents`/`suggestions` fields — see the
+/// design spec's "Key insight" for why.
 ///
-/// This view builds only the empty list shell and keeps its theme current;
-/// the *items* are owned by [`AutocompleteWidget`], which pushes the filtered
-/// set via `SuggestionList::set_items` on every open/keystroke/suggestion
-/// change. Duplicating the filtered list here would be dead work — the widget
-/// overwrites it before it's ever shown.
-pub(crate) struct SuggestionListView {
-    pub(crate) handle: AutocompleteHandle,
-    pub(crate) listbox_handle: LabelListHandle,
-    pub(crate) text_area_handle: TextAreaHandle,
-    pub(crate) theme: Theme,
+/// Unlike the pre-virtualization version, this is *not* capped (virtualizing
+/// the list is the whole point of this task — see `crate::collection::
+/// overlay_list`) and does not take a precomputed-lowercase mirror of `all`.
+/// That mirror existed to avoid a `to_lowercase` allocation per item on the
+/// hot *keystroke* path, when this ran once per keystroke against a widget
+/// hand-rolled loop over every candidate; it now runs at most a couple of
+/// times per render (here, and once more for `AutocompleteWidget::
+/// set_match_summary`'s callers below), triggered only by genuine prop
+/// changes (typing, focus, host-driven suggestion updates) rather than every
+/// masonry action dispatch — a categorically cheaper call pattern that
+/// doesn't carry its weight. If a future host passes a suggestion list large
+/// enough for this to show up in a profile, reintroducing a cached
+/// lowercase mirror (keyed on `suggestions` only recomputing when that
+/// `Arc` actually changes) is the natural next step.
+fn compute_filtered(all: &[ArcStr], query: &str) -> Vec<ArcStr> {
+    if query.is_empty() {
+        return all.to_vec();
+    }
+    let q = query.to_lowercase();
+    all.iter()
+        .filter(|s| s.to_lowercase().starts_with(&q))
+        .cloned()
+        .collect()
 }
 
-impl ViewMarker for SuggestionListView {}
+// ─────────────────────────────────────────────────────────────────────────────
+// SuggestionListView — the suggestion dropdown's content, in both hosting modes
+// ─────────────────────────────────────────────────────────────────────────────
 
-impl<State, Action> View<State, Action, ViewCtx> for SuggestionListView
+/// Xilem view wrapping [`SuggestionList`], built directly by [`AutocompleteView`]
+/// in both hosting modes now (see its module doc): registered with the
+/// overlay scope's portal when a scope ancestor exists, or nested directly
+/// inside `AutocompleteView`'s own element (behind `AnchoredOverlay`'s
+/// overlay slot) otherwise. Generic over the child view `V` —
+/// `overlay_list(...)`'s own (opaque) return type — mirroring
+/// `ClickableRow<V, State, Action, F>` (`collection/row_click.rs`): the
+/// wrapped widget ([`SuggestionList<W>`]) stays generic too, so `rebuild`/
+/// `teardown`/`message` can forward straight into the child view's own
+/// `Mut<'_, Pod<W>>` with no downcast at all — `this.ctx.get_mut` on a
+/// concretely-typed `WidgetPod<W>` field already produces exactly that type.
+///
+/// `W` (and so `V`) never needs to be erased *inside* this pairing — it only
+/// gets erased one level up, at `AutocompleteView`'s own boundary, via
+/// [`WidgetView::boxed`]/[`Arc::new`] into `Pod<Passthrough>` (the same
+/// `AnyElement<Pod<W>, ViewCtx> for Pod<Passthrough>` blanket impl
+/// `xilem_masonry::any_view` already provides for any `W: Widget +
+/// FromDynWidget`), which both `AnchoredOverlay`'s in-tree overlay slot and
+/// the portal's own content registration already expect erased content for.
+struct SuggestionListView<V, State, Action> {
+    child: V,
+    theme: Theme,
+    handle: AutocompleteHandle,
+    text_area_handle: TextAreaHandle,
+    listbox_handle: ListboxHandle,
+    phantom: PhantomData<fn(State) -> Action>,
+}
+
+impl<V, State, Action> ViewMarker for SuggestionListView<V, State, Action> {}
+
+impl<V, State, Action> View<State, Action, ViewCtx> for SuggestionListView<V, State, Action>
 where
+    V: WidgetView<State, Action>,
+    V::Widget: masonry::core::FromDynWidget + Sized,
     State: 'static,
     Action: 'static,
 {
-    type Element = Pod<SuggestionList>;
-    type ViewState = ();
+    type Element = Pod<SuggestionList<V::Widget>>;
+    type ViewState = V::ViewState;
 
-    fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
-        // Empty shell: AutocompleteWidget populates items via set_items when
-        // it opens the dropdown.
+    fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
+        let (child_pod, child_state) = self.child.build(ctx, app_state);
         let widget = SuggestionList::new(
-            [],
+            child_pod.new_widget,
             &self.theme,
-            self.listbox_handle.clone(),
             self.handle.clone(),
             self.text_area_handle.clone(),
+            self.listbox_handle.clone(),
         );
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
-        (element, ())
+        (element, child_state)
     }
 
     fn rebuild(
         &self,
         prev: &Self,
-        _vs: &mut (),
-        _ctx: &mut ViewCtx,
+        view_state: &mut Self::ViewState,
+        ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
-        _state: &mut State,
+        app_state: &mut State,
     ) {
-        // Items are the widget's responsibility; this view only re-themes.
         if self.theme != prev.theme {
             SuggestionList::set_theme(&mut element, &self.theme);
         }
+        let child = SuggestionList::child_mut(&mut element);
+        self.child
+            .rebuild(&prev.child, view_state, ctx, child, app_state);
     }
 
-    fn teardown(&self, _vs: &mut (), ctx: &mut ViewCtx, element: Mut<'_, Self::Element>) {
+    fn teardown(
+        &self,
+        view_state: &mut Self::ViewState,
+        ctx: &mut ViewCtx,
+        mut element: Mut<'_, Self::Element>,
+    ) {
+        {
+            let child = SuggestionList::child_mut(&mut element);
+            self.child.teardown(view_state, ctx, child);
+        }
         ctx.teardown_action_source(element);
     }
 
     fn message(
         &self,
-        _vs: &mut (),
+        view_state: &mut Self::ViewState,
         message: &mut MessageCtx,
         mut element: Mut<'_, Self::Element>,
-        _state: &mut State,
+        app_state: &mut State,
     ) -> MessageResult<Action> {
-        if let Some(boxed) = message.take_message::<SuggestionSelected>() {
-            let SuggestionSelected(text) = *boxed;
-            if let Some(ac_id) = self.handle.widget_id() {
-                element.ctx.mutate_later(ac_id, move |mut w| {
-                    let mut ac = w.downcast::<AutocompleteWidget>();
-                    AutocompleteWidget::portal_select(&mut ac, text.to_string());
-                });
-            }
-        }
-        MessageResult::Nop
+        let child = SuggestionList::child_mut(&mut element);
+        self.child.message(view_state, message, child, app_state)
     }
 }
+
+/// Builds the (opaque-typed) `SuggestionListView` shared by both hosting
+/// modes and both `build`/`rebuild` — a plain value constructed fresh every
+/// call (the normal xilem pattern; nothing here needs to persist beyond the
+/// call that builds it, since the state that *does* need to persist —
+/// `V::ViewState`/`AnyViewState` — lives in `AutocompleteViewState` instead).
+///
+/// `on_select` calls `on_changed` directly (the host's real action), and
+/// `on_activated` is the synchronous, `EventCtx`-level side effect that runs
+/// when a *click* completes a row selection — refocusing the text input and
+/// closing the dropdown. Keyboard selection (Enter once Tab'd into the
+/// listbox) doesn't need this: `CollectionListWidget::on_text_event`'s own
+/// Enter handler doesn't consume the keypress, so it bubbles to
+/// `SuggestionList::on_text_event`, which refocuses/closes for
+/// Enter/Escape/Tab uniformly, synchronously, from real `EventCtx` — see
+/// both those modules' docs for why refocus/close can't happen from
+/// `on_select` itself (fired later, from `View::message`, which only ever
+/// has `MutateCtx` — masonry's `set_focus`/`request_focus` are `EventCtx`/
+/// `ActionCtx`-only).
+fn build_list_view<State, Action>(
+    items: Arc<Vec<ArcStr>>,
+    theme: &Theme,
+    handle: AutocompleteHandle,
+    text_area_handle: TextAreaHandle,
+    listbox_handle: ListboxHandle,
+    on_changed: OnChanged<State, Action>,
+) -> SuggestionListView<impl WidgetView<State, Action, Widget: Sized>, State, Action>
+where
+    State: 'static,
+    Action: 'static,
+{
+    let on_select: OnSelect<State, Action> =
+        Arc::new(move |state: &mut State, _pos: usize, text: ArcStr| {
+            Some((on_changed)(state, text.to_string()))
+        });
+    let on_activated: OnActivated = {
+        let text_area_handle = text_area_handle.clone();
+        let handle = handle.clone();
+        Arc::new(move |ctx: &mut EventCtx<'_>| {
+            if let Some(id) = text_area_handle.widget_id() {
+                ctx.set_focus(id);
+            }
+            if let Some(ac_id) = handle.widget_id() {
+                ctx.mutate_later(ac_id, |mut w| {
+                    let mut ac = w.downcast::<AutocompleteWidget>();
+                    AutocompleteWidget::mark_closed_suppressing_reopen(&mut ac);
+                });
+            }
+        })
+    };
+    SuggestionListView {
+        child: overlay_list(
+            items,
+            None,
+            theme,
+            Role::ListBox,
+            Role::ListBoxOption,
+            on_select,
+            Some(on_activated),
+            // Autocomplete's `SuggestionList` wants Tab to move real
+            // keyboard focus into the listbox — `Role::ListBox`'s intended
+            // ARIA pattern here. See `CollectionListWidget::accepts_focus`'s
+            // doc for the contrast with dropdown_button's roving-highlight
+            // model, which passes `false`.
+            true,
+        ),
+        theme: *theme,
+        handle,
+        text_area_handle,
+        listbox_handle,
+        phantom: PhantomData,
+    }
+}
+
+/// `AutocompleteViewState`'s persisted state for the in-tree nested
+/// `SuggestionListView` — the `View::ViewState` of a `Box<AnyWidgetView<
+/// State, Action>>`, named via projection (mirrors
+/// `overlay_portal::PortalContentViewState`) so this doesn't have to depend
+/// on `xilem_core`'s internal `AnyViewState` type, which isn't part of its
+/// public API surface.
+type BoxedListViewState<State, Action> =
+    <Box<AnyWidgetView<State, Action>> as View<State, Action, ViewCtx>>::ViewState;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AutocompleteView
@@ -219,19 +352,31 @@ pub struct AutocompleteView<State, Action> {
     phantom: PhantomData<fn(State) -> Action>,
 }
 
-/// Where this autocomplete's suggestion list is bound.
+/// Where this autocomplete's suggestion list is bound. Both variants retain
+/// the same handle instances the `SuggestionListView` they built was given —
+/// `SuggestionList`'s own Enter/Escape/Tab handling and a click's
+/// `on_activated` hook both resolve `AutocompleteHandle`/`TextAreaHandle`
+/// lazily, but reusing the *same* `Arc`-backed handles (not fresh, detached
+/// ones) is what lets a later rebuild still reach the original mounted
+/// widgets.
 enum ViewBinding<State: 'static, Action: 'static> {
     Portal {
         portal: OverlayPortal<State, Action>,
         key: u64,
-        /// Retained so rebuilds can re-register with the *same* handle
-        /// instances instead of detached defaults — `SuggestionListView`'s
-        /// `message`/`build` rely on these resolving to real widget ids.
         handle: AutocompleteHandle,
-        listbox_handle: LabelListHandle,
+        listbox_handle: ListboxHandle,
         text_area_handle: TextAreaHandle,
     },
-    InTree,
+    InTree {
+        handle: AutocompleteHandle,
+        listbox_handle: ListboxHandle,
+        text_area_handle: TextAreaHandle,
+        /// Persisted `View::ViewState` for the nested `SuggestionListView`,
+        /// built/rebuilt directly against `AutocompleteWidget`'s
+        /// `AnchoredOverlay` overlay slot — see
+        /// `AutocompleteWidget::with_overlay_content`.
+        list_state: BoxedListViewState<State, Action>,
+    },
 }
 
 /// View state for `AutocompleteView`.
@@ -249,18 +394,23 @@ where
     type Element = Pod<AutocompleteWidget>;
     type ViewState = AutocompleteViewState<State, Action>;
 
-    fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
+    fn build(&self, ctx: &mut ViewCtx, state: &mut State) -> (Self::Element, Self::ViewState) {
         let portal = portal_from_env::<State, Action>(ctx);
+        let handle = AutocompleteHandle::new();
+        let listbox_handle = ListboxHandle::new();
+        let text_area_handle = TextAreaHandle::new();
+        let filtered = Arc::new(compute_filtered(&self.suggestions, &self.contents));
+        let first_suggestion = filtered.first().cloned();
+
         if let Some(portal) = portal {
-            let handle = AutocompleteHandle::new();
-            let listbox_handle = LabelListHandle::new();
-            let text_area_handle = TextAreaHandle::new();
-            let list_view = SuggestionListView {
-                handle: handle.clone(),
-                listbox_handle: listbox_handle.clone(),
-                text_area_handle: text_area_handle.clone(),
-                theme: self.theme,
-            };
+            let list_view = build_list_view(
+                filtered,
+                &self.theme,
+                handle.clone(),
+                text_area_handle.clone(),
+                listbox_handle.clone(),
+                Arc::clone(&self.on_changed),
+            );
             let content: Arc<PortalContentView<State, Action>> = Arc::new(list_view);
             let key = portal.register(
                 content,
@@ -272,7 +422,7 @@ where
                 AutocompleteConfig {
                     contents: self.contents.clone(),
                     placeholder: self.placeholder.clone(),
-                    all_suggestions: (*self.suggestions).clone(),
+                    first_suggestion,
                     disabled: self.disabled,
                     theme: self.theme,
                 },
@@ -296,18 +446,39 @@ where
                 },
             )
         } else {
-            let widget = AutocompleteWidget::new(
-                &self.contents,
-                self.placeholder.clone(),
-                (*self.suggestions).clone(),
-                self.disabled,
+            let list_view = build_list_view(
+                filtered,
                 &self.theme,
+                handle.clone(),
+                text_area_handle.clone(),
+                listbox_handle.clone(),
+                Arc::clone(&self.on_changed),
+            )
+            .boxed();
+            let (list_element, list_state) = list_view.build(ctx, state);
+            let widget = AutocompleteWidget::new(
+                AutocompleteConfig {
+                    contents: self.contents.clone(),
+                    placeholder: self.placeholder.clone(),
+                    first_suggestion,
+                    disabled: self.disabled,
+                    theme: self.theme,
+                },
+                list_element.new_widget.erased(),
+                handle.clone(),
+                listbox_handle.clone(),
+                &text_area_handle,
             );
             let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
             (
                 element,
                 AutocompleteViewState {
-                    binding: ViewBinding::InTree,
+                    binding: ViewBinding::InTree {
+                        handle,
+                        listbox_handle,
+                        text_area_handle,
+                        list_state,
+                    },
                 },
             )
         }
@@ -317,9 +488,9 @@ where
         &self,
         prev: &Self,
         view_state: &mut Self::ViewState,
-        _ctx: &mut ViewCtx,
+        ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
-        _state: &mut State,
+        state: &mut State,
     ) {
         let contents_changed = self.contents != prev.contents;
         let suggestions_changed = self.suggestions != prev.suggestions;
@@ -327,8 +498,21 @@ where
         if contents_changed {
             AutocompleteWidget::set_contents(&mut element, &self.contents);
         }
-        if suggestions_changed {
-            AutocompleteWidget::set_all_suggestions(&mut element, (*self.suggestions).clone());
+        // Decoupled from `contents_changed`'s guard above on purpose: a typed
+        // keystroke round-trips `contents` back unchanged (host-controlled),
+        // so `set_contents` alone would never re-evaluate the matching set —
+        // see `AutocompleteWidget::set_match_summary`'s doc comment.
+        //
+        // `just_opened` (closed → open this call) drives the portal branch
+        // below: see `AutocompleteWidget::set_match_summary`'s doc comment
+        // for the live crash a stale, still-stashed leftover row causes if a
+        // reopen just diffs against the suggestion list left over from
+        // before close instead of starting fresh.
+        let mut just_opened = false;
+        if contents_changed || suggestions_changed {
+            let filtered = compute_filtered(&self.suggestions, &self.contents);
+            just_opened =
+                AutocompleteWidget::set_match_summary(&mut element, filtered.first().cloned());
         }
         if self.placeholder != prev.placeholder {
             AutocompleteWidget::set_placeholder(&mut element, self.placeholder.clone());
@@ -340,39 +524,107 @@ where
             AutocompleteWidget::set_theme(&mut element, &self.theme);
         }
 
-        // Re-register the portal content only when the theme changes — that's
-        // the sole property `SuggestionListView` now carries. Suggestion-set
-        // and keystroke changes reach the mounted list directly through the
-        // widget layer (set_all_suggestions / set_contents → mutate_later), so
-        // re-registering for them would be pure churn.
-        if let ViewBinding::Portal {
-            portal,
-            key,
-            handle,
-            listbox_handle,
-            text_area_handle,
-        } = &view_state.binding
-            && self.theme != prev.theme
-        {
-            // Re-use the *same* handle instances from the original portal
-            // registration (not detached defaults) — `SuggestionListView`'s
-            // `message` and `LabelList`'s back-channels both need
-            // `widget_id()` to resolve to the real, already-mounted widgets,
-            // which only the original `Arc<OnceLock<_>>`s have.
-            let list_view = SuggestionListView {
-                handle: handle.clone(),
-                listbox_handle: listbox_handle.clone(),
-                text_area_handle: text_area_handle.clone(),
-                theme: self.theme,
-            };
-            let content: Arc<PortalContentView<State, Action>> = Arc::new(list_view);
-            portal.update(
-                *key,
-                content,
-                &self.theme,
-                PortalPlacement::BareTrigger,
-                SurfaceStyle::Popover,
-            );
+        // Forward into the suggestion list (both hosting modes) whenever
+        // anything it depends on changed. This reverses the old theme-only
+        // re-registration optimization: previously the portal content was an
+        // empty shell the widget populated imperatively via `set_items`, so
+        // re-registering for anything but a theme change was pure churn.
+        // Items now flow through this View path on every keystroke
+        // regardless — the whole point of virtualizing via `overlay_list` —
+        // so re-registering/rebuilding on content or suggestion-set changes
+        // too is not optional, it's how the new items actually reach the
+        // list at all.
+        let list_changed = contents_changed || suggestions_changed || self.theme != prev.theme;
+        if !list_changed {
+            return;
+        }
+
+        match &mut view_state.binding {
+            ViewBinding::Portal {
+                portal,
+                key,
+                handle,
+                listbox_handle,
+                text_area_handle,
+            } => {
+                let filtered = Arc::new(compute_filtered(&self.suggestions, &self.contents));
+                let list_view = build_list_view(
+                    filtered,
+                    &self.theme,
+                    handle.clone(),
+                    text_area_handle.clone(),
+                    listbox_handle.clone(),
+                    Arc::clone(&self.on_changed),
+                );
+                let content: Arc<PortalContentView<State, Action>> = Arc::new(list_view);
+                if just_opened {
+                    // Deregister the old entry and register a fresh one
+                    // (a new key) instead of updating the existing one in
+                    // place: `portal.update` would diff the new content
+                    // against whatever `VirtualScroll` state the old entry
+                    // left behind, which — while closed — never got a
+                    // layout pass to reconcile a prior shrink (see
+                    // `AutocompleteWidget::set_match_summary`'s doc
+                    // comment). Deregister/register instead tears the old
+                    // entry down and mounts a genuinely fresh one, the same
+                    // way `teardown` already does, so the reopened list
+                    // starts with an empty, consistent `VirtualScroll`
+                    // rather than inheriting stale, still-stashed rows.
+                    portal.deregister(*key);
+                    *key = portal.register(
+                        content,
+                        &self.theme,
+                        PortalPlacement::BareTrigger,
+                        SurfaceStyle::Popover,
+                    );
+                    // `set_match_summary` (earlier in this `rebuild`)
+                    // already pushed visibility for the *old* key through
+                    // `AutocompleteWidget`'s `PortalBinding` — a no-op now
+                    // that entry's gone. Repoint the binding at the new key
+                    // and re-push, or the reopened dropdown mounts but never
+                    // actually shows.
+                    AutocompleteWidget::set_portal_key(&mut element, *key);
+                } else {
+                    portal.update(
+                        *key,
+                        content,
+                        &self.theme,
+                        PortalPlacement::BareTrigger,
+                        SurfaceStyle::Popover,
+                    );
+                }
+            }
+            ViewBinding::InTree {
+                handle,
+                listbox_handle,
+                text_area_handle,
+                list_state,
+            } => {
+                let prev_filtered = Arc::new(compute_filtered(&prev.suggestions, &prev.contents));
+                let prev_list_view = build_list_view(
+                    prev_filtered,
+                    &prev.theme,
+                    handle.clone(),
+                    text_area_handle.clone(),
+                    listbox_handle.clone(),
+                    Arc::clone(&prev.on_changed),
+                )
+                .boxed();
+                let filtered = Arc::new(compute_filtered(&self.suggestions, &self.contents));
+                let list_view = build_list_view(
+                    filtered,
+                    &self.theme,
+                    handle.clone(),
+                    text_area_handle.clone(),
+                    listbox_handle.clone(),
+                    Arc::clone(&self.on_changed),
+                )
+                .boxed();
+                AutocompleteWidget::with_overlay_content(&mut element, |mut content| {
+                    let passthrough = content.downcast::<Passthrough>();
+                    list_view.rebuild(&prev_list_view, list_state, ctx, passthrough, state);
+                });
+            }
         }
     }
 
@@ -380,26 +632,91 @@ where
         &self,
         view_state: &mut Self::ViewState,
         ctx: &mut ViewCtx,
-        element: Mut<'_, Self::Element>,
+        mut element: Mut<'_, Self::Element>,
     ) {
-        if let ViewBinding::Portal { portal, key, .. } = &view_state.binding {
-            portal.deregister(*key);
+        match &mut view_state.binding {
+            ViewBinding::Portal { portal, key, .. } => {
+                portal.deregister(*key);
+            }
+            ViewBinding::InTree {
+                handle,
+                listbox_handle,
+                text_area_handle,
+                list_state,
+            } => {
+                let filtered = Arc::new(compute_filtered(&self.suggestions, &self.contents));
+                let list_view = build_list_view(
+                    filtered,
+                    &self.theme,
+                    handle.clone(),
+                    text_area_handle.clone(),
+                    listbox_handle.clone(),
+                    Arc::clone(&self.on_changed),
+                )
+                .boxed();
+                AutocompleteWidget::with_overlay_content(&mut element, |mut content| {
+                    let passthrough = content.downcast::<Passthrough>();
+                    list_view.teardown(list_state, ctx, passthrough);
+                });
+            }
         }
         ctx.teardown_action_source(element);
     }
 
     fn message(
         &self,
-        _vs: &mut Self::ViewState,
+        view_state: &mut Self::ViewState,
         message: &mut MessageCtx,
-        _element: Mut<'_, Self::Element>,
+        mut element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        if let Some(boxed) = message.take_message::<AutocompleteAction>() {
-            let AutocompleteAction::TextChanged(text) = *boxed;
-            return MessageResult::Action((self.on_changed)(app_state, text));
+        // A message addressed to *this* view's own `AutocompleteWidget`
+        // arrives fully routed (empty remaining path) — that's
+        // `AutocompleteAction`, submitted directly by the widget. A message
+        // with a non-empty path is bound for the nested in-tree
+        // `SuggestionListView` (only possible in-tree: portal mode's
+        // `SuggestionListView` lives in a *separate* view subtree — the
+        // scope's own portal registry — dispatched by `OverlayScope`
+        // directly, never routed through here at all). Same guard shape as
+        // `ClickableRow`/`CollapsibleView` (`collection/row_click.rs`,
+        // `components/collapsible/view.rs`).
+        if message.remaining_path().is_empty() {
+            if let Some(boxed) = message.take_message::<AutocompleteAction>() {
+                let AutocompleteAction::TextChanged(text) = *boxed;
+                return MessageResult::Action((self.on_changed)(app_state, text));
+            }
+            tracing::error!(?message, "unexpected message in AutocompleteView");
+            return MessageResult::Stale;
         }
-        tracing::error!(?message, "unexpected message in AutocompleteView");
-        MessageResult::Stale
+
+        let ViewBinding::InTree {
+            handle,
+            listbox_handle,
+            text_area_handle,
+            list_state,
+        } = &mut view_state.binding
+        else {
+            tracing::error!(
+                ?message,
+                "AutocompleteView received a routed message in portal mode, which should be \
+                 impossible — portal-mode SuggestionListView messages are dispatched by \
+                 OverlayScope directly, never through here"
+            );
+            return MessageResult::Stale;
+        };
+        let filtered = Arc::new(compute_filtered(&self.suggestions, &self.contents));
+        let list_view = build_list_view(
+            filtered,
+            &self.theme,
+            handle.clone(),
+            text_area_handle.clone(),
+            listbox_handle.clone(),
+            Arc::clone(&self.on_changed),
+        )
+        .boxed();
+        AutocompleteWidget::with_overlay_content(&mut element, |mut content| {
+            let passthrough = content.downcast::<Passthrough>();
+            list_view.message(list_state, message, passthrough, app_state)
+        })
     }
 }

@@ -138,6 +138,19 @@ impl PortalBinding {
         self.key
     }
 
+    /// Repoint this binding at a different registered entry — needed when a
+    /// caller deregisters and re-registers under a fresh key instead of
+    /// updating the existing entry in place (autocomplete does this on
+    /// reopen; see `AutocompleteView::rebuild`'s doc comment). Without this,
+    /// `open`/`close`/`reanchor` would keep pushing visibility for the old,
+    /// now-deregistered key — a silent no-op (`PortalSlot::set_visible`
+    /// early-returns on an unknown key), so the dropdown would never
+    /// actually show. Callers that switch keys must re-push visibility
+    /// afterward (e.g. call `open` again) since this alone doesn't.
+    pub(crate) fn set_key(&mut self, key: u64) {
+        self.key = key;
+    }
+
     /// Whether the scope widget is mounted (its handle filled). All methods
     /// silently no-op when it isn't; callers that must not flip their own
     /// `open` flag in that state check this first.
