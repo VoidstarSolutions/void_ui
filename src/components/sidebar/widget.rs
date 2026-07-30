@@ -221,6 +221,25 @@ impl ThemedSidebarItem {
         }
         this.ctx.children_changed();
         this.ctx.request_layout();
+
+        // Seed the freshly-spliced action's reveal from live context. A row
+        // added *this way* — swapped into an already-mounted item, not built
+        // with the item — never triggers `drive_reveal`'s usual driver
+        // (`Update::WidgetAdded` fires only when the *item* is added), so an
+        // action attached to a row that is already hovered or focused would
+        // otherwise stay hidden until the next hover/focus change. A new
+        // `RevealBox` defaults to hidden, so this is a no-op unless the row is
+        // currently revealed. Mirrors `drive_reveal`; kept inline because that
+        // method takes an `UpdateCtx` and this path holds a `MutateCtx`.
+        let disabled = this.widget.disabled;
+        if let Content::Row(row) = &mut this.widget.content {
+            let revealed = !disabled && (this.ctx.has_hovered() || this.ctx.has_focus_target());
+            this.ctx.mutate_child_later(row, move |mut row| {
+                let mut action_widget = Flex::get_mut(&mut row, ACTIONS_INDEX);
+                let mut action = action_widget.downcast::<RevealBox>();
+                RevealBox::set_revealed(&mut action, revealed);
+            });
+        }
     }
 }
 
@@ -899,5 +918,32 @@ mod tests {
                 None::<NewWidget<Label>>,
             );
         });
+    }
+
+    #[test]
+    fn attaching_an_action_to_an_already_hovered_row_reveals_it() {
+        // Regression: `set_content` splices the action row into an
+        // already-mounted item, so `Update::WidgetAdded` never fires to seed
+        // the reveal. If the row is already hovered when the action lands it
+        // must appear at once, not wait for the next hover change.
+        let theme = Theme::dark();
+        let widget = ThemedSidebarItem::new(NewWidget::new(Label::new("Nav")), &theme);
+        let mut h = TestHarness::create_with_size(
+            default_property_set(),
+            NewWidget::new(widget),
+            (160, 28),
+        );
+        h.mouse_move(Point::new(20.0, 14.0)); // hover the label-only row first
+        h.edit_root_widget(|mut wm| {
+            ThemedSidebarItem::set_content(
+                &mut wm,
+                NewWidget::new(Label::new("Nav")),
+                Some(NewWidget::new(Label::new("gear"))),
+            );
+        });
+        assert!(
+            !action_is_stashed(&mut h),
+            "an action attached while the row is already hovered must reveal at once"
+        );
     }
 }

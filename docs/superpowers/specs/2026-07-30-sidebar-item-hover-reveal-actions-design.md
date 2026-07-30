@@ -65,8 +65,9 @@ tracking.
 `RevealBox` (salvaged, repurposed) wraps the trailing actions and, given the reclaim
 decision, **collapses** rather than merely clipping paint:
 
-- `revealed == false` → reports **zero size** in measure/layout and stashes/skips painting
-  the child, freeing the space so the label flexes into it.
+- `revealed == false` → reports **zero width** in measure/layout (while still reporting the
+  child's natural cross-axis extent, i.e. its real height) and stashes/skips painting the
+  child, freeing the horizontal space so the label flexes into it.
 - `revealed == true` → natural size + paint.
 
 Instant; no animator. This deliberately avoids the animator-re-arm cost documented in
