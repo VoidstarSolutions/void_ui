@@ -48,14 +48,15 @@ use xilem::masonry::widgets::VirtualScroll as VirtualScrollWidget;
 
 use super::item_row::OverlayListItem;
 use super::scroll::clamp_scroll_index;
+use super::window::MaterializedWindow;
 
 pub(crate) struct CollectionListWidget {
     child: WidgetPod<VirtualScrollWidget>,
     item_count: usize,
-    /// Slice position of the first currently-materialized row. See the
-    /// module doc's "`active_start`" section for why this is a field kept in
-    /// sync via [`Self::set_active_start`] rather than a parameter.
-    active_start: usize,
+    /// The currently materialized window of `child`, kept in sync via
+    /// [`Self::set_active_start`]. See the module doc's "`active_start`"
+    /// section for why this is a field rather than a parameter.
+    window: MaterializedWindow,
     highlighted: Option<usize>,
     /// The materialized [`WidgetId`] of the currently-highlighted row, if
     /// any — kept in sync by [`Self::set_highlight`], which is the only
@@ -106,7 +107,7 @@ impl CollectionListWidget {
         Self {
             child: child.to_pod(),
             item_count,
-            active_start: 0,
+            window: MaterializedWindow::new(0),
             highlighted: None,
             highlighted_row_id: None,
             container_role,
@@ -162,7 +163,7 @@ impl CollectionListWidget {
     /// exactly the case here, since only the materialized window moved, not
     /// the highlighted index itself.
     pub(crate) fn set_active_start(this: &mut WidgetMut<'_, Self>, active_start: usize) {
-        this.widget.active_start = active_start;
+        this.widget.window.set_active_start(active_start);
         Self::refresh_highlight_row(this);
     }
 
@@ -178,15 +179,12 @@ impl CollectionListWidget {
         let Some(i) = this.widget.highlighted else {
             return;
         };
-        let active_start = this.widget.active_start;
+        let window = this.widget.window;
         let mut new_highlighted_row_id = None;
         {
             let mut vs = this.ctx.get_mut(&mut this.widget.child);
             let materialized_count = vs.widget.children_ids().len();
-            if (active_start..active_start + materialized_count).contains(&i)
-                && let Some(k) = i.checked_sub(active_start)
-                && k < materialized_count
-            {
+            if window.slot_for(materialized_count, i).is_some() {
                 let mut row = VirtualScrollWidget::child_mut(&mut vs, i);
                 let row_id = row.ctx.widget_id();
                 let mut item = row.downcast::<OverlayListItem>();
@@ -259,13 +257,13 @@ impl CollectionListWidget {
         }
         let prev = this.widget.highlighted;
         this.widget.highlighted = index;
-        let active_start = this.widget.active_start;
+        let window = this.widget.window;
         let materialized_count = {
             let vs = this.ctx.get_mut(&mut this.widget.child);
             vs.widget.children_ids().len()
         };
         if let Some(i) = index
-            && !(active_start..active_start + materialized_count).contains(&i)
+            && window.slot_for(materialized_count, i).is_none()
         {
             let mut vs = this.ctx.get_mut(&mut this.widget.child);
             VirtualScrollWidget::scroll_to(&mut vs, i);
@@ -274,15 +272,13 @@ impl CollectionListWidget {
         {
             let mut vs = this.ctx.get_mut(&mut this.widget.child);
             if let Some(i) = prev
-                && let Some(k) = i.checked_sub(active_start)
-                && k < vs.widget.children_ids().len()
+                && window.slot_for(vs.widget.children_ids().len(), i).is_some()
             {
                 let mut row = VirtualScrollWidget::child_mut(&mut vs, i);
                 OverlayListItem::set_highlighted(&mut row.downcast(), false);
             }
             if let Some(i) = index
-                && (active_start..active_start + materialized_count).contains(&i)
-                && let Some(k) = i.checked_sub(active_start)
+                && let Some(k) = window.slot_for(materialized_count, i)
                 && k < vs.widget.children_ids().len()
             {
                 let mut row = VirtualScrollWidget::child_mut(&mut vs, i);
@@ -353,12 +349,12 @@ impl Widget for CollectionListWidget {
                     let Some(i) = this.widget.highlighted else {
                         return;
                     };
-                    let active_start = this.widget.active_start;
+                    let window = this.widget.window;
                     let materialized_count = {
                         let vs = this.ctx.get_mut(&mut this.widget.child);
                         vs.widget.children_ids().len()
                     };
-                    if (active_start..active_start + materialized_count).contains(&i) {
+                    if window.slot_for(materialized_count, i).is_some() {
                         let mut vs = this.ctx.get_mut(&mut this.widget.child);
                         let mut row = VirtualScrollWidget::child_mut(&mut vs, i);
                         OverlayListItem::activate(&mut row.downcast());
