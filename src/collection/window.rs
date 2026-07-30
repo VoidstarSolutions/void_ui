@@ -32,7 +32,11 @@ impl MaterializedWindow {
     /// are currently materialized (`VirtualScroll::children_ids().len()`),
     /// or `None` if `idx` isn't currently materialized.
     pub(crate) fn slot_for(self, materialized_count: usize, idx: usize) -> Option<usize> {
-        if !(self.active_start..self.active_start + materialized_count).contains(&idx) {
+        let window_end = self
+            .active_start
+            .checked_add(materialized_count)
+            .expect("materialized window end overflowed usize");
+        if !(self.active_start..window_end).contains(&idx) {
             return None;
         }
         idx.checked_sub(self.active_start)
@@ -40,7 +44,9 @@ impl MaterializedWindow {
 
     /// The global index at materialized slot `slot`.
     pub(crate) fn index_for_slot(self, slot: usize) -> usize {
-        self.active_start + slot
+        self.active_start
+            .checked_add(slot)
+            .expect("materialized slot produced an out-of-range global index")
     }
 }
 
@@ -107,5 +113,38 @@ mod tests {
         window.set_active_start(10);
         assert_eq!(window.slot_for(5, 0), None);
         assert_eq!(window.slot_for(5, 10), Some(0));
+    }
+
+    #[test]
+    fn slot_for_handles_a_window_end_of_exactly_usize_max() {
+        // window_end (active_start + materialized_count) lands on exactly
+        // usize::MAX here, the largest value it can take without
+        // overflowing; the exclusive range this feeds means usize::MAX
+        // itself is never a reachable idx.
+        let window = MaterializedWindow::new(usize::MAX - 4);
+        assert_eq!(window.slot_for(4, usize::MAX - 4), Some(0));
+        assert_eq!(window.slot_for(4, usize::MAX - 1), Some(3));
+        assert_eq!(window.slot_for(4, usize::MAX), None);
+        assert_eq!(window.slot_for(4, usize::MAX - 5), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "materialized window end overflowed usize")]
+    fn slot_for_panics_when_the_window_end_overflows() {
+        let window = MaterializedWindow::new(usize::MAX);
+        window.slot_for(1, 0);
+    }
+
+    #[test]
+    fn index_for_slot_handles_a_result_of_exactly_usize_max() {
+        let window = MaterializedWindow::new(usize::MAX - 4);
+        assert_eq!(window.index_for_slot(4), usize::MAX);
+    }
+
+    #[test]
+    #[should_panic(expected = "materialized slot produced an out-of-range global index")]
+    fn index_for_slot_panics_when_the_result_overflows() {
+        let window = MaterializedWindow::new(usize::MAX);
+        window.index_for_slot(1);
     }
 }
