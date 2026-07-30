@@ -36,6 +36,7 @@ mod nav_view;
 mod nav_widget;
 mod panel_view;
 mod panel_widget;
+mod reveal;
 mod view;
 mod widget;
 
