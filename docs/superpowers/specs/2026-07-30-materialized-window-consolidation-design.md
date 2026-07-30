@@ -65,18 +65,21 @@ impl MaterializedWindow {
     /// The materialized slot for global index `idx`, given how many rows
     /// are currently materialized (`VirtualScrollWidget::children_ids().len()`),
     /// or `None` if `idx` isn't currently materialized.
-    pub(crate) fn slot_for(&self, materialized_count: usize, idx: usize) -> Option<usize> {
-        (self.active_start..self.active_start + materialized_count)
-            .contains(&idx)
-            .then(|| idx - self.active_start)
+    pub(crate) fn slot_for(self, materialized_count: usize, idx: usize) -> Option<usize> {
+        if !(self.active_start..self.active_start + materialized_count).contains(&idx) {
+            return None;
+        }
+        idx.checked_sub(self.active_start)
     }
 
     /// The global index at materialized slot `slot`.
-    pub(crate) fn index_for_slot(&self, slot: usize) -> usize {
+    pub(crate) fn index_for_slot(self, slot: usize) -> usize {
         self.active_start + slot
     }
 }
 ```
+
+`slot_for`/`index_for_slot` take `self` by value, not `&self`: `MaterializedWindow` is `Copy`/8 bytes, and `&self` here trips `clippy::trivially_copy_pass_by_ref` (part of this workspace's denied `clippy::pedantic`) as a hard compile error, not a warning. Found during Task 1's implementation review; call sites are unaffected since `window.slot_for(...)` reads identically either way on an owned local.
 
 ### `imperative_list.rs`
 

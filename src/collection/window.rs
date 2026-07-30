@@ -99,4 +99,13 @@ mod tests {
         assert_eq!(window.slot_for(3, 2), Some(2));
         assert_eq!(window.slot_for(3, 3), None);
     }
+
+    #[test]
+    fn set_active_start_moves_the_window() {
+        let mut window = MaterializedWindow::new(0);
+        assert_eq!(window.slot_for(5, 0), Some(0));
+        window.set_active_start(10);
+        assert_eq!(window.slot_for(5, 0), None);
+        assert_eq!(window.slot_for(5, 10), Some(0));
+    }
 }
