@@ -132,14 +132,14 @@ k;` with `window.index_for_slot(k)`.
 
 ## Acceptance criteria
 
-- [ ] `src/collection/window.rs` exists with `MaterializedWindow` and passing
+- [x] `src/collection/window.rs` exists with `MaterializedWindow` and passing
       unit tests covering the boundary cases above.
-- [ ] `CollectionListWidget` (`imperative_list.rs`) uses `MaterializedWindow`
+- [x] `CollectionListWidget` (`imperative_list.rs`) uses `MaterializedWindow`
       in place of its raw `active_start` field and inline bounds checks; all
-      three duplicated call sites converted.
-- [ ] `CollectionBodyWidget::refresh_row_nav` (`body.rs`) uses
+      four duplicated call sites converted.
+- [x] `CollectionBodyWidget::refresh_row_nav` (`body.rs`) uses
       `MaterializedWindow::index_for_slot` in place of the inline
       `active_start + k`.
-- [ ] Full existing test suite (`cargo test --all-features`) passes
+- [x] Full existing test suite (`cargo test --all-features`) passes
       unmodified — no behavior change.
-- [ ] `cargo clippy --all-targets --all-features` clean.
+- [x] `cargo clippy --all-targets --all-features` clean.
