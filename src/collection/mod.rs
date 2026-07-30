@@ -25,6 +25,7 @@ pub(crate) mod row_click;
 mod scroll;
 mod selection;
 pub(crate) mod single_child;
+mod window;
 
 // Re-exported for the data_grid widget-tree integration test; the body
 // widget itself is constructed internally by `collection_body`.
