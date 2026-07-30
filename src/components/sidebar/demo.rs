@@ -10,16 +10,20 @@ use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 use super::{SidebarNavItem, sidebar_item, sidebar_nav, sidebar_panel};
 use crate::Theme;
 use crate::components::ScrollBarVisibility;
-use crate::label;
 use crate::scroll_container;
 use crate::separator;
 use crate::with_source;
+use crate::{ButtonVariant, IconName, button, label};
 
 // --- MARK: LOCAL STATE
 
 struct SidebarDemo {
     collapsed: bool,
     nav_selected: usize,
+    /// Most recent row selection or action click in the row-actions
+    /// example, echoed underneath it so the reveal + click paths are
+    /// observable.
+    last_action: String,
 }
 
 impl SidebarDemo {
@@ -27,6 +31,7 @@ impl SidebarDemo {
         Self {
             collapsed: false,
             nav_selected: 0,
+            last_action: String::new(),
         }
     }
 }
@@ -50,6 +55,25 @@ pub struct SidebarDemoPanel {
 
 // --- MARK: INNER VIEW BUILDER
 
+/// One row in the row-actions example: a label that selects the row, plus a
+/// gear revealed on hover / keyboard focus. Clicking the gear and selecting
+/// the row write distinct `last_action` text so the two paths are visibly
+/// different.
+fn actions_row(theme: &Theme, name: &'static str) -> impl WidgetView<SidebarDemo> + use<> {
+    sidebar_item(name, move |s: &mut SidebarDemo| {
+        s.last_action = format!("Selected {name}");
+    })
+    .action(
+        button(move |s: &mut SidebarDemo| s.last_action = format!("Settings · {name}"))
+            .icon(IconName::Settings)
+            .variant(ButtonVariant::Text)
+            .accessible_name(format!("{name} settings"))
+            .render(theme),
+    )
+    .render(theme)
+}
+
+#[allow(clippy::too_many_lines)]
 fn build_inner(theme: &Theme, state: &SidebarDemo) -> impl WidgetView<SidebarDemo> + use<> {
     let header = |text: &'static str| {
         label(text)
@@ -85,6 +109,32 @@ fn build_inner(theme: &Theme, state: &SidebarDemo) -> impl WidgetView<SidebarDem
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .gap(Length::px(2.0))
     });
+
+    // --- row actions (hover-reveal) example ---
+
+    let row_actions_example = with_source!(theme, {
+        flex_col((
+            actions_row(theme, "AAPL"),
+            actions_row(theme, "MSFT"),
+            actions_row(theme, "GOOG"),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .gap(Length::px(2.0))
+    });
+
+    let row_actions_echo = {
+        let text = if state.last_action.is_empty() {
+            "Hover a row (or Tab to it), then click the gear — it acts without \
+             selecting the row."
+                .to_string()
+        } else {
+            state.last_action.clone()
+        };
+        label(text)
+            .text_size(theme.typography.size_caption)
+            .color(theme.palette.text_muted)
+            .render(theme)
+    };
 
     // --- interactive collapse demo ---
 
@@ -137,6 +187,12 @@ fn build_inner(theme: &Theme, state: &SidebarDemo) -> impl WidgetView<SidebarDem
             active_example,
             header("Default — hover shows fill, label muted when inactive"),
             default_example,
+            header(
+                "Row actions — trailing gear revealed on hover / keyboard focus; \
+                 clicking it does not select the row",
+            ),
+            row_actions_example,
+            row_actions_echo,
             header(
                 "Collapsible panel — click the ‹ strip on the right to collapse, › to expand. Tab to the list, Up/Down to move focus, Enter/Space to select",
             ),
