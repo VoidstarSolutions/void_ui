@@ -332,7 +332,7 @@ where
             };
         }
         let id = message.take_first().expect("remaining_path was non-empty");
-        if id.routing_id() != ACTION_ID.routing_id() {
+        if id != ACTION_ID {
             return MessageResult::Stale;
         }
         match (&self.action, view_state.as_mut()) {
