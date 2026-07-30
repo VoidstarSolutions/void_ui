@@ -31,7 +31,7 @@ impl MaterializedWindow {
     /// The materialized slot for global index `idx`, given how many rows
     /// are currently materialized (`VirtualScroll::children_ids().len()`),
     /// or `None` if `idx` isn't currently materialized.
-    pub(crate) fn slot_for(&self, materialized_count: usize, idx: usize) -> Option<usize> {
+    pub(crate) fn slot_for(self, materialized_count: usize, idx: usize) -> Option<usize> {
         if !(self.active_start..self.active_start + materialized_count).contains(&idx) {
             return None;
         }
@@ -39,7 +39,7 @@ impl MaterializedWindow {
     }
 
     /// The global index at materialized slot `slot`.
-    pub(crate) fn index_for_slot(&self, slot: usize) -> usize {
+    pub(crate) fn index_for_slot(self, slot: usize) -> usize {
         self.active_start + slot
     }
 }
