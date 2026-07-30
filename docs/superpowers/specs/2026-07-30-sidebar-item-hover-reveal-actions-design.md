@@ -81,7 +81,7 @@ The Pass-2 bug "rows accumulated revealed state as the cursor moved" came from a
 every relevant `Update` as a **pure function of live widget context** and push it
 idempotently (`RevealBox::set_revealed` is a no-op when unchanged):
 
-```
+```text
 revealed = !disabled
         && (row hovered || descendant hovered || row focused || descendant focused)
 ```
