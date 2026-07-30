@@ -80,17 +80,45 @@ widget_id_handle!(
     AutocompleteHandle
 );
 
-widget_id_handle!(
-    /// Self-filling handle to the listbox's widget id (the
-    /// `overlay_list(...)`-built `CollectionListWidget`, `Role::ListBox`),
-    /// filled by [`SuggestionList`] at `Update::WidgetAdded` from its own
-    /// (already-known) child id — see `SuggestionList::update`. Lets
-    /// [`AutocompleteWidget`] expose `aria-controls` pointing at the listbox
-    /// and move real focus into it on forward-Tab, regardless of hosting mode
-    /// (in portal mode there's no tree path from `AutocompleteWidget` to the
-    /// listbox at all).
-    ListboxHandle
-);
+/// Self-filling, *repointable* handle to the listbox's widget id (the
+/// `overlay_list(...)`-built `CollectionListWidget`, `Role::ListBox`), reset
+/// by [`SuggestionList`] at every `Update::WidgetAdded` from its own
+/// (already-known) child id — see `SuggestionList::update`. Lets
+/// [`AutocompleteWidget`] expose `aria-controls` pointing at the listbox and
+/// move real focus into it on forward-Tab, regardless of hosting mode (in
+/// portal mode there's no tree path from `AutocompleteWidget` to the listbox
+/// at all).
+///
+/// Deliberately *not* built via the `widget_id_handle!` macro
+/// ([`AutocompleteHandle`]/[`TextAreaHandle`] are): that macro's `OnceLock`
+/// backing is correct for those two, since their target widgets live for the
+/// whole `AutocompleteWidget` lifetime and are never torn down — "latch on
+/// the first `Update::WidgetAdded`" is equivalent to "always current" there.
+/// The listbox itself *is* torn down and rebuilt with a fresh `WidgetId`:
+/// `AutocompleteView::rebuild`'s portal branch deregisters the old
+/// `SuggestionListView` portal entry and registers a new one on every
+/// closed→open transition (`just_opened` — see
+/// [`AutocompleteWidget::set_match_summary`]'s doc comment for why), reusing
+/// this same handle across both mounts. A `OnceLock` would latch onto the
+/// first mount forever, leaving a subsequent `ctx.set_focus(listbox_id)`
+/// targeting an already-torn-down widget — reproduced by
+/// `listbox_handle_repoints_after_the_portal_list_is_torn_down_and_rebuilt`.
+#[derive(Clone, Default)]
+pub(crate) struct ListboxHandle(std::sync::Arc<std::sync::Mutex<Option<WidgetId>>>);
+
+impl ListboxHandle {
+    pub(crate) fn new() -> Self {
+        Self(std::sync::Arc::new(std::sync::Mutex::new(None)))
+    }
+
+    pub(crate) fn widget_id(&self) -> Option<WidgetId> {
+        *self.0.lock().unwrap()
+    }
+
+    fn set(&self, id: WidgetId) {
+        *self.0.lock().unwrap() = Some(id);
+    }
+}
 
 widget_id_handle!(
     /// Handle to the autocomplete's editable `TextArea`'s widget id. Unlike
@@ -1925,6 +1953,82 @@ mod accessibility_tests {
                 .is_expanded(),
             Some(false),
             "clicking outside should close the in-tree dropdown"
+        );
+    }
+
+    /// Reproduces the real bug behind "tabbing into the list of autocomplete
+    /// entries is broken": `AutocompleteView::rebuild`'s portal branch
+    /// deregisters the old `SuggestionListView` portal entry and registers a
+    /// fresh one on every closed→open transition (`just_opened` — see that
+    /// method's doc comment for why: a stale, still-stashed leftover row
+    /// from before close must not be diffed against). That mints a brand
+    /// new `SuggestionList`/`CollectionListWidget` with a *different*
+    /// `WidgetId`, but reuses the *same*, long-lived `ListboxHandle` across
+    /// both mounts (`build_list_view` is always given `listbox_handle.clone()`
+    /// of the one `AutocompleteView::build` created).
+    ///
+    /// `ListboxHandle` is built via the shared `widget_id_handle!` macro,
+    /// which backs `AutocompleteHandle`/`TextAreaHandle` correctly (their
+    /// target widgets live for the whole `AutocompleteWidget` lifetime and
+    /// are never torn down, so "latch on first `Update::WidgetAdded`" is
+    /// equivalent to "always up to date") — but the listbox itself *is* torn
+    /// down and rebuilt here, so the first mount's `OnceLock` write wins
+    /// forever, and the second mount's own `Update::WidgetAdded` silently
+    /// no-ops. `AutocompleteWidget::on_text_event`'s forward-Tab handler
+    /// then calls `ctx.set_focus` with that stale id, targeting a widget
+    /// that no longer exists.
+    #[test]
+    fn listbox_handle_repoints_after_the_portal_list_is_torn_down_and_rebuilt() {
+        let theme = Theme::default();
+        let listbox_handle = ListboxHandle::new();
+
+        let build_suggestion_list = |listbox_handle: ListboxHandle| {
+            let handle = AutocompleteHandle::new();
+            let text_area_handle = TextAreaHandle::new();
+            let vs = VirtualScrollWidget::new(0, FRUITS.len());
+            let list = CollectionListWidget::new(
+                NewWidget::new(vs),
+                FRUITS.len(),
+                Role::ListBox,
+                true,
+                f64::from(theme.density.row_height),
+            );
+            let list_widget = NewWidget::new(list);
+            let list_id = list_widget.id();
+            let suggestion_list = SuggestionList::new(
+                list_widget,
+                &theme,
+                handle,
+                text_area_handle,
+                listbox_handle,
+            );
+            let mut harness = TestHarness::create_with_size(
+                masonry::theme::default_property_set(),
+                NewWidget::new(suggestion_list),
+                (300, 300),
+            );
+            harness.render();
+            list_id
+        };
+
+        // First open: mounts the listbox the dropdown starts with.
+        let first_id = build_suggestion_list(listbox_handle.clone());
+        assert_eq!(listbox_handle.widget_id(), Some(first_id));
+
+        // Reopen: the portal tears down the first entry and mounts a fresh
+        // one — a different WidgetId — reusing the same handle.
+        let second_id = build_suggestion_list(listbox_handle.clone());
+        assert_ne!(
+            first_id, second_id,
+            "each fresh mount must mint a different WidgetId"
+        );
+
+        assert_eq!(
+            listbox_handle.widget_id(),
+            Some(second_id),
+            "the handle must repoint at the freshly mounted listbox once the \
+             old one is torn down, or Tab's ctx.set_focus(listbox_id) targets \
+             a widget that no longer exists"
         );
     }
 
