@@ -1,11 +1,11 @@
 //! Collapse-based reveal wrapper for a sidebar row's trailing action.
 //!
-//! [`RevealBox`] wraps a single child and hides it by **collapsing** it —
-//! reporting zero size in measure/layout and marking it [stashed] — rather
-//! than clipping it to an empty rect. The parent
-//! [`super::widget::ThemedSidebarItem`] owns the hover/focus decision and
-//! drives this box via [`RevealBox::set_revealed`]; this widget holds no
-//! opinion of its own, it only obeys.
+//! [`RevealBox`] wraps a single child and hides it by **collapsing** it along
+//! the row's main (horizontal) axis — reporting zero *width* in
+//! measure/layout and marking it [stashed] — rather than clipping it to an
+//! empty rect. The parent [`super::widget::ThemedSidebarItem`] owns the
+//! hover/focus decision and drives this box via [`RevealBox::set_revealed`];
+//! this widget holds no opinion of its own, it only obeys.
 //!
 //! Collapsing (rather than clipping) is deliberate: the design's "reclaim
 //! space" decision means a hidden action must free its slot for the label to
@@ -13,6 +13,19 @@
 //! also means a hidden action is automatically excluded from pointer
 //! hit-testing and Tab focus order for free — masonry's own hit-test and
 //! focus-traversal passes both skip stashed subtrees.
+//!
+//! Collapsing is deliberately **width-only**: the box always reports its
+//! child's real height, revealed or not. The row this wraps
+//! (`ThemedSidebarItem`'s `Content::Row`) is a horizontal `Flex::row()`, so
+//! the row's own measured height is the max of its children's cross-axis
+//! (vertical) extents. Reporting zero height while hidden would make that
+//! max — and so the whole row's height, as seen by its parent list — swing
+//! between the label's height and `max(label, action)` every time the action
+//! reveals or hides, under a pointer that hasn't moved. That vertical jump
+//! was reproduced live (not just in headless tests, which force a fixed
+//! window size regardless of measured content and so never exposed it): it
+//! shifts content under a stationary cursor, which trips hover on and off
+//! and reads as "the gear won't stay revealed."
 //!
 //! [stashed]: masonry::doc::masonry_concepts#stashed
 
@@ -26,7 +39,7 @@ use masonry::kurbo::{Axis, Point, Size};
 use masonry::layout::{LayoutSize, LenReq, Length, SizeDef};
 
 /// A wrapper that reveals or hides its single child by collapsing it to
-/// zero size and stashing it. See the module docs.
+/// zero width and stashing it. See the module docs.
 pub(super) struct RevealBox {
     child: WidgetPod<dyn Widget>,
     /// Whether the child is currently shown. Driven by the parent row;
@@ -78,7 +91,13 @@ impl Widget for RevealBox {
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        if !self.revealed {
+        // Collapse only the main (horizontal) axis when hidden. The cross
+        // (vertical) axis always reports the child's real extent so the
+        // containing row's own height — determined by the max of its
+        // children's cross-axis extents — stays constant whether the action
+        // is shown or not. See the module docs for why: reporting zero on
+        // both axes made the row's height swing on every reveal/hide.
+        if !self.revealed && axis == Axis::Horizontal {
             return Length::ZERO;
         }
         let context_size = LayoutSize::maybe(axis.cross(), cross_length);

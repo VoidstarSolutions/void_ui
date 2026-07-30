@@ -261,22 +261,21 @@ impl ThemedSidebarItem {
     /// is a no-op when unchanged, so driving it unconditionally is cheap. A
     /// no-op when the row has no action.
     ///
-    /// `hovered`/`focus_target` are passed in rather than read straight off
-    /// `ctx.has_hovered()`/`ctx.has_focus_target()`: masonry's update pass
-    /// dispatches `Update::ChildHoveredChanged`/`ChildFocusChanged` to this
-    /// widget *before* writing the new value into `widget_state.has_hovered`
-    /// / `has_focus_target` (see `passes/update.rs`), so reading those
-    /// accessors mid-dispatch on this exact event returns the stale,
-    /// pre-change value — confirmed by tracing `ctx.has_hovered()` at this
-    /// call site, which read `false` on the very `ChildHoveredChanged(true)`
-    /// event caused by hovering the row. The row is never the pointer's
-    /// direct hover leaf (the label under it is, since
-    /// `propagates_pointer_interaction` stays at its `true` default), so
-    /// this path — not a directly-fresh `HoveredChanged` — is the common
-    /// case, not an edge case. The caller extracts the authoritative value
-    /// from the event's own payload for the dimension that event reports,
-    /// and falls back to the ctx accessor for the other, unrelated
-    /// dimension (which isn't concurrently being written).
+    /// The caller must pass the *subtree-wide* hovered/focus signal —
+    /// `ctx.has_hovered()`/`ctx.has_focus_target()` ("am I or any
+    /// descendant"), not the narrower `ctx.is_hovered()`/`is_focus_target()`
+    /// ("am I, specifically, the pointer's literal target") that back
+    /// `Update::HoveredChanged`/`FocusChanged`'s own payload. The row *is*
+    /// sometimes the pointer's literal hover leaf — e.g. the cursor sitting
+    /// over the row's own padding rather than the label or action inside it
+    /// — confirmed live: `HoveredChanged` does fire directly on the row, not
+    /// only on its children. Using that event's narrow payload as "am I
+    /// hovered" (as an earlier version of this method did) meant that the
+    /// literal hover leaf moving from the row onto a descendant — a routine
+    /// occurrence, not an edge case — fired `HoveredChanged(false)` and
+    /// incorrectly hid the action even though a descendant was still under
+    /// the pointer. See each `update()` call site for which value is safe
+    /// to read fresh for which event.
     fn drive_reveal(&mut self, ctx: &mut UpdateCtx<'_>, hovered: bool, focus_target: bool) {
         let Content::Row(row) = &mut self.content else {
             return;
@@ -380,21 +379,43 @@ impl Widget for ThemedSidebarItem {
                 ctx.set_disabled(self.disabled);
                 self.drive_reveal(ctx, ctx.has_hovered(), ctx.has_focus_target());
             }
-            // Row-level or descendant hover/focus changes all flip the
-            // reveal: a descendant here is a revealed action control. The
-            // event's own payload — not `ctx.has_hovered()`/
-            // `ctx.has_focus_target()` — is the source of truth for the
-            // dimension *this* event reports; see `drive_reveal`'s docs for
-            // why.
-            Update::HoveredChanged(hovered) | Update::ChildHoveredChanged(hovered) => {
+            // `ChildHoveredChanged`'s bool payload IS the fresh
+            // `has_hovered` value for this widget — masonry writes it into
+            // `widget_state.has_hovered` only *after* this dispatch
+            // returns, so the payload (not `ctx.has_hovered()`) is the only
+            // fresh source here. See `drive_reveal`'s docs.
+            Update::ChildHoveredChanged(hovered) => {
                 ctx.request_paint_only();
                 self.drive_reveal(ctx, *hovered, ctx.has_focus_target());
             }
-            Update::FocusChanged(focus_target) | Update::ChildFocusChanged(focus_target) => {
+            // Mirrors the `ChildHoveredChanged` arm above:
+            // `ChildFocusChanged`'s payload is the fresh `has_focus_target`,
+            // written after dispatch, so it's used directly.
+            Update::ChildFocusChanged(focus_target) => {
                 ctx.request_paint_only();
                 self.drive_reveal(ctx, ctx.has_hovered(), *focus_target);
             }
-            Update::DisabledChanged(_) => {
+            // `HoveredChanged`'s bool payload is `is_hovered` — whether
+            // *this exact widget* is the pointer's literal target — not
+            // `has_hovered`, and `FocusChanged`'s payload is the analogous
+            // narrow `is_focus_target`. Neither stands in for the broad
+            // "is anything in my subtree hovered/focused" signal
+            // `drive_reveal` needs: the row does become the literal
+            // pointer target directly at times (e.g. the pointer sitting
+            // over the row's own padding rather than a child), so treating
+            // that narrow payload as the broad signal — as an earlier
+            // version of this method did — meant the literal target moving
+            // from the row onto a still-hovered child fired
+            // `HoveredChanged(false)` while `has_hovered` stayed `true`,
+            // reveal-then-hiding the action under a pointer that never
+            // left it. By the time either event dispatches, masonry has
+            // already finished committing `has_hovered`/`has_focus_target`
+            // for the whole hovered/focused path earlier in this same
+            // pass, so both `ctx` accessors are safe to read fresh here —
+            // unlike in the `Child*Changed` arms above, where the
+            // corresponding field is still stale mid-dispatch (see
+            // `drive_reveal`'s docs).
+            Update::HoveredChanged(_) | Update::FocusChanged(_) | Update::DisabledChanged(_) => {
                 ctx.request_paint_only();
                 self.drive_reveal(ctx, ctx.has_hovered(), ctx.has_focus_target());
             }
