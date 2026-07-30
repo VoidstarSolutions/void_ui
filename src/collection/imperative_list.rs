@@ -144,13 +144,60 @@ impl CollectionListWidget {
     }
 
     /// Updates the slice-position offset of the first currently-materialized
-    /// row. Cheap — like `CollectionBodyWidget::set_row_meta`, it only
-    /// affects the next keyboard-nav/highlight call, so no repaint/relayout
-    /// is requested. Must be called by the wrapping View on every rebuild
-    /// whenever `virtual_scroll`'s materialized range may have changed — see
-    /// the module doc.
+    /// row, then re-resolves the current highlight against the (possibly
+    /// just-changed) materialized window. Must be called by the wrapping
+    /// View on every rebuild whenever `virtual_scroll`'s materialized range
+    /// may have changed — see the module doc.
+    ///
+    /// The re-resolve matters whenever a highlighted index's row wasn't
+    /// materialized when it was first highlighted (`set_highlight`'s
+    /// `scroll_to` branch re-anchors the window but can't push the flag onto
+    /// a row that doesn't exist yet) or just scrolled out of the window
+    /// entirely: without it, `highlighted_row_id` — and thus the
+    /// `aria-activedescendant` `accessibility()` sets from it — would either
+    /// stay `None` forever after a re-anchor, or keep pointing at a
+    /// `WidgetId` that `VirtualScroll` has since torn down. Delegates to
+    /// [`Self::refresh_highlight_row`] rather than a second `set_highlight`
+    /// call, since `set_highlight` no-ops when the *index* is unchanged —
+    /// exactly the case here, since only the materialized window moved, not
+    /// the highlighted index itself.
     pub(crate) fn set_active_start(this: &mut WidgetMut<'_, Self>, active_start: usize) {
         this.widget.active_start = active_start;
+        Self::refresh_highlight_row(this);
+    }
+
+    /// Re-resolves [`Self::highlighted`]'s row against the current
+    /// materialized window: pushes the highlighted flag onto the row if it's
+    /// now materialized, and keeps `highlighted_row_id` (and the
+    /// accessibility update it drives) in sync either way — `Some` only when
+    /// there's a materialized row to point at, `None` otherwise. Unlike
+    /// `set_highlight`, this never calls `scroll_to`: it's meant to run
+    /// *after* the window has already moved (from [`Self::set_active_start`]),
+    /// not to request a move itself.
+    fn refresh_highlight_row(this: &mut WidgetMut<'_, Self>) {
+        let Some(i) = this.widget.highlighted else {
+            return;
+        };
+        let active_start = this.widget.active_start;
+        let mut new_highlighted_row_id = None;
+        {
+            let mut vs = this.ctx.get_mut(&mut this.widget.child);
+            let materialized_count = vs.widget.children_ids().len();
+            if (active_start..active_start + materialized_count).contains(&i)
+                && let Some(k) = i.checked_sub(active_start)
+                && k < materialized_count
+            {
+                let mut row = VirtualScrollWidget::child_mut(&mut vs, i);
+                let row_id = row.ctx.widget_id();
+                let mut item = row.downcast::<OverlayListItem>();
+                OverlayListItem::set_highlighted(&mut item, true);
+                new_highlighted_row_id = Some(row_id);
+            }
+        }
+        if this.widget.highlighted_row_id != new_highlighted_row_id {
+            this.widget.highlighted_row_id = new_highlighted_row_id;
+            this.ctx.request_accessibility_update();
+        }
     }
 
     /// Clamps `highlighted` past the new end (or clears it entirely once the
