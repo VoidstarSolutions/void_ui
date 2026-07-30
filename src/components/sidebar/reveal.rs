@@ -146,36 +146,34 @@ mod tests {
     }
 
     #[test]
-    fn hidden_by_default_reports_zero_size() {
+    fn hidden_by_default() {
+        // Freshly constructed harness: child should be stashed since revealed = false.
         let mut h = harness();
-        // When hidden, measure returns ZERO and the child is stashed.
-        // (With create_with_size, border_box reflects the harness size, not
-        // the measured size, so we verify stashing instead.)
-        h.edit_root_widget(|mut wm| RevealBox::set_revealed(&mut wm, true));
-        h.redraw();
-        h.edit_root_widget(|mut wm| RevealBox::set_revealed(&mut wm, false));
-        h.redraw();
         h.edit_root_widget(|wm| {
             assert!(
                 wm.ctx.child_is_stashed(&wm.widget.child),
-                "starts hidden, so child should be stashed"
+                "child should be stashed by default (revealed = false)"
             );
         });
     }
 
     #[test]
-    fn revealing_grows_to_the_childs_natural_size() {
+    fn revealing_unstashes_the_child() {
+        // When set_revealed(true), the child should NOT be stashed.
         let mut h = harness();
         h.edit_root_widget(|mut wm| RevealBox::set_revealed(&mut wm, true));
-        let size = h.edit_root_widget(|wm| wm.ctx.border_box().size());
-        assert!(
-            size.width > 0.0 && size.height > 0.0,
-            "revealed size should be the child's natural size, got {size:?}"
-        );
+        h.redraw();
+        h.edit_root_widget(|wm| {
+            assert!(
+                !wm.ctx.child_is_stashed(&wm.widget.child),
+                "child should NOT be stashed when revealed"
+            );
+        });
     }
 
     #[test]
-    fn hiding_after_revealing_collapses_back_to_zero() {
+    fn hiding_after_revealing_restashes_the_child() {
+        // Reveal, then hide: child should be stashed again after hiding.
         let mut h = harness();
         h.edit_root_widget(|mut wm| RevealBox::set_revealed(&mut wm, true));
         h.redraw();
@@ -184,7 +182,7 @@ mod tests {
         h.edit_root_widget(|wm| {
             assert!(
                 wm.ctx.child_is_stashed(&wm.widget.child),
-                "after hiding, child should be stashed"
+                "child should be stashed after hiding"
             );
         });
     }
