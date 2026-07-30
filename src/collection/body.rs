@@ -23,6 +23,7 @@ use xilem::masonry::widgets::VirtualScroll as VirtualScrollWidget;
 
 use super::row_click::{RowClickable, TreeRowMeta};
 use super::single_child;
+use super::window::MaterializedWindow;
 
 /// Single-child wrapper around masonry's `VirtualScroll`. All keyboard focus
 /// navigation (Up/Down/Left/Right) is handled locally by the focused row
@@ -115,6 +116,7 @@ impl CollectionBodyWidget {
     /// "transiently-wrong-then-self-heals" contract `refresh_tree_row_meta`
     /// already relies on, just triggered by a different condition.
     pub(crate) fn refresh_row_nav(this: &mut WidgetMut<'_, Self>, active_start: usize) {
+        let window = MaterializedWindow::new(active_start);
         let ids: Vec<WidgetId> = {
             let vs = Self::virtual_scroll_mut(this);
             vs.widget.children_ids().iter().copied().collect()
@@ -138,7 +140,7 @@ impl CollectionBodyWidget {
             }
             let up = k.checked_sub(1).and_then(|j| ids.get(j)).copied();
             let down = ids.get(k + 1).copied();
-            let idx = active_start + k;
+            let idx = window.index_for_slot(k);
             let mut row = VirtualScrollWidget::child_mut(&mut vs, idx);
             let mut row = row.downcast::<RowClickable>();
             RowClickable::set_nav(&mut row, up, down);
