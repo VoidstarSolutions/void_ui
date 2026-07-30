@@ -20,10 +20,10 @@ materialized `VirtualScroll` children, using the same
 ## Background
 
 `body.rs`'s `CollectionBodyWidget::refresh_row_nav` and
-`imperative_list.rs`'s `CollectionListWidget` (three call sites:
-`refresh_highlight_row`, and both branches of `set_highlight`) each implement
-the same "is global index `idx` currently materialized, and if so at which
-child slot" check:
+`imperative_list.rs`'s `CollectionListWidget` (four call sites:
+`refresh_highlight_row`, both branches of `set_highlight`, and the `Enter`
+key handler in `on_text_event`) each implement the same "is global index
+`idx` currently materialized, and if so at which child slot" check:
 
 ```rust
 (active_start..active_start + materialized_count).contains(&idx)
@@ -82,12 +82,13 @@ impl MaterializedWindow {
 
 `CollectionListWidget`'s `active_start: usize` field becomes `window:
 MaterializedWindow`. `set_active_start` delegates to
-`self.window.set_active_start(...)`. The three duplicated bounds-check sites
-(`refresh_highlight_row`; both branches of `set_highlight`) call
-`self.window.slot_for(materialized_count, i)` instead of the inline
-`.contains()`/`checked_sub()` expression. No change to call order, no change
-to `set_item_count`/`move_highlight`/`set_highlight`'s external behavior or
-signatures — this is an internal representation swap.
+`self.window.set_active_start(...)`. The four duplicated bounds-check sites
+(`refresh_highlight_row`; both branches of `set_highlight`; the `Enter` key
+handler in `on_text_event`) call `self.window.slot_for(materialized_count,
+i)` instead of the inline `.contains()`/`checked_sub()` expression. No
+change to call order, no change to `set_item_count`/`move_highlight`/
+`set_highlight`'s external behavior or signatures — this is an internal
+representation swap.
 
 ### `body.rs`
 
