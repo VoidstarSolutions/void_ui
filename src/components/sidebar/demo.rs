@@ -73,19 +73,10 @@ fn actions_row(theme: &Theme, name: &'static str) -> impl WidgetView<SidebarDemo
     .render(theme)
 }
 
-#[allow(clippy::too_many_lines)]
-fn build_inner(theme: &Theme, state: &SidebarDemo) -> impl WidgetView<SidebarDemo> + use<> {
-    let header = |text: &'static str| {
-        label(text)
-            .text_size(theme.typography.size_caption)
-            .letter_spacing(1.2)
-            .color(theme.palette.text_faint)
-            .render(theme)
-    };
-
-    // --- static item examples ---
-
-    let active_example = with_source!(theme, {
+/// "Active" example: static items showing the selected accent bar and a
+/// disabled entry.
+fn active_example(theme: &Theme) -> impl WidgetView<SidebarDemo> + use<> {
+    with_source!(theme, {
         flex_col((
             sidebar_item("Button", |_: &mut SidebarDemo| {})
                 .selected(true)
@@ -98,9 +89,12 @@ fn build_inner(theme: &Theme, state: &SidebarDemo) -> impl WidgetView<SidebarDem
         ))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .gap(Length::px(2.0))
-    });
+    })
+}
 
-    let default_example = with_source!(theme, {
+/// "Default" example: unselected items showing hover fill and muted label.
+fn default_example(theme: &Theme) -> impl WidgetView<SidebarDemo> + use<> {
+    with_source!(theme, {
         flex_col((
             sidebar_item("Button", |_: &mut SidebarDemo| {}).render(theme),
             sidebar_item("Data Grid", |_: &mut SidebarDemo| {}).render(theme),
@@ -108,10 +102,19 @@ fn build_inner(theme: &Theme, state: &SidebarDemo) -> impl WidgetView<SidebarDem
         ))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .gap(Length::px(2.0))
-    });
+    })
+}
 
-    // --- row actions (hover-reveal) example ---
-
+/// Row-actions (hover-reveal) example, plus the label underneath that echoes
+/// the most recent row selection or action click. Returned together since
+/// they're always used adjacently.
+fn row_actions_section(
+    theme: &Theme,
+    state: &SidebarDemo,
+) -> (
+    impl WidgetView<SidebarDemo> + use<>,
+    impl WidgetView<SidebarDemo> + use<>,
+) {
     let row_actions_example = with_source!(theme, {
         flex_col((
             actions_row(theme, "AAPL"),
@@ -136,8 +139,15 @@ fn build_inner(theme: &Theme, state: &SidebarDemo) -> impl WidgetView<SidebarDem
             .render(theme)
     };
 
-    // --- interactive collapse demo ---
+    (row_actions_example, row_actions_echo)
+}
 
+/// Interactive collapse demo: nav list embedded in a `sidebar_panel`, with a
+/// content pane beside it.
+fn collapsible_panel_section(
+    theme: &Theme,
+    state: &SidebarDemo,
+) -> impl WidgetView<SidebarDemo> + use<> {
     let items = sidebar_nav(
         vec![
             SidebarNavItem::new("Dashboard"),
@@ -155,7 +165,7 @@ fn build_inner(theme: &Theme, state: &SidebarDemo) -> impl WidgetView<SidebarDem
         .render(theme),))
     .cross_axis_alignment(CrossAxisAlignment::Start);
 
-    let panel_row = with_source!(theme, {
+    with_source!(theme, {
         flex_row((
             sidebar_panel(items, |s: &mut SidebarDemo| s.collapsed = !s.collapsed)
                 .collapsed(state.collapsed)
@@ -164,7 +174,22 @@ fn build_inner(theme: &Theme, state: &SidebarDemo) -> impl WidgetView<SidebarDem
         ))
         .main_axis_alignment(MainAxisAlignment::Start)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
-    });
+    })
+}
+
+fn build_inner(theme: &Theme, state: &SidebarDemo) -> impl WidgetView<SidebarDemo> + use<> {
+    let header = |text: &'static str| {
+        label(text)
+            .text_size(theme.typography.size_caption)
+            .letter_spacing(1.2)
+            .color(theme.palette.text_faint)
+            .render(theme)
+    };
+
+    let active_example = active_example(theme);
+    let default_example = default_example(theme);
+    let (row_actions_example, row_actions_echo) = row_actions_section(theme, state);
+    let panel_row = collapsible_panel_section(theme, state);
 
     let title_block = flex_col((
         label("Sidebar")
