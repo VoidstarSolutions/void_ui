@@ -80,7 +80,7 @@ The component surface grew in dependency order. Anything overlay-shaped (popover
 
 Each phase ended with an API review pass before the next began. Component scope and naming draw on conventions from mature Rust UI component libraries; credit is owed (see Acknowledgments).
 
-The overlay primitive and Foundations, Phases 1–4, and most of 5–6 are shipped. What remains is the long tail of specialized surfaces, called out in **Remaining** below. Names in parentheses are the shipped module names where they differ from the original roadmap label.
+The overlay primitive and Foundations are shipped, as is most of Phases 1–4 (only `NumberInput`, `Form`, `ProgressCircle`, and `Tag` / `Chip` remain), plus `List` and `DatePicker` from Phases 5–6. What remains is the long tail of specialized surfaces, called out in **Remaining** below. Names in parentheses are the shipped module names where they differ from the original roadmap label.
 
 ### Foundations — shipped
 
