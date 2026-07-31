@@ -55,6 +55,7 @@ Shipped components, grouped by role:
 - **`Meter`** — linear progress/fill bar, optional gradient
 - **`Badge`** — count/dot pill
 - **`StatusDot`** — semantic status indicator
+- **`Alert`** — info/success/warning/error banner, optional dismiss
 - **`Skeleton`** — shimmer loading placeholder
 - **`Spinner`** — indeterminate activity indicator
 - **`Icon`** — named-icon registry
@@ -62,7 +63,7 @@ Shipped components, grouped by role:
 - **`DatePicker`** — calendar popover
 - **`Clipboard`** — copy-to-clipboard button
 
-Layout primitives: **`FlexWrap`** (left-to-right wrapping row, `src/lib.rs`), **`PointerInert`** (event-transparent wrapper, `src/pointer_inert.rs`), **`FloatingOverlay`** (the shared overlay primitive, `src/floating.rs` — see below).
+Layout primitives: **`FlexWrap`** (left-to-right wrapping row, `src/layout/flex_wrap/`), **`PointerInert`** (event-transparent wrapper, `src/pointer_inert.rs`), **`FloatingOverlay`** (the shared overlay primitive, `src/floating.rs` — see below).
 
 A live gallery exercises every component end-to-end. Most panels show their
 source inline via the `with_source!` macro; the interactive `Data Grid` and
