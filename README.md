@@ -23,7 +23,7 @@ Shipped components, grouped by role:
 
 - **`Popover`** — anchored floating panel
 - **`DropdownButton`** — button + anchored menu
-- **`ContextMenu`** — right-click rich-item menu
+- **`ContextMenuArea`** — right-click rich-item menu
 - **`Autocomplete`** — text input + filtered suggestion list
 - **`Tooltip`** — anchored, dismiss-aware
 - **`Dialog`** — modal header/body/footer over the outermost overlay scope
@@ -59,7 +59,7 @@ Shipped components, grouped by role:
 - **`Skeleton`** — shimmer loading placeholder
 - **`Spinner`** — indeterminate activity indicator
 - **`Icon`** — named-icon registry
-- **`CodeView`** — read-only highlighted text
+- **`ReadOnlyText`** — read-only highlighted text
 - **`DatePicker`** — calendar popover
 - **`Clipboard`** — copy-to-clipboard button
 
@@ -157,7 +157,7 @@ The overlay primitive and Foundations are shipped, as is most of Phases 1–4 (o
 
 The open surface, all `—` above: `NumberInput`, `Form`, `ProgressCircle`, `Tag`/`Chip`, `Tree`, `Pagination`, `DescriptionList`, `HoverCard`, `ColorPicker`, `Stepper`, `Kbd`.
 
-Also shipped beyond the original roadmap: `ButtonGroup`, `Clipboard`, `CodeView`, `StatusDot`, `Popover` (standalone), and the collapsible `Sidebar` panel (beyond `SidebarItem`).
+Also shipped beyond the original roadmap: `ButtonGroup`, `Clipboard`, `ReadOnlyText`, `StatusDot`, `Popover` (standalone), and the collapsible `Sidebar` panel (beyond `SidebarItem`).
 
 ## Descope
 
