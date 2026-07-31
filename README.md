@@ -80,7 +80,7 @@ The component surface grew in dependency order. Anything overlay-shaped (popover
 
 Each phase ended with an API review pass before the next began. Component scope and naming draw on conventions from mature Rust UI component libraries; credit is owed (see Acknowledgments).
 
-The overlay primitive and Foundations are shipped, as is most of Phases 1–4 (only `NumberInput`, `Form`, `ProgressCircle`, and `Tag` / `Chip` remain), plus `List` and `DatePicker` from Phases 5–6. What remains is the long tail of specialized surfaces, called out in **Remaining** below. Names in parentheses are the shipped module names where they differ from the original roadmap label.
+The overlay primitive and Foundations are shipped, as is most of Phases 1–4 (only `Form`, `ProgressCircle`, and `Tag` / `Chip` remain), plus `List` and `DatePicker` from Phases 5–6. What remains is the long tail of specialized surfaces, called out in **Remaining** below. Names in parentheses are the shipped module names where they differ from the original roadmap label.
 
 ### Foundations — shipped
 
@@ -100,7 +100,7 @@ The overlay primitive and Foundations are shipped, as is most of Phases 1–4 (o
 | `Label`                 | S    | ✓      |                                                    |
 | `TextInput` (`input`)   | L    | ✓      | Wraps masonry's `TextInput`, themed chrome.        |
 | `Slider`                | M    | ✓      | Single-thumb and dual-thumb range.                 |
-| `NumberInput`           | M    | —      | TextInput + step + parse/format.                   |
+| `NumberInput`           | M    | ✓      | TextInput + step + parse/format.                   |
 | `Form`                  | S    | —      | Layout container, label/control pairing.           |
 
 ### Phase 2 — Selection & navigation — shipped
@@ -155,7 +155,7 @@ The overlay primitive and Foundations are shipped, as is most of Phases 1–4 (o
 
 ### Remaining
 
-The open surface, all `—` above: `NumberInput`, `Form`, `ProgressCircle`, `Tag`/`Chip`, `Tree`, `Pagination`, `DescriptionList`, `HoverCard`, `ColorPicker`, `Stepper`, `Kbd`.
+The open surface, all `—` above: `Form`, `ProgressCircle`, `Tag`/`Chip`, `Tree`, `Pagination`, `DescriptionList`, `HoverCard`, `ColorPicker`, `Stepper`, `Kbd`.
 
 Also shipped beyond the original roadmap: `ButtonGroup`, `Clipboard`, `ReadOnlyText`, `StatusDot`, `Popover` (standalone), and the collapsible `Sidebar` panel (beyond `SidebarItem`).
 
