@@ -99,6 +99,10 @@ pub struct ThemedButton {
     ///
     /// [`content_button`]: super::content_button
     stretch_child: bool,
+    /// When true, vertical padding is dropped and horizontal padding is
+    /// halved, so the button is only as tall as its content while keeping a
+    /// slim, clickable hit area — used for inline chip dismiss affordances.
+    compact: bool,
 }
 
 // --- MARK: BUILDERS
@@ -124,6 +128,7 @@ impl ThemedButton {
             corners: RoundedRectRadii::from_single_radius(f64::from(theme.radius.small)),
             keyboard_pressed: false,
             stretch_child: false,
+            compact: false,
         }
     }
 
@@ -208,6 +213,16 @@ impl ThemedButton {
         self.stretch_child = stretch;
         self
     }
+
+    /// Removes vertical padding so the button is only as tall as its
+    /// content. Intended for inline affordances (e.g. a dismiss/close icon
+    /// embedded in a chip) where the surrounding container already supplies
+    /// vertical space.
+    #[must_use]
+    pub fn with_compact(mut self, compact: bool) -> Self {
+        self.compact = compact;
+        self
+    }
 }
 
 // --- MARK: WIDGETMUT
@@ -227,6 +242,14 @@ impl ThemedButton {
         if this.widget.selected != selected {
             this.widget.selected = selected;
             this.ctx.request_paint_only();
+        }
+    }
+
+    /// Toggles the `compact` flag. Requests a layout on change.
+    pub fn set_compact(this: &mut WidgetMut<'_, Self>, compact: bool) {
+        if this.widget.compact != compact {
+            this.widget.compact = compact;
+            this.ctx.request_layout();
         }
     }
 
@@ -647,8 +670,18 @@ impl Widget for ThemedButton {
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        let pad_v = f64::from(self.theme.density.button_pad_v);
-        let pad_h = f64::from(self.theme.density.button_pad_h);
+        let pad_v = if self.compact {
+            0.0
+        } else {
+            f64::from(self.theme.density.button_pad_v)
+        };
+        let pad_h = if self.compact {
+            // Keep a slim horizontal hit area around the glyph for
+            // clickability, without the full button padding.
+            f64::from(self.theme.density.button_pad_h) * 0.5
+        } else {
+            f64::from(self.theme.density.button_pad_h)
+        };
         let (main_pad, cross_pad) = match axis {
             Axis::Horizontal => (2.0 * pad_h, 2.0 * pad_v),
             Axis::Vertical => (2.0 * pad_v, 2.0 * pad_h),
@@ -692,8 +725,18 @@ impl Widget for ThemedButton {
     }
 
     fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let pad_v = f64::from(self.theme.density.button_pad_v);
-        let pad_h = f64::from(self.theme.density.button_pad_h);
+        let pad_v = if self.compact {
+            0.0
+        } else {
+            f64::from(self.theme.density.button_pad_v)
+        };
+        let pad_h = if self.compact {
+            // Keep a slim horizontal hit area around the glyph for
+            // clickability, without the full button padding.
+            f64::from(self.theme.density.button_pad_h) * 0.5
+        } else {
+            f64::from(self.theme.density.button_pad_h)
+        };
         let icon_base = if self.loading && self.icon.is_some() {
             self.icon_size() * 2.0 + ICON_GAP
         } else if self.icon.is_some() || self.loading {
@@ -749,9 +792,14 @@ impl Widget for ThemedButton {
         ctx.derive_baselines(&self.child);
 
         let icon_sz = self.icon_size();
+        // Lucide glyphs sit ~1px high within their em box, unnoticeable in a
+        // normally-padded button but visible in a `compact` icon-only affordance
+        // (the chip dismiss) where the glyph fills its own hit area. Nudge it
+        // down so it reads centered.
+        let icon_optical_nudge = if self.compact { 1.0 } else { 0.0 };
         if let Some(icon) = &mut self.icon {
             ctx.run_layout(icon, Size::new(icon_sz, icon_sz));
-            let icon_y = (size.height - icon_sz) * 0.5;
+            let icon_y = (size.height - icon_sz) * 0.5 + icon_optical_nudge;
             let icon_x = if self.loading {
                 pad_h + icon_sz + ICON_GAP
             } else {
@@ -761,7 +809,7 @@ impl Widget for ThemedButton {
         }
         if let Some(ti) = &mut self.trailing_icon {
             ctx.run_layout(ti, Size::new(icon_sz, icon_sz));
-            let icon_y = (size.height - icon_sz) * 0.5;
+            let icon_y = (size.height - icon_sz) * 0.5 + icon_optical_nudge;
             let icon_x = size.width - pad_h - icon_sz;
             ctx.place_child(ti, Point::new(icon_x, icon_y));
         }
@@ -875,7 +923,7 @@ mod tests {
     use masonry::kurbo::Point;
     use masonry::testing::TestHarness;
     use masonry::theme::default_property_set;
-    use masonry::widgets::Label;
+    use masonry::widgets::{Flex, Label};
 
     use super::*;
     use crate::Theme;
@@ -1114,6 +1162,35 @@ mod tests {
             "child ({child_w}) should fill the inner box of a {button_w}px button"
         );
         assert!((child_x - pad_h).abs() < 0.5, "left-aligned, got {child_x}");
+    }
+
+    #[test]
+    fn compact_removes_vertical_padding_from_natural_height() {
+        // A root widget in TestHarness always gets the exact window box
+        // (masonry's layout pass fixes the root to window size), so a
+        // ThemedButton placed directly as root can't reveal a natural-height
+        // difference. Wrapping it as a non-flex child of a `Flex::column`
+        // makes masonry measure the button's own intrinsic height instead.
+        const BTN: WidgetTag<ThemedButton> = WidgetTag::named("compact-test-button");
+
+        fn natural_height(compact: bool) -> f64 {
+            let label = NewWidget::new(Label::new("Go"));
+            let button = ThemedButton::new(label, &Theme::dark()).with_compact(compact);
+            let column = Flex::column().with_fixed(NewWidget::new(button).with_tag(BTN));
+            let h = TestHarness::create_with_size(
+                default_property_set(),
+                NewWidget::new(column),
+                (120, 200),
+            );
+            h.get_widget(BTN).ctx().border_box().size().height
+        }
+
+        let default_h = natural_height(false);
+        let compact_h = natural_height(true);
+        assert!(
+            compact_h < default_h,
+            "compact height ({compact_h}) should be less than default height ({default_h})"
+        );
     }
 
     #[test]

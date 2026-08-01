@@ -83,7 +83,7 @@ pub mod tooltip;
 
 pub use alert::{Alert, AlertVariant, CloseCallback, alert};
 pub use autocomplete::{Autocomplete, AutocompleteAction, AutocompleteView, autocomplete};
-pub use badge::{Badge, badge, pill};
+pub use badge::{Badge, DismissCallback, badge, pill};
 pub use breadcrumb::{Breadcrumb, BreadcrumbSegment, breadcrumb, segment};
 pub use button::{
     Button, ButtonVariant, ButtonView, ContentButton, ContentButtonView, button, content_button,

@@ -32,6 +32,16 @@ use super::widget::{ThemedButton, ThemedButtonProps, apply_themed_button_props};
 use crate::components::spinner::widget::SpinnerWidget;
 use crate::{IconName, Theme};
 
+/// Newtype around a `bool`, used only for the `compact` flag on
+/// [`Button`]/[`ButtonView`]. `selected`/`disabled`/`loading` already total
+/// three plain `bool` fields (independent toggles — see `ThemedButton`'s doc
+/// comment on why they don't fold into a shared enum); a literal fourth
+/// `bool` field trips clippy's `struct_excessive_bools` pedantic lint. This
+/// crate fixes pedantic lints rather than suppressing them, so the new flag
+/// is wrapped in a zero-cost newtype instead of reaching for `#[allow]`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Compact(bool);
+
 /// Builder for an interactive themed button.
 ///
 /// Created with [`button`]; label and icon are optional and set via builder
@@ -50,6 +60,7 @@ pub struct Button<F> {
     trailing_icon: Option<IconName>,
     corners: Option<RoundedRectRadii>,
     tint: Option<AlphaColor<Srgb>>,
+    compact: Compact,
     callback: F,
 }
 
@@ -70,6 +81,7 @@ pub fn button<F>(callback: F) -> Button<F> {
         trailing_icon: None,
         corners: None,
         tint: None,
+        compact: Compact(false),
         callback,
     }
 }
@@ -144,6 +156,15 @@ impl<F> Button<F> {
         self
     }
 
+    /// Drop vertical padding and halve horizontal padding so the button is
+    /// only as tall as its content while keeping a slim, clickable hit area.
+    /// Intended for inline affordances (e.g. a dismiss/close icon embedded in
+    /// a chip) where the surrounding container already supplies spacing.
+    pub fn compact(mut self, on: bool) -> Self {
+        self.compact = Compact(on);
+        self
+    }
+
     /// Materialize the xilem view at the supplied theme.
     pub fn render<State, Action>(self, theme: &Theme) -> ButtonView<F, State, Action>
     where
@@ -162,6 +183,7 @@ impl<F> Button<F> {
             trailing_icon: self.trailing_icon,
             corners: self.corners,
             tint: self.tint,
+            compact: self.compact,
             theme: *theme,
             callback: self.callback,
             phantom: PhantomData,
@@ -184,6 +206,7 @@ pub struct ButtonView<F, State, Action> {
     trailing_icon: Option<IconName>,
     corners: Option<RoundedRectRadii>,
     tint: Option<AlphaColor<Srgb>>,
+    compact: Compact,
     theme: Theme,
     callback: F,
     phantom: PhantomData<fn(State) -> Action>,
@@ -256,7 +279,8 @@ where
             .with_disabled(self.disabled)
             .with_loading(self.loading)
             .with_variant(self.variant)
-            .with_accessibility_label(self.accessible_name.clone());
+            .with_accessibility_label(self.accessible_name.clone())
+            .with_compact(self.compact.0);
         if let Some(name) = self.icon {
             widget = widget.with_icon(
                 super::super::icon::icon(name)
@@ -309,6 +333,9 @@ where
         }
         if self.loading != prev.loading {
             ThemedButton::set_loading(&mut element, self.loading);
+        }
+        if self.compact != prev.compact {
+            ThemedButton::set_compact(&mut element, self.compact.0);
         }
         if self.disabled != prev.disabled {
             let text_color = self.text_color();

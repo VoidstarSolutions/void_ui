@@ -8,7 +8,7 @@ use xilem::view::{CrossAxisAlignment, flex_col, flex_row};
 use super::{badge, pill};
 use crate::components::ScrollBarVisibility;
 use crate::with_source;
-use crate::{AlertVariant, Theme, label, scroll_container};
+use crate::{AlertVariant, IconName, Theme, label, scroll_container};
 
 fn section_header<S: 'static>(text: &'static str, theme: &Theme) -> impl WidgetView<S> + use<S> {
     label(text)
@@ -50,6 +50,45 @@ fn pill_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     })
 }
 
+fn icon_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
+    with_source!(theme, {
+        flex_row((
+            badge("Info")
+                .variant(AlertVariant::Info)
+                .icon(IconName::Info)
+                .render(theme),
+            badge("Success")
+                .variant(AlertVariant::Success)
+                .icon(IconName::CheckCircle)
+                .render(theme),
+            pill("Verified")
+                .variant(AlertVariant::Success)
+                .icon(IconName::Check)
+                .render(theme),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .gap(Length::px(8.0))
+    })
+}
+
+fn dismissible_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
+    with_source!(theme, {
+        flex_row((
+            pill("react")
+                .variant(AlertVariant::Info)
+                .on_dismiss(|_: &mut S| {})
+                .render(theme),
+            pill("rust")
+                .variant(AlertVariant::Success)
+                .icon(IconName::Check)
+                .on_dismiss(|_: &mut S| {})
+                .render(theme),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .gap(Length::px(8.0))
+    })
+}
+
 /// Renders the Badge demo panel.
 #[must_use]
 pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
@@ -74,6 +113,10 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
             rounded_section(theme),
             section_header("Capsule (pill)", theme),
             pill_section(theme),
+            section_header("Leading icon", theme),
+            icon_section(theme),
+            section_header("Dismissible", theme),
+            dismissible_section(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .gap(Length::px(16.0)),
