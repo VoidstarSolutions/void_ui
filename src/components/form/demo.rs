@@ -79,7 +79,10 @@ fn vertical_section(theme: &Theme, state: &FormDemo) -> Box<AnyWidgetView<FormDe
                 "Email",
                 input(state.email.clone(), |s: &mut FormDemo, t| s.email = t).render(theme),
             )
-            .hint("We'll never share it."),
+            .hint("We'll never share it.")
+            .validate(state.email.as_str(), |v: &str| {
+                (!v.is_empty() && !v.contains('@')).then(|| "Enter a valid email address.".into())
+            }),
             form_field(
                 "Subscribe to the newsletter",
                 checkbox(state.subscribe, |s: &mut FormDemo, c: bool| s.subscribe = c)
