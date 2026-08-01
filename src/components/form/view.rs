@@ -9,12 +9,12 @@
 
 use masonry::core::ArcStr;
 use xilem::masonry::layout::Length;
+use xilem::style::Style as _;
+use xilem::view::{CrossAxisAlignment, flex_col, flex_row, sized_box};
 use xilem::{AnyWidgetView, WidgetView};
 
-// `CrossAxisAlignment`, `flex_col`, `flex_row`, `sized_box`, `crate::Theme`,
-// and `crate::label` are needed by `Form::render`/`FormField::render`, added
-// in a later task. Re-add them then; importing now would be unused-import
-// dead weight until that code exists.
+use crate::Theme;
+use crate::label;
 
 /// Orientation of a field's label relative to its control.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -29,9 +29,7 @@ pub enum FormOrientation {
 /// One label/control pair. Created with [`form_field`].
 #[must_use = "FormField does nothing until added to a form or rendered with .render(&theme)"]
 pub struct FormField<State, Action = ()> {
-    #[expect(dead_code, reason = "read by FormField::render, added in a later task")]
     label: ArcStr,
-    #[expect(dead_code, reason = "read by FormField::render, added in a later task")]
     control: Box<AnyWidgetView<State, Action>>,
     required: bool,
     hint: Option<ArcStr>,
@@ -70,13 +68,24 @@ impl<State: 'static, Action: 'static> FormField<State, Action> {
         self.hint = Some(text.into());
         self
     }
+
+    /// Materialize this field on its own, always vertical, at a theme-derived
+    /// label width.
+    #[must_use]
+    pub fn render(self, theme: &Theme) -> Box<AnyWidgetView<State, Action>> {
+        render_field(
+            self,
+            FormOrientation::Vertical,
+            default_label_width(theme),
+            theme,
+        )
+    }
 }
 
 /// Builder for a form: a vertical stack of [`FormField`]s. Created with
 /// [`form`].
 #[must_use = "Form does nothing until rendered with .render(&theme)"]
 pub struct Form<State, Action = ()> {
-    #[expect(dead_code, reason = "read by Form::render, added in a later task")]
     fields: Vec<FormField<State, Action>>,
     orientation: FormOrientation,
     label_width: Option<Length>,
@@ -119,6 +128,89 @@ impl<State: 'static, Action: 'static> Form<State, Action> {
         self.label_width = Some(width);
         self
     }
+
+    /// Materialize the form at the supplied theme.
+    #[must_use]
+    pub fn render(self, theme: &Theme) -> Box<AnyWidgetView<State, Action>> {
+        let width = self
+            .label_width
+            .unwrap_or_else(|| default_label_width(theme));
+        let orientation = self.orientation;
+        let rows: Vec<Box<AnyWidgetView<State, Action>>> = self
+            .fields
+            .into_iter()
+            .map(|field| render_field(field, orientation, width, theme))
+            .collect();
+        Box::new(
+            flex_col(rows)
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .gap(Length::px(f64::from(theme.density.gap_lg))),
+        )
+    }
+}
+
+/// Default label-column width for horizontal forms. A fixed multiple of the
+/// base padding; tuned against the gallery.
+fn default_label_width(theme: &Theme) -> Length {
+    Length::px(f64::from(theme.density.pad) * 10.0)
+}
+
+/// Render one field into a vertical or horizontal label/control layout.
+fn render_field<State: 'static, Action: 'static>(
+    field: FormField<State, Action>,
+    orientation: FormOrientation,
+    label_width: Length,
+    theme: &Theme,
+) -> Box<AnyWidgetView<State, Action>> {
+    let FormField {
+        label: text,
+        control,
+        required,
+        hint,
+    } = field;
+
+    // Label, plus a cosmetic danger asterisk when required.
+    let label_view = label(text).render(theme);
+    let label_row: Box<AnyWidgetView<State, Action>> = if required {
+        let asterisk = label("*").color(theme.palette.danger).render(theme);
+        Box::new(
+            flex_row((label_view, asterisk))
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .gap(Length::px(f64::from(theme.density.gap))),
+        )
+    } else {
+        Box::new(label_view)
+    };
+
+    // Control, plus a muted hint caption beneath it when set.
+    let control_cell: Box<AnyWidgetView<State, Action>> = match hint {
+        Some(hint_text) => {
+            let hint_view = label(hint_text)
+                .text_size(theme.typography.size_caption)
+                .color(theme.palette.text_muted)
+                .multiline(true)
+                .render(theme);
+            Box::new(
+                flex_col((control, hint_view))
+                    .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                    .gap(Length::px(f64::from(theme.density.gap))),
+            )
+        }
+        None => control,
+    };
+
+    match orientation {
+        FormOrientation::Vertical => Box::new(
+            flex_col((label_row, control_cell))
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .gap(Length::px(f64::from(theme.density.pad))),
+        ),
+        FormOrientation::Horizontal => Box::new(
+            flex_row((sized_box(label_row).fixed_width(label_width), control_cell))
+                .cross_axis_alignment(CrossAxisAlignment::Start)
+                .gap(Length::px(f64::from(theme.density.gap_lg))),
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -126,6 +218,9 @@ mod tests {
     use super::{FormOrientation, form, form_field};
     use crate::Theme;
     use crate::label;
+    use crate::test_support;
+    use xilem::ViewCtx;
+    use xilem::core::View;
     use xilem::masonry::layout::Length;
 
     #[test]
@@ -161,5 +256,40 @@ mod tests {
 
         let reset = form::<(), ()>(vec![]).horizontal().vertical();
         assert_eq!(reset.orientation, FormOrientation::Vertical);
+    }
+
+    #[test]
+    fn fields_and_forms_build_without_panicking() {
+        let theme = Theme::default();
+        let mut ctx = ViewCtx::new(
+            test_support::noop_proxy(),
+            test_support::current_thread_runtime(),
+        );
+        let mut state = ();
+
+        // Standalone field.
+        let _ = form_field::<(), ()>("Name", label("x").render::<(), ()>(&theme))
+            .render(&theme)
+            .build(&mut ctx, &mut state);
+
+        // Vertical form: a required field and a field with a hint.
+        let _ = form::<(), ()>(vec![
+            form_field("Name", label("x").render::<(), ()>(&theme)).required(true),
+            form_field("Email", label("y").render::<(), ()>(&theme)).hint("optional"),
+        ])
+        .render(&theme)
+        .build(&mut ctx, &mut state);
+
+        // Horizontal form: required + hint on one field, explicit label width.
+        let _ = form::<(), ()>(vec![
+            form_field("Name", label("x").render::<(), ()>(&theme)),
+            form_field("Bio", label("y").render::<(), ()>(&theme))
+                .hint("about you")
+                .required(true),
+        ])
+        .horizontal()
+        .label_width(Length::px(100.0))
+        .render(&theme)
+        .build(&mut ctx, &mut state);
     }
 }
