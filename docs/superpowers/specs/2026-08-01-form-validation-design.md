@@ -172,8 +172,11 @@ assert layout. Visual correctness is deferred to the gallery pass.
 ## Gallery
 
 Add one live-validated field to the existing form demo panel: an Email field
-whose rule flags a missing `@` (or empty) with a message, so the error appears
-and clears as the user types. Keep it a local, self-contained rule in `demo.rs`
+whose rule flags non-empty text missing an `@` with a message, so the error
+appears and clears as the user types. An empty field is *not* flagged — the
+form is stateless with no touched-gating, so flagging empty would paint a danger
+caption on a pristine field on first render. Keep it a local, self-contained
+rule in `demo.rs`
 — no shared validator helper, no new public surface.
 
 ## Files
