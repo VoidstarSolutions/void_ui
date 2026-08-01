@@ -58,6 +58,7 @@ pub mod data_grid;
 pub mod date_picker;
 pub mod dialog;
 pub mod dropdown_button;
+pub mod form;
 pub mod group_box;
 pub mod icon;
 pub mod input;
@@ -111,6 +112,7 @@ pub use data_grid::{
 pub use date_picker::{DatePicker, DatePickerAction, DatePickerView, date_picker};
 pub use dialog::{Dialog, DialogView, dialog};
 pub use dropdown_button::{DropdownButton, DropdownButtonView, dropdown_button};
+pub use form::{Form, FormField, FormOrientation, form, form_field};
 pub use group_box::{GroupBox, NoTitle, TitleState, WithTitle, group_box};
 pub use icon::{Icon, IconName, disclosure_chevron, disclosure_icon, icon};
 pub use input::{
