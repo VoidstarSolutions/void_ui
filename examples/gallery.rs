@@ -195,6 +195,7 @@ fn main_pane(focused: ComponentKind, theme: &Theme) -> Box<AnyWidgetView<State>>
         ComponentKind::DropdownButton => {
             Box::new(void_ui::components::dropdown_button::demo::panel(theme))
         }
+        ComponentKind::Form => Box::new(void_ui::components::form::demo::panel(theme)),
         ComponentKind::GroupBox => Box::new(void_ui::components::group_box::demo::panel(theme)),
         ComponentKind::Icon => Box::new(void_ui::components::icon::demo::panel(theme)),
         ComponentKind::Input => Box::new(void_ui::components::input::demo::panel(theme)),
