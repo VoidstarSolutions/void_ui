@@ -33,6 +33,7 @@ pub struct FormField<State, Action = ()> {
     control: Box<AnyWidgetView<State, Action>>,
     required: bool,
     hint: Option<ArcStr>,
+    error: Option<ArcStr>,
 }
 
 /// Pair a label with a control.
@@ -52,6 +53,7 @@ where
         control: Box::new(control),
         required: false,
         hint: None,
+        error: None,
     }
 }
 
@@ -66,6 +68,30 @@ impl<State: 'static, Action: 'static> FormField<State, Action> {
     /// Add a muted caption under the control.
     pub fn hint(mut self, text: impl Into<ArcStr>) -> Self {
         self.hint = Some(text.into());
+        self
+    }
+
+    /// Set an error message directly. For errors the consumer already holds:
+    /// server-side failures, cross-field checks, async validation results.
+    ///
+    /// Last write wins against [`Self::validate`].
+    pub fn error(mut self, msg: impl Into<ArcStr>) -> Self {
+        self.error = Some(msg.into());
+        self
+    }
+
+    /// Run `rule` against `value` and store its result as this field's error
+    /// (`Some(message)` = invalid, `None` = valid). Called at build time —
+    /// i.e. every rebuild — so validation is live with no stored state.
+    ///
+    /// `T: ?Sized` so `&str` values work directly. Last write wins against
+    /// [`Self::error`].
+    pub fn validate<T: ?Sized>(
+        mut self,
+        value: &T,
+        rule: impl FnOnce(&T) -> Option<ArcStr>,
+    ) -> Self {
+        self.error = rule(value);
         self
     }
 
@@ -168,6 +194,7 @@ fn render_field<State: 'static, Action: 'static>(
         control,
         required,
         hint,
+        error: _,
     } = field;
 
     // Label, plus a cosmetic danger asterisk when required.
@@ -245,6 +272,45 @@ mod tests {
             .hint("we won't share it");
         assert!(f.required);
         assert_eq!(f.hint.as_deref(), Some("we won't share it"));
+    }
+
+    #[test]
+    fn error_setter_sets_message() {
+        let theme = Theme::default();
+        let f = form_field::<(), ()>("Email", label("x").render::<(), ()>(&theme)).error("boom");
+        assert_eq!(f.error.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn validate_stores_rule_result() {
+        let theme = Theme::default();
+        let rule = |v: &str| (v.is_empty()).then(|| "required".into());
+
+        let failing =
+            form_field::<(), ()>("Email", label("x").render::<(), ()>(&theme)).validate("", rule);
+        assert_eq!(failing.error.as_deref(), Some("required"));
+
+        let passing =
+            form_field::<(), ()>("Email", label("x").render::<(), ()>(&theme)).validate("ok", rule);
+        assert!(passing.error.is_none());
+    }
+
+    #[test]
+    fn error_and_validate_are_last_write_wins() {
+        let theme = Theme::default();
+        let clear = |_: &str| None;
+
+        // validate after error clears it
+        let a = form_field::<(), ()>("Email", label("x").render::<(), ()>(&theme))
+            .error("first")
+            .validate("ok", clear);
+        assert!(a.error.is_none());
+
+        // error after validate overrides it
+        let b = form_field::<(), ()>("Email", label("x").render::<(), ()>(&theme))
+            .validate("", |v: &str| (v.is_empty()).then(|| "computed".into()))
+            .error("forced");
+        assert_eq!(b.error.as_deref(), Some("forced"));
     }
 
     #[test]
