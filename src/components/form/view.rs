@@ -194,7 +194,7 @@ fn render_field<State: 'static, Action: 'static>(
         control,
         required,
         hint,
-        error: _,
+        error,
     } = field;
 
     // Label, plus a cosmetic danger asterisk when required.
@@ -210,20 +210,31 @@ fn render_field<State: 'static, Action: 'static>(
         Box::new(label_view)
     };
 
-    // Control, plus a muted hint caption beneath it when set.
-    let control_cell: Box<AnyWidgetView<State, Action>> = match hint {
-        Some(hint_text) => {
-            let hint_view = label(hint_text)
+    // Caption beneath the control: the error (danger) takes precedence over the
+    // hint (muted). At most one shows; a valid field with a hint shows the hint.
+    let caption: Option<Box<AnyWidgetView<State, Action>>> = match (error, hint) {
+        (Some(err), _) => Some(Box::new(
+            label(err)
+                .text_size(theme.typography.size_caption)
+                .color(theme.palette.danger)
+                .multiline(true)
+                .render(theme),
+        )),
+        (None, Some(hint_text)) => Some(Box::new(
+            label(hint_text)
                 .text_size(theme.typography.size_caption)
                 .color(theme.palette.text_muted)
                 .multiline(true)
-                .render(theme);
-            Box::new(
-                flex_col((control, hint_view))
-                    .cross_axis_alignment(CrossAxisAlignment::Stretch)
-                    .gap(Length::px(f64::from(theme.density.gap))),
-            )
-        }
+                .render(theme),
+        )),
+        (None, None) => None,
+    };
+    let control_cell: Box<AnyWidgetView<State, Action>> = match caption {
+        Some(cap) => Box::new(
+            flex_col((control, cap))
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .gap(Length::px(f64::from(theme.density.gap))),
+        ),
         None => control,
     };
 
@@ -356,6 +367,38 @@ mod tests {
         ])
         .horizontal()
         .label_width(Length::px(100.0))
+        .render(&theme)
+        .build(&mut ctx, &mut state);
+    }
+
+    #[test]
+    fn errored_fields_build_without_panicking() {
+        let theme = Theme::default();
+        let mut ctx = ViewCtx::new(
+            test_support::noop_proxy(),
+            test_support::current_thread_runtime(),
+        );
+        let mut state = ();
+
+        // Vertical: an errored field, and a field carrying BOTH hint and error
+        // (exercises the error-beats-hint precedence branch).
+        let _ = form::<(), ()>(vec![
+            form_field("Name", label("x").render::<(), ()>(&theme)).error("required"),
+            form_field("Email", label("y").render::<(), ()>(&theme))
+                .hint("optional")
+                .error("bad email"),
+        ])
+        .render(&theme)
+        .build(&mut ctx, &mut state);
+
+        // Horizontal: same coverage in the other orientation.
+        let _ = form::<(), ()>(vec![
+            form_field("Name", label("x").render::<(), ()>(&theme)).error("required"),
+            form_field("Email", label("y").render::<(), ()>(&theme))
+                .hint("optional")
+                .error("bad email"),
+        ])
+        .horizontal()
         .render(&theme)
         .build(&mut ctx, &mut state);
     }
