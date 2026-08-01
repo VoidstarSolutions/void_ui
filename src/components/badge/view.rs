@@ -159,6 +159,7 @@ impl<C> Badge<C> {
             icon(name)
                 .color(fg)
                 .size(theme.typography.size_body)
+                .decorative()
                 .render(theme)
         });
 

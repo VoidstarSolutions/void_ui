@@ -118,7 +118,7 @@ icon to `None`), so all current call sites and the doctest keep compiling.
 The single-child `sized_box` becomes a `sized_box` wrapping a `flex_row` (using
 the `flex_row` view + `CrossAxisAlignment::Center`, as `Alert` does):
 
-```
+```text
 sized_box(
     flex_row([ leading_icon?, label, dismiss_button? ])
 )
@@ -128,7 +128,7 @@ sized_box(
 - Chrome (padding, background, border, radius, shape) is unchanged.
 - When both `icon` is `None` and `on_dismiss` is `()`, the row holds only the
   label — visually identical to today's badge. Existing badges render the same.
-- `leading_icon` = `icon(name).color(fg).size(size_caption)`; small gap before
+- `leading_icon` = `icon(name).color(fg).size(size_body)`; small gap before
   the label (theme spacing) only when present.
 - `dismiss_button` = `button(move |s| on_dismiss.call(s)).icon(IconName::X)`
   styled as an unobtrusive/ghost variant tinted to `fg`, mirroring `Alert`'s
@@ -163,7 +163,7 @@ demo state that removes the tag on dismiss (per the local-state demo pattern).
 The README carries the same stale taxonomy and must be corrected as part of
 this change:
 
-- `README.md` line ~56 `**\`Badge\`** — count/dot pill` and line ~124 table row
+- `README.md` line ~56 ``**`Badge`** — count/dot pill`` and line ~124 table row
   `Badge … Count/dot overlay.` describe `Badge` as count/dot, which is wrong —
   that is `StatusDot`. Correct `Badge`'s description to "semantic colored pill
   (optional leading icon, optional dismiss)".
@@ -183,4 +183,3 @@ this change:
   unchanged in the gallery.
 - `clippy::pedantic` is denied workspace-wide — the new generic/trait code must
   be pedantic-clean (no `allow`).
-```
