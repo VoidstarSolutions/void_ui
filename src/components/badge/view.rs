@@ -158,14 +158,13 @@ impl<C> Badge<C> {
         let icon_view = self.icon.map(|name| {
             icon(name)
                 .color(fg)
-                .size(theme.typography.size_caption)
+                .size(theme.typography.size_body)
                 .render(theme)
         });
 
         let text = label(self.text)
-            .text_size(theme.typography.size_caption)
+            .text_size(theme.typography.size_body)
             .color(fg)
-            .line_height(1.0)
             .render(theme);
 
         let on_dismiss = self.on_dismiss;
