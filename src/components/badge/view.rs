@@ -162,10 +162,17 @@ impl<C> Badge<C> {
                 .render(theme)
         });
 
-        let text = label(self.text)
-            .text_size(theme.typography.size_body)
-            .color(fg)
-            .render(theme);
+        // Latin text under `CrossAxisAlignment::Center` sits low because parley
+        // leaves line-leading above the glyph, whereas the leading/dismiss icon
+        // glyphs are em-centered. A small bottom padding on the label raises its
+        // glyph to sit level with the icons.
+        let text = sized_box(
+            label(self.text)
+                .text_size(theme.typography.size_body)
+                .color(fg)
+                .render(theme),
+        )
+        .padding(Padding::bottom(Length::px(2.0)));
 
         let on_dismiss = self.on_dismiss;
         let dismiss_view = C::enabled().then(|| {
@@ -174,6 +181,7 @@ impl<C> Badge<C> {
                 .variant(ButtonVariant::Text)
                 .tint(fg)
                 .accessible_name("Dismiss")
+                .compact(true)
                 .render(theme)
         });
 
