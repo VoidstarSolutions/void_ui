@@ -53,7 +53,7 @@ Shipped components, grouped by role:
   [`docs/DATA_GRID_HOST_CONTRACT.md`](docs/DATA_GRID_HOST_CONTRACT.md).
 - **`List`** — flat virtualized list (DataGrid's virtualization, single-column)
 - **`Meter`** — linear progress/fill bar, optional gradient
-- **`Badge`** — count/dot pill
+- **`Badge`** — semantic colored pill (optional leading icon, optional dismiss)
 - **`StatusDot`** — semantic status indicator
 - **`Alert`** — info/success/warning/error banner, optional dismiss
 - **`Skeleton`** — shimmer loading placeholder
@@ -80,7 +80,7 @@ The component surface grew in dependency order. Anything overlay-shaped (popover
 
 Each phase ended with an API review pass before the next began. Component scope and naming draw on conventions from mature Rust UI component libraries; credit is owed (see Acknowledgments).
 
-The overlay primitive and Foundations are shipped, as is most of Phases 1–4 (only `Form`, `ProgressCircle`, and `Tag` / `Chip` remain), plus `List` and `DatePicker` from Phases 5–6. What remains is the long tail of specialized surfaces, called out in **Remaining** below. Names in parentheses are the shipped module names where they differ from the original roadmap label.
+The overlay primitive and Foundations are shipped, as is most of Phases 1–4 (only `Form` and `ProgressCircle` remain), plus `List` and `DatePicker` from Phases 5–6. What remains is the long tail of specialized surfaces, called out in **Remaining** below. Names in parentheses are the shipped module names where they differ from the original roadmap label.
 
 ### Foundations — shipped
 
@@ -121,10 +121,10 @@ The overlay primitive and Foundations are shipped, as is most of Phases 1–4 (o
 | `Spinner`            | S    | ✓      |                                      |
 | `Progress` (`meter`) | S    | ✓      | Linear.                              |
 | `Notification`       | M    | ✓      | Toast queue + auto-dismiss.          |
-| `Badge`              | S    | ✓      | Count/dot overlay.                   |
+| `Badge`              | S    | ✓      | Semantic colored pill; optional icon + dismiss. |
 | `Skeleton`           | S    | ✓      | Shimmer placeholder.                 |
 | `ProgressCircle`     | M    | —      |                                      |
-| `Tag` / `Chip`       | S    | —      | Semantic colored pill.               |
+| `Tag` / `Chip`       | S    | ✓      | Delivered by `Badge` (icon + dismiss). |
 
 ### Phase 4 — Modal & structure — shipped
 
@@ -155,7 +155,7 @@ The overlay primitive and Foundations are shipped, as is most of Phases 1–4 (o
 
 ### Remaining
 
-The open surface, all `—` above: `Form`, `ProgressCircle`, `Tag`/`Chip`, `Tree`, `Pagination`, `DescriptionList`, `HoverCard`, `ColorPicker`, `Stepper`, `Kbd`.
+The open surface, all `—` above: `Form`, `ProgressCircle`, `Tree`, `Pagination`, `DescriptionList`, `HoverCard`, `ColorPicker`, `Stepper`, `Kbd`.
 
 Also shipped beyond the original roadmap: `ButtonGroup`, `Clipboard`, `ReadOnlyText`, `StatusDot`, `Popover` (standalone), and the collapsible `Sidebar` panel (beyond `SidebarItem`).
 

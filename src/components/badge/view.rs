@@ -1,10 +1,12 @@
 //! Xilem view for the badge/pill component.
 //!
-//! A small inline chip: themed background, optional semantic accent, and
-//! either a slightly rounded or fully capsule-shaped outline. There is no
-//! custom masonry widget — [`Badge::render`] composes [`crate::label`]
-//! inside a `sized_box`, reusing [`AlertVariant`]'s color mapping so a
-//! badge's semantics match an alert's.
+//! A small inline chip: themed background, optional semantic accent, an
+//! optional leading icon, an optional trailing dismiss (X) button, and either
+//! a slightly rounded or fully capsule-shaped outline. There is no custom
+//! masonry widget — [`Badge::render`] composes [`crate::label`] (with an
+//! optional [`crate::icon`] and dismiss [`crate::button`]) inside a
+//! `flex_row` within a `sized_box`, reusing [`AlertVariant`]'s color mapping
+//! so a badge's semantics match an alert's.
 //!
 //! ```
 //! # use void_ui::Theme;
