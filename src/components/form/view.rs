@@ -273,6 +273,7 @@ mod tests {
         let f = form_field::<(), ()>("Name", label("x").render::<(), ()>(&theme));
         assert!(!f.required);
         assert!(f.hint.is_none());
+        assert!(f.error.is_none());
     }
 
     #[test]
@@ -380,13 +381,15 @@ mod tests {
         );
         let mut state = ();
 
-        // Vertical: an errored field, and a field carrying BOTH hint and error
-        // (exercises the error-beats-hint precedence branch).
+        // Vertical: an errored field, a field carrying BOTH hint and error
+        // (exercises the error-beats-hint precedence branch), and a clean
+        // field with neither hint nor error (mixed errored/clean form).
         let _ = form::<(), ()>(vec![
             form_field("Name", label("x").render::<(), ()>(&theme)).error("required"),
             form_field("Email", label("y").render::<(), ()>(&theme))
                 .hint("optional")
                 .error("bad email"),
+            form_field("Phone", label("z").render::<(), ()>(&theme)),
         ])
         .render(&theme)
         .build(&mut ctx, &mut state);
