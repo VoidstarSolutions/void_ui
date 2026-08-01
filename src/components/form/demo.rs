@@ -18,6 +18,7 @@ use crate::{label, scroll_container, separator, with_source};
 #[derive(Debug, Clone)]
 struct FormDemo {
     name: String,
+    full_name: String,
     email: String,
     subscribe: bool,
     notify: bool,
@@ -27,6 +28,7 @@ impl FormDemo {
     fn new() -> Self {
         Self {
             name: String::new(),
+            full_name: String::new(),
             email: String::new(),
             subscribe: false,
             notify: true,
@@ -94,7 +96,10 @@ fn horizontal_section(theme: &Theme, state: &FormDemo) -> Box<AnyWidgetView<Form
         form(vec![
             form_field(
                 "Full name",
-                input(state.name.clone(), |s: &mut FormDemo, t| s.name = t).render(theme),
+                input(state.full_name.clone(), |s: &mut FormDemo, t| {
+                    s.full_name = t;
+                })
+                .render(theme),
             )
             .required(true),
             form_field(
