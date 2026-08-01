@@ -150,7 +150,8 @@ impl<State: 'static, Action: 'static> Form<State, Action> {
 }
 
 /// Default label-column width for horizontal forms. A fixed multiple of the
-/// base padding; tuned against the gallery.
+/// base padding; not yet visually tuned against the gallery.
+// TODO(#220): confirm or retune this multiple after the human gallery pass.
 fn default_label_width(theme: &Theme) -> Length {
     Length::px(f64::from(theme.density.pad) * 10.0)
 }
