@@ -1,6 +1,6 @@
 # Tag / Chip (#222) — deliver by extending `Badge`
 
-**Status:** approved design, pre-implementation
+**Status:** delivered — `Badge` extended in `src/components/badge/view.rs`
 **Issue:** #222 — "Tag / Chip: semantic colored pill" (Phase 3 feedback, size S)
 **Branch:** `222-tag-chip-semantic-colored-pill`
 
@@ -66,7 +66,7 @@ pill("Active").variant(AlertVariant::Success).render::<(), ()>(&theme);
 New builder methods:
 
 ```rust
-// Optional leading icon, tinted to the variant foreground, caption-sized.
+// Optional leading icon, tinted to the variant foreground, body-sized.
 badge("Active")
     .variant(AlertVariant::Success)
     .icon(IconName::CheckCircle)
@@ -81,7 +81,7 @@ pill("api")
 ```
 
 - `fn icon(self, name: IconName) -> Self` — stores `Option<IconName>`; default
-  `None`. Tinted with the variant `fg`, sized to `typography.size_caption`.
+  `None`. Tinted with the variant `fg`, sized to `typography.size_body`.
 - `fn on_dismiss<F>(self, f: F) -> Badge<F>` — presence of the callback adds a
   trailing X button. Absent by default (no dismiss control, current behavior).
 
@@ -132,7 +132,9 @@ sized_box(
   the label (theme spacing) only when present.
 - `dismiss_button` = `button(move |s| on_dismiss.call(s)).icon(IconName::X)`
   styled as an unobtrusive/ghost variant tinted to `fg`, mirroring `Alert`'s
-  close button (`alert/view.rs` ~L230). Rendered only when `C != ()`.
+  close button (`alert/view.rs` ~L230). Rendered only when
+  `DismissCallback::enabled()` is `true` (the blanket `impl` for `()` returns
+  `false`; the `Fn` `impl` returns `true`).
 
 ### Color / theme
 
