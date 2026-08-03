@@ -10,7 +10,7 @@
 use masonry::core::ArcStr;
 use xilem::masonry::layout::Length;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, flex_col, flex_row, sized_box};
+use xilem::view::{CrossAxisAlignment, FlexExt as _, flex_col, flex_row, sized_box};
 use xilem::{AnyWidgetView, WidgetView};
 
 use crate::Theme;
@@ -245,9 +245,14 @@ fn render_field<State: 'static, Action: 'static>(
                 .gap(Length::px(f64::from(theme.density.pad))),
         ),
         FormOrientation::Horizontal => Box::new(
-            flex_row((sized_box(label_row).fixed_width(label_width), control_cell))
-                .cross_axis_alignment(CrossAxisAlignment::Start)
-                .gap(Length::px(f64::from(theme.density.gap_lg))),
+            // Control fills the row's remaining width beside the fixed label
+            // column, so a text input isn't pinned to its tiny intrinsic size.
+            flex_row((
+                sized_box(label_row).fixed_width(label_width),
+                control_cell.flex(1.0),
+            ))
+            .cross_axis_alignment(CrossAxisAlignment::Start)
+            .gap(Length::px(f64::from(theme.density.gap_lg))),
         ),
     }
 }
