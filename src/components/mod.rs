@@ -58,6 +58,7 @@ pub mod data_grid;
 pub mod date_picker;
 pub mod dialog;
 pub mod dropdown_button;
+pub mod form;
 pub mod group_box;
 pub mod icon;
 pub mod input;
@@ -111,6 +112,7 @@ pub use data_grid::{
 pub use date_picker::{DatePicker, DatePickerAction, DatePickerView, date_picker};
 pub use dialog::{Dialog, DialogView, dialog};
 pub use dropdown_button::{DropdownButton, DropdownButtonView, dropdown_button};
+pub use form::{Form, FormField, FormOrientation, form, form_field};
 pub use group_box::{GroupBox, NoTitle, TitleState, WithTitle, group_box};
 pub use icon::{Icon, IconName, disclosure_chevron, disclosure_icon, icon};
 pub use input::{
@@ -166,6 +168,7 @@ pub enum ComponentKind {
     DropdownButton,
     Checkbox,
     Clipboard,
+    Form,
     GroupBox,
     CodeView,
     Collapsible,
@@ -210,6 +213,7 @@ impl ComponentKind {
             Self::Checkbox => "Checkbox",
             Self::Clipboard => "Clipboard",
             Self::CodeView => "Code View",
+            Self::Form => "Form",
             Self::GroupBox => "Group Box",
             Self::Collapsible => "Collapsible",
             Self::ContextMenu => "Context Menu",
@@ -258,6 +262,7 @@ impl ComponentKind {
             Self::DatePicker,
             Self::Dialog,
             Self::DropdownButton,
+            Self::Form,
             Self::GroupBox,
             Self::Icon,
             Self::Input,
