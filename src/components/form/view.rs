@@ -34,6 +34,7 @@ pub struct FormField<State, Action = ()> {
     required: bool,
     hint: Option<ArcStr>,
     error: Option<ArcStr>,
+    orientation: Option<FormOrientation>,
 }
 
 /// Pair a label with a control.
@@ -54,6 +55,7 @@ where
         required: false,
         hint: None,
         error: None,
+        orientation: None,
     }
 }
 
@@ -95,16 +97,32 @@ impl<State: 'static, Action: 'static> FormField<State, Action> {
         self
     }
 
-    /// Materialize this field on its own, always vertical, at a theme-derived
-    /// label width.
+    /// Override this field's orientation, ignoring the form's. Unset by
+    /// default, in which case the field inherits the form's orientation.
+    pub fn orientation(mut self, orientation: FormOrientation) -> Self {
+        self.orientation = Some(orientation);
+        self
+    }
+
+    /// Shorthand for `.orientation(FormOrientation::Horizontal)`.
+    pub fn horizontal(mut self) -> Self {
+        self.orientation = Some(FormOrientation::Horizontal);
+        self
+    }
+
+    /// Shorthand for `.orientation(FormOrientation::Vertical)`.
+    pub fn vertical(mut self) -> Self {
+        self.orientation = Some(FormOrientation::Vertical);
+        self
+    }
+
+    /// Materialize this field on its own. Uses the field's own orientation if
+    /// set with [`Self::orientation`]/[`Self::horizontal`]/[`Self::vertical`],
+    /// otherwise Vertical, at a theme-derived label width.
     #[must_use]
     pub fn render(self, theme: &Theme) -> Box<AnyWidgetView<State, Action>> {
-        render_field(
-            self,
-            FormOrientation::Vertical,
-            default_label_width(theme),
-            theme,
-        )
+        let effective = resolve_orientation(self.orientation, FormOrientation::Vertical);
+        render_field(self, effective, default_label_width(theme), theme)
     }
 }
 
@@ -130,7 +148,8 @@ pub fn form<State, Action>(fields: Vec<FormField<State, Action>>) -> Form<State,
 }
 
 impl<State: 'static, Action: 'static> Form<State, Action> {
-    /// Set the orientation of every field.
+    /// Set the form-wide orientation — used by every field that does not
+    /// override it with its own [`FormField::orientation`].
     pub fn orientation(mut self, orientation: FormOrientation) -> Self {
         self.orientation = orientation;
         self
@@ -148,8 +167,10 @@ impl<State: 'static, Action: 'static> Form<State, Action> {
         self
     }
 
-    /// Fixed width of the label column. Horizontal orientation only; ignored
-    /// when vertical. Defaults to a theme-derived width.
+    /// Fixed width of the label column. Applies to every field that resolves to
+    /// [`FormOrientation::Horizontal`] — including a `.horizontal()` override
+    /// inside a vertical form; ignored for fields resolving to `Vertical`.
+    /// Defaults to a theme-derived width.
     pub fn label_width(mut self, width: Length) -> Self {
         self.label_width = Some(width);
         self
@@ -165,7 +186,10 @@ impl<State: 'static, Action: 'static> Form<State, Action> {
         let rows: Vec<Box<AnyWidgetView<State, Action>>> = self
             .fields
             .into_iter()
-            .map(|field| render_field(field, orientation, width, theme))
+            .map(|field| {
+                let effective = resolve_orientation(field.orientation, orientation);
+                render_field(field, effective, width, theme)
+            })
             .collect();
         Box::new(
             flex_col(rows)
@@ -175,11 +199,17 @@ impl<State: 'static, Action: 'static> Form<State, Action> {
     }
 }
 
-/// Default label-column width for horizontal forms. A fixed multiple of the
-/// base padding; not yet visually tuned against the gallery.
+/// Default label-column width for fields resolving to horizontal. A fixed
+/// multiple of the base padding; not yet visually tuned against the gallery.
 // TODO(#220): confirm or retune this multiple after the human gallery pass.
 fn default_label_width(theme: &Theme) -> Length {
     Length::px(f64::from(theme.density.pad) * 10.0)
+}
+
+/// Effective orientation for a field: the field's own override if set,
+/// otherwise the surrounding form's orientation.
+fn resolve_orientation(field: Option<FormOrientation>, form: FormOrientation) -> FormOrientation {
+    field.unwrap_or(form)
 }
 
 /// Render one field into a vertical or horizontal label/control layout.
@@ -195,6 +225,7 @@ fn render_field<State: 'static, Action: 'static>(
         required,
         hint,
         error,
+        orientation: _,
     } = field;
 
     // Label, plus a cosmetic danger asterisk when required.
@@ -265,7 +296,7 @@ fn render_field<State: 'static, Action: 'static>(
 
 #[cfg(test)]
 mod tests {
-    use super::{FormOrientation, form, form_field};
+    use super::{FormOrientation, form, form_field, resolve_orientation};
     use crate::Theme;
     use crate::label;
     use crate::test_support;
@@ -334,6 +365,71 @@ mod tests {
             .validate("", |v: &str| (v.is_empty()).then(|| "computed".into()))
             .error("forced");
         assert_eq!(b.error.as_deref(), Some("forced"));
+    }
+
+    #[test]
+    fn resolve_orientation_matrix() {
+        use FormOrientation::{Horizontal, Vertical};
+        // Default field inherits the form's orientation.
+        assert_eq!(resolve_orientation(None, Vertical), Vertical);
+        assert_eq!(resolve_orientation(None, Horizontal), Horizontal);
+        // A field override wins over the opposite form orientation.
+        assert_eq!(resolve_orientation(Some(Horizontal), Vertical), Horizontal);
+        assert_eq!(resolve_orientation(Some(Vertical), Horizontal), Vertical);
+        // Standalone default (form defaulted to Vertical, no override).
+        assert_eq!(resolve_orientation(None, Vertical), Vertical);
+    }
+
+    #[test]
+    fn form_field_orientation_defaults_to_none() {
+        let theme = Theme::default();
+        let f = form_field::<(), ()>("Name", label("x").render::<(), ()>(&theme));
+        assert!(f.orientation.is_none());
+    }
+
+    #[test]
+    fn form_field_orientation_setters_apply() {
+        let theme = Theme::default();
+        let h = form_field::<(), ()>("Name", label("x").render::<(), ()>(&theme)).horizontal();
+        assert_eq!(h.orientation, Some(FormOrientation::Horizontal));
+        let v = form_field::<(), ()>("Name", label("x").render::<(), ()>(&theme)).vertical();
+        assert_eq!(v.orientation, Some(FormOrientation::Vertical));
+        let o = form_field::<(), ()>("Name", label("x").render::<(), ()>(&theme))
+            .orientation(FormOrientation::Horizontal);
+        assert_eq!(o.orientation, Some(FormOrientation::Horizontal));
+    }
+
+    #[test]
+    fn mixed_orientation_forms_and_standalone_override_build() {
+        let theme = Theme::default();
+        let mut ctx = ViewCtx::new(
+            test_support::noop_proxy(),
+            test_support::current_thread_runtime(),
+        );
+        let mut state = ();
+
+        // Vertical form: one field overrides to horizontal, one inherits.
+        let _ = form::<(), ()>(vec![
+            form_field("Name", label("x").render::<(), ()>(&theme)).horizontal(),
+            form_field("Email", label("y").render::<(), ()>(&theme)),
+        ])
+        .render(&theme)
+        .build(&mut ctx, &mut state);
+
+        // Horizontal form: one field overrides to vertical, one inherits.
+        let _ = form::<(), ()>(vec![
+            form_field("Name", label("x").render::<(), ()>(&theme)).vertical(),
+            form_field("Email", label("y").render::<(), ()>(&theme)),
+        ])
+        .horizontal()
+        .render(&theme)
+        .build(&mut ctx, &mut state);
+
+        // Standalone field honoring its own override.
+        let _ = form_field::<(), ()>("Name", label("x").render::<(), ()>(&theme))
+            .horizontal()
+            .render(&theme)
+            .build(&mut ctx, &mut state);
     }
 
     #[test]
