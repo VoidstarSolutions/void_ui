@@ -148,7 +148,8 @@ pub fn form<State, Action>(fields: Vec<FormField<State, Action>>) -> Form<State,
 }
 
 impl<State: 'static, Action: 'static> Form<State, Action> {
-    /// Set the orientation of every field.
+    /// Set the form-wide orientation — used by every field that does not
+    /// override it with its own [`FormField::orientation`].
     pub fn orientation(mut self, orientation: FormOrientation) -> Self {
         self.orientation = orientation;
         self
