@@ -229,14 +229,20 @@ fn render_field<State: 'static, Action: 'static>(
         )),
         (None, None) => None,
     };
-    let control_cell: Box<AnyWidgetView<State, Action>> = match caption {
-        Some(cap) => Box::new(
-            flex_col((control, cap))
-                .cross_axis_alignment(CrossAxisAlignment::Stretch)
-                .gap(Length::px(f64::from(theme.density.gap))),
-        ),
-        None => control,
-    };
+    // Always wrap the control in the same `flex_col`, with the caption as an
+    // *optional sibling* (`None` = zero children, `Some` = one), rather than
+    // switching `control_cell` between a bare control and a wrapping `flex_col`.
+    // That switch changes the concrete view type at this slot, and xilem's
+    // rebuild reacts to a type change by tearing down and recreating the whole
+    // subtree — including the focused `TextInput`, which loses focus on the
+    // first keystroke that toggles a validation error. Keeping the wrapper
+    // unconditional holds the control's identity stable across valid/invalid
+    // rebuilds. The gap only materializes when a caption is actually present.
+    let control_cell: Box<AnyWidgetView<State, Action>> = Box::new(
+        flex_col((control, caption))
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .gap(Length::px(f64::from(theme.density.gap))),
+    );
 
     match orientation {
         FormOrientation::Vertical => Box::new(
