@@ -10,11 +10,11 @@
 use masonry::core::ArcStr;
 use xilem::masonry::layout::Length;
 use xilem::style::Style as _;
-use xilem::view::{flex_col, flex_row, sized_box, CrossAxisAlignment, FlexExt as _};
+use xilem::view::{CrossAxisAlignment, FlexExt as _, flex_col, flex_row, sized_box};
 use xilem::{AnyWidgetView, WidgetView};
 
-use crate::label;
 use crate::Theme;
+use crate::label;
 
 /// Orientation of a field's label relative to its control.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -265,13 +265,13 @@ fn render_field<State: 'static, Action: 'static>(
 
 #[cfg(test)]
 mod tests {
-    use super::{form, form_field, FormOrientation};
+    use super::{FormOrientation, form, form_field};
+    use crate::Theme;
     use crate::label;
     use crate::test_support;
-    use crate::Theme;
+    use xilem::ViewCtx;
     use xilem::core::View;
     use xilem::masonry::layout::Length;
-    use xilem::ViewCtx;
 
     #[test]
     fn orientation_defaults_to_vertical() {
