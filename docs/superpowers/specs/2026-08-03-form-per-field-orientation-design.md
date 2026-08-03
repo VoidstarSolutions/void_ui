@@ -39,9 +39,10 @@ otherwise.
 
 ## Architecture
 
-One optional field, three builder methods, and effective-orientation resolution
-at the two callers of `render_field`. `render_field` itself is unchanged except
-for binding the new struct field in its destructure.
+One optional field, three builder methods, and a pure `resolve_orientation`
+helper called at the two callers of `render_field` to compute each field's
+effective orientation. `render_field` itself is unchanged except for binding the
+new struct field in its destructure.
 
 ### Data model
 
@@ -88,23 +89,29 @@ symmetry — they live on a different type, so there is no conflict.
 
 ### Resolution
 
-The caller resolves the effective orientation and passes it to `render_field`
-(whose signature already accepts `orientation: FormOrientation`):
+Resolution is a single pure function, so precedence is unit-testable directly
+(not only through build-without-panic):
+
+```rust
+/// Effective orientation for a field: the field's own override if set,
+/// otherwise the surrounding form's orientation.
+fn resolve_orientation(
+    field: Option<FormOrientation>,
+    form: FormOrientation,
+) -> FormOrientation {
+    field.unwrap_or(form)
+}
+```
+
+Both callers resolve through it and pass the result to `render_field` (whose
+signature already accepts `orientation: FormOrientation`):
 
 - **`Form::render`**, per field:
-  ```rust
-  let effective = field.orientation.unwrap_or(self.orientation);
-  render_field(field, effective, width, theme)
-  ```
-  Field override wins; otherwise the form-wide orientation.
-
+  `resolve_orientation(field.orientation, self.orientation)` — field override
+  wins; otherwise the form-wide orientation.
 - **`FormField::render`** (standalone):
-  ```rust
-  let effective = self.orientation.unwrap_or(FormOrientation::Vertical);
-  render_field(self, effective, default_label_width(theme), theme)
-  ```
-  Honors the field's own override; falls back to Vertical (today's behavior)
-  when unset.
+  `resolve_orientation(self.orientation, FormOrientation::Vertical)` — honors
+  the field's own override; falls back to Vertical (today's behavior) when unset.
 
 `render_field`'s destructure gains `orientation: _` — the field's own value has
 already been consumed by the caller to compute the argument, so the helper
@@ -114,25 +121,64 @@ grows a field, so it must be bound.)
 
 ### `label_width` interaction
 
-`label_width` remains a form-level setting. A field that is horizontal — whether
-by inheritance or override — uses the form's `label_width` (or the theme default)
-for its label column. A horizontal field inside an otherwise-vertical form
-therefore uses the default label width unless the form set one. No per-field
-width knob is added.
+`label_width` remains a form-level setting, but it applies per *resolved*
+orientation, not per form orientation. Every field that **resolves to
+`Horizontal`** — whether by inheriting a horizontal form or by overriding a
+vertical form with `.horizontal()` — uses the form's `label_width` (or the theme
+default) for its label column. A field resolving to `Vertical` ignores it. So a
+horizontal override inside an otherwise-vertical form does get the label column;
+it uses the default width unless the form set one. No per-field width knob is
+added.
+
+### Orientation-dependent doc comments to correct
+
+These existing comments are written form-centrically and become inaccurate under
+the resolved model. Update the wording only — behavior is unchanged:
+
+- `FormField::render` — currently "always vertical". Now: uses the field's own
+  orientation if set, otherwise Vertical.
+- `Form::label_width` — currently "Horizontal orientation only; ignored when
+  vertical." Now: applies to every field that resolves to `Horizontal`
+  (including a `.horizontal()` override inside a vertical form); ignored for
+  fields resolving to `Vertical`.
+- `default_label_width` — currently "for horizontal forms". Now: for fields
+  resolving to horizontal.
 
 ## Testing
 
-Mirror the existing form test style (builder-state assertions + build-without-panic):
+Builder-state assertions, **direct resolution assertions**, and
+build-without-panic:
 
+Builder state:
 - `form_field(...)` defaults `orientation` to `None`.
 - `.orientation(Horizontal)`, `.horizontal()`, `.vertical()` each set the
   expected `Some(..)`.
-- A vertical `form(...)` containing one field with `.horizontal()` and one field
-  that inherits builds without panic (mixed resolution exercised).
-- Standalone `form_field(...).horizontal().render(theme)` builds without panic;
-  the plain standalone render (no override) still builds.
 
-Layout is not asserted (consistent with `label`/`group_box`/the rest of `form`).
+Resolution (`resolve_orientation`) — assert the *resolved* value across the full
+precedence matrix, so a reversed-precedence bug is caught (build-without-panic
+alone would not):
+- Default field (`None`) inheriting a **vertical** form resolves to `Vertical`.
+- Default field (`None`) inheriting a **horizontal** form resolves to `Horizontal`.
+- A `.horizontal()` override against a **vertical** form resolves to `Horizontal`.
+- A `.vertical()` override against a **horizontal** form resolves to `Vertical`.
+- Standalone default (`None`, form defaulted to `Vertical`) resolves to `Vertical`.
+
+`label_width` rule coverage: because `label_width` applies exactly to fields
+resolving to `Horizontal`, the "horizontal override against a vertical form
+resolves to `Horizontal`" assertion above *is* the coverage that such a field
+receives the label column — no separate structural layout assertion is needed
+(and none is feasible without adding a layout accessor, which composition-only
+forbids).
+
+Build-without-panic (render path):
+- A vertical `form(...)` with one `.horizontal()` field and one inheriting field.
+- A horizontal `form(...)` with one `.vertical()` field and one inheriting field.
+- Standalone `form_field(...).horizontal().render(theme)`, and the plain
+  standalone render (no override).
+
+Layout geometry itself is not asserted (consistent with
+`label`/`group_box`/the rest of `form`); resolution is asserted via the pure
+helper instead.
 
 ## Gallery
 
@@ -143,8 +189,11 @@ sections.
 
 ## Files
 
-- `src/components/form/view.rs` — `orientation` field, three builders,
-  resolution in `Form::render` and `FormField::render`, `orientation: _` in the
-  `render_field` destructure, tests.
+- `src/components/form/view.rs` — `orientation` field, three builders, the
+  pure `resolve_orientation` helper used by `Form::render` and
+  `FormField::render`, `orientation: _` in the `render_field` destructure,
+  corrected orientation-dependent doc comments (`FormField::render`,
+  `Form::label_width`, `default_label_width`), tests (builder state, resolution
+  matrix, build-without-panic).
 - `src/components/form/demo.rs` — mixed-orientation demo section.
 - No new theme tokens, no `widget.rs`, no view state.
