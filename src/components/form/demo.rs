@@ -22,6 +22,8 @@ struct FormDemo {
     email: String,
     subscribe: bool,
     notify: bool,
+    nickname: String,
+    bio: String,
 }
 
 impl FormDemo {
@@ -32,6 +34,8 @@ impl FormDemo {
             email: String::new(),
             subscribe: false,
             notify: true,
+            nickname: String::new(),
+            bio: String::new(),
         }
     }
 }
@@ -116,6 +120,28 @@ fn horizontal_section(theme: &Theme, state: &FormDemo) -> Box<AnyWidgetView<Form
     }))
 }
 
+/// Mixed form — a horizontal form where one field overrides to vertical, so
+/// per-field orientation is visible in one form.
+fn mixed_section(theme: &Theme, state: &FormDemo) -> Box<AnyWidgetView<FormDemo>> {
+    Box::new(with_source!(theme, {
+        form(vec![
+            // Inherits the form's horizontal orientation.
+            form_field(
+                "Nickname",
+                input(state.nickname.clone(), |s: &mut FormDemo, t| s.nickname = t).render(theme),
+            ),
+            // Overrides to vertical — label above its own control.
+            form_field(
+                "Bio",
+                input(state.bio.clone(), |s: &mut FormDemo, t| s.bio = t).render(theme),
+            )
+            .vertical(),
+        ])
+        .horizontal()
+        .render(theme)
+    }))
+}
+
 fn build_inner(theme: &Theme, state: &FormDemo) -> impl WidgetView<FormDemo> + use<> {
     let title_block = flex_col((
         label("Form")
@@ -138,6 +164,8 @@ fn build_inner(theme: &Theme, state: &FormDemo) -> impl WidgetView<FormDemo> + u
             vertical_section(theme, state),
             section_header("Horizontal", theme),
             horizontal_section(theme, state),
+            section_header("Mixed", theme),
+            mixed_section(theme, state),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .gap(Length::px(16.0)),
