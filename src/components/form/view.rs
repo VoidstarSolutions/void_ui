@@ -10,11 +10,11 @@
 use masonry::core::ArcStr;
 use xilem::masonry::layout::Length;
 use xilem::style::Style as _;
-use xilem::view::{CrossAxisAlignment, FlexExt as _, flex_col, flex_row, sized_box};
+use xilem::view::{flex_col, flex_row, sized_box, CrossAxisAlignment, FlexExt as _};
 use xilem::{AnyWidgetView, WidgetView};
 
-use crate::Theme;
 use crate::label;
+use crate::Theme;
 
 /// Orientation of a field's label relative to its control.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -229,14 +229,20 @@ fn render_field<State: 'static, Action: 'static>(
         )),
         (None, None) => None,
     };
-    let control_cell: Box<AnyWidgetView<State, Action>> = match caption {
-        Some(cap) => Box::new(
-            flex_col((control, cap))
-                .cross_axis_alignment(CrossAxisAlignment::Stretch)
-                .gap(Length::px(f64::from(theme.density.gap))),
-        ),
-        None => control,
-    };
+    // Always wrap the control in the same `flex_col`, with the caption as an
+    // *optional sibling* (`None` = zero children, `Some` = one), rather than
+    // switching `control_cell` between a bare control and a wrapping `flex_col`.
+    // That switch changes the concrete view type at this slot, and xilem's
+    // rebuild reacts to a type change by tearing down and recreating the whole
+    // subtree — including the focused `TextInput`, which loses focus on the
+    // first keystroke that toggles a validation error. Keeping the wrapper
+    // unconditional holds the control's identity stable across valid/invalid
+    // rebuilds. The gap only materializes when a caption is actually present.
+    let control_cell: Box<AnyWidgetView<State, Action>> = Box::new(
+        flex_col((control, caption))
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .gap(Length::px(f64::from(theme.density.gap))),
+    );
 
     match orientation {
         FormOrientation::Vertical => Box::new(
@@ -259,13 +265,13 @@ fn render_field<State: 'static, Action: 'static>(
 
 #[cfg(test)]
 mod tests {
-    use super::{FormOrientation, form, form_field};
-    use crate::Theme;
+    use super::{form, form_field, FormOrientation};
     use crate::label;
     use crate::test_support;
-    use xilem::ViewCtx;
+    use crate::Theme;
     use xilem::core::View;
     use xilem::masonry::layout::Length;
+    use xilem::ViewCtx;
 
     #[test]
     fn orientation_defaults_to_vertical() {
