@@ -53,9 +53,9 @@ use crate::label;
 /// for none (masked).
 ///
 /// Affixes are cross-axis-*centered* against the editor rather than baseline-
-/// aligned: the editor's `TextArea` reserves a taller line box than a bare affix
-/// label, so a shared baseline left the affix (e.g. a `$`) riding visibly high;
-/// centering seats it on the editor's optical midline instead.
+/// aligned. Editor, placeholder, and affixes all share the same pinned line box
+/// ([`body_line_height`]), so centering seats every piece on one vertical
+/// midline; a shared baseline instead left affixes (e.g. a `$`) riding high.
 ///
 /// A macro rather than a `fn`: xilem's generic flex bounds make a generic helper
 /// impractical (`Flex<Seq>: Style` needs a concrete sequence), so this expands
@@ -221,6 +221,11 @@ pub(crate) fn stripped_text_input_props(theme: &Theme) -> PropertySet {
 
 /// A muted, non-interactive affix label (prefix/suffix, currency symbol). Shared
 /// so every flavor styles its affixes identically.
+///
+/// The affix is pinned to the same line box as the editor ([`body_line_height`])
+/// so prefix/suffix text and the value share one vertical midline. `label`'s
+/// line height is a font-size ratio, so convert the absolute px target back to a
+/// multiple of the body size.
 pub(crate) fn affix_label<State, Action>(
     text: ArcStr,
     theme: &Theme,
@@ -229,7 +234,11 @@ where
     State: 'static,
     Action: 'static,
 {
-    label(text).color(theme.palette.text_muted).render(theme)
+    let ratio = body_line_height(theme) / theme.typography.size_body;
+    label(text)
+        .color(theme.palette.text_muted)
+        .line_height(ratio)
+        .render(theme)
 }
 
 /// Infer where the caret sits in `current` after the single contiguous edit that
@@ -284,11 +293,6 @@ pub(crate) struct InputView<F, State, Action> {
     placeholder: ArcStr,
     disabled: bool,
     theme: Theme,
-    /// Optional absolute line-box height (px) for the editor. `None` leaves the
-    /// font's natural metrics line height. Set by the number input, which caps
-    /// the editor's height (see [`Self::line_height`]) so the taller stepper row
-    /// can't stretch the single-line editor and top-align its glyph.
-    line_height: Option<f32>,
     callback: F,
     phantom: PhantomData<fn(State) -> Action>,
 }
@@ -308,21 +312,25 @@ impl<F, State, Action> InputView<F, State, Action> {
             placeholder,
             disabled,
             theme: *theme,
-            line_height: None,
             callback,
             phantom: PhantomData,
         }
     }
+}
 
-    /// Pin the editor's line-box height (px) rather than using the font's
-    /// natural metrics. An absolute line height also seats the glyph on the
-    /// box's optical midline (half-leading split evenly), so when the caller
-    /// also constrains the editor's widget height to this value the value text
-    /// centers cleanly against neighbors like the number input's steppers.
-    pub(crate) fn line_height(mut self, px: f32) -> Self {
-        self.line_height = Some(px);
-        self
-    }
+/// The editor's line-box height (px), derived from the body font size so it
+/// tracks the theme rather than a hard-coded pixel count. `1.3` is a standard UI
+/// line-height ratio: tall enough to clear ascenders/descenders without clipping,
+/// tight enough to sit snug in the field.
+///
+/// Pinning an *absolute* line height (rather than the font's natural metrics)
+/// also seats the glyph on the box's optical midline — the half-leading is split
+/// evenly above and below, whereas the font's ascent-heavy natural metrics push
+/// the single line up. Every field flavor uses this so its text, placeholder,
+/// and affixes share one midline; the number input additionally caps the editor
+/// widget's height to it so the taller stepper row can't stretch the editor.
+pub(crate) fn body_line_height(theme: &Theme) -> f32 {
+    (theme.typography.size_body * 1.3).round()
 }
 
 impl<F, State, Action> ViewMarker for InputView<F, State, Action> {}
@@ -341,13 +349,11 @@ where
     type ViewState = bool;
 
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
-        let mut text_area = widgets::TextArea::new_editable(&self.contents)
-            .with_style(StyleProperty::FontSize(self.theme.typography.size_body));
-        if let Some(px) = self.line_height {
-            text_area = text_area.with_style(StyleProperty::LineHeight(
-                masonry::parley::LineHeight::Absolute(px),
+        let text_area = widgets::TextArea::new_editable(&self.contents)
+            .with_style(StyleProperty::FontSize(self.theme.typography.size_body))
+            .with_style(StyleProperty::LineHeight(
+                masonry::parley::LineHeight::Absolute(body_line_height(&self.theme)),
             ));
-        }
 
         let text_input = widgets::TextInput::from_text_area(
             NewWidget::new(text_area).with_props(text_area_props(&self.theme)),
@@ -388,19 +394,27 @@ where
         let mut child = InputFrame::child_mut(&mut element);
         let mut text_input = child.downcast::<widgets::TextInput>();
 
-        // Match the placeholder's font size to the editor's. masonry builds the
-        // placeholder Label at its default size (15px) while our body text is
-        // 13px, so left alone the placeholder renders a couple of pixels low.
-        // `with_placeholder` exposes no build-time style hook, so we apply the
-        // override on the first rebuild (and on theme changes). It can't live in
-        // `build`; the trade-off is that the very first painted frame uses
-        // masonry's default until this runs. `insert_style` always invalidates,
-        // so we gate it rather than re-asserting it on every keystroke.
+        // Match the placeholder's font size *and line height* to the editor's.
+        // masonry builds the placeholder Label at its default size (15px) with
+        // the font's natural (ascent-heavy) metrics, while our body text is 13px
+        // on a pinned absolute line box; left alone the placeholder renders a
+        // couple of pixels off from the editor text. `with_placeholder` exposes
+        // no build-time style hook, so we apply the overrides on the first
+        // rebuild (and on theme changes). They can't live in `build`; the
+        // trade-off is that the very first painted frame uses masonry's default
+        // until this runs. `insert_style` always invalidates, so we gate it
+        // rather than re-asserting it on every keystroke.
         if !*placeholder_sized || theme_changed {
             let mut placeholder = widgets::TextInput::placeholder_mut(&mut text_input);
             widgets::Label::insert_style(
                 &mut placeholder,
                 StyleProperty::FontSize(self.theme.typography.size_body),
+            );
+            widgets::Label::insert_style(
+                &mut placeholder,
+                StyleProperty::LineHeight(masonry::parley::LineHeight::Absolute(body_line_height(
+                    &self.theme,
+                ))),
             );
             *placeholder_sized = true;
         }

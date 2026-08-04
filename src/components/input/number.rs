@@ -33,7 +33,7 @@ use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, FlexExt as _, flex_row, sized_box};
 
 use super::numeric::scan_number;
-use super::view::{InputView, affix_label, affixed_row, field_chrome};
+use super::view::{InputView, affix_label, affixed_row, body_line_height, field_chrome};
 use crate::Theme;
 use crate::components::button::button;
 
@@ -144,15 +144,6 @@ impl<F> NumberInput<F> {
         // a handle; the last (the `+` stepper) moves the original.
         let on_changed = Arc::new(on_changed);
 
-        // The stepper buttons are taller than a single text line, and masonry's
-        // `TextInput` fills whatever cross height the flex row offers, top-
-        // aligning its one line — so an unconstrained editor stretches to the
-        // button height and its digits ride high with dead space beneath. Pin
-        // the editor to a fixed body line box (`body_line_height`) so it keeps its
-        // natural height and the row's center alignment seats the value on the
-        // steppers' midline. The absolute line height also centers the glyph
-        // within that box.
-        let line_px = body_line_height(theme);
         let core = {
             let on_changed = on_changed.clone();
             // Typed text is only numeric-filtered, never range-clamped (see
@@ -164,9 +155,15 @@ impl<F> NumberInput<F> {
                 theme,
                 move |state: &mut State, text: String| (*on_changed)(state, filter_numeric(&text)),
             )
-            .line_height(line_px)
         };
-        let core = sized_box(core).height(Length::px(f64::from(line_px)));
+        // The stepper buttons are taller than a single text line, and masonry's
+        // `TextInput` fills whatever cross height the flex row offers, top-
+        // aligning its one line — so an unconstrained editor stretches to the
+        // button height and its digits ride high with dead space beneath. Cap the
+        // editor's widget height to the shared body line box (`InputView` already
+        // pins the same value as its line height) so it keeps its natural height
+        // and the row's center alignment seats the value on the steppers' midline.
+        let core = sized_box(core).height(Length::px(f64::from(body_line_height(theme))));
 
         let minus = {
             let on_changed = on_changed.clone();
@@ -197,14 +194,6 @@ impl<F> NumberInput<F> {
 
         field_chrome(row, theme)
     }
-}
-
-/// The editor's pinned line-box height, derived from the body font size so it
-/// tracks the theme rather than a hard-coded pixel count. `1.3` is a standard UI
-/// line-height ratio: tall enough to clear ascenders/descenders without clipping,
-/// tight enough that the value sits snug against its steppers.
-fn body_line_height(theme: &Theme) -> f32 {
-    (theme.typography.size_body * 1.3).round()
 }
 
 /// Keep only characters that form a number: digits, a single decimal point, and
