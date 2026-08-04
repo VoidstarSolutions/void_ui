@@ -284,11 +284,15 @@ fn render_field<State: 'static, Action: 'static>(
         FormOrientation::Horizontal => Box::new(
             // Control fills the row's remaining width beside the fixed label
             // column, so a text input isn't pinned to its tiny intrinsic size.
+            // Center the label vertically against the control, so the label's
+            // center sits level with the control's center rather than pinned to
+            // the top. (When the control cell carries a hint/error caption
+            // beneath the control, this centers against the whole cell.)
             flex_row((
                 sized_box(label_row).fixed_width(label_width),
                 control_cell.flex(1.0),
             ))
-            .cross_axis_alignment(CrossAxisAlignment::Start)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
             .gap(Length::px(f64::from(theme.density.gap_lg))),
         ),
     }
