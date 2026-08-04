@@ -71,7 +71,8 @@ fn app_logic(state: &mut State) -> impl WidgetView<State> + use<> {
 
     let outer = flex_col((topbar(theme_panel_open, &theme), workspace.flex(1.0)))
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .main_axis_alignment(MainAxisAlignment::Start);
+        .main_axis_alignment(MainAxisAlignment::Start)
+        .gap(Length::px(0.0));
 
     let content = sized_box(outer).background_color(theme.palette.bg_deep);
     let toast_layer =
@@ -108,12 +109,14 @@ fn workspace_row(
         .border(theme.palette.border, Length::px(1.0));
         Box::new(
             flex_row((sidebar_view, main.flex(1.0), panel))
-                .cross_axis_alignment(CrossAxisAlignment::Stretch),
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .gap(Length::px(0.0)),
         )
     } else {
         Box::new(
             flex_row((sidebar_view, main.flex(1.0)))
-                .cross_axis_alignment(CrossAxisAlignment::Stretch),
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .gap(Length::px(0.0)),
         )
     }
 }
