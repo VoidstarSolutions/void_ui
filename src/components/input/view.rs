@@ -441,6 +441,12 @@ where
                 &mut text_area,
                 StyleProperty::FontSize(self.theme.typography.size_body),
             );
+            widgets::TextArea::insert_style(
+                &mut text_area,
+                StyleProperty::LineHeight(masonry::parley::LineHeight::Absolute(body_line_height(
+                    &self.theme,
+                ))),
+            );
         }
         // Reformatting fields (currency/mask) rebuild `contents` into a
         // different string than the user's just-typed text, so the text must be
