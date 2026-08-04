@@ -115,7 +115,7 @@ impl<F> MaskedInput<F> {
         };
 
         // No affixes — the mask template defines the structure; `()` fills the
-        // affix slots so masked shares the one baseline-aligned row helper.
+        // affix slots so masked shares the one center-aligned row helper.
         field_chrome(affixed_row!((), core, (), theme), theme)
     }
 }

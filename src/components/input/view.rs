@@ -47,20 +47,25 @@ use super::widget::{InputCleared, InputFrame};
 use crate::Theme;
 use crate::label;
 
-/// Compose a field's baseline-aligned content row — prefix affix, the
+/// Compose a field's center-aligned content row — prefix affix, the
 /// flex-growing editor, then suffix affix — with the theme's column gap. Each
 /// slot is a flex child: `Some(view)` / `None` for an optional affix, or `()`
 /// for none (masked).
 ///
+/// Affixes are cross-axis-*centered* against the editor rather than baseline-
+/// aligned. Editor, placeholder, and affixes all share the same pinned line box
+/// ([`body_line_height`]), so centering seats every piece on one vertical
+/// midline; a shared baseline instead left affixes (e.g. a `$`) riding high.
+///
 /// A macro rather than a `fn`: xilem's generic flex bounds make a generic helper
 /// impractical (`Flex<Seq>: Style` needs a concrete sequence), so this expands
-/// at each call site — keeping the baseline-alignment decision in one place.
+/// at each call site — keeping the cross-axis-alignment decision in one place.
 macro_rules! affixed_row {
     ($prefix:expr, $core:expr, $suffix:expr, $theme:expr $(,)?) => {{
         use ::xilem::style::Style as _;
         use ::xilem::view::FlexExt as _;
         ::xilem::view::flex_row(($prefix, $core.flex(1.0), $suffix))
-            .cross_axis_alignment(::xilem::view::CrossAxisAlignment::FirstBaseline)
+            .cross_axis_alignment(::xilem::view::CrossAxisAlignment::Center)
             .gap(::masonry::layout::Length::px(f64::from(
                 $theme.density.gap_lg,
             )))
@@ -216,6 +221,11 @@ pub(crate) fn stripped_text_input_props(theme: &Theme) -> PropertySet {
 
 /// A muted, non-interactive affix label (prefix/suffix, currency symbol). Shared
 /// so every flavor styles its affixes identically.
+///
+/// The affix is pinned to the same line box as the editor ([`body_line_height`])
+/// so prefix/suffix text and the value share one vertical midline. `label`'s
+/// line height is a font-size ratio, so convert the absolute px target back to a
+/// multiple of the body size.
 pub(crate) fn affix_label<State, Action>(
     text: ArcStr,
     theme: &Theme,
@@ -224,7 +234,11 @@ where
     State: 'static,
     Action: 'static,
 {
-    label(text).color(theme.palette.text_muted).render(theme)
+    let ratio = body_line_height(theme) / theme.typography.size_body;
+    label(text)
+        .color(theme.palette.text_muted)
+        .line_height(ratio)
+        .render(theme)
 }
 
 /// Infer where the caret sits in `current` after the single contiguous edit that
@@ -304,6 +318,21 @@ impl<F, State, Action> InputView<F, State, Action> {
     }
 }
 
+/// The editor's line-box height (px), derived from the body font size so it
+/// tracks the theme rather than a hard-coded pixel count. `1.3` is a standard UI
+/// line-height ratio: tall enough to clear ascenders/descenders without clipping,
+/// tight enough to sit snug in the field.
+///
+/// Pinning an *absolute* line height (rather than the font's natural metrics)
+/// also seats the glyph on the box's optical midline — the half-leading is split
+/// evenly above and below, whereas the font's ascent-heavy natural metrics push
+/// the single line up. Every field flavor uses this so its text, placeholder,
+/// and affixes share one midline; the number input additionally caps the editor
+/// widget's height to it so the taller stepper row can't stretch the editor.
+pub(crate) fn body_line_height(theme: &Theme) -> f32 {
+    (theme.typography.size_body * 1.3).round()
+}
+
 impl<F, State, Action> ViewMarker for InputView<F, State, Action> {}
 
 impl<F, State, Action> View<State, Action, ViewCtx> for InputView<F, State, Action>
@@ -313,15 +342,14 @@ where
     Action: 'static,
 {
     type Element = Pod<InputFrame>;
-    /// `true` once the placeholder font-size override has been applied (see
-    /// `rebuild`). masonry builds the placeholder Label at its default size and
-    /// gives no build-time style hook, so we correct it on the first rebuild
-    /// rather than every rebuild.
-    type ViewState = bool;
+    type ViewState = ();
 
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
         let text_area = widgets::TextArea::new_editable(&self.contents)
-            .with_style(StyleProperty::FontSize(self.theme.typography.size_body));
+            .with_style(StyleProperty::FontSize(self.theme.typography.size_body))
+            .with_style(StyleProperty::LineHeight(
+                masonry::parley::LineHeight::Absolute(body_line_height(&self.theme)),
+            ));
 
         let text_input = widgets::TextInput::from_text_area(
             NewWidget::new(text_area).with_props(text_area_props(&self.theme)),
@@ -340,18 +368,28 @@ where
         input.properties = stripped_text_input_props(&self.theme);
         input.options.disabled = self.disabled;
 
-        let pod = ctx.create_pod(InputFrame::new(input));
+        // Correct the placeholder's font size + line height on `WidgetAdded`
+        // (before first paint). masonry builds the placeholder Label at its own
+        // default size with natural metrics and offers no build-time hook; doing
+        // it via the frame's lifecycle — rather than the view's `rebuild` — means
+        // it's right on the first frame even if the app never rebuilds. The
+        // `rebuild` below re-applies it on theme changes.
+        let pod = ctx.create_pod(InputFrame::with_placeholder_style(
+            input,
+            self.theme.typography.size_body,
+            body_line_height(&self.theme),
+        ));
         // Route both sources to this view: the frame (Escape -> InputCleared)
         // and the inner TextArea (edits -> TextAction).
         ctx.record_action_source(pod.new_widget.id());
         ctx.record_action_source(area_id);
-        (pod, false)
+        (pod, ())
     }
 
     fn rebuild(
         &self,
         prev: &Self,
-        placeholder_sized: &mut Self::ViewState,
+        _view_state: &mut Self::ViewState,
         _ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
         _app_state: &mut State,
@@ -362,21 +400,22 @@ where
         let mut child = InputFrame::child_mut(&mut element);
         let mut text_input = child.downcast::<widgets::TextInput>();
 
-        // Match the placeholder's font size to the editor's. masonry builds the
-        // placeholder Label at its default size (15px) while our body text is
-        // 13px, so left alone the placeholder renders a couple of pixels low.
-        // `with_placeholder` exposes no build-time style hook, so we apply the
-        // override on the first rebuild (and on theme changes). It can't live in
-        // `build`; the trade-off is that the very first painted frame uses
-        // masonry's default until this runs. `insert_style` always invalidates,
-        // so we gate it rather than re-asserting it on every keystroke.
-        if !*placeholder_sized || theme_changed {
+        // The placeholder's initial font size + line height are stamped by
+        // `InputFrame` on `WidgetAdded` (before the first paint — see there).
+        // Here we only need to *re-apply* them when the theme changes, since the
+        // frame's one-shot correction has long since run.
+        if theme_changed {
             let mut placeholder = widgets::TextInput::placeholder_mut(&mut text_input);
             widgets::Label::insert_style(
                 &mut placeholder,
                 StyleProperty::FontSize(self.theme.typography.size_body),
             );
-            *placeholder_sized = true;
+            widgets::Label::insert_style(
+                &mut placeholder,
+                StyleProperty::LineHeight(masonry::parley::LineHeight::Absolute(body_line_height(
+                    &self.theme,
+                ))),
+            );
         }
 
         if theme_changed {
@@ -402,6 +441,12 @@ where
                 &mut text_area,
                 StyleProperty::FontSize(self.theme.typography.size_body),
             );
+            widgets::TextArea::insert_style(
+                &mut text_area,
+                StyleProperty::LineHeight(masonry::parley::LineHeight::Absolute(body_line_height(
+                    &self.theme,
+                ))),
+            );
         }
         // Reformatting fields (currency/mask) rebuild `contents` into a
         // different string than the user's just-typed text, so the text must be
@@ -426,7 +471,7 @@ where
 
     fn teardown(
         &self,
-        _: &mut Self::ViewState,
+        (): &mut Self::ViewState,
         ctx: &mut ViewCtx,
         mut element: Mut<'_, Self::Element>,
     ) {
@@ -444,7 +489,7 @@ where
 
     fn message(
         &self,
-        _: &mut Self::ViewState,
+        (): &mut Self::ViewState,
         message: &mut MessageCtx,
         _element: Mut<'_, Self::Element>,
         app_state: &mut State,
@@ -476,7 +521,7 @@ mod tests {
     use xilem::ViewCtx;
     use xilem::core::{DynMessage, Environment, MessageCtx, MessageResult, View};
 
-    use super::super::widget::InputCleared;
+    use super::super::widget::{InputCleared, InputFrame};
     use super::{InputView, byte_pos_after_n_digits, caret_after_edit};
     use crate::Theme;
     use crate::test_support;
@@ -498,6 +543,102 @@ mod tests {
         assert_eq!(byte_pos_after_n_digits("12,934", 0), 0);
         // Fewer digits than asked -> clamp to the end.
         assert_eq!(byte_pos_after_n_digits("12,934", 9), 6);
+    }
+
+    /// The empty field's placeholder must render at the same vertical extent as
+    /// the editor's own text **on the first paint, without any rebuild**. masonry
+    /// builds the placeholder Label at its own (larger) default font size; the
+    /// correction is stamped by `InputFrame` on `WidgetAdded`. A regression here
+    /// (correction moved back into the view's `rebuild`) makes a freshly-opened,
+    /// never-rebuilt field show an oversized, low placeholder. Guards issue: the
+    /// "placeholder too low" report.
+    #[test]
+    fn placeholder_matches_editor_without_rebuild() {
+        use masonry::core::{Widget, WidgetRef};
+        use masonry::kurbo::Rect;
+        use masonry::widgets::{Label, TextArea};
+
+        fn ink_rows(img: &image::RgbaImage, w: WidgetRef<'_, dyn Widget>) -> (u32, u32) {
+            let b = w.ctx().content_box();
+            let o = w.ctx().window_transform() * b.origin();
+            let rect = Rect::from_origin_size(o, b.size());
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "small positive layout pixels"
+            )]
+            let (x0, x1, y0, y1) = (
+                rect.x0.max(0.0) as u32,
+                (rect.x1 as u32).min(img.width()),
+                rect.y0.max(0.0) as u32,
+                (rect.y1 as u32).min(img.height()),
+            );
+            let bg = *img.get_pixel(x0 + 1, y0.saturating_sub(2));
+            let (mut lo, mut hi) = (u32::MAX, 0u32);
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    if *img.get_pixel(x, y) != bg {
+                        lo = lo.min(y - y0);
+                        hi = hi.max(y - y0);
+                    }
+                }
+            }
+            (lo, hi)
+        }
+        fn find<W: Widget>(w: WidgetRef<'_, dyn Widget>) -> Option<WidgetRef<'_, W>> {
+            w.downcast::<W>()
+                .or_else(|| w.children().into_iter().find_map(find::<W>))
+        }
+        // build + render only — NO rebuild. The correction must already have run
+        // via `WidgetAdded` during the first update pass.
+        fn build_harness<V: xilem::WidgetView<(), Widget = InputFrame>>(
+            view: &V,
+        ) -> TestHarness<InputFrame> {
+            let mut ctx = ViewCtx::new(
+                test_support::noop_proxy(),
+                test_support::current_thread_runtime(),
+            );
+            let (pod, _) = view.build(&mut ctx, &mut ());
+            TestHarness::create(masonry::theme::default_property_set(), pod.new_widget)
+        }
+
+        let theme = Theme::default();
+        // `input(...).render()` wraps chrome around the `InputFrame`; build the
+        // bare core so the harness root is the `InputFrame` itself.
+        let editor = super::InputView::new(
+            "example.com".to_string(),
+            ArcStr::default(),
+            false,
+            &theme,
+            |(): &mut (), _| (),
+        );
+        let mut h = build_harness(&editor);
+        let img = h.render();
+        let editor_rows = ink_rows(
+            &img,
+            find::<TextArea<true>>(h.root_widget().as_dyn())
+                .unwrap()
+                .as_dyn(),
+        );
+
+        let placeholder = super::InputView::new(
+            String::new(),
+            "example.com".into(),
+            false,
+            &theme,
+            |(): &mut (), _| (),
+        );
+        let mut h = build_harness(&placeholder);
+        let img = h.render();
+        let placeholder_rows = ink_rows(
+            &img,
+            find::<Label>(h.root_widget().as_dyn()).unwrap().as_dyn(),
+        );
+
+        assert_eq!(
+            placeholder_rows, editor_rows,
+            "placeholder ink {placeholder_rows:?} must match editor ink {editor_rows:?} on first paint"
+        );
     }
 
     fn build_view_and_state() -> (ViewCtx, String) {
