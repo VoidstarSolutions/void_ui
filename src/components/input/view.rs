@@ -47,20 +47,25 @@ use super::widget::{InputCleared, InputFrame};
 use crate::Theme;
 use crate::label;
 
-/// Compose a field's baseline-aligned content row — prefix affix, the
+/// Compose a field's center-aligned content row — prefix affix, the
 /// flex-growing editor, then suffix affix — with the theme's column gap. Each
 /// slot is a flex child: `Some(view)` / `None` for an optional affix, or `()`
 /// for none (masked).
 ///
+/// Affixes are cross-axis-*centered* against the editor rather than baseline-
+/// aligned: the editor's `TextArea` reserves a taller line box than a bare affix
+/// label, so a shared baseline left the affix (e.g. a `$`) riding visibly high;
+/// centering seats it on the editor's optical midline instead.
+///
 /// A macro rather than a `fn`: xilem's generic flex bounds make a generic helper
 /// impractical (`Flex<Seq>: Style` needs a concrete sequence), so this expands
-/// at each call site — keeping the baseline-alignment decision in one place.
+/// at each call site — keeping the cross-axis-alignment decision in one place.
 macro_rules! affixed_row {
     ($prefix:expr, $core:expr, $suffix:expr, $theme:expr $(,)?) => {{
         use ::xilem::style::Style as _;
         use ::xilem::view::FlexExt as _;
         ::xilem::view::flex_row(($prefix, $core.flex(1.0), $suffix))
-            .cross_axis_alignment(::xilem::view::CrossAxisAlignment::FirstBaseline)
+            .cross_axis_alignment(::xilem::view::CrossAxisAlignment::Center)
             .gap(::masonry::layout::Length::px(f64::from(
                 $theme.density.gap_lg,
             )))
@@ -279,6 +284,11 @@ pub(crate) struct InputView<F, State, Action> {
     placeholder: ArcStr,
     disabled: bool,
     theme: Theme,
+    /// Optional absolute line-box height (px) for the editor. `None` leaves the
+    /// font's natural metrics line height. Set by the number input, which caps
+    /// the editor's height (see [`Self::line_height`]) so the taller stepper row
+    /// can't stretch the single-line editor and top-align its glyph.
+    line_height: Option<f32>,
     callback: F,
     phantom: PhantomData<fn(State) -> Action>,
 }
@@ -298,9 +308,20 @@ impl<F, State, Action> InputView<F, State, Action> {
             placeholder,
             disabled,
             theme: *theme,
+            line_height: None,
             callback,
             phantom: PhantomData,
         }
+    }
+
+    /// Pin the editor's line-box height (px) rather than using the font's
+    /// natural metrics. An absolute line height also seats the glyph on the
+    /// box's optical midline (half-leading split evenly), so when the caller
+    /// also constrains the editor's widget height to this value the value text
+    /// centers cleanly against neighbors like the number input's steppers.
+    pub(crate) fn line_height(mut self, px: f32) -> Self {
+        self.line_height = Some(px);
+        self
     }
 }
 
@@ -320,8 +341,13 @@ where
     type ViewState = bool;
 
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
-        let text_area = widgets::TextArea::new_editable(&self.contents)
+        let mut text_area = widgets::TextArea::new_editable(&self.contents)
             .with_style(StyleProperty::FontSize(self.theme.typography.size_body));
+        if let Some(px) = self.line_height {
+            text_area = text_area.with_style(StyleProperty::LineHeight(
+                masonry::parley::LineHeight::Absolute(px),
+            ));
+        }
 
         let text_input = widgets::TextInput::from_text_area(
             NewWidget::new(text_area).with_props(text_area_props(&self.theme)),
