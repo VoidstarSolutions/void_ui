@@ -43,7 +43,7 @@ use masonry::widgets::{self, SizedBox, TextAction};
 use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
 use crate::components::input::widget::{InputCleared, InputFrame};
-use crate::components::input::{stripped_text_input_props, text_area_props};
+use crate::components::input::{body_line_height, stripped_text_input_props, text_area_props};
 use crate::overlay::OverlayAnchor;
 use crate::overlay::binding::{self, PortalBinding};
 use crate::overlay_scope::OverlayScopeHandle;
@@ -439,8 +439,23 @@ fn apply_chrome_theme(sb: &mut WidgetMut<'_, SizedBox>, theme: &Theme) {
         Length::px(f64::from(theme.density.button_pad_v)),
         Length::px(f64::from(theme.density.button_pad_h)),
     ));
+    let line_px = body_line_height(theme);
     with_text_input_in_chrome(sb, |ti| {
         ti.insert_prop(PlaceholderColor::new(theme.palette.text_muted));
+        // Re-apply the placeholder's font size + line height (the `WidgetAdded`
+        // one-shot in `InputFrame` has long since run); mirrors the editor below
+        // so the empty field keeps matching after a theme swap.
+        {
+            let mut placeholder = widgets::TextInput::placeholder_mut(ti);
+            widgets::Label::insert_style(
+                &mut placeholder,
+                StyleProperty::FontSize(theme.typography.size_body),
+            );
+            widgets::Label::insert_style(
+                &mut placeholder,
+                StyleProperty::LineHeight(masonry::parley::LineHeight::Absolute(line_px)),
+            );
+        }
         let mut ta = widgets::TextInput::text_mut(ti);
         ta.insert_prop(ContentColor::new(theme.palette.text));
         ta.insert_prop(CaretColor {
@@ -452,6 +467,10 @@ fn apply_chrome_theme(sb: &mut WidgetMut<'_, SizedBox>, theme: &Theme) {
         widgets::TextArea::insert_style(
             &mut ta,
             StyleProperty::FontSize(theme.typography.size_body),
+        );
+        widgets::TextArea::insert_style(
+            &mut ta,
+            StyleProperty::LineHeight(masonry::parley::LineHeight::Absolute(line_px)),
         );
     });
 }
@@ -611,8 +630,15 @@ impl AutocompleteWidget {
         theme: &Theme,
     ) -> (NewWidget<SizedBox>, WidgetId) {
         // ── TextArea ──────────────────────────────────────────────────────────
+        // Pin an absolute line height (matching the `input` component) so the
+        // glyph seats on the box's optical midline and descenders clear the clip
+        // rect — the font's natural, ascent-heavy metrics push the text up and
+        // let `with_clip(true)` shear the descenders off.
         let text_area = widgets::TextArea::new_editable(contents)
-            .with_style(StyleProperty::FontSize(theme.typography.size_body));
+            .with_style(StyleProperty::FontSize(theme.typography.size_body))
+            .with_style(StyleProperty::LineHeight(
+                masonry::parley::LineHeight::Absolute(body_line_height(theme)),
+            ));
 
         let text_area_widget = NewWidget::new(text_area).with_props(text_area_props(theme));
         let text_area_id = text_area_widget.id();
@@ -627,7 +653,15 @@ impl AutocompleteWidget {
         text_input_widget.options.disabled = disabled;
 
         // ── InputFrame — adds Esc-to-clear behaviour ──────────────────────────
-        let input_frame = InputFrame::new(text_input_widget);
+        // Stamp the placeholder's font size + line height before first paint, so
+        // the empty field's placeholder matches the editor instead of rendering
+        // oversized and low (masonry builds it at its own default size with
+        // natural metrics — see `InputFrame::with_placeholder_style`).
+        let input_frame = InputFrame::with_placeholder_style(
+            text_input_widget,
+            theme.typography.size_body,
+            body_line_height(theme),
+        );
 
         // ── SizedBox — field chrome via masonry property system ───────────────
         let mut chrome_box = NewWidget::new(SizedBox::new(NewWidget::new(input_frame)));

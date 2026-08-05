@@ -51,7 +51,10 @@ pub struct InputFrame {
 
 impl InputFrame {
     /// Wrap the given child (the themed `TextInput`) with no placeholder
-    /// correction. Used by tests and callers that never show a placeholder.
+    /// correction. Test-only: every production field ships a placeholder and so
+    /// goes through [`Self::with_placeholder_style`]; the bare constructor exists
+    /// for harnesses that never show one.
+    #[cfg(test)]
     #[must_use]
     pub fn new(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
