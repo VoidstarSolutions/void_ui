@@ -253,7 +253,7 @@ mod tests {
 
     /// Builds an `OverlayScope` whose content is a `TooltipHost` wrapping
     /// `child`, with a `Label("Tip text")` popup registered under `key = 5`
-    /// in the scope's portal — mirrors `ContextMenuAreaWidget::portal_scope_harness`.
+    /// in the scope's portal — mirrors [`crate::components::context_menu::area::tests::portal_scope_harness`].
     /// Returns the harness, the popup's portal key, and the host's own
     /// widget id (needed for `mouse_move_to`/`focus_on` targets now that the
     /// scope, not the host, is the harness root).
