@@ -394,11 +394,15 @@ where
                 StyleProperty::FontSize(self.theme.density.ui_font_size),
             );
         }
-        // Label text is not re-applied here; masonry's Label doesn't expose
-        // stable post-construction text mutation. If the label string changes
-        // the parent view should replace the whole button, which xilem will do
-        // via teardown+build when the identity changes.
-        let _ = &prev.label;
+        // Re-apply the label text when it changes so an in-place rebuild (same
+        // view identity, new string) updates the visible label. The button's
+        // main child is the `Label` (icons attach in separate slots), matching
+        // `build` and the `downcast::<Label>()` above.
+        if self.label != prev.label {
+            let mut child = ThemedButton::child_mut(&mut element);
+            let mut lbl = child.downcast::<Label>();
+            Label::set_text(&mut lbl, self.label.clone().unwrap_or_default());
+        }
     }
 
     fn teardown(
@@ -479,5 +483,63 @@ mod tests {
         let _ = button(|(): &mut ()| ())
             .selected(true)
             .render::<(), ()>(&theme);
+    }
+
+    /// Regression (citadel #85): an in-place rebuild with a changed label must
+    /// update the visible text. When several same-typed buttons sit in an
+    /// index-diffed sequence (e.g. the sidebar's box-size rows), xilem rebuilds
+    /// each in place as the set reorders; if `rebuild` doesn't re-apply the
+    /// label the rows all show a stale string.
+    #[test]
+    fn rebuild_updates_changed_label_text() {
+        use masonry::core::{Widget, WidgetRef};
+        use masonry::testing::TestHarness;
+        use masonry::widgets::Label;
+        use xilem::ViewCtx;
+        use xilem::core::View;
+
+        use crate::test_support;
+
+        fn find<W: Widget>(w: WidgetRef<'_, dyn Widget>) -> Option<WidgetRef<'_, W>> {
+            w.downcast::<W>()
+                .or_else(|| w.children().into_iter().find_map(find::<W>))
+        }
+        // A named `fn` (not a closure) so `view_a` and `view_b` share one
+        // `ButtonView` type — `rebuild` requires `prev` and `self` to match.
+        fn noop(_: &mut ()) {}
+
+        let theme = Theme::default();
+        let mut ctx = ViewCtx::new(
+            test_support::noop_proxy(),
+            test_support::current_thread_runtime(),
+        );
+        let mut state = ();
+
+        let view_a = button(noop)
+            .label("$1.00 box · 3 rev")
+            .render::<(), ()>(&theme);
+        let (pod, mut view_state) = View::<(), (), ViewCtx>::build(&view_a, &mut ctx, &mut state);
+        let mut harness =
+            TestHarness::create(masonry::theme::default_property_set(), pod.new_widget);
+
+        let view_b = button(noop)
+            .label("$3.20 box · 3 rev")
+            .render::<(), ()>(&theme);
+        harness.edit_root_widget(|element| {
+            View::<(), (), ViewCtx>::rebuild(
+                &view_b,
+                &view_a,
+                &mut view_state,
+                &mut ctx,
+                element,
+                &mut state,
+            );
+        });
+
+        let text = find::<Label>(harness.root_widget().as_dyn())
+            .expect("button has a Label child")
+            .text()
+            .to_string();
+        assert_eq!(text, "$3.20 box · 3 rev");
     }
 }
