@@ -1145,7 +1145,7 @@ mod tests {
     /// Uncontrolled hosts observe every open/close transition via
     /// `PopoverAction` — the view's `on_open_change` contract.
     #[test]
-    fn toggling_submits_open_changed_actions() {
+    fn toggling_submits_popover_actions() {
         let (mut h, trigger_id) = harness();
         h.focus_on(Some(trigger_id));
 
