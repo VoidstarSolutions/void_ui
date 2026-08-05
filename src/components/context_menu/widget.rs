@@ -166,7 +166,7 @@ impl PartialEq for MenuRowSpec {
 }
 
 /// A normalized menu navigation key, so the keyboard owner (the inline panel or
-/// the [`ContextMenuArea`](super::area::ContextMenuArea)) forwards intent rather
+/// the [`ContextMenuAreaWidget`](super::area::ContextMenuAreaWidget)) forwards intent rather
 /// than raw `winit` keys into [`MenuPanel::handle_menu_key`].
 #[derive(Clone, Copy)]
 pub(crate) enum MenuKey {
@@ -211,7 +211,7 @@ pub enum MenuAction {
     /// [`MenuRowSpec`] list) was selected.
     Selected(usize),
     /// The menu was dismissed by keyboard (Escape) without a selection. A
-    /// hosting [`ContextMenuArea`](super::area::ContextMenuArea) closes on this;
+    /// hosting [`ContextMenuAreaWidget`](super::area::ContextMenuAreaWidget) closes on this;
     /// a standalone inline menu ignores it.
     Dismissed,
 }
@@ -487,7 +487,7 @@ impl MenuPanel {
     }
 
     /// Set the keyboard-highlighted row, driven externally by a host that owns
-    /// focus (e.g. [`ContextMenuArea`](super::area::ContextMenuArea)). Pass
+    /// focus (e.g. [`ContextMenuAreaWidget`](super::area::ContextMenuAreaWidget)). Pass
     /// `None` to clear. Standalone/inline menus drive their own highlight via
     /// the keyboard handler instead.
     pub fn set_highlighted(this: &mut WidgetMut<'_, Self>, index: Option<usize>) {
@@ -506,7 +506,7 @@ impl MenuPanel {
     /// Left is pressed at this level so a parent collapses us.
     ///
     /// The keyboard owner (the focused inline panel via `mutate_self_later`, or
-    /// the focused [`ContextMenuArea`](super::area::ContextMenuArea) via
+    /// the focused [`ContextMenuAreaWidget`](super::area::ContextMenuAreaWidget) via
     /// `mutate_child_later`) forwards keys here.
     pub(crate) fn handle_menu_key(this: &mut WidgetMut<'_, Self>, key: MenuKey) {
         // Only the outermost panel (this one) submits — emitting from a nested
@@ -765,7 +765,7 @@ impl Widget for MenuPanel {
     /// When focused (the inline / standalone case), forward navigation keys to
     /// [`Self::handle_menu_key`] — run via `mutate_self_later` so it can recurse
     /// into open fly-outs and emit through a `MutateCtx`. (A right-click menu is
-    /// driven the same way by `ContextMenuArea`, which holds focus.)
+    /// driven the same way by `ContextMenuAreaWidget`, which holds focus.)
     fn on_text_event(
         &mut self,
         ctx: &mut EventCtx<'_>,

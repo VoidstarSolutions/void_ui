@@ -124,8 +124,7 @@ pub use code_view::{
 pub use collapsible::{Collapsible, CollapsibleView, collapsible};
 pub use context_menu::{ContextMenuAction, ContextMenuArea};
 pub use context_menu::{
-    ContextMenuAreaBuilder, ContextMenuAreaView, Menu, MenuItem, MenuView, Submenu,
-    context_menu_area, item, menu, submenu,
+    ContextMenuAreaView, Menu, MenuItem, MenuView, Submenu, context_menu_area, item, menu, submenu,
 };
 pub use data_grid::{
     CellAlignment, ClickableRow, ColumnDef, ColumnId, ColumnWidths, DataGrid, ExpansionState,

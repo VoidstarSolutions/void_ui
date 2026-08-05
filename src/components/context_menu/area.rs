@@ -1,4 +1,4 @@
-//! `ContextMenuArea` — wraps arbitrary content and pops a `MenuPanel` at the
+//! `ContextMenuAreaWidget` — wraps arbitrary content and pops a `MenuPanel` at the
 //! cursor on secondary (right) click.
 //!
 //! Hosting strategy mirrors `dropdown_button`'s in-tree fallback: the menu is a
@@ -39,7 +39,7 @@ use crate::overlay_portal::PortalSlot;
 use crate::overlay_scope::{OverlayScope, OverlayScopeHandle};
 
 widget_id_handle!(
-    /// Self-filling handle to a [`ContextMenuArea`]'s widget id, filled at
+    /// Self-filling handle to a [`ContextMenuAreaWidget`]'s widget id, filled at
     /// `Update::WidgetAdded` — mirrors
     /// `dropdown_button::widget::DropdownButtonHandle`.
     ///
@@ -47,7 +47,7 @@ widget_id_handle!(
     /// (`super::view`) so a selection or dismissal can `mutate_later` back
     /// into the area: in portal mode the menu is not a descendant of the
     /// area, so normal action bubbling never reaches
-    /// [`ContextMenuArea::on_action`].
+    /// [`ContextMenuAreaWidget::on_action`].
     ContextMenuHandle
 );
 
@@ -69,7 +69,7 @@ enum Hosting {
 }
 
 /// Wraps `content` and opens a `MenuPanel` at the cursor on right-click.
-pub struct ContextMenuArea {
+pub struct ContextMenuAreaWidget {
     content: WidgetPod<dyn Widget>,
     hosting: Hosting,
     handle: ContextMenuHandle,
@@ -78,7 +78,7 @@ pub struct ContextMenuArea {
     cursor: Point,
 }
 
-impl ContextMenuArea {
+impl ContextMenuAreaWidget {
     /// In-tree constructor (fallback, no scope ancestor): the menu is a
     /// direct descendant, shown/hidden via `open`/`layout`.
     #[must_use]
@@ -218,15 +218,15 @@ impl ContextMenuArea {
 /// portal-mounted context menu on an outside press (see
 /// `crate::overlay_portal::DismissHook`). Also reused directly by
 /// `ContextMenuContentView::message` (see `super::view`) for the
-/// selection/Escape close path — unlike `dropdown_button`, `ContextMenuArea`
+/// selection/Escape close path — unlike `dropdown_button`, `ContextMenuAreaWidget`
 /// has no host-controlled `open` prop, so both paths share this one
 /// unconditional close.
 pub(crate) fn context_menu_dismiss_hook(mut w: WidgetMut<'_, dyn Widget>) {
-    let mut area = w.downcast::<ContextMenuArea>();
-    ContextMenuArea::mark_closed(&mut area);
+    let mut area = w.downcast::<ContextMenuAreaWidget>();
+    ContextMenuAreaWidget::mark_closed(&mut area);
 }
 
-impl ContextMenuArea {
+impl ContextMenuAreaWidget {
     /// Sync `open` after an external close notification (outside-press
     /// dismissal via [`context_menu_dismiss_hook`], or a portal-mounted
     /// selection/Escape via `ContextMenuContentView::message`). No-op if
@@ -241,7 +241,7 @@ impl ContextMenuArea {
     }
 }
 
-impl Widget for ContextMenuArea {
+impl Widget for ContextMenuAreaWidget {
     type Action = ContextMenuAction;
 
     fn on_pointer_event(
@@ -475,7 +475,7 @@ mod tests {
 
     #[test]
     fn clamp_keeps_menu_at_cursor_when_it_fits() {
-        let p = ContextMenuArea::clamp(
+        let p = ContextMenuAreaWidget::clamp(
             Point::new(20.0, 30.0),
             Size::new(100.0, 80.0),
             Size::new(400.0, 400.0),
@@ -485,7 +485,7 @@ mod tests {
 
     #[test]
     fn clamp_shifts_menu_back_inside_the_right_and_bottom_edges() {
-        let p = ContextMenuArea::clamp(
+        let p = ContextMenuAreaWidget::clamp(
             Point::new(380.0, 360.0),
             Size::new(100.0, 80.0),
             Size::new(400.0, 400.0),
@@ -495,7 +495,7 @@ mod tests {
 
     #[test]
     fn clamp_never_goes_negative_for_a_menu_larger_than_the_container() {
-        let p = ContextMenuArea::clamp(
+        let p = ContextMenuAreaWidget::clamp(
             Point::new(10.0, 10.0),
             Size::new(500.0, 500.0),
             Size::new(400.0, 400.0),
@@ -537,7 +537,7 @@ mod tests {
             .prepare()
             .erased();
         let menu = MenuPanel::new(vec![row(0, "Copy"), row(1, "Paste")], &theme).hosted();
-        let area = ContextMenuArea::new(content, NewWidget::new(menu));
+        let area = ContextMenuAreaWidget::new(content, NewWidget::new(menu));
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(area));
 
         // Right-click inside the area opens the menu.
@@ -595,7 +595,7 @@ mod tests {
             .prepare()
             .erased();
         let menu = MenuPanel::new(vec![row(0, "Copy")], &theme).hosted();
-        let area = ContextMenuArea::new(content, NewWidget::new(menu));
+        let area = ContextMenuAreaWidget::new(content, NewWidget::new(menu));
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(area));
         let root_id = h.root_id();
 
@@ -648,7 +648,7 @@ mod tests {
             .prepare()
             .erased();
         let menu = MenuPanel::new(vec![row(0, "Copy"), row(1, "Paste")], &theme).hosted();
-        let area = ContextMenuArea::new(content, NewWidget::new(menu));
+        let area = ContextMenuAreaWidget::new(content, NewWidget::new(menu));
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(area));
 
         h.mouse_move(Point::new(40.0, 30.0));
@@ -702,7 +702,7 @@ mod tests {
             &theme,
         )
         .hosted();
-        let area = ContextMenuArea::new(content, NewWidget::new(menu));
+        let area = ContextMenuAreaWidget::new(content, NewWidget::new(menu));
         let mut h = TestHarness::create(default_property_set(), NewWidget::new(area));
         let root = h.root_id();
         h.redraw();
@@ -753,7 +753,7 @@ mod tests {
         }
     }
 
-    /// Builds a scope whose `content` is a portal-mode `ContextMenuArea`
+    /// Builds a scope whose `content` is a portal-mode `ContextMenuAreaWidget`
     /// (200×120 inner filler) and whose `portal_children` holds the matching
     /// `MenuPanel`, registered by hand at `key` exactly as the view layer
     /// would register it via `ContextMenuContentView` (see Task 3) — but
@@ -773,8 +773,12 @@ mod tests {
             .prepare()
             .erased();
         let scope_handle = OverlayScopeHandle::new();
-        let area =
-            ContextMenuArea::new_portal(inner, ContextMenuHandle::new(), scope_handle.clone(), key);
+        let area = ContextMenuAreaWidget::new_portal(
+            inner,
+            ContextMenuHandle::new(),
+            scope_handle.clone(),
+            key,
+        );
         let content = NewWidget::new(area).erased();
         let menu = MenuPanel::new(
             vec![portal_test_row(0, "Copy"), portal_test_row(1, "Paste")],
@@ -802,11 +806,11 @@ mod tests {
 
     fn with_portal_area<R>(
         h: &mut masonry::testing::TestHarness<OverlayScope>,
-        f: impl FnOnce(&mut WidgetMut<'_, ContextMenuArea>) -> R,
+        f: impl FnOnce(&mut WidgetMut<'_, ContextMenuAreaWidget>) -> R,
     ) -> R {
         h.edit_root_widget(|mut wm| {
             let mut content = OverlayScope::content_mut(&mut wm);
-            let mut area = content.downcast::<ContextMenuArea>();
+            let mut area = content.downcast::<ContextMenuAreaWidget>();
             f(&mut area)
         })
     }
@@ -893,7 +897,7 @@ mod tests {
         // `ContextMenuContentView::message` via `mutate_later` (Task 3);
         // exercised directly here since that view doesn't exist without
         // going through the full xilem View layer.
-        with_portal_area(&mut h, ContextMenuArea::mark_closed);
+        with_portal_area(&mut h, ContextMenuAreaWidget::mark_closed);
         assert!(
             !with_portal_area(&mut h, |a| a.widget.open),
             "mark_closed must close the area"
@@ -958,8 +962,12 @@ mod tests {
             .height(120.0.px())
             .prepare()
             .erased();
-        let area =
-            ContextMenuArea::new_portal(inner, ContextMenuHandle::new(), scope_handle.clone(), key);
+        let area = ContextMenuAreaWidget::new_portal(
+            inner,
+            ContextMenuHandle::new(),
+            scope_handle.clone(),
+            key,
+        );
 
         // Opaque and pointer-consuming — a stand-in for "a panel painted
         // after the area." Sized/aligned to cover the window from y=56 down
@@ -1006,14 +1014,14 @@ mod tests {
         // The area is the ZStack's first (index 0) child — unlike
         // `portal_scope_harness`'s scenes, `content` here is the `ZStack`,
         // not the area directly, so `with_portal_area` (which downcasts
-        // straight to `ContextMenuArea`) doesn't apply; reach through the
+        // straight to `ContextMenuAreaWidget`) doesn't apply; reach through the
         // `ZStack` by index instead.
         let area_open = |h: &mut TestHarness<OverlayScope>| {
             h.edit_root_widget(|mut wm| {
                 let mut content = OverlayScope::content_mut(&mut wm);
                 let mut zstack = content.downcast::<ZStack>();
                 let mut area = CollectionWidget::get_mut(&mut zstack, 0);
-                area.downcast::<ContextMenuArea>().widget.open
+                area.downcast::<ContextMenuAreaWidget>().widget.open
             })
         };
 
