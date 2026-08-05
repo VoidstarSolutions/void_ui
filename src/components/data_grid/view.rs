@@ -33,7 +33,7 @@ use xilem::view::{
 };
 use xilem::{AnyWidgetView, Pod, ViewCtx};
 
-use super::column::{CellAlign, CellRenderer, ColumnDef, ColumnId, TextProjector};
+use super::column::{CellAlignment, CellRenderer, ColumnDef, ColumnId, TextProjector};
 use super::column_strip::{ColumnSeparatorStyle, column_strip};
 use super::copy_shortcut::{CopyOnShortcut, CopyRequested};
 use super::expand::{disclosure_hit_width, disclosure_toggle, tree_indent_step};
@@ -227,18 +227,18 @@ struct ColumnRender<R, State> {
     /// alongside the width so header, body, and filter strips all derive the
     /// same weight list and distribute surplus identically.
     flex: f64,
-    align: CellAlign,
+    align: CellAlignment,
     render: CellRenderer<R, State>,
 }
 
-/// Translates [`CellAlign`] into the [`MainAxisAlignment`] used by the
+/// Translates [`CellAlignment`] into the [`MainAxisAlignment`] used by the
 /// single-child flex wrapper that aligns the cell view inside its
 /// fixed-width slot.
-const fn align_to_main(align: CellAlign) -> MainAxisAlignment {
+const fn align_to_main(align: CellAlignment) -> MainAxisAlignment {
     match align {
-        CellAlign::Start => MainAxisAlignment::Start,
-        CellAlign::Center => MainAxisAlignment::Center,
-        CellAlign::End => MainAxisAlignment::End,
+        CellAlignment::Start => MainAxisAlignment::Start,
+        CellAlignment::Center => MainAxisAlignment::Center,
+        CellAlignment::End => MainAxisAlignment::End,
     }
 }
 
@@ -1076,7 +1076,7 @@ where
 
 /// Wraps a cell view in a fixed-width `sized_box` with the cell's
 /// content packed via a single-child `flex_row` whose
-/// `main_axis_alignment` is derived from [`CellAlign`].
+/// `main_axis_alignment` is derived from [`CellAlignment`].
 ///
 /// Returning a boxed `AnyWidgetView` keeps the concrete type out of
 /// the call sites in the header / body builders (which already
@@ -1084,7 +1084,7 @@ where
 fn aligned_cell<State: 'static, Action: 'static>(
     inner: Box<AnyWidgetView<State, Action>>,
     width: f64,
-    align: CellAlign,
+    align: CellAlignment,
 ) -> Box<AnyWidgetView<State, Action>> {
     let aligned = flex_row((flex_item(inner, 0.0),))
         .main_axis_alignment(align_to_main(align))
@@ -1693,7 +1693,7 @@ mod tests {
     use super::{data_grid, decompose_columns, project_tsv};
     use crate::Theme;
     use crate::collection::{CollectionBodyWidget, IdSource, SelectionState};
-    use crate::components::data_grid::column::{CellAlign, TextProjector, text_column};
+    use crate::components::data_grid::column::{CellAlignment, TextProjector, text_column};
     use crate::components::data_grid::width::ColumnWidths;
 
     /// Row id == the row value itself, so test slices read naturally:
@@ -1814,8 +1814,8 @@ mod tests {
         // must trip the uniqueness assertion. (Release builds warn once
         // instead; that path can't be asserted in a unit test.)
         let cols = vec![
-            text_column::<u64, (), _>("Price", 80.0, CellAlign::End, |r: &u64| r.to_string()),
-            text_column::<u64, (), _>("Price", 80.0, CellAlign::End, |r: &u64| r.to_string()),
+            text_column::<u64, (), _>("Price", 80.0, CellAlignment::End, |r: &u64| r.to_string()),
+            text_column::<u64, (), _>("Price", 80.0, CellAlignment::End, |r: &u64| r.to_string()),
         ];
         let _ = decompose_columns(cols, &ColumnWidths::new());
     }
@@ -1830,7 +1830,7 @@ mod tests {
         let cols = vec![text_column::<u64, (), _>(
             "N",
             80.0,
-            CellAlign::Start,
+            CellAlignment::Start,
             |r: &u64| r.to_string(),
         )];
         let _ = data_grid::<(), u64, ()>(cols)
@@ -1853,9 +1853,9 @@ mod tests {
         use super::super::column::ColumnId;
 
         let cols = vec![
-            text_column::<u64, (), _>("A", 100.0, CellAlign::Start, |r: &u64| r.to_string())
+            text_column::<u64, (), _>("A", 100.0, CellAlignment::Start, |r: &u64| r.to_string())
                 .flex(1.0),
-            text_column::<u64, (), _>("B", 100.0, CellAlign::Start, |r: &u64| r.to_string())
+            text_column::<u64, (), _>("B", 100.0, CellAlignment::Start, |r: &u64| r.to_string())
                 .flex(2.0),
         ];
         let mut widths = ColumnWidths::new();
@@ -1917,7 +1917,7 @@ mod tests {
         let columns = vec![text_column::<u64, State, _>(
             "Value",
             80.0,
-            CellAlign::End,
+            CellAlignment::End,
             |r: &u64| r.to_string(),
         )];
         let view = data_grid::<State, u64, ()>(columns)
@@ -1963,7 +1963,7 @@ mod tests {
         let columns = vec![text_column::<u64, State, _>(
             "Value",
             80.0,
-            CellAlign::End,
+            CellAlignment::End,
             |r: &u64| r.to_string(),
         )];
         let view = data_grid::<State, u64, Reorder>(columns)

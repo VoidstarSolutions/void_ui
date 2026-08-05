@@ -10,8 +10,8 @@
 //! fully-qualified `crate::components::foo::Foo` paths, never the
 //! re-export) and only breaks for a downstream consumer.
 //!
-//! Two such bugs have already shipped: `data_grid`'s `SeparatorStyle`
-//! collided with `separator`'s own `SeparatorStyle` at the crate root
+//! Two such bugs have already shipped: `data_grid`'s `SeparatorVariant`
+//! collided with `separator`'s own `SeparatorVariant` at the crate root
 //! (issue #156, fixed by renaming the former to `ColumnSeparatorStyle`), and
 //! `ButtonIcon` exposed a `LucideIcon` type name the crate never actually
 //! exported (issue #157). Both are caught by the explicit `use` list below:
@@ -29,7 +29,7 @@ use std::sync::Arc;
 #[allow(unused_imports)] // exercised by name below, not necessarily constructed
 use void_ui::{
     Alert, AlertVariant, Autocomplete, AutocompleteAction, AutocompleteView, Badge, Breadcrumb,
-    BreadcrumbSegment, Button, ButtonGroup, ButtonVariant, ButtonView, Card, CellAlign, Checkbox,
+    BreadcrumbSegment, Button, ButtonGroup, ButtonVariant, ButtonView, Card, CellAlignment, Checkbox,
     CheckboxPress, CheckboxView, ClickableRow, Clipboard, ClipboardView, CloseCallback,
     Collapsible, CollapsibleView, ColumnDef, ColumnId, ColumnWidths, ComponentKind, ContentButton,
     ContentButtonView, ContextMenuAction, ContextMenuArea, ContextMenuAreaBuilder,
@@ -43,7 +43,7 @@ use void_ui::{
     Radio, RadioView, RangeSlider, RangeSliderView, ReadOnlyText, ReadOnlyTextView, Resizable,
     ResizablePanel, ResizablePanels, ResizablePanelsView, ResizableView, RowClickAction,
     RowComparator, RowFilter, RustHighlighter, ScrollBarVisibility, ScrollContainer,
-    ScrollContainerView, ScrollState, SelectionState, Separator, SeparatorStyle, SidebarItem,
+    ScrollContainerView, ScrollState, SelectionState, Separator, SeparatorVariant, SidebarItem,
     SidebarItemView, SidebarNav, SidebarNavItem, SidebarNavView, SidebarPanel, SidebarPanelView,
     Skeleton, SkeletonAnimation, SkeletonShape, SkeletonView, Slider, SliderView, SortDirection,
     SortState, Spinner, SpinnerView, StatusDot, Submenu, TabItem, Tabs, TabsVariant, TabsView,
@@ -99,14 +99,14 @@ fn view_ctx() -> ViewCtx {
     ViewCtx::new(Arc::new(NoopProxy), runtime)
 }
 
-/// `SeparatorStyle` is `separator`'s own type. Before issue #156's fix,
-/// `data_grid` re-exported an unrelated same-named `SeparatorStyle` at the
-/// crate root, so `void_ui::SeparatorStyle` was ambiguous for any consumer
+/// `SeparatorVariant` is `separator`'s own type. Before issue #156's fix,
+/// `data_grid` re-exported an unrelated same-named `SeparatorVariant` at the
+/// crate root, so `void_ui::SeparatorVariant` was ambiguous for any consumer
 /// who wrote it out (as opposed to internal code, which only ever used
 /// fully-qualified module paths and never noticed). Referencing the bare
 /// name here is what would have caught that.
 #[allow(dead_code)]
-fn separator_style_resolves_unambiguously(style: SeparatorStyle) -> SeparatorStyle {
+fn separator_style_resolves_unambiguously(style: SeparatorVariant) -> SeparatorVariant {
     style
 }
 

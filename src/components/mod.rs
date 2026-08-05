@@ -105,7 +105,7 @@ pub use context_menu::{
     context_menu_area, item, menu, submenu,
 };
 pub use data_grid::{
-    CellAlign, ClickableRow, ColumnDef, ColumnId, ColumnWidths, DataGrid, ExpansionState,
+    CellAlignment, ClickableRow, ColumnDef, ColumnId, ColumnWidths, DataGrid, ExpansionState,
     FilterState, MIN_COLUMN_WIDTH, RowClickAction, RowComparator, RowFilter, ScrollState,
     SelectionState, SortDirection, SortState, clickable_row, colored_text_column, data_grid,
     filtered_indices, optional_text_column, sort_indices, text_column,
@@ -138,7 +138,7 @@ pub use resizable::{
 pub use scroll_container::{
     ScrollBarVisibility, ScrollContainer, ScrollContainerView, scroll_container,
 };
-pub use separator::{Orientation, Separator, SeparatorStyle, separator};
+pub use separator::{Orientation, Separator, SeparatorVariant, separator};
 pub use sidebar::{
     SidebarItem, SidebarItemView, SidebarNav, SidebarNavItem, SidebarNavView, SidebarPanel,
     SidebarPanelView, sidebar_item, sidebar_nav, sidebar_panel,

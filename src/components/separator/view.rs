@@ -28,7 +28,7 @@ pub enum Orientation {
 
 /// Visual style of the separator line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SeparatorStyle {
+pub enum SeparatorVariant {
     Solid,
     Dashed,
 }
@@ -39,7 +39,7 @@ pub enum SeparatorStyle {
 #[must_use = "Separator does nothing until rendered with .render(&theme)"]
 pub struct Separator {
     orientation: Orientation,
-    style: SeparatorStyle,
+    style: SeparatorVariant,
     color: Option<Color>,
     label: Option<String>,
 }
@@ -48,7 +48,7 @@ pub struct Separator {
 pub fn separator() -> Separator {
     Separator {
         orientation: Orientation::Horizontal,
-        style: SeparatorStyle::Solid,
+        style: SeparatorVariant::Solid,
         color: None,
         label: None,
     }
@@ -63,7 +63,7 @@ impl Separator {
 
     /// Render as a dashed line instead of solid.
     pub fn dashed(mut self) -> Self {
-        self.style = SeparatorStyle::Dashed;
+        self.style = SeparatorVariant::Dashed;
         self
     }
 
@@ -119,7 +119,7 @@ impl Separator {
 #[must_use = "View values do nothing unless provided to Xilem."]
 pub struct SeparatorLineView {
     pub(super) orientation: Orientation,
-    pub(super) style: SeparatorStyle,
+    pub(super) style: SeparatorVariant,
     pub(super) color: Color,
 }
 
@@ -183,7 +183,7 @@ mod tests {
     use xilem::ViewCtx;
     use xilem::core::View;
 
-    use super::{Orientation, SeparatorStyle, separator};
+    use super::{Orientation, SeparatorVariant, separator};
     use crate::{Theme, test_support};
 
     #[derive(Default)]
@@ -193,7 +193,7 @@ mod tests {
     fn defaults_to_horizontal_solid_no_color_or_label_override() {
         let s = separator();
         assert_eq!(s.orientation, Orientation::Horizontal);
-        assert_eq!(s.style, SeparatorStyle::Solid);
+        assert_eq!(s.style, SeparatorVariant::Solid);
         assert!(s.color.is_none());
         assert!(s.label.is_none());
     }
@@ -207,7 +207,7 @@ mod tests {
             .color(theme.palette.accent)
             .label("Section");
         assert_eq!(s.orientation, Orientation::Vertical);
-        assert_eq!(s.style, SeparatorStyle::Dashed);
+        assert_eq!(s.style, SeparatorVariant::Dashed);
         assert_eq!(s.color, Some(theme.palette.accent));
         assert_eq!(s.label.as_deref(), Some("Section"));
     }

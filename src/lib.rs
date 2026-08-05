@@ -70,8 +70,8 @@ pub use animated_clip::AnimatedClip;
 /// (re-exported as `menu_item`), plus `ComponentKind`.
 pub use components::{
     Alert, AlertVariant, Autocomplete, AutocompleteAction, AutocompleteView, Badge, Breadcrumb,
-    BreadcrumbSegment, Button, ButtonGroup, ButtonVariant, ButtonView, Card, CellAlign, Checkbox,
-    CheckboxPress, CheckboxView, ClickableRow, Clipboard, ClipboardView, CloseCallback,
+    BreadcrumbSegment, Button, ButtonGroup, ButtonVariant, ButtonView, Card, CellAlignment,
+    Checkbox, CheckboxPress, CheckboxView, ClickableRow, Clipboard, ClipboardView, CloseCallback,
     Collapsible, CollapsibleView, ColumnDef, ColumnId, ColumnWidths, ComponentKind, ContentButton,
     ContentButtonView, ContextMenuAction, ContextMenuArea, ContextMenuAreaBuilder,
     ContextMenuAreaView, CurrencyFormat, CurrencyInput, DEFAULT_DELAY_MS,
@@ -85,7 +85,7 @@ pub use components::{
     RangeSlider, RangeSliderView, ReadOnlyText, ReadOnlyTextView, Resizable, ResizablePanel,
     ResizablePanels, ResizablePanelsView, ResizableView, RowClickAction, RowComparator, RowFilter,
     RustHighlighter, ScrollBarVisibility, ScrollContainer, ScrollContainerView, ScrollState,
-    SelectionState, Separator, SeparatorStyle, SidebarItem, SidebarItemView, SidebarNav,
+    SelectionState, Separator, SeparatorVariant, SidebarItem, SidebarItemView, SidebarNav,
     SidebarNavItem, SidebarNavView, SidebarPanel, SidebarPanelView, Skeleton, SkeletonAnimation,
     SkeletonShape, SkeletonView, Slider, SliderView, SortDirection, SortState, Spinner,
     SpinnerView, StatusDot, Submenu, TabItem, Tabs, TabsVariant, TabsView, TitleState, Toggle,
@@ -131,7 +131,7 @@ mod root_export_tests {
         use crate::{
             Alert, AlertVariant, Autocomplete, AutocompleteAction, AutocompleteView, Badge,
             Breadcrumb, BreadcrumbSegment, Button, ButtonGroup, ButtonVariant, ButtonView, Card,
-            CellAlign, Checkbox, CheckboxPress, CheckboxView, ClickableRow, Clipboard,
+            CellAlignment, Checkbox, CheckboxPress, CheckboxView, ClickableRow, Clipboard,
             ClipboardView, CloseCallback, Collapsible, CollapsibleView, ColumnDef, ColumnId,
             ColumnWidths, ComponentKind, ContentButton, ContentButtonView, ContextMenuAction,
             ContextMenuArea, ContextMenuAreaBuilder, ContextMenuAreaView, CurrencyFormat,
@@ -146,7 +146,7 @@ mod root_export_tests {
             RangeSliderView, ReadOnlyText, ReadOnlyTextView, Resizable, ResizablePanel,
             ResizablePanels, ResizablePanelsView, ResizableView, RowClickAction, RowComparator,
             RowFilter, RustHighlighter, ScrollBarVisibility, ScrollContainer, ScrollContainerView,
-            ScrollState, SelectionState, Separator, SeparatorStyle, SidebarItem, SidebarItemView,
+            ScrollState, SelectionState, Separator, SeparatorVariant, SidebarItem, SidebarItemView,
             SidebarNav, SidebarNavItem, SidebarNavView, SidebarPanel, SidebarPanelView, Skeleton,
             SkeletonAnimation, SkeletonShape, SkeletonView, Slider, SliderView, SortDirection,
             SortState, Spinner, SpinnerView, StatusDot, Submenu, TabItem, Tabs, TabsVariant,
