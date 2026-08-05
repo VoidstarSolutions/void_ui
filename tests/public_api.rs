@@ -10,8 +10,8 @@
 //! fully-qualified `crate::components::foo::Foo` paths, never the
 //! re-export) and only breaks for a downstream consumer.
 //!
-//! Two such bugs have already shipped: `data_grid`'s `SeparatorVariant`
-//! collided with `separator`'s own `SeparatorVariant` at the crate root
+//! Two such bugs have already shipped: `data_grid`'s `SeparatorStyle`
+//! collided with `separator`'s own `SeparatorStyle` at the crate root
 //! (issue #156, fixed by renaming the former to `ColumnSeparatorStyle`), and
 //! `ButtonIcon` exposed a `LucideIcon` type name the crate never actually
 //! exported (issue #157). Both are caught by the explicit `use` list below:
