@@ -17,14 +17,7 @@ use xilem::view::{CrossAxisAlignment, FlexExt as _, flex_col, flex_row};
 use xilem::{AnyWidgetView, Pod, ViewCtx};
 
 use super::widget::SeparatorWidget;
-use crate::Theme;
-
-/// Orientation of the separator line.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Orientation {
-    Horizontal,
-    Vertical,
-}
+use crate::{Orientation, Theme};
 
 /// Visual style of the separator line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -183,8 +176,8 @@ mod tests {
     use xilem::ViewCtx;
     use xilem::core::View;
 
-    use super::{Orientation, SeparatorVariant, separator};
-    use crate::{Theme, test_support};
+    use super::{SeparatorVariant, separator};
+    use crate::{Orientation, Theme, test_support};
 
     #[derive(Default)]
     struct AppState;

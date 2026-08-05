@@ -23,4 +23,4 @@ pub mod demo;
 mod view;
 mod widget;
 
-pub use view::{Orientation, Separator, SeparatorVariant, separator};
+pub use view::{Separator, SeparatorVariant, separator};

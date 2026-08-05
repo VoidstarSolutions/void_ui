@@ -140,7 +140,7 @@ pub use resizable::{
 pub use scroll_container::{
     ScrollBarVisibility, ScrollContainer, ScrollContainerView, scroll_container,
 };
-pub use separator::{Orientation, Separator, SeparatorVariant, separator};
+pub use separator::{Separator, SeparatorVariant, separator};
 pub use sidebar::{
     SidebarItem, SidebarItemView, SidebarNav, SidebarNavItem, SidebarNavView, SidebarPanel,
     SidebarPanelView, sidebar_item, sidebar_nav, sidebar_panel,

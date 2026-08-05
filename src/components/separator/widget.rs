@@ -10,7 +10,8 @@ use masonry::kurbo::{Axis, Point, Rect, Size};
 use masonry::layout::{LenReq, Length};
 use masonry::peniko::Color;
 
-use super::view::{Orientation, SeparatorVariant};
+use super::view::SeparatorVariant;
+use crate::Orientation;
 
 /// Length of the drawn segment in a dashed separator's pattern — dash-pattern
 /// chrome, not density-scaled.
@@ -154,7 +155,8 @@ mod tests {
     use masonry::testing::TestHarness;
 
     use super::SeparatorWidget;
-    use crate::components::separator::view::{Orientation, SeparatorVariant};
+    use crate::Orientation;
+    use crate::components::separator::view::SeparatorVariant;
 
     fn widget() -> SeparatorWidget {
         SeparatorWidget {
