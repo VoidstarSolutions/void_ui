@@ -39,6 +39,27 @@
 //! 4. `mod view;` is always private — nothing outside a component needs
 //!    the raw module path, since every type callers need is re-exported
 //!    through the component's own `mod.rs`.
+//!
+//! ## Render return type
+//!
+//! `render` returns one of three shapes. Pick the most specific one that
+//! compiles — never reach for a heavier shape than the composition needs, as
+//! each step down erases more type information (and `Box` adds an allocation):
+//!
+//! 1. A concrete `FooView` when the component ships its own `View` impl
+//!    (bespoke rebuild logic in `view.rs`). Most interactive widgets —
+//!    `button`, `checkbox`, `slider`, `tabs` — do this; the named type lets a
+//!    caller store the view and keeps rebuild allocation-free.
+//! 2. `impl WidgetView<State, Action> + use<...>` when `render` is a pure
+//!    composition of other views whose *outermost* view has a single concrete
+//!    type. Per-child variation is fine here — absorb it into a homogeneous
+//!    `Vec<Box<AnyWidgetView<..>>>` handed to one flex container, so the
+//!    return itself stays a single opaque type (`breadcrumb`, `data_grid`).
+//! 3. `Box<AnyWidgetView<State, Action>>` only when the *outermost* expression
+//!    itself branches into differing concrete types that cannot be unified —
+//!    an optional border or title, an orientation switch (`card`, `group_box`,
+//!    `separator`, `meter`, `form`). Erase once at the return rather than
+//!    duplicate the whole builder per branch.
 
 pub(crate) mod access_wrap;
 pub mod alert;
