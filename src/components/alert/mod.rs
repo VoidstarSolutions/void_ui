@@ -22,4 +22,4 @@
 pub mod demo;
 mod view;
 
-pub use view::{Alert, AlertVariant, CloseCallback, alert};
+pub use view::{Alert, AlertVariant, alert};

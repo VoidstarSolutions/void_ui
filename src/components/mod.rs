@@ -51,6 +51,7 @@ pub mod card;
 pub mod checkbox;
 pub(crate) mod click;
 pub mod clipboard;
+mod close_callback;
 pub mod code_view;
 pub mod collapsible;
 pub mod context_menu;
@@ -83,9 +84,9 @@ pub mod tabs;
 pub mod toggle;
 pub mod tooltip;
 
-pub use alert::{Alert, AlertVariant, CloseCallback, alert};
+pub use alert::{Alert, AlertVariant, alert};
 pub use autocomplete::{Autocomplete, AutocompleteAction, AutocompleteView, autocomplete};
-pub use badge::{Badge, DismissCallback, badge, pill};
+pub use badge::{Badge, badge, pill};
 pub use breadcrumb::{Breadcrumb, BreadcrumbSegment, breadcrumb, segment};
 pub use button::{
     Button, ButtonVariant, ButtonView, ContentButton, ContentButtonView, button, content_button,
@@ -94,6 +95,7 @@ pub use button_group::{ButtonGroup, button_group, toggle_button_group};
 pub use card::{Card, card};
 pub use checkbox::{Checkbox, CheckboxPress, CheckboxView, checkbox};
 pub use clipboard::{Clipboard, ClipboardView, clipboard};
+pub use close_callback::CloseCallback;
 pub use code_view::{
     Highlighter, ReadOnlyText, ReadOnlyTextView, RustHighlighter, TokenKind, TokenSpan,
     read_only_text,

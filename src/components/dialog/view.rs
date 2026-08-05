@@ -52,44 +52,14 @@ use xilem::{Pod, ViewCtx, WidgetView};
 use super::widget::{DialogDismissed, DialogHost};
 use crate::Theme;
 use crate::components::button::{ButtonVariant, button};
+use crate::components::close_callback::CloseCallback;
 use crate::components::icon::IconName;
 use crate::overlay::SurfaceStyle;
 use crate::overlay_portal::{OverlayPortal, PortalContentView, PortalPlacement};
 use crate::overlay_scope::root_portal_lookup;
 
 /// Erased close callback, present only when [`Dialog::on_close`] was set.
-type OnClose<State, Action> = Arc<dyn Fn(&mut State) -> Action + Send + Sync>;
-
-/// Implemented by `()` (no close callback) and by `Fn(&mut State) ->
-/// Action` closures, so [`Dialog::on_close`] is optional without boxing the
-/// callback. Mirrors [`crate::components::alert::CloseCallback`].
-pub trait CloseCallback<State, Action>: Send + Sync + 'static {
-    /// Whether outside-click dismissal and the close button should be active.
-    #[must_use]
-    fn enabled() -> bool {
-        false
-    }
-
-    /// Invoke the callback. Only called when [`Self::enabled`] is `true`.
-    fn call(&self, _state: &mut State) -> Action {
-        unreachable!("CloseCallback::call on a disabled callback")
-    }
-}
-
-impl<State: 'static, Action: 'static> CloseCallback<State, Action> for () {}
-
-impl<State, Action, F> CloseCallback<State, Action> for F
-where
-    F: Fn(&mut State) -> Action + Send + Sync + 'static,
-{
-    fn enabled() -> bool {
-        true
-    }
-
-    fn call(&self, state: &mut State) -> Action {
-        self(state)
-    }
-}
+type OnCloseFn<State, Action> = Arc<dyn Fn(&mut State) -> Action + Send + Sync>;
 
 /// Builder for a dialog.
 ///
@@ -161,9 +131,9 @@ where
     where
         D: CloseCallback<State, Action>,
     {
-        let on_close: Option<OnClose<State, Action>> = D::enabled().then(|| {
+        let on_close: Option<OnCloseFn<State, Action>> = D::enabled().then(|| {
             let on_close = self.on_close;
-            Arc::new(move |state: &mut State| on_close.call(state)) as OnClose<State, Action>
+            Arc::new(move |state: &mut State| on_close.call(state)) as OnCloseFn<State, Action>
         });
 
         let close_button = self
@@ -202,7 +172,7 @@ where
 pub struct DialogView<State, Action> {
     open: bool,
     content: Arc<PortalContentView<State, Action>>,
-    on_close: Option<OnClose<State, Action>>,
+    on_close: Option<OnCloseFn<State, Action>>,
     theme: Theme,
     phantom: PhantomData<fn(State) -> Action>,
 }

@@ -76,12 +76,12 @@ fn dismissible_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S>
         flex_row((
             pill("react")
                 .variant(AlertVariant::Info)
-                .on_dismiss(|_: &mut S| {})
+                .on_close(|_: &mut S| {})
                 .render(theme),
             pill("rust")
                 .variant(AlertVariant::Success)
                 .icon(IconName::Check)
-                .on_dismiss(|_: &mut S| {})
+                .on_close(|_: &mut S| {})
                 .render(theme),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Center)

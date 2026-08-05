@@ -26,6 +26,7 @@ use xilem::WidgetView;
 use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, flex_row, sized_box};
 
+use crate::components::close_callback::CloseCallback;
 use crate::{AlertVariant, ButtonVariant, IconName, Theme, button, icon, label};
 
 /// Shape of a [`Badge`]'s outline.
@@ -38,39 +39,6 @@ enum Shape {
     Pill,
 }
 
-/// Optional dismiss callback for a [`Badge`].
-///
-/// Implemented for `()` (no dismiss button) and for any
-/// `Fn(&mut State) -> Action`, so [`Badge::on_dismiss`] is optional without
-/// boxing the callback. Mirrors `alert`'s `CloseCallback`.
-pub trait DismissCallback<State, Action>: Send + Sync + 'static {
-    /// Whether this callback should produce a dismiss button.
-    #[must_use]
-    fn enabled() -> bool {
-        false
-    }
-
-    /// Invoke the callback. Only called when [`Self::enabled`] is `true`.
-    fn call(&self, _state: &mut State) -> Action {
-        unreachable!("DismissCallback::call on a disabled callback")
-    }
-}
-
-impl<State: 'static, Action: 'static> DismissCallback<State, Action> for () {}
-
-impl<State, Action, F> DismissCallback<State, Action> for F
-where
-    F: Fn(&mut State) -> Action + Send + Sync + 'static,
-{
-    fn enabled() -> bool {
-        true
-    }
-
-    fn call(&self, state: &mut State) -> Action {
-        self(state)
-    }
-}
-
 /// Builder for an inline chip.
 ///
 /// Created with [`badge`] or [`pill`]. Materialize as a xilem view via
@@ -81,7 +49,7 @@ pub struct Badge<C = ()> {
     variant: AlertVariant,
     shape: Shape,
     icon: Option<IconName>,
-    on_dismiss: C,
+    on_close: C,
 }
 
 /// Create a badge with slightly rounded corners.
@@ -94,7 +62,7 @@ pub fn badge(text: impl Into<ArcStr>) -> Badge {
         variant: AlertVariant::Default,
         shape: Shape::Rounded,
         icon: None,
-        on_dismiss: (),
+        on_close: (),
     }
 }
 
@@ -108,7 +76,7 @@ pub fn pill(text: impl Into<ArcStr>) -> Badge {
         variant: AlertVariant::Default,
         shape: Shape::Pill,
         icon: None,
-        on_dismiss: (),
+        on_close: (),
     }
 }
 
@@ -126,15 +94,15 @@ impl<C> Badge<C> {
         self
     }
 
-    /// Show a trailing dismiss (X) button that invokes `on_dismiss` when
+    /// Show a trailing dismiss (X) button that invokes `on_close` when
     /// clicked.
-    pub fn on_dismiss<F>(self, on_dismiss: F) -> Badge<F> {
+    pub fn on_close<F>(self, on_close: F) -> Badge<F> {
         Badge {
             text: self.text,
             variant: self.variant,
             shape: self.shape,
             icon: self.icon,
-            on_dismiss,
+            on_close,
         }
     }
 
@@ -147,7 +115,7 @@ impl<C> Badge<C> {
     where
         State: 'static,
         Action: 'static,
-        C: DismissCallback<State, Action>,
+        C: CloseCallback<State, Action>,
     {
         let (fg, bg, border) = self.variant.colors(&theme.palette);
         let radius = match self.shape {
@@ -175,9 +143,9 @@ impl<C> Badge<C> {
         )
         .padding(Padding::bottom(Length::px(1.0)));
 
-        let on_dismiss = self.on_dismiss;
+        let on_close = self.on_close;
         let dismiss_view = C::enabled().then(|| {
-            button(move |state: &mut State| on_dismiss.call(state))
+            button(move |state: &mut State| on_close.call(state))
                 .icon(IconName::X)
                 .variant(ButtonVariant::Text)
                 .tint(fg)
@@ -271,13 +239,13 @@ mod tests {
         let _ = badge("Tag")
             .variant(AlertVariant::Info)
             .icon(IconName::Info)
-            .on_dismiss(|_: &mut AppState| {})
+            .on_close(|_: &mut AppState| {})
             .render::<AppState, ()>(&theme)
             .build(&mut ctx, &mut state);
         let _ = pill("Done")
             .variant(AlertVariant::Success)
             .icon(IconName::CheckCircle)
-            .on_dismiss(|_: &mut AppState| {})
+            .on_close(|_: &mut AppState| {})
             .render::<AppState, ()>(&theme)
             .build(&mut ctx, &mut state);
     }

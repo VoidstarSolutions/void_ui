@@ -32,6 +32,7 @@ use xilem::view::{
     CrossAxisAlignment, FlexExt as _, MainAxisAlignment, flex_col, flex_row, sized_box,
 };
 
+use crate::components::close_callback::CloseCallback;
 use crate::theme::Palette;
 use crate::{ButtonVariant, IconName, Theme, button, icon, label};
 
@@ -75,36 +76,6 @@ impl AlertVariant {
             Self::Warning => Some(IconName::AlertTriangle),
             Self::Error => Some(IconName::CircleX),
         }
-    }
-}
-
-/// Implemented by `()` (no close button) and by `Fn(&mut State) -> Action`
-/// closures, so [`Alert::on_close`] is optional without boxing the callback.
-pub trait CloseCallback<State, Action>: Send + Sync + 'static {
-    /// Whether this callback should produce a close button.
-    #[must_use]
-    fn enabled() -> bool {
-        false
-    }
-
-    /// Invoke the callback. Only called when [`Self::enabled`] is `true`.
-    fn call(&self, _state: &mut State) -> Action {
-        unreachable!("CloseCallback::call on a disabled callback")
-    }
-}
-
-impl<State: 'static, Action: 'static> CloseCallback<State, Action> for () {}
-
-impl<State, Action, F> CloseCallback<State, Action> for F
-where
-    F: Fn(&mut State) -> Action + Send + Sync + 'static,
-{
-    fn enabled() -> bool {
-        true
-    }
-
-    fn call(&self, state: &mut State) -> Action {
-        self(state)
     }
 }
 
