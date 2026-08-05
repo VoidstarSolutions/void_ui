@@ -48,12 +48,12 @@ pub struct Radio<F> {
 /// The callback is invoked on primary-pointer release inside the widget and on
 /// Space while the widget is focused. The host should update the selected value
 /// in app state so this radio gets `.selected(true)` and siblings get `.selected(false)`.
-pub fn radio<F>(label: impl Into<ArcStr>, callback: F) -> Radio<F> {
+pub fn radio<F>(label: impl Into<ArcStr>, on_select: F) -> Radio<F> {
     Radio {
         label: label.into(),
         selected: false,
         disabled: false,
-        callback,
+        callback: on_select,
     }
 }
 

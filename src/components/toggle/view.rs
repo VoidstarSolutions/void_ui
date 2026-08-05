@@ -41,12 +41,12 @@ pub struct Toggle<F> {
 /// Space / Enter while the widget is focused. The callback receives the
 /// **new** checked value (`!checked` at the time of the press); the host
 /// stores it in its own state.
-pub fn toggle<F>(checked: bool, callback: F) -> Toggle<F> {
+pub fn toggle<F>(checked: bool, on_change: F) -> Toggle<F> {
     Toggle {
         checked,
         disabled: false,
         label: None,
-        callback,
+        callback: on_change,
     }
 }
 

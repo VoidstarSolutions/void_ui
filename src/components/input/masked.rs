@@ -51,15 +51,15 @@ pub struct MaskedInput<F> {
 /// Create a masked input over the raw digit string `raw`.
 ///
 /// `raw` is host-controlled and holds only the significant digits; the field
-/// formats it through the [`mask`](MaskedInput::mask) for display. `on_changed`
+/// formats it through the [`mask`](MaskedInput::mask) for display. `on_change`
 /// receives the raw digits (mask literals stripped) on every edit.
-pub fn masked_input<F>(raw: impl Into<String>, on_changed: F) -> MaskedInput<F> {
+pub fn masked_input<F>(raw: impl Into<String>, on_change: F) -> MaskedInput<F> {
     MaskedInput {
         raw: raw.into(),
         mask: String::new(),
         placeholder: ArcStr::default(),
         disabled: false,
-        on_changed,
+        on_changed: on_change,
     }
 }
 

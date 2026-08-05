@@ -55,10 +55,10 @@ pub struct NumberInput<F> {
 
 /// Create a numeric input with the given value and change callback.
 ///
-/// `value` is host-controlled. `on_changed` is invoked — with non-numeric
+/// `value` is host-controlled. `on_change` is invoked — with non-numeric
 /// characters stripped — on every edit, and also by the steppers with the
 /// adjusted, formatted value. Defaults: `step` 1.0, unbounded range.
-pub fn number_input<F>(value: impl Into<String>, on_changed: F) -> NumberInput<F> {
+pub fn number_input<F>(value: impl Into<String>, on_change: F) -> NumberInput<F> {
     NumberInput {
         value: value.into(),
         step: 1.0,
@@ -68,7 +68,7 @@ pub fn number_input<F>(value: impl Into<String>, on_changed: F) -> NumberInput<F
         disabled: false,
         prefix: None,
         suffix: None,
-        on_changed,
+        on_changed: on_change,
     }
 }
 
