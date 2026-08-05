@@ -32,7 +32,7 @@ use std::sync::Arc;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
-use super::widget::{PopoverHost, PopoverOpenChanged};
+use super::widget::{PopoverAction, PopoverHost};
 use crate::Theme;
 use crate::anchored_overlay::AnchoredOverlay;
 use crate::overlay::{OverlayAnchor, OverlaySurface, SurfaceStyle};
@@ -350,8 +350,8 @@ where
         app_state: &mut State,
     ) -> MessageResult<Action> {
         if message.remaining_path().is_empty() {
-            if let Some(action) = message.take_message::<PopoverOpenChanged>() {
-                let PopoverOpenChanged(open) = *action;
+            if let Some(action) = message.take_message::<PopoverAction>() {
+                let PopoverAction(open) = *action;
                 return match &self.on_open_change {
                     Some(f) => MessageResult::Action(f(app_state, open)),
                     None => MessageResult::Nop,

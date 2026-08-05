@@ -26,7 +26,7 @@
 //! 2. Any other type a component's public API forces a caller to name —
 //!    config/style enums, constants, and action/marker types referenced by
 //!    a builder's generic bounds or a view's `message()` contract
-//!    (`CloseCallback`, `TogglePress`, `PopoverOpenChanged`,
+//!    (`CloseCallback`, `ToggleAction`, `PopoverAction`,
 //!    `DEFAULT_DELAY_MS`, `MIN_PANEL_SIZE`, ...) — is `pub` and re-exported
 //!    to the root too, regardless of whether it happens to live in that
 //!    component's `view.rs` or `widget.rs`.
@@ -93,7 +93,7 @@ pub use button::{
 };
 pub use button_group::{ButtonGroup, button_group, toggle_button_group};
 pub use card::{Card, card};
-pub use checkbox::{Checkbox, CheckboxPress, CheckboxView, checkbox};
+pub use checkbox::{Checkbox, CheckboxAction, CheckboxView, checkbox};
 pub use clipboard::{Clipboard, ClipboardView, clipboard};
 pub use close_callback::CloseCallback;
 pub use code_view::{
@@ -131,7 +131,7 @@ pub use notification::{
     NotificationPosition, NotificationView, OnClose, notification, notification_layer,
     notification_overlay, notification_stack,
 };
-pub use popover::{Popover, PopoverAnchor, PopoverOpenChanged, PopoverView, popover};
+pub use popover::{Popover, PopoverAction, PopoverAnchor, PopoverView, popover};
 pub use radio::{Radio, RadioView, radio};
 pub use resizable::{
     MIN_PANEL_SIZE, Resizable, ResizablePanel, ResizablePanels, ResizablePanelsView, ResizableView,
@@ -150,7 +150,7 @@ pub use slider::{RangeSlider, RangeSliderView, Slider, SliderView, range_slider,
 pub use spinner::{Spinner, SpinnerView, spinner};
 pub use status_dot::{StatusDot, status_dot};
 pub use tabs::{TabItem, Tabs, TabsVariant, TabsView, tabs};
-pub use toggle::{Toggle, TogglePress, ToggleView, toggle};
+pub use toggle::{Toggle, ToggleAction, ToggleView, toggle};
 pub use tooltip::{DEFAULT_DELAY_MS, Tooltip, TooltipView, tooltip};
 
 /// One entry per component the gallery exposes.

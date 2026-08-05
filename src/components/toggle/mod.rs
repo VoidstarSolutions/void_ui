@@ -22,4 +22,4 @@ pub use view::{Toggle, ToggleView, toggle};
 
 /// Action emitted by `ToggleWidget` on activation.
 #[derive(Debug, Clone)]
-pub struct TogglePress;
+pub struct ToggleAction;

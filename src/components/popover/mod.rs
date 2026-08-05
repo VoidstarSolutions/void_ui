@@ -23,7 +23,7 @@ mod view;
 mod widget;
 
 pub use view::{Popover, PopoverView, popover};
-pub use widget::PopoverOpenChanged;
+pub use widget::PopoverAction;
 
 /// Compatibility alias for the pre-consolidation name of
 /// [`crate::overlay::OverlayAnchor`]. Prefer `OverlayAnchor` in new code.
