@@ -64,6 +64,7 @@ pub mod icon;
 pub mod input;
 pub(crate) mod interaction;
 pub(crate) mod item_list;
+pub mod kbd;
 pub mod label;
 pub mod list;
 pub mod meter;
@@ -119,6 +120,7 @@ pub use input::{
     CurrencyFormat, CurrencyInput, Input, MaskedInput, NumberInput, currency_input,
     format_currency, format_mask, input, masked_input, number_input,
 };
+pub use kbd::{Kbd, Modifier, kbd};
 pub use label::{Label, LabelAlignment, label};
 pub use list::{List, list};
 pub use meter::{Meter, MeterFill, meter};
