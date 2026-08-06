@@ -175,6 +175,7 @@ fn grouped_section(theme: &Theme, state: &FormDemo) -> Box<AnyWidgetView<FormDem
                             .then(|| "Enter a valid email address.".into())
                     }),
                 ])
+                .horizontal()
                 .render(theme),
             )
             .title("Account")
