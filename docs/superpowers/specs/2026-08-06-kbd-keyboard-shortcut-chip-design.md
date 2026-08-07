@@ -123,7 +123,7 @@ Precedent for `cfg!(target_os = "macos")` as the platform switch:
 
 4. **Spoken form** (`compose_spoken`, platform-independent): modifier words
    `Control, Alt, Shift, Command` (note `Cmd` → "Command") in canonical
-   order, then the key, space-joined → `"Command Shift K"`. Used only for
+   order, then the key, space-joined → `"Shift Command K"`. Used only for
    the accessibility name so assistive tech never reads raw glyphs like "⌘".
 
 The composed display string is one `ArcStr` handed to a single monospace
