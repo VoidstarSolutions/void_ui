@@ -259,7 +259,7 @@ no actions and handles no events, so `message` just returns
 
 ## Files
 
-```
+```text
 src/components/kbd/
   mod.rs      — re-exports: kbd, Kbd, Modifier
   view.rs     — kbd(), Kbd, Modifier, Platform, compose_* , render/rebuild
