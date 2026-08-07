@@ -1,5 +1,17 @@
 //! Xilem view + builder for the `kbd` keycap chip.
 
+use std::borrow::Cow;
+
+use masonry::core::{ArcStr, StyleProperty, Widget as _};
+use masonry::parley::{FontFamily, FontFamilyName};
+use masonry::properties::ContentColor;
+use masonry::widgets::Label;
+use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
+use xilem::{Pod, ViewCtx, WidgetView};
+
+use super::widget::KbdWidget;
+use crate::Theme;
+
 /// A keyboard modifier, rendered platform-aware.
 ///
 /// `Cmd` is the cross-platform "primary action" modifier: ⌘ on macOS, Ctrl
@@ -25,7 +37,6 @@ enum Platform {
 }
 
 /// The host platform's key vocabulary, resolved once at render time.
-#[expect(dead_code, reason = "used by KbdView in Task 3")]
 fn resolve_platform() -> Platform {
     if cfg!(target_os = "macos") {
         Platform::Mac
@@ -37,7 +48,6 @@ fn resolve_platform() -> Platform {
 /// Modifiers are always emitted in this order, whatever order the caller
 /// passed them in — so `[Cmd, Shift]` and `[Shift, Cmd]` render identically,
 /// and the sequence matches each platform's own convention (⌃⌥⇧⌘ on macOS).
-#[expect(dead_code)]
 const CANONICAL_ORDER: [Modifier; 4] = [
     Modifier::Ctrl,
     Modifier::Alt,
@@ -46,7 +56,6 @@ const CANONICAL_ORDER: [Modifier; 4] = [
 ];
 
 /// The visible glyph/word for a modifier on a platform.
-#[expect(dead_code)]
 fn display_token(m: Modifier, platform: Platform) -> &'static str {
     match (m, platform) {
         (Modifier::Ctrl, Platform::Mac) => "⌃",
@@ -60,7 +69,6 @@ fn display_token(m: Modifier, platform: Platform) -> &'static str {
 }
 
 /// The spoken word for a modifier, for the accessibility name.
-#[expect(dead_code)]
 fn spoken_token(m: Modifier) -> &'static str {
     match m {
         Modifier::Cmd => "Command",
@@ -71,7 +79,6 @@ fn spoken_token(m: Modifier) -> &'static str {
 }
 
 /// Modifiers present in `mods`, in canonical order, de-duplicated.
-#[expect(dead_code)]
 fn ordered_mods(mods: &[Modifier]) -> impl Iterator<Item = Modifier> + '_ {
     CANONICAL_ORDER
         .into_iter()
@@ -80,7 +87,6 @@ fn ordered_mods(mods: &[Modifier]) -> impl Iterator<Item = Modifier> + '_ {
 
 /// The visible chip text: platform symbols/words joined by a thin space
 /// (macOS) or `+` (other), with the literal key appended verbatim.
-#[expect(dead_code)]
 fn compose_display(mods: &[Modifier], key: &str, platform: Platform) -> String {
     let sep = match platform {
         Platform::Mac => "\u{2009}",
@@ -96,23 +102,153 @@ fn compose_display(mods: &[Modifier], key: &str, platform: Platform) -> String {
 /// The spoken form for the accessibility name: modifier words in canonical
 /// order then the key, space-joined, platform-independent. Keeps assistive
 /// tech from reading raw glyphs like "⌘".
-#[expect(dead_code)]
 fn compose_spoken(mods: &[Modifier], key: &str) -> String {
     let mut parts: Vec<&str> = ordered_mods(mods).map(spoken_token).collect();
     parts.push(key);
     parts.join(" ")
 }
 
-// TODO: Placeholder for the Kbd builder and View (Task 3)
-pub struct Kbd;
-#[must_use]
-pub fn kbd() -> Kbd {
-    Kbd
+/// Builder for a keycap chip. Create with [`kbd`], materialize with
+/// [`Self::render`].
+#[must_use = "Kbd does nothing until rendered with .render(&theme)"]
+pub struct Kbd {
+    key: ArcStr,
+    mods: Vec<Modifier>,
+}
+
+/// Create a keycap chip for `key` (e.g. `"K"`, `"Enter"`, `"F5"`, `"→"`).
+///
+/// The key label is rendered verbatim; only modifiers are symbol-mapped.
+pub fn kbd(key: impl Into<ArcStr>) -> Kbd {
+    Kbd {
+        key: key.into(),
+        mods: Vec::new(),
+    }
+}
+
+impl Kbd {
+    /// Set the modifiers. Replaces any previously-set modifiers.
+    pub fn mods(mut self, mods: impl IntoIterator<Item = Modifier>) -> Self {
+        self.mods = mods.into_iter().collect();
+        self
+    }
+
+    /// Materialize the xilem view at the supplied theme.
+    #[must_use = "View values do nothing unless provided to Xilem."]
+    pub fn render<State, Action>(
+        self,
+        theme: &Theme,
+    ) -> impl WidgetView<State, Action> + use<State, Action>
+    where
+        State: 'static,
+        Action: 'static,
+    {
+        let platform = resolve_platform();
+        KbdView {
+            display: ArcStr::from(compose_display(&self.mods, &self.key, platform)),
+            spoken: ArcStr::from(compose_spoken(&self.mods, &self.key)),
+            theme: *theme,
+        }
+    }
+}
+
+/// Materialized view for a [`Kbd`]. Not constructed directly.
+struct KbdView {
+    display: ArcStr,
+    spoken: ArcStr,
+    theme: Theme,
+}
+
+impl KbdView {
+    /// Build the monospace child label at this view's theme.
+    fn build_label(&self) -> masonry::core::NewWidget<Label> {
+        // Single named family from the theme's mono stack (falls back to the
+        // system default if absent), mirroring `icon/view.rs`'s single-family
+        // approach. First family is "Geist Mono" by default.
+        let family = self
+            .theme
+            .typography
+            .mono
+            .families
+            .first()
+            .copied()
+            .unwrap_or("monospace");
+        let mut label = Label::new(self.display.clone())
+            .with_style(StyleProperty::FontSize(self.theme.typography.size_body))
+            .with_style(StyleProperty::FontFamily(FontFamily::Single(
+                FontFamilyName::Named(Cow::Borrowed(family)),
+            )))
+            .prepare();
+        label
+            .properties
+            .insert(ContentColor::new(self.theme.palette.text));
+        label
+    }
+}
+
+impl ViewMarker for KbdView {}
+
+impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for KbdView {
+    type Element = Pod<KbdWidget>;
+    type ViewState = ();
+
+    fn build(&self, ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
+        let label = self.build_label();
+        let widget = KbdWidget::new(label, &self.theme, self.spoken.clone());
+        (ctx.create_pod(widget), ())
+    }
+
+    fn rebuild(
+        &self,
+        prev: &Self,
+        (): &mut Self::ViewState,
+        _ctx: &mut ViewCtx,
+        mut element: Mut<'_, Self::Element>,
+        _: &mut State,
+    ) {
+        if self.theme != prev.theme {
+            KbdWidget::set_theme(&mut element, &self.theme);
+            let mut child = KbdWidget::child_mut(&mut element);
+            child.insert_prop(ContentColor::new(self.theme.palette.text));
+            Label::insert_style(
+                &mut child,
+                StyleProperty::FontSize(self.theme.typography.size_body),
+            );
+        }
+        if self.display != prev.display {
+            KbdWidget::set_text(&mut element, self.display.clone());
+        }
+        if self.spoken != prev.spoken {
+            KbdWidget::set_spoken_name(&mut element, self.spoken.clone());
+        }
+    }
+
+    fn teardown(
+        &self,
+        (): &mut Self::ViewState,
+        _ctx: &mut ViewCtx,
+        _element: Mut<'_, Self::Element>,
+    ) {
+    }
+
+    fn message(
+        &self,
+        (): &mut Self::ViewState,
+        _message: &mut MessageCtx,
+        _element: Mut<'_, Self::Element>,
+        _: &mut State,
+    ) -> MessageResult<Action> {
+        MessageResult::Stale
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Modifier, Platform, compose_display, compose_spoken};
+    use xilem::ViewCtx;
+    use xilem::core::View;
+
+    use super::{Modifier, Platform, compose_display, compose_spoken, kbd};
+    use crate::{Theme, test_support};
 
     const THIN: &str = "\u{2009}";
 
@@ -178,5 +314,37 @@ mod tests {
             "Shift Command K"
         );
         assert_eq!(compose_spoken(&[], "Enter"), "Enter");
+    }
+
+    #[test]
+    fn builder_stores_key_and_mods() {
+        let k = kbd("K").mods([Modifier::Cmd, Modifier::Shift]);
+        assert_eq!(k.key.as_ref(), "K");
+        assert_eq!(k.mods, vec![Modifier::Cmd, Modifier::Shift]);
+    }
+
+    #[test]
+    fn mods_replaces_rather_than_appends() {
+        let k = kbd("K").mods([Modifier::Cmd]).mods([Modifier::Alt]);
+        assert_eq!(k.mods, vec![Modifier::Alt]);
+    }
+
+    #[test]
+    fn render_builds_without_panicking() {
+        let theme = Theme::default();
+        let mut ctx = ViewCtx::new(
+            test_support::noop_proxy(),
+            test_support::current_thread_runtime(),
+        );
+        let mut state = ();
+
+        let _ = kbd("K")
+            .mods([Modifier::Cmd])
+            .render::<(), ()>(&theme)
+            .build(&mut ctx, &mut state);
+        let _ = kbd("J")
+            .mods([Modifier::Cmd, Modifier::Shift])
+            .render::<(), ()>(&theme)
+            .build(&mut ctx, &mut state);
     }
 }
