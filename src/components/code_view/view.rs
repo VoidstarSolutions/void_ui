@@ -22,6 +22,7 @@ use std::marker::PhantomData;
 use std::sync::{Arc, LazyLock};
 
 use masonry::layout::UnitPoint;
+use masonry::parley::FontFamilyName;
 use masonry::peniko::Brush;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::layout::Length;
@@ -164,6 +165,7 @@ where
             self.theme.density.pad,
             self.right_inset,
             self.theme.typography.size_caption,
+            mono_families(&self.theme),
             self.theme.palette.accent_soft,
         );
         (ctx.create_pod(widget), ())
@@ -213,6 +215,9 @@ where
         {
             CodeViewWidget::set_font_size(&mut element, self.theme.typography.size_caption);
         }
+        if self.theme.typography.mono != prev.theme.typography.mono {
+            CodeViewWidget::set_font_families(&mut element, mono_families(&self.theme));
+        }
         if (self.right_inset - prev.right_inset).abs() > f32::EPSILON {
             CodeViewWidget::set_right_inset(&mut element, self.right_inset);
         }
@@ -236,6 +241,20 @@ where
         // Read-only widget emits no actions; any message routed here is a no-op.
         MessageResult::Nop
     }
+}
+
+/// Parse the theme's mono stack into parley family names. The widget pushes
+/// the whole list so parley falls through per glyph — the leading family
+/// (Geist Mono) lacks the keyboard symbols (⌘/⌫/…) shown in `kbd` demo
+/// source, which would otherwise render as tofu in the code block.
+fn mono_families(theme: &Theme) -> Vec<FontFamilyName<'static>> {
+    theme
+        .typography
+        .mono
+        .families
+        .iter()
+        .filter_map(|f| FontFamilyName::parse(f))
+        .collect()
 }
 
 /// Run the highlighter (if present); otherwise produce no spans, which

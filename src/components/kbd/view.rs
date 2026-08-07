@@ -1,16 +1,40 @@
 //! Xilem view + builder for the `kbd` keycap chip.
 
-use std::borrow::Cow;
-
-use masonry::core::{ArcStr, StyleProperty, Widget as _};
-use masonry::parley::{FontFamily, FontFamilyName};
-use masonry::properties::ContentColor;
-use masonry::widgets::Label;
+use masonry::core::ArcStr;
+use masonry::parley::FontFamilyName;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
 use super::widget::KbdWidget;
 use crate::Theme;
+
+/// Symbol-first font stack for the keyboard-glyph styled runs. These faces
+/// carry the macOS/Windows keyboard glyph set (⌘ ⇧ ⌫ → …) that the mono
+/// faces (Geist Mono) lack; listed ahead of the mono stack so parley selects
+/// them for the non-ASCII glyph runs instead of tofu-ing. Mirrors the
+/// coverage tail documented in `theme::typography`.
+const SYMBOL_FAMILIES: &[&str] = &["Apple Symbols", "Segoe UI Symbol"];
+
+/// Parse a family-name list into parley families, dropping any that fail.
+fn parse_families(names: &[&'static str]) -> Vec<FontFamilyName<'static>> {
+    names
+        .iter()
+        .filter_map(|f| FontFamilyName::parse(f))
+        .collect()
+}
+
+/// The theme's mono stack, applied to the whole label by default.
+fn mono_families(theme: &Theme) -> Vec<FontFamilyName<'static>> {
+    parse_families(theme.typography.mono.families)
+}
+
+/// Symbol faces first, then the mono stack as further fallback — used for the
+/// styled runs over keyboard-glyph spans.
+fn symbol_families(theme: &Theme) -> Vec<FontFamilyName<'static>> {
+    let mut families = parse_families(SYMBOL_FAMILIES);
+    families.extend(mono_families(theme));
+    families
+}
 
 /// A keyboard modifier, rendered platform-aware.
 ///
@@ -159,33 +183,6 @@ struct KbdView {
     theme: Theme,
 }
 
-impl KbdView {
-    /// Build the monospace child label at this view's theme.
-    fn build_label(&self) -> masonry::core::NewWidget<Label> {
-        // Single named family from the theme's mono stack (falls back to the
-        // system default if absent), mirroring `icon/view.rs`'s single-family
-        // approach. First family is "Geist Mono" by default.
-        let family = self
-            .theme
-            .typography
-            .mono
-            .families
-            .first()
-            .copied()
-            .unwrap_or("monospace");
-        let mut label = Label::new(self.display.clone())
-            .with_style(StyleProperty::FontSize(self.theme.typography.size_body))
-            .with_style(StyleProperty::FontFamily(FontFamily::Single(
-                FontFamilyName::Named(Cow::Borrowed(family)),
-            )))
-            .prepare();
-        label
-            .properties
-            .insert(ContentColor::new(self.theme.palette.text));
-        label
-    }
-}
-
 impl ViewMarker for KbdView {}
 
 impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for KbdView {
@@ -193,8 +190,13 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for KbdView {
     type ViewState = ();
 
     fn build(&self, ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
-        let label = self.build_label();
-        let widget = KbdWidget::new(label, &self.theme, self.spoken.clone());
+        let widget = KbdWidget::new(
+            self.display.clone(),
+            &self.theme,
+            self.spoken.clone(),
+            mono_families(&self.theme),
+            symbol_families(&self.theme),
+        );
         (ctx.create_pod(widget), ())
     }
 
@@ -208,11 +210,12 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for KbdView {
     ) {
         if self.theme != prev.theme {
             KbdWidget::set_theme(&mut element, &self.theme);
-            let mut child = KbdWidget::child_mut(&mut element);
-            child.insert_prop(ContentColor::new(self.theme.palette.text));
-            Label::insert_style(
-                &mut child,
-                StyleProperty::FontSize(self.theme.typography.size_body),
+        }
+        if self.theme.typography.mono != prev.theme.typography.mono {
+            KbdWidget::set_fonts(
+                &mut element,
+                mono_families(&self.theme),
+                symbol_families(&self.theme),
             );
         }
         if self.display != prev.display {
