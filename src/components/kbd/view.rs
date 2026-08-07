@@ -55,7 +55,7 @@ pub enum Modifier {
 
 /// Which symbol vocabulary + separator to render with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Platform {
+pub(super) enum Platform {
     Mac,
     Other,
 }
@@ -154,6 +154,7 @@ fn compose_spoken(mods: &[Modifier], key: &str) -> String {
 pub struct Kbd {
     key: ArcStr,
     mods: Vec<Modifier>,
+    platform: Option<Platform>,
 }
 
 /// Create a keycap chip for `key` (e.g. `"K"`, `"Enter"`, `"F5"`, `"→"`).
@@ -163,6 +164,7 @@ pub fn kbd(key: impl Into<ArcStr>) -> Kbd {
     Kbd {
         key: key.into(),
         mods: Vec::new(),
+        platform: None,
     }
 }
 
@@ -170,6 +172,14 @@ impl Kbd {
     /// Set the modifiers. Replaces any previously-set modifiers.
     pub fn mods(mut self, mods: impl IntoIterator<Item = Modifier>) -> Self {
         self.mods = mods.into_iter().collect();
+        self
+    }
+
+    /// Force a specific platform vocabulary instead of resolving the host's.
+    /// For the gallery, which shows both branches on any host; production
+    /// callers omit this and get the host platform.
+    pub(super) fn platform(mut self, platform: Platform) -> Self {
+        self.platform = Some(platform);
         self
     }
 
@@ -183,7 +193,7 @@ impl Kbd {
         State: 'static,
         Action: 'static,
     {
-        let platform = resolve_platform();
+        let platform = self.platform.unwrap_or_else(resolve_platform);
         KbdView {
             display: ArcStr::from(compose_display(&self.mods, &self.key, platform)),
             spoken: ArcStr::from(compose_spoken(&self.mods, &self.key)),

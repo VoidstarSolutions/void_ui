@@ -5,6 +5,7 @@ use xilem::WidgetView;
 use xilem::style::Style as _;
 use xilem::view::{CrossAxisAlignment, flex_col, flex_row};
 
+use super::view::Platform;
 use super::{Modifier, kbd};
 use crate::components::ScrollBarVisibility;
 use crate::with_source;
@@ -96,6 +97,46 @@ fn apple_symbols_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<
     })
 }
 
+// One platform's rendering of the representative combos. `kbd` resolves the
+// host platform at render time, so the gallery would otherwise only ever show
+// one branch live; `.platform(..)` forces the vocabulary so both the macOS
+// glyph forms (⌘S, ⌘⇧K) and the Windows/Linux word forms (Ctrl+S,
+// Ctrl+Shift+K) render side by side on any host — real chips, so the symbol
+// font fallback still applies to the glyphs.
+fn platform_row<S: 'static>(
+    name: &'static str,
+    platform: Platform,
+    theme: &Theme,
+) -> impl WidgetView<S> + use<S> {
+    flex_row((
+        label(name)
+            .text_size(theme.typography.size_caption)
+            .color(theme.palette.text_faint)
+            .render(theme),
+        kbd("S")
+            .mods([Modifier::Cmd])
+            .platform(platform)
+            .render(theme),
+        kbd("K")
+            .mods([Modifier::Cmd, Modifier::Shift])
+            .platform(platform)
+            .render(theme),
+    ))
+    .cross_axis_alignment(CrossAxisAlignment::Center)
+    .gap(Length::px(12.0))
+}
+
+fn platform_preview_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
+    with_source!(theme, {
+        flex_col((
+            platform_row("macOS", Platform::Mac, theme),
+            platform_row("Windows / Linux", Platform::Other, theme),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .gap(Length::px(8.0))
+    })
+}
+
 fn combo_section<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
     with_source!(theme, {
         flex_row((
@@ -148,6 +189,8 @@ pub fn panel<S: 'static>(theme: &Theme) -> impl WidgetView<S> + use<S> {
             apple_symbols_section(theme),
             section_header("Modified combos", theme),
             combo_section(theme),
+            section_header("Platform previews", theme),
+            platform_preview_section(theme),
             section_header("Menu row pairing", theme),
             menu_row_section(theme),
         ))
