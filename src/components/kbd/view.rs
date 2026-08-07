@@ -116,7 +116,23 @@ fn compose_display(mods: &[Modifier], key: &str, platform: Platform) -> String {
         Platform::Mac => "\u{2009}",
         Platform::Other => "+",
     };
-    let mut tokens: Vec<&str> = ordered_mods(mods)
+    // On non-mac, Cmd shows as "Ctrl". Collapse Cmd into Ctrl before ordering
+    // so the two never render as "Ctrl+Ctrl" and control sorts to Ctrl's slot
+    // (ahead of Alt/Shift) instead of trailing at Cmd's canonical position.
+    let normalized: Vec<Modifier> = match platform {
+        Platform::Mac => mods.to_vec(),
+        Platform::Other => mods
+            .iter()
+            .map(|&m| {
+                if m == Modifier::Cmd {
+                    Modifier::Ctrl
+                } else {
+                    m
+                }
+            })
+            .collect(),
+    };
+    let mut tokens: Vec<&str> = ordered_mods(&normalized)
         .map(|m| display_token(m, platform))
         .collect();
     tokens.push(key);
@@ -270,7 +286,7 @@ mod tests {
     #[test]
     fn other_uses_words_and_plus() {
         let got = compose_display(&[Modifier::Cmd, Modifier::Shift], "K", Platform::Other);
-        assert_eq!(got, "Shift+Ctrl+K");
+        assert_eq!(got, "Ctrl+Shift+K");
     }
 
     #[test]
