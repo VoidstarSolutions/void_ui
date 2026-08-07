@@ -54,6 +54,13 @@ const MONO: FontStack = FontStack::new(&[
     "ui-monospace",
     "SF Mono",
     "Menlo",
+    // Keycap-symbol coverage tail: obscure glyphs like ⌤ (U+2324) aren't in the
+    // mono faces above, and parley's script-bucketed fallback won't hunt them
+    // down. These dedicated symbol fonts carry the full macOS/Windows keyboard
+    // glyph set. Placed before the terminal `monospace` generic, which always
+    // resolves and would otherwise end the search.
+    "Apple Symbols",
+    "Segoe UI Symbol",
     "monospace",
 ]);
 

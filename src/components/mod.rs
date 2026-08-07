@@ -64,6 +64,7 @@ pub mod icon;
 pub mod input;
 pub(crate) mod interaction;
 pub(crate) mod item_list;
+pub mod kbd;
 pub mod label;
 pub mod list;
 pub mod meter;
@@ -119,6 +120,7 @@ pub use input::{
     CurrencyFormat, CurrencyInput, Input, MaskedInput, NumberInput, currency_input,
     format_currency, format_mask, input, masked_input, number_input,
 };
+pub use kbd::{Kbd, Modifier, kbd};
 pub use label::{Label, LabelAlignment, label};
 pub use list::{List, list};
 pub use meter::{Meter, MeterFill, meter};
@@ -178,6 +180,7 @@ pub enum ComponentKind {
     Dialog,
     Icon,
     Input,
+    Kbd,
     Label,
     List,
     Meter,
@@ -222,6 +225,7 @@ impl ComponentKind {
             Self::Dialog => "Dialog",
             Self::Icon => "Icon",
             Self::Input => "Input",
+            Self::Kbd => "Kbd",
             Self::Label => "Label",
             Self::List => "List",
             Self::Meter => "Meter",
@@ -266,6 +270,7 @@ impl ComponentKind {
             Self::GroupBox,
             Self::Icon,
             Self::Input,
+            Self::Kbd,
             Self::Label,
             Self::List,
             Self::Meter,

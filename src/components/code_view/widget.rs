@@ -8,6 +8,8 @@
 //! click/drag selection (single/double/triple + shift-extend), and
 //! Ctrl/Cmd+C copy.
 
+use std::borrow::Cow;
+
 use masonry::accesskit::{Node, Role};
 use masonry::core::keyboard::{Key, KeyState};
 use masonry::core::{
@@ -73,6 +75,11 @@ pub struct CodeViewWidget {
     /// overlap with overlaid affordances (e.g. the clipboard button).
     right_inset: f32,
     font_size: f32,
+    /// Ordered monospace family fallback stack. Threaded from the theme's mono
+    /// stack so glyphs missing from the first family (e.g. the macOS keyboard
+    /// symbols ⌘/⌫ absent from Geist Mono) fall through to a face that carries
+    /// them. Empty = fall back to the bare `Monospace` generic.
+    font_families: Vec<FontFamilyName<'static>>,
     /// Fill color for selection rectangles painted under the text.
     selection_color: Color,
     /// Working layout — mutated freely by `measure()` for whatever query is
@@ -120,6 +127,7 @@ impl CodeViewWidget {
         padding: f32,
         right_inset: f32,
         font_size: f32,
+        font_families: Vec<FontFamilyName<'static>>,
         selection_color: Color,
     ) -> Self {
         assert_eq!(
@@ -138,6 +146,7 @@ impl CodeViewWidget {
             padding,
             right_inset,
             font_size,
+            font_families,
             selection_color,
             layout: Layout::default(),
             paint_layout: Layout::default(),
@@ -228,6 +237,19 @@ impl CodeViewWidget {
         }
     }
 
+    /// Replaces the monospace family fallback stack. Marks the layout dirty and
+    /// requests layout if the value changed.
+    pub fn set_font_families(
+        this: &mut WidgetMut<'_, Self>,
+        font_families: Vec<FontFamilyName<'static>>,
+    ) {
+        if this.widget.font_families != font_families {
+            this.widget.font_families = font_families;
+            this.widget.layout_dirty = true;
+            this.ctx.request_layout();
+        }
+    }
+
     /// Sets extra space reserved on the right side of the text area beyond the
     /// normal padding. Use this to avoid text overlapping an overlaid affordance
     /// such as the clipboard button. Requests layout if changed.
@@ -252,9 +274,15 @@ impl CodeViewWidget {
     ) {
         let mut builder = layout_ctx.ranged_builder(font_ctx, &self.text, 1.0, true);
         builder.push_default(StyleProperty::FontSize(self.font_size));
-        builder.push_default(StyleProperty::FontFamily(FontFamily::Single(
-            FontFamilyName::Generic(GenericFamily::Monospace),
-        )));
+        // Push the whole mono stack (not just the first family) so parley can
+        // fall through per glyph — the first family (Geist Mono) lacks the
+        // keyboard-symbol clusters, which would otherwise render as tofu.
+        let font_family = if self.font_families.is_empty() {
+            FontFamily::Single(FontFamilyName::Generic(GenericFamily::Monospace))
+        } else {
+            FontFamily::List(Cow::Owned(self.font_families.clone()))
+        };
+        builder.push_default(StyleProperty::FontFamily(font_family));
         builder.push_default(StyleProperty::Brush(BrushIndex(0)));
         // Spans come from a pluggable `Highlighter`, so a third-party impl may
         // hand us empty or out-of-bounds ranges. Skip empty/inverted ranges and

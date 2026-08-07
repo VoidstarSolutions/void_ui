@@ -202,6 +202,7 @@ fn main_pane(focused: ComponentKind, theme: &Theme) -> Box<AnyWidgetView<State>>
         ComponentKind::GroupBox => Box::new(void_ui::components::group_box::demo::panel(theme)),
         ComponentKind::Icon => Box::new(void_ui::components::icon::demo::panel(theme)),
         ComponentKind::Input => Box::new(void_ui::components::input::demo::panel(theme)),
+        ComponentKind::Kbd => Box::new(void_ui::components::kbd::demo::panel(theme)),
         ComponentKind::Label => Box::new(void_ui::components::label::demo::panel(theme)),
         ComponentKind::List => Box::new(void_ui::components::list::demo::panel(theme)),
         ComponentKind::Meter => Box::new(void_ui::components::meter::demo::panel(theme)),
