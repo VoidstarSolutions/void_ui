@@ -180,7 +180,7 @@ impl Widget for KbdWidget {
         _props: &PropertiesRef<'_>,
         node: &mut Node,
     ) {
-        node.set_value(self.spoken_name.as_ref());
+        node.set_label(self.spoken_name.as_ref());
     }
 
     fn children_ids(&self) -> ChildrenIds {
@@ -220,7 +220,7 @@ mod tests {
         h.redraw();
         let node = h.access_node(h.root_id()).expect("node exists");
         assert_eq!(node.role(), Role::Label);
-        assert_eq!(node.value().as_deref(), Some("Command K"));
+        assert_eq!(node.label().as_deref(), Some("Command K"));
     }
 
     #[test]
@@ -232,7 +232,7 @@ mod tests {
         });
         h.redraw();
         let node = h.access_node(h.root_id()).expect("node exists");
-        assert_eq!(node.value().as_deref(), Some("Command J"));
+        assert_eq!(node.label().as_deref(), Some("Command J"));
     }
 
     /// `set_theme` must request layout (not just repaint) when density
