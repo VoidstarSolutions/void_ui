@@ -283,6 +283,7 @@ fn panel_for(kind: ComponentKind, theme: &Theme) -> Box<AnyWidgetView<ProbeState
         ComponentKind::GroupBox => Box::new(c::group_box::demo::panel(theme)),
         ComponentKind::Icon => Box::new(c::icon::demo::panel(theme)),
         ComponentKind::Input => Box::new(c::input::demo::panel(theme)),
+        ComponentKind::Kbd => Box::new(c::kbd::demo::panel(theme)),
         ComponentKind::Label => Box::new(c::label::demo::panel(theme)),
         ComponentKind::List => Box::new(c::list::demo::panel(theme)),
         ComponentKind::Meter => Box::new(c::meter::demo::panel(theme)),
