@@ -126,24 +126,40 @@ Precedent for `cfg!(target_os = "macos")` as the platform switch:
    order, then the key, space-joined → `"Shift Command K"`. Used only for
    the accessibility name so assistive tech never reads raw glyphs like "⌘".
 
-The composed display string is one `ArcStr` handed to a single monospace
-`Label`. The widget never sees individual keys — it is purely a chrome
-container, which keeps it small.
+The composed display string is one `ArcStr` handed to `KbdWidget`, which lays
+it out with parley directly and paints it. The widget never sees individual
+keys — it renders one flat line, keeping it small. It does not compose a child
+`Label`: a `Label` carries only default styles, so it can't put the keyboard-
+symbol glyphs (⌘/⇧/⌫/→ …) on a symbol-capable font via a per-range styled run,
+which is required or those glyphs tofu (see "Widget" below).
 
 ## Widget: `KbdWidget` (`widget.rs`)
 
-Follows the `button`/`meter` custom-widget pattern. Owns a single child
-`Label` (the composed text) plus a `Theme` value, and paints the raised
-keycap chrome behind it. Non-interactive: `type Action = NoAction`, no
-pointer/keyboard/focus handling.
+Follows the `button`/`meter` custom-widget pattern. Owns the composed text as
+an `ArcStr` and its own parley `Layout<BrushIndex>` (no child widget) plus a
+`Theme` value, and paints the raised keycap chrome plus the text itself.
+Non-interactive: `type Action = NoAction`, no pointer/keyboard/focus handling,
+no child message routing.
+
+Laying out the text directly (rather than wrapping a `Label`) is what lets a
+*styled run* put the keyboard-symbol glyphs on a symbol-capable font while the
+ASCII key letters stay on the mono stack — `Label` can't express a per-range
+font.
 
 Fields (roughly):
 
 ```rust
 pub struct KbdWidget {
-    child: WidgetPod<Label>,   // the mono combo text
-    theme: Theme,              // read as a value, not via the property stack
-    spoken_name: ArcStr,       // accessibility name
+    text: ArcStr,                          // the composed mono/symbol line
+    spoken_name: ArcStr,                   // accessibility name
+    theme: Theme,                          // read as a value, not the property stack
+    mono_families: Vec<FontFamilyName>,    // default family stack for the whole line
+    symbol_families: Vec<FontFamilyName>,  // symbol-first stack for glyph styled runs
+    font_size: f32,
+    text_color: Color,
+    layout: Layout<BrushIndex>,            // the widget's own parley layout
+    text_origin: Point,                    // where the text is painted, set in layout()
+    layout_dirty: bool,                    // rebuild the parley layout on next ensure_layout
 }
 ```
 
@@ -161,21 +177,24 @@ library). Colors used:
   body darkened) to read as a physical key edge.
 - border: `theme.palette` border token, 1px hairline.
 - text: mono foreground, sized `theme.typography.size_body`, family
-  `theme.typography.mono`, set on the child `Label` in `view.rs`.
+  `theme.typography.mono` — applied by the widget as parley default styles,
+  with a symbol-first styled run over each non-ASCII glyph span. The view
+  passes the parsed mono + symbol family stacks into the widget.
 - radius: `theme.radius.small`.
 
 ### Layout
 
-`register_children` / `children_ids` expose the one `Label` pod.
-`measure`/`layout`:
+No children: `register_children` is empty and `children_ids` returns an empty
+set. `measure`/`layout`:
 
-- Measure the child label.
+- Build/refresh the parley layout (`ensure_layout`) and measure it.
 - Add symmetric horizontal padding and vertical padding derived from
   `theme.density` (reuse the same `button_pad_*`/`pad` tokens `badge` uses so
   chip metrics match).
-- Reserve **1px extra height at the bottom** for the raised lip, and place
-  the child offset up by that 1px so the glyph stays optically centered above
-  the lip rather than sinking onto it.
+- Reserve extra height at the bottom for the raised lip, and center the text
+  on the key face (the padded region above the lip) so the glyphs stay
+  optically centered above the lip rather than sinking onto it. `layout`
+  records the resulting top-left paint origin in `text_origin`.
 
 ### Paint
 
@@ -191,7 +210,9 @@ hand-rolling rounded-rect geometry where it fits:
 4. *(optional, if it reads well)* a 1px lighter inner highlight along the top
    edge for extra dimensionality. Cut if it muddies the look.
 
-The child `Label` paints on top via the normal child-paint pass.
+The widget's own `paint` then renders the parley `layout` on top at
+`text_origin` (via masonry's `render_text`), painting the text color as
+brush index 0.
 
 ### Accessibility
 
@@ -204,12 +225,14 @@ shortcut in words rather than reading unlabeled symbol glyphs.
 Value-diff-guarded mutators in the `WidgetMut` style, matching `meter`'s
 setter discipline:
 
-- `set_text(this, ArcStr)` — updates the child label text; `request_layout`
-  on change (width changes).
+- `set_text(this, ArcStr)` — updates the text, marks the layout dirty;
+  `request_layout` on change (width changes).
 - `set_spoken_name(this, ArcStr)` — updates the a11y name; `request_render`
   (or an accessibility-only request) on change.
-- `set_theme(this, &Theme)` — re-applies theme to self and child; requests
-  the appropriate pass on change.
+- `set_theme(this, &Theme)` — re-applies theme values (font size, text color),
+  marks the layout dirty; requests layout + paint on change.
+- `set_fonts(this, mono, symbol)` — replaces the mono + symbol family stacks
+  when theme typography changes, marks the layout dirty; `request_layout`.
 
 ## View → widget wiring (`view.rs`)
 
@@ -218,19 +241,21 @@ setter discipline:
 1. `resolve_platform()`.
 2. `compose_display(&mods, &key, platform)` → display `ArcStr`.
 3. `compose_spoken(&mods, &key)` → spoken `ArcStr`.
-4. Build the mono child `Label` (family `theme.typography.mono`, size
-   `size_body`, foreground color).
-5. Wrap in `KbdWidget` carrying the theme + spoken name.
+4. Parse the mono family stack (`theme.typography.mono`) and the symbol-first
+   stack (symbol faces, then the mono stack as fallback).
+5. Build `KbdWidget` carrying the display text, theme, spoken name, and the two
+   family stacks. The widget lays out and paints the text itself; the view
+   builds no child.
 
-`rebuild` re-applies text/spoken-name/theme **only on value change**, through
-the setters, honoring the CLAUDE.md theme-diff rule (theme re-applied only
-when the value differs).
+`rebuild` re-applies theme/fonts/text/spoken-name **only on value change**,
+through the setters, honoring the CLAUDE.md theme-diff rule (theme re-applied
+only when the value differs).
 
-Follow the `feedback_xilem_view_with_id` rule: since the view owns a child
-`WidgetView` (the label), if message routing is involved it must use
-`ctx.with_id` + `message.take_first()`. `kbd` emits no actions and the label
-is non-interactive, so there is likely no message path — but wire the id
-scope the same way the other single-child views do to stay consistent.
+The view's `Element` is `Pod<KbdWidget>` with no child `WidgetView`, so the
+`feedback_xilem_view_with_id` `ctx.with_id` + `message.take_first()` routing
+rule does not apply — there is no nested widget to disambiguate. `kbd` emits
+no actions and handles no events, so `message` just returns
+`MessageResult::Stale`.
 
 ## Files
 
