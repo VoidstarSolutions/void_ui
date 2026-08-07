@@ -63,7 +63,8 @@ impl KbdWidget {
     pub(super) fn set_theme(this: &mut WidgetMut<'_, Self>, theme: &Theme) {
         if this.widget.theme != *theme {
             this.widget.theme = *theme;
-            this.ctx.request_render();
+            this.ctx.request_layout();
+            this.ctx.request_paint_only();
         }
     }
 
@@ -146,12 +147,11 @@ impl Widget for KbdWidget {
         );
         // 2. Body — inset 1px top/left/right and (1 + LIP_PX) bottom, so the
         //    dark outer shows as a hairline ring plus a thicker bottom edge.
-        let body = Rect::new(
-            bbox.x0 + 1.0,
-            bbox.y0 + 1.0,
-            bbox.x1 - 1.0,
-            bbox.y1 - 1.0 - LIP_PX,
-        );
+        // Clamped so a host-forced undersized box (smaller than ~4px) can't
+        // invert the rect (max coords are never less than the min coords).
+        let x1 = (bbox.x1 - 1.0).max(bbox.x0 + 1.0);
+        let y1 = (bbox.y1 - 1.0 - LIP_PX).max(bbox.y0 + 1.0);
+        let body = Rect::new(bbox.x0 + 1.0, bbox.y0 + 1.0, x1, y1);
         let inner_radius = CornerRadius::all(Length::px((self.corner_px() - 1.0).max(0.0)));
         paint_background(
             painter,
@@ -233,5 +233,39 @@ mod tests {
         h.redraw();
         let node = h.access_node(h.root_id()).expect("node exists");
         assert_eq!(node.value().as_deref(), Some("Command J"));
+    }
+
+    /// `set_theme` must request layout (not just repaint) when density
+    /// changes, since `button_pad_v`/`button_pad_h` feed `measure`/`layout`.
+    /// The root widget itself always fills the harness window (tight
+    /// constraints), so a relayout can't be observed via the root's own
+    /// border box; instead this checks the child label's placed position,
+    /// which `layout` derives directly from `pad_h`/`pad_v`
+    /// (`ctx.place_child(&mut self.child, Point::new(pad_h, pad_v))`) — a
+    /// post-mount theme swap to a wider density must shift it.
+    #[test]
+    fn set_theme_with_new_density_relayouts() {
+        let mut h = harness("⌘\u{2009}K", "Command K");
+        h.redraw();
+        let child_origin = |h: &TestHarness<KbdWidget>| {
+            let root = h.root_widget();
+            let child = root.children().into_iter().next().expect("has child");
+            child.ctx().to_window(masonry::kurbo::Point::ORIGIN)
+        };
+        let before = child_origin(&h);
+
+        let mut grown = Theme::default();
+        grown.density.button_pad_h += 20.0;
+        grown.density.button_pad_v += 20.0;
+        h.edit_root_widget(|mut wm| {
+            KbdWidget::set_theme(&mut wm, &grown);
+        });
+        h.redraw();
+        let after = child_origin(&h);
+
+        assert_ne!(
+            before, after,
+            "set_theme should trigger a relayout when density padding changes"
+        );
     }
 }
