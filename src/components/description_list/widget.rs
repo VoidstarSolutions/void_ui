@@ -3,8 +3,9 @@
 //! [`DescriptionListWidget`] is a multi-child container holding one label pod and
 //! one value pod per item. In horizontal mode it measures every label, sets the
 //! shared label-column width to the widest, and baseline-aligns each value against
-//! its label (falling back to top-align when the value reports no baseline). In
-//! stacked mode each value is laid out directly below its label.
+//! its label when both expose a real text baseline — falling back to top-align
+//! when either doesn't (e.g. a non-text value like a status dot). In stacked mode
+//! each value is laid out directly below its label.
 //!
 //! Horizontal layout (this module's `layout_horizontal`/`measure`) is real as of
 //! Task 3. Stacked layout (`layout_stacked`/`measure_stacked`) is still a
@@ -75,6 +76,14 @@ impl DescriptionListWidget {
         f64::from(self.theme.density.pad)
     }
 
+    /// Slack for detecting masonry's baseline-substitution sentinel: a widget
+    /// that never calls `set_baselines` gets its layout-first-baseline reported
+    /// as exactly its own border-box height (see `layout_horizontal`'s
+    /// `*_has_base` comment). A tiny epsilon absorbs float noise without risking
+    /// a false "real baseline" match for a genuine text baseline that happens to
+    /// sit very close to the child's bottom edge.
+    const BASELINE_SENTINEL_EPS: f64 = 0.5;
+
     fn layout_horizontal(&mut self, ctx: &mut LayoutCtx<'_>, size: Size) {
         let ctx_size = LayoutSize::from(size);
 
@@ -115,16 +124,25 @@ impl DescriptionListWidget {
             ctx.run_layout(value, vs);
             let (value_base, _) = ctx.child_layout_baselines(value);
 
-            // Baseline align: if both children report a baseline, offset the one
-            // with the smaller baseline down so the baselines coincide. Otherwise
-            // top-align (offset 0 for both). In practice masonry's baseline
-            // accessors fall back to the child's own height rather than NaN when a
-            // widget never calls `set_baselines`, so this branch mostly guards
-            // against a stray non-finite value rather than firing routinely.
-            let (label_dy, value_dy) = if label_base.is_finite() && value_base.is_finite() {
+            // Baseline align only when BOTH children expose a real text baseline;
+            // otherwise top-align. `child_layout_baselines` never returns NaN:
+            // masonry substitutes the child's own border-box height whenever the
+            // child never called `set_baselines` (confirmed against masonry
+            // c5950bc's `WidgetState::layout_first_baseline`, which returns
+            // `self.layout_border_box_size.height` when `first_baseline.is_nan()`).
+            // So a widget with no real baseline reports baseline == height; a real
+            // text baseline sits strictly above the bottom edge, i.e. baseline <
+            // height. Detect the substitution that way instead of `is_finite()`,
+            // which never actually fires.
+            let label_has_base = label_base < lh - Self::BASELINE_SENTINEL_EPS;
+            let value_has_base = value_base < vs.height - Self::BASELINE_SENTINEL_EPS;
+            let (label_dy, value_dy) = if label_has_base && value_has_base {
+                // Offset whichever child's baseline sits higher so both baselines
+                // land on the same line.
                 let target = label_base.max(value_base);
                 (target - label_base, target - value_base)
             } else {
+                // At least one child has no real text baseline: top-align the row.
                 (0.0, 0.0)
             };
 
@@ -285,6 +303,14 @@ impl Widget for DescriptionListWidget {
                         Axis::Vertical,
                         cross_length,
                     );
+                    // Simplification: approximate row height as max(label_h,
+                    // value_h), ignoring the baseline-alignment offsets that
+                    // `layout_horizontal` applies to actual placement. When a
+                    // row's value has an atypical baseline (rare — labels are
+                    // fixed caption text and typical values are text too), this
+                    // can slightly under-report the height `layout` actually
+                    // produces. Accepted as a known, intentional gap rather than
+                    // running a second layout pass inside `measure`.
                     total_h += lh.get().max(vh.get());
                     if i + 1 < n {
                         total_h += row_gap;
@@ -344,8 +370,9 @@ impl Widget for DescriptionListWidget {
 #[cfg(test)]
 mod tests {
     use masonry::core::NewWidget;
+    use masonry::layout::Length;
     use masonry::testing::TestHarness;
-    use masonry::widgets::{Label, Passthrough};
+    use masonry::widgets::{Label, Passthrough, SizedBox};
 
     use super::DescriptionListWidget;
     use crate::Theme;
@@ -353,6 +380,21 @@ mod tests {
 
     fn passthrough(text: &str) -> NewWidget<Passthrough> {
         NewWidget::new(Passthrough::new(NewWidget::new(Label::new(text)).erased()))
+    }
+
+    /// A plain `SizedBox` never calls `ctx.set_baselines`, so it has no real
+    /// text baseline — masonry substitutes its own border-box height as its
+    /// "baseline" (see `layout_horizontal`'s `*_has_base` comment). Used to
+    /// exercise the top-align fallback when a value isn't text.
+    fn passthrough_box(width: f64, height: f64) -> NewWidget<Passthrough> {
+        NewWidget::new(Passthrough::new(
+            NewWidget::new(
+                SizedBox::empty()
+                    .width(Length::px(width))
+                    .height(Length::px(height)),
+            )
+            .erased(),
+        ))
     }
 
     fn widget() -> DescriptionListWidget {
@@ -415,5 +457,38 @@ mod tests {
         );
         // And the column starts past the short label's own width.
         assert!(x0 > 20.0, "value column should sit past the widest label");
+    }
+
+    #[test]
+    fn horizontal_top_aligns_row_when_value_has_no_text_baseline() {
+        // The value is a plain SizedBox (no `set_baselines` call), so it has no
+        // real text baseline — `layout_horizontal` must fall back to top-align
+        // rather than baseline-align this row (which would otherwise pin the
+        // box's bottom edge to the label's baseline).
+        let w = DescriptionListWidget::new(
+            vec![passthrough("Status")],
+            vec![passthrough_box(40.0, 8.0)],
+            DescriptionListOrientation::Horizontal,
+            &Theme::default(),
+        );
+        let mut h = TestHarness::create_with_size(
+            masonry::theme::default_property_set(),
+            NewWidget::new(w),
+            (600, 200),
+        );
+
+        let (label_id, value_id) = h.edit_root_widget(|wm| {
+            (
+                masonry::core::WidgetPod::id(&wm.widget.labels[0]),
+                masonry::core::WidgetPod::id(&wm.widget.values[0]),
+            )
+        });
+        let label_min_y = h.get_widget_with_id(label_id).ctx().bounding_box().min_y();
+        let value_min_y = h.get_widget_with_id(value_id).ctx().bounding_box().min_y();
+        assert!(
+            (label_min_y - value_min_y).abs() < 0.5,
+            "row should top-align when the value has no text baseline: label min_y \
+             {label_min_y} vs value min_y {value_min_y}"
+        );
     }
 }
