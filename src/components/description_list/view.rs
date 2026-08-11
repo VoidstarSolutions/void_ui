@@ -239,19 +239,19 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx>
         }
         let id = message.take_first().expect("remaining_path was non-empty");
         let index = usize::try_from(id.routing_id()).unwrap_or(usize::MAX);
-        if self.items.get(index).is_none() {
-            return MessageResult::Stale;
-        }
         // Only value children are interactive; route to the value view. Its own
         // internal view-path disambiguates label vs value beneath this ViewId.
         // Both label and value build under the same `ViewId::new(i)` (see
         // `build`/`rebuild` above) — safe only because labels are static
         // `Label`s that never send a message. If a label ever becomes
         // interactive, split the id space (`2*i` label, `2*i+1` value).
-        let (_, value_view) = &self.items[index];
-        let (_, vstate) = &mut view_state[index];
-        let mut child = DescriptionListWidget::value_mut(&mut element, index);
-        value_view.message(vstate, message, child.downcast(), app_state)
+        if let Some((_, value_view)) = self.items.get(index) {
+            let (_, vstate) = &mut view_state[index];
+            let mut child = DescriptionListWidget::value_mut(&mut element, index);
+            value_view.message(vstate, message, child.downcast(), app_state)
+        } else {
+            MessageResult::Stale
+        }
     }
 }
 

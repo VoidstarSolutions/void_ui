@@ -194,6 +194,11 @@ impl DescriptionListWidget {
         let pair_gap = self.pair_gap();
         let row_gap = self.row_gap();
         let n = self.labels.len();
+        // Sizes children via the incoming `len_req`, while `layout_stacked`
+        // sizes the same children via `SizeDef::MIN`. The two agree only
+        // while values are intrinsically-sized (min-content == fit-content),
+        // which holds for the current value set (text/badge/status_dot).
+        // Revisit this split if a wrapping/growable value type is introduced.
         match axis {
             Axis::Horizontal => {
                 let mut w = 0.0_f64;
@@ -335,6 +340,12 @@ impl Widget for DescriptionListWidget {
                 let mut total_h = 0.0_f64;
                 let row_gap = self.row_gap();
                 let n = self.labels.len();
+                // This arm sizes children via the incoming `len_req`, while
+                // `layout_horizontal` sizes the same children via `SizeDef::MIN`.
+                // The two agree only while values are intrinsically-sized
+                // (min-content == fit-content), which holds for the current
+                // value set (text/badge/status_dot). Revisit this split if a
+                // wrapping/growable value type is introduced.
                 for i in 0..n {
                     let lw = ctx.compute_length(
                         &mut self.labels[i],
