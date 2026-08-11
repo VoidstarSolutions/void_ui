@@ -314,11 +314,12 @@ impl Widget for DescriptionListWidget {
     type Action = NoAction;
 
     fn register_children(&mut self, ctx: &mut RegisterCtx<'_>) {
-        for pod in &mut self.labels {
-            ctx.register_child(pod);
-        }
-        for pod in &mut self.values {
-            ctx.register_child(pod);
+        // Interleave label/value per item (label_0, value_0, label_1, …) so
+        // registration order mirrors visual row grouping and matches
+        // `children_ids`.
+        for (label, value) in self.labels.iter_mut().zip(self.values.iter_mut()) {
+            ctx.register_child(label);
+            ctx.register_child(value);
         }
     }
 
@@ -434,8 +435,8 @@ impl Widget for DescriptionListWidget {
         let ids: Vec<_> = self
             .labels
             .iter()
-            .chain(self.values.iter())
-            .map(WidgetPod::id)
+            .zip(self.values.iter())
+            .flat_map(|(label, value)| [label.id(), value.id()])
             .collect();
         ChildrenIds::from_slice(&ids)
     }
@@ -445,7 +446,7 @@ impl Widget for DescriptionListWidget {
 
 #[cfg(test)]
 mod tests {
-    use masonry::core::NewWidget;
+    use masonry::core::{NewWidget, Widget};
     use masonry::layout::Length;
     use masonry::testing::TestHarness;
     use masonry::widgets::{Label, Passthrough, SizedBox};
@@ -483,7 +484,7 @@ mod tests {
     }
 
     #[test]
-    fn children_ids_lists_every_label_then_every_value() {
+    fn children_ids_interleave_label_then_value_per_item() {
         let mut h = TestHarness::create(
             masonry::theme::default_property_set(),
             NewWidget::new(widget()),
@@ -491,6 +492,14 @@ mod tests {
         h.edit_root_widget(|wm| {
             assert_eq!(wm.widget.labels.len(), 2);
             assert_eq!(wm.widget.values.len(), 2);
+            let expected = vec![
+                wm.widget.labels[0].id(),
+                wm.widget.values[0].id(),
+                wm.widget.labels[1].id(),
+                wm.widget.values[1].id(),
+            ];
+            let actual: Vec<_> = wm.widget.children_ids().iter().copied().collect();
+            assert_eq!(actual, expected);
         });
     }
 
