@@ -16,8 +16,8 @@
 //! # ;
 //! ```
 
-// NOTE: `demo.rs` (gallery panel) ships in Task 5. Don't gate a `pub mod demo;`
-// here until that file exists — `--all-features` builds would break otherwise.
+#[cfg(feature = "gallery")]
+pub mod demo;
 mod view;
 mod widget;
 

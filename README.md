@@ -141,7 +141,7 @@ The overlay primitive and Foundations are shipped, as is most of Phases 1–4 (o
 | `List`            | M    | ✓      | DataGrid's virtualization for a flat list.       |
 | `Tree`            | L    | —      | Hierarchical with expand/collapse.               |
 | `Pagination`      | S    | —      |                                                  |
-| `DescriptionList` | S    | —      | Label/value pairs.                               |
+| `DescriptionList` | S    | ✓      | Label/value pairs.                               |
 | `HoverCard`       | M    | —      | Tooltip with richer content.                     |
 
 ### Phase 6 — Specialized
@@ -155,7 +155,7 @@ The overlay primitive and Foundations are shipped, as is most of Phases 1–4 (o
 
 ### Remaining
 
-The open surface, all `—` above: `Form`, `ProgressCircle`, `Tree`, `Pagination`, `DescriptionList`, `HoverCard`, `ColorPicker`, `Stepper`, `Kbd`.
+The open surface, all `—` above: `Form`, `ProgressCircle`, `Tree`, `Pagination`, `HoverCard`, `ColorPicker`, `Stepper`, `Kbd`.
 
 Also shipped beyond the original roadmap: `ButtonGroup`, `Clipboard`, `ReadOnlyText`, `StatusDot`, `Popover` (standalone), and the collapsible `Sidebar` panel (beyond `SidebarItem`).
 

@@ -277,6 +277,7 @@ fn panel_for(kind: ComponentKind, theme: &Theme) -> Box<AnyWidgetView<ProbeState
         ComponentKind::ContextMenu => Box::new(c::context_menu::demo::panel(theme)),
         ComponentKind::DataGrid => Box::new(c::data_grid::demo::panel(theme)),
         ComponentKind::DatePicker => Box::new(c::date_picker::demo::panel(theme)),
+        ComponentKind::DescriptionList => Box::new(c::description_list::demo::panel(theme)),
         ComponentKind::Dialog => Box::new(c::dialog::demo::panel(theme)),
         ComponentKind::DropdownButton => Box::new(c::dropdown_button::demo::panel(theme)),
         ComponentKind::Form => Box::new(c::form::demo::panel(theme)),
