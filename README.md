@@ -52,6 +52,7 @@ Shipped components, grouped by role:
   NASDAQ-style stock-quote board (the product "value lens"). See
   [`docs/DATA_GRID_HOST_CONTRACT.md`](docs/DATA_GRID_HOST_CONTRACT.md).
 - **`List`** — flat virtualized list (DataGrid's virtualization, single-column)
+- **`DescriptionList`** — label/value pairs, horizontal or stacked
 - **`Meter`** — linear progress/fill bar, optional gradient
 - **`Badge`** — semantic colored pill (optional leading icon, optional dismiss)
 - **`StatusDot`** — semantic status indicator
