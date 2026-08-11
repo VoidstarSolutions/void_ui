@@ -7,10 +7,9 @@
 //! when either doesn't (e.g. a non-text value like a status dot). In stacked mode
 //! each value is laid out directly below its label.
 //!
-//! Horizontal layout (this module's `layout_horizontal`/`measure`) is real as of
-//! Task 3. Stacked layout (`layout_stacked`/`measure_stacked`) is still a
-//! placeholder — every child measured at its minimum preferred size and placed
-//! at the origin — pending Task 4.
+//! Both layout modes are real: horizontal (`layout_horizontal`/`measure`'s
+//! Horizontal arm) as of Task 3, stacked (`layout_stacked`/`measure_stacked`) as
+//! of Task 4.
 
 use masonry::accesskit::{Node, Role};
 use masonry::core::{
@@ -70,8 +69,6 @@ impl DescriptionListWidget {
         f64::from(self.theme.density.gap)
     }
     /// Vertical gap between a label and its value in stacked mode.
-    // TODO(Task 4): wired up by `layout_stacked`/`measure_stacked`; unused until then.
-    #[allow(dead_code)]
     fn pair_gap(&self) -> f64 {
         f64::from(self.theme.density.pad)
     }
@@ -154,28 +151,96 @@ impl DescriptionListWidget {
         }
     }
 
-    /// TODO(Task 4): real stacked layout — label above value, each item stacked
-    /// vertically. For now, lay every child out at its preferred size and place
-    /// it at the origin so the widget compiles and the Horizontal path (this
-    /// task's actual scope) has somewhere to dispatch from.
+    /// Real stacked layout: each item's value is placed directly below its own
+    /// label, both at full width; items stack vertically with `row_gap`
+    /// between them.
     fn layout_stacked(&mut self, ctx: &mut LayoutCtx<'_>, size: Size) {
-        for pod in self.labels.iter_mut().chain(self.values.iter_mut()) {
-            let s = ctx.compute_size(pod, SizeDef::MIN, LayoutSize::from(size));
-            ctx.run_layout(pod, s);
-            ctx.place_child(pod, Point::ORIGIN);
+        let full = LayoutSize::from(size);
+        let pair_gap = self.pair_gap();
+        let row_gap = self.row_gap();
+        let mut y = 0.0_f64;
+        for i in 0..self.labels.len() {
+            let label = &mut self.labels[i];
+            let ls = ctx.compute_size(label, SizeDef::MIN, full);
+            let lh = ls.height;
+            ctx.run_layout(label, Size::new(size.width, lh));
+            ctx.place_child(label, Point::new(0.0, y));
+            y += lh + pair_gap;
+
+            let value = &mut self.values[i];
+            let vs = ctx.compute_size(value, SizeDef::MIN, full);
+            ctx.run_layout(value, Size::new(size.width, vs.height));
+            ctx.place_child(value, Point::new(0.0, y));
+            y += vs.height;
+
+            if i + 1 < self.labels.len() {
+                y += row_gap;
+            }
         }
     }
 
-    /// TODO(Task 4): real stacked measurement, mirroring `layout_stacked`.
-    #[allow(clippy::unused_self)]
+    /// Real stacked measurement, mirroring `layout_stacked`: horizontal
+    /// preferred width is the widest label or value; vertical preferred
+    /// height is the sum of each item's label + `pair_gap` + value, plus
+    /// `row_gap` between items.
     fn measure_stacked(
         &mut self,
-        _ctx: &mut MeasureCtx<'_>,
-        _axis: Axis,
-        _len_req: LenReq,
-        _cross_length: Option<Length>,
+        ctx: &mut MeasureCtx<'_>,
+        axis: Axis,
+        len_req: LenReq,
+        cross_length: Option<Length>,
     ) -> Length {
-        Length::px(0.0)
+        let context_size = LayoutSize::maybe(axis.cross(), cross_length);
+        let pair_gap = self.pair_gap();
+        let row_gap = self.row_gap();
+        let n = self.labels.len();
+        match axis {
+            Axis::Horizontal => {
+                let mut w = 0.0_f64;
+                for i in 0..n {
+                    let lw = ctx.compute_length(
+                        &mut self.labels[i],
+                        len_req.into(),
+                        context_size,
+                        Axis::Horizontal,
+                        cross_length,
+                    );
+                    let vw = ctx.compute_length(
+                        &mut self.values[i],
+                        len_req.into(),
+                        context_size,
+                        Axis::Horizontal,
+                        cross_length,
+                    );
+                    w = w.max(lw.get()).max(vw.get());
+                }
+                Length::px(w)
+            }
+            Axis::Vertical => {
+                let mut h = 0.0_f64;
+                for i in 0..n {
+                    let lh = ctx.compute_length(
+                        &mut self.labels[i],
+                        len_req.into(),
+                        context_size,
+                        Axis::Vertical,
+                        cross_length,
+                    );
+                    let vh = ctx.compute_length(
+                        &mut self.values[i],
+                        len_req.into(),
+                        context_size,
+                        Axis::Vertical,
+                        cross_length,
+                    );
+                    h += lh.get() + pair_gap + vh.get();
+                    if i + 1 < n {
+                        h += row_gap;
+                    }
+                }
+                Length::px(h)
+            }
+        }
     }
 }
 
@@ -489,6 +554,33 @@ mod tests {
             (label_min_y - value_min_y).abs() < 0.5,
             "row should top-align when the value has no text baseline: label min_y \
              {label_min_y} vs value min_y {value_min_y}"
+        );
+    }
+
+    #[test]
+    fn stacked_places_each_value_below_its_label() {
+        let w = DescriptionListWidget::new(
+            vec![passthrough("Name")],
+            vec![passthrough("Ada Lovelace")],
+            DescriptionListOrientation::Stacked,
+            &Theme::default(),
+        );
+        let mut h = TestHarness::create_with_size(
+            masonry::theme::default_property_set(),
+            NewWidget::new(w),
+            (400, 200),
+        );
+        let (lid, vid) = h.edit_root_widget(|wm| {
+            (
+                masonry::core::WidgetPod::id(&wm.widget.labels[0]),
+                masonry::core::WidgetPod::id(&wm.widget.values[0]),
+            )
+        });
+        let label_bottom = h.get_widget_with_id(lid).ctx().bounding_box().max_y();
+        let value_top = h.get_widget_with_id(vid).ctx().bounding_box().min_y();
+        assert!(
+            value_top >= label_bottom - 0.5,
+            "value should sit below its label"
         );
     }
 }
