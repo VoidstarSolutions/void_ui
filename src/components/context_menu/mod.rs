@@ -31,8 +31,8 @@ pub(crate) mod item_node;
 mod view;
 mod widget;
 
-pub use area::{ContextMenuAction, ContextMenuArea};
+pub use area::ContextMenuAction;
 pub use view::{
-    ContextMenuAreaBuilder, ContextMenuAreaView, Menu, MenuItem, MenuView, Submenu,
-    context_menu_area, item, menu, submenu,
+    ContextMenuArea, ContextMenuAreaView, Menu, MenuItem, MenuView, Submenu, context_menu_area,
+    item, menu, submenu,
 };

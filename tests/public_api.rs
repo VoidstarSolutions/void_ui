@@ -29,25 +29,24 @@ use std::sync::Arc;
 #[allow(unused_imports)] // exercised by name below, not necessarily constructed
 use void_ui::{
     Alert, AlertVariant, Autocomplete, AutocompleteAction, AutocompleteView, Badge, Breadcrumb,
-    BreadcrumbSegment, Button, ButtonGroup, ButtonVariant, ButtonView, Card, CellAlign, Checkbox,
-    CheckboxPress, CheckboxView, ClickableRow, Clipboard, ClipboardView, CloseCallback,
+    BreadcrumbSegment, Button, ButtonGroup, ButtonVariant, ButtonView, Card, CellAlignment,
+    Checkbox, CheckboxAction, CheckboxView, ClickableRow, Clipboard, ClipboardView, CloseCallback,
     Collapsible, CollapsibleView, ColumnDef, ColumnId, ColumnWidths, ComponentKind, ContentButton,
-    ContentButtonView, ContextMenuAction, ContextMenuArea, ContextMenuAreaBuilder,
-    ContextMenuAreaView, CurrencyFormat, CurrencyInput, DEFAULT_DELAY_MS,
-    DEFAULT_NOTIFICATION_WIDTH, DEFAULT_TIMEOUT, DataGrid, DatePicker, DatePickerAction,
-    DatePickerView, Dialog, DialogView, DropdownButton, DropdownButtonView, ExpansionState,
-    FilterState, GroupBox, Highlighter, Icon, IconName, Input, Label, LabelAlignment, List,
-    MIN_COLUMN_WIDTH, MIN_PANEL_SIZE, MaskedInput, Menu, MenuItem, MenuView, Meter, MeterFill,
-    NoTitle, Notification, NotificationLayerView, NotificationPosition, NotificationView,
-    NumberInput, OnClose, Orientation, Popover, PopoverAnchor, PopoverOpenChanged, PopoverView,
-    Radio, RadioView, RangeSlider, RangeSliderView, ReadOnlyText, ReadOnlyTextView, Resizable,
-    ResizablePanel, ResizablePanels, ResizablePanelsView, ResizableView, RowClickAction,
+    ContentButtonView, ContextMenuAction, ContextMenuArea, ContextMenuAreaView, CurrencyFormat,
+    CurrencyInput, DEFAULT_DELAY_MS, DEFAULT_NOTIFICATION_WIDTH, DEFAULT_TIMEOUT, DataGrid,
+    DatePicker, DatePickerAction, DatePickerView, Dialog, DialogView, DropdownButton,
+    DropdownButtonView, ExpansionState, FilterState, GroupBox, Highlighter, Icon, IconName, Input,
+    Label, LabelAlignment, List, MIN_COLUMN_WIDTH, MIN_PANEL_SIZE, MaskedInput, Menu, MenuItem,
+    MenuView, Meter, MeterFill, NoTitle, Notification, NotificationLayerView, NotificationPosition,
+    NotificationView, NumberInput, OnClose, Orientation, Popover, PopoverAction, PopoverAnchor,
+    PopoverView, Radio, RadioView, RangeSlider, RangeSliderView, ReadOnlyText, ReadOnlyTextView,
+    Resizable, ResizablePanel, ResizablePanels, ResizablePanelsView, ResizableView, RowClickAction,
     RowComparator, RowFilter, RustHighlighter, ScrollBarVisibility, ScrollContainer,
-    ScrollContainerView, ScrollState, SelectionState, Separator, SeparatorStyle, SidebarItem,
+    ScrollContainerView, ScrollState, SelectionState, Separator, SeparatorVariant, SidebarItem,
     SidebarItemView, SidebarNav, SidebarNavItem, SidebarNavView, SidebarPanel, SidebarPanelView,
     Skeleton, SkeletonAnimation, SkeletonShape, SkeletonView, Slider, SliderView, SortDirection,
     SortState, Spinner, SpinnerView, StatusDot, Submenu, TabItem, Tabs, TabsVariant, TabsView,
-    TitleState, Toggle, TogglePress, ToggleView, TokenKind, TokenSpan, Tooltip, TooltipView,
+    TitleState, Toggle, ToggleAction, ToggleView, TokenKind, TokenSpan, Tooltip, TooltipView,
     WithTitle, alert, autocomplete, badge, breadcrumb, button, button_group, card, checkbox,
     clickable_row, clipboard, collapsible, colored_text_column, content_button, context_menu_area,
     currency_input, data_grid, date_picker, dialog, disclosure_chevron, disclosure_icon,
@@ -99,14 +98,14 @@ fn view_ctx() -> ViewCtx {
     ViewCtx::new(Arc::new(NoopProxy), runtime)
 }
 
-/// `SeparatorStyle` is `separator`'s own type. Before issue #156's fix,
-/// `data_grid` re-exported an unrelated same-named `SeparatorStyle` at the
-/// crate root, so `void_ui::SeparatorStyle` was ambiguous for any consumer
+/// `SeparatorVariant` is `separator`'s own type. Before issue #156's fix,
+/// `data_grid` re-exported an unrelated same-named `SeparatorVariant` at the
+/// crate root, so `void_ui::SeparatorVariant` was ambiguous for any consumer
 /// who wrote it out (as opposed to internal code, which only ever used
 /// fully-qualified module paths and never noticed). Referencing the bare
 /// name here is what would have caught that.
 #[allow(dead_code)]
-fn separator_style_resolves_unambiguously(style: SeparatorStyle) -> SeparatorStyle {
+fn separator_style_resolves_unambiguously(style: SeparatorVariant) -> SeparatorVariant {
     style
 }
 

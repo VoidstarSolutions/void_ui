@@ -4,7 +4,7 @@
 //! The optional text label is a masonry `Label` child widget. The `checked`
 //! flag is host-controlled.
 //!
-//! Emits [`TogglePress`] on primary-pointer release inside the widget and
+//! Emits [`ToggleAction`] on primary-pointer release inside the widget and
 //! on Space/Enter while focused.
 
 use masonry::accesskit::{self, Node, Role, Toggled};
@@ -20,7 +20,7 @@ use masonry::peniko::Color;
 use masonry::properties::ContentColor;
 use masonry::widgets::Label;
 
-use super::TogglePress;
+use super::ToggleAction;
 use crate::Theme;
 use crate::components::click::{self, ClickPhase};
 use crate::components::interaction::{self, InteractionState};
@@ -196,7 +196,7 @@ impl ToggleWidget {
 
 // --- MARK: IMPL WIDGET
 impl Widget for ToggleWidget {
-    type Action = TogglePress;
+    type Action = ToggleAction;
 
     fn on_pointer_event(
         &mut self,
@@ -214,7 +214,7 @@ impl Widget for ToggleWidget {
             }
             Some(ClickPhase::Up { completed, .. }) => {
                 if completed {
-                    ctx.submit_action::<Self::Action>(TogglePress);
+                    ctx.submit_action::<Self::Action>(ToggleAction);
                 }
                 ctx.request_paint_only();
             }
@@ -239,7 +239,7 @@ impl Widget for ToggleWidget {
             ctx.set_handled();
             self.keyboard_pressed = false;
             ctx.request_paint_only();
-            ctx.submit_action::<Self::Action>(TogglePress);
+            ctx.submit_action::<Self::Action>(ToggleAction);
         }
     }
 
@@ -253,7 +253,7 @@ impl Widget for ToggleWidget {
             return;
         }
         if interaction::is_access_click(event) {
-            ctx.submit_action::<Self::Action>(TogglePress);
+            ctx.submit_action::<Self::Action>(ToggleAction);
         }
     }
 
@@ -440,7 +440,7 @@ mod tests {
     use masonry::theme::default_property_set;
 
     use crate::Theme;
-    use crate::components::toggle::TogglePress;
+    use crate::components::toggle::ToggleAction;
     use crate::theme::Density;
 
     use super::ToggleWidget;
@@ -577,7 +577,7 @@ mod tests {
         h.mouse_move(Point::new(40.0, 15.0));
         h.mouse_button_press(Some(PointerButton::Primary));
         h.mouse_button_release(Some(PointerButton::Primary));
-        assert!(h.pop_action::<TogglePress>().is_some());
+        assert!(h.pop_action::<ToggleAction>().is_some());
     }
 
     #[test]
@@ -587,7 +587,7 @@ mod tests {
         h.mouse_button_press(Some(PointerButton::Primary));
         h.mouse_move(Point::new(300.0, 300.0));
         h.mouse_button_release(Some(PointerButton::Primary));
-        assert!(h.pop_action::<TogglePress>().is_none());
+        assert!(h.pop_action::<ToggleAction>().is_none());
     }
 
     #[test]
@@ -596,10 +596,10 @@ mod tests {
         h.focus_on(Some(h.root_id()));
 
         h.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
-        assert!(h.pop_action::<TogglePress>().is_some());
+        assert!(h.pop_action::<ToggleAction>().is_some());
 
         h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
-        assert!(h.pop_action::<TogglePress>().is_some());
+        assert!(h.pop_action::<ToggleAction>().is_some());
     }
 
     #[test]
@@ -613,11 +613,14 @@ mod tests {
         assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
         h.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
         assert!(h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
-        assert!(h.pop_action::<TogglePress>().is_none(), "not yet activated");
+        assert!(
+            h.pop_action::<ToggleAction>().is_none(),
+            "not yet activated"
+        );
 
         h.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
         assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
-        assert!(h.pop_action::<TogglePress>().is_some());
+        assert!(h.pop_action::<ToggleAction>().is_some());
     }
 
     #[test]

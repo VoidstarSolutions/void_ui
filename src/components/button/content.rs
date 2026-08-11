@@ -78,7 +78,7 @@ pub struct ContentButton<V, F> {
 /// The child is static content, not a control (see the module docs above).
 /// Set an [`accessible_name`](ContentButton::accessible_name): a composite
 /// child has no single string for assistive tech to announce.
-pub fn content_button<V, F>(child: V, callback: F) -> ContentButton<V, F> {
+pub fn content_button<V, F>(child: V, on_press: F) -> ContentButton<V, F> {
     ContentButton {
         child,
         accessible_name: None,
@@ -87,7 +87,7 @@ pub fn content_button<V, F>(child: V, callback: F) -> ContentButton<V, F> {
         variant: ButtonVariant::Default,
         corners: None,
         fill_content: true,
-        callback,
+        callback: on_press,
     }
 }
 

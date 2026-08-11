@@ -69,7 +69,7 @@ pub struct Button<F> {
 /// Label and icon start as `None`; set them via `.label()` and `.icon()`.
 /// The callback is invoked on primary-pointer release inside the widget and on
 /// Space / Enter while the widget is focused.
-pub fn button<F>(callback: F) -> Button<F> {
+pub fn button<F>(on_press: F) -> Button<F> {
     Button {
         label: None,
         accessible_name: None,
@@ -82,7 +82,7 @@ pub fn button<F>(callback: F) -> Button<F> {
         corners: None,
         tint: None,
         compact: Compact(false),
-        callback,
+        callback: on_press,
     }
 }
 

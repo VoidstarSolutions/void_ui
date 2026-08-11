@@ -63,7 +63,7 @@ impl std::fmt::Display for ColumnId {
 
 /// In-cell horizontal alignment.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum CellAlign {
+pub enum CellAlignment {
     /// Pack to the leading edge — natural for text columns.
     #[default]
     Start,
@@ -145,7 +145,7 @@ pub struct ColumnDef<R, State> {
     /// so wide tables stay reachable rather than clipping.
     pub(crate) width: f64,
     /// In-cell text alignment.
-    pub(crate) align: CellAlign,
+    pub(crate) align: CellAlignment,
     /// Flex weight for viewport-fill sizing (CSS `flex-grow` / AG-Grid
     /// `flex`). `0.0` (the default) = a fixed column at [`width`](Self::width).
     /// `> 0.0` = the column grows to absorb surplus width when the grid is
@@ -186,7 +186,7 @@ pub struct ColumnDef<R, State> {
 impl<R, State> ColumnDef<R, State> {
     /// Constructs a column from an explicit cell-builder. Most callers
     /// should prefer [`text_column`] or [`optional_text_column`].
-    pub fn new<F>(title: impl Into<String>, width: f64, align: CellAlign, render: F) -> Self
+    pub fn new<F>(title: impl Into<String>, width: f64, align: CellAlignment, render: F) -> Self
     where
         F: Fn(&R, &Theme) -> Box<AnyWidgetView<State>> + Send + Sync + 'static,
     {
@@ -221,9 +221,9 @@ impl<R, State> ColumnDef<R, State> {
     /// ```
     /// # struct Row { name: String }
     /// use void_ui::components::data_grid::text_column;
-    /// use void_ui::CellAlign;
+    /// use void_ui::CellAlignment;
     /// // "Name" absorbs all the surplus; the metric columns stay fixed.
-    /// text_column::<Row, (), _>("Name", 200.0, CellAlign::Start, |r| r.name.clone()).flex(1.0)
+    /// text_column::<Row, (), _>("Name", 200.0, CellAlignment::Start, |r| r.name.clone()).flex(1.0)
     /// # ;
     /// ```
     pub fn flex(mut self, flex: f64) -> Self {
@@ -323,7 +323,7 @@ impl<R, State> ColumnDef<R, State> {
 pub fn text_column<R, State, F>(
     title: impl Into<String>,
     width: f64,
-    align: CellAlign,
+    align: CellAlignment,
     fmt: F,
 ) -> ColumnDef<R, State>
 where
@@ -353,7 +353,7 @@ where
 pub fn optional_text_column<R, State, F>(
     title: impl Into<String>,
     width: f64,
-    align: CellAlign,
+    align: CellAlignment,
     fmt: F,
 ) -> ColumnDef<R, State>
 where
@@ -393,7 +393,7 @@ where
 pub fn colored_text_column<R, State, F, C>(
     title: impl Into<String>,
     width: f64,
-    align: CellAlign,
+    align: CellAlignment,
     fmt: F,
     color: C,
 ) -> ColumnDef<R, State>
@@ -419,7 +419,7 @@ where
 mod tests {
     use std::cmp::Ordering;
 
-    use super::{CellAlign, ColumnDef, ColumnId, text_column};
+    use super::{CellAlignment, ColumnDef, ColumnId, text_column};
 
     #[derive(Clone)]
     struct Row {
@@ -430,14 +430,15 @@ mod tests {
     #[test]
     fn effective_id_defaults_to_title() {
         let col: ColumnDef<Row, ()> =
-            text_column("Price", 10.0, CellAlign::End, |r: &Row| r.n.to_string());
+            text_column("Price", 10.0, CellAlignment::End, |r: &Row| r.n.to_string());
         assert_eq!(col.effective_id(), ColumnId::from("Price"));
     }
 
     #[test]
     fn explicit_id_overrides_the_title_default() {
         let col: ColumnDef<Row, ()> =
-            text_column("Price", 10.0, CellAlign::End, |r: &Row| r.n.to_string()).id("price_units");
+            text_column("Price", 10.0, CellAlignment::End, |r: &Row| r.n.to_string())
+                .id("price_units");
         assert_eq!(col.effective_id(), ColumnId::from("price_units"));
         // The display title is unaffected by the id override.
         assert_eq!(col.title, "Price");
@@ -461,7 +462,7 @@ mod tests {
     #[test]
     fn flex_defaults_to_zero_and_rejects_nonpositive() {
         fn col() -> ColumnDef<Row, ()> {
-            text_column("N", 10.0, CellAlign::End, |r: &Row| r.n.to_string())
+            text_column("N", 10.0, CellAlignment::End, |r: &Row| r.n.to_string())
         }
         // Fixed by default.
         assert!((col().flex - 0.0).abs() < f64::EPSILON);
@@ -477,7 +478,7 @@ mod tests {
     #[test]
     fn columns_are_unsortable_by_default() {
         let col: ColumnDef<Row, ()> =
-            text_column("N", 10.0, CellAlign::End, |r: &Row| r.n.to_string());
+            text_column("N", 10.0, CellAlignment::End, |r: &Row| r.n.to_string());
         assert!(
             col.comparator.is_none(),
             "text_column must not auto-attach a comparator"
@@ -489,7 +490,7 @@ mod tests {
         // The display projection stringifies, which would sort
         // lexicographically; the key sorts numerically instead.
         let col: ColumnDef<Row, ()> =
-            text_column("N", 10.0, CellAlign::End, |r: &Row| r.n.to_string())
+            text_column("N", 10.0, CellAlignment::End, |r: &Row| r.n.to_string())
                 .sortable_by_key(|r: &Row| r.n);
         let cmp = col
             .comparator
@@ -504,9 +505,10 @@ mod tests {
 
     #[test]
     fn sortable_by_uses_the_explicit_comparator() {
-        let col: ColumnDef<Row, ()> =
-            text_column("Name", 10.0, CellAlign::Start, |r: &Row| r.name.to_string())
-                .sortable_by(|a: &Row, b: &Row| a.name.cmp(b.name));
+        let col: ColumnDef<Row, ()> = text_column("Name", 10.0, CellAlignment::Start, |r: &Row| {
+            r.name.to_string()
+        })
+        .sortable_by(|a: &Row, b: &Row| a.name.cmp(b.name));
         let cmp = col.comparator.expect("sortable_by attaches a comparator");
         let a = Row {
             n: 0,

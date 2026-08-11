@@ -205,7 +205,7 @@ fn affix_section(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo>
 }
 
 /// A template mask (phone). The field shows the formatted value while the host
-/// stores the raw digits; the readout below shows what `on_changed` emits.
+/// stores the raw digits; the readout below shows what `on_change` emits.
 fn mask_section(theme: &Theme, state: &InputDemo) -> impl WidgetView<InputDemo> + use<> {
     with_source!(theme, {
         flex_col((

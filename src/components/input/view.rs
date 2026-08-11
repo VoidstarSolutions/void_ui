@@ -94,17 +94,17 @@ pub struct Input<F> {
 /// Create a single-line text input with the given contents and change callback.
 ///
 /// `contents` is host-controlled — the widget never mutates it directly.
-/// `on_changed` is invoked with the full updated string on every edit; the
+/// `on_change` is invoked with the full updated string on every edit; the
 /// host is responsible for storing it and passing it back in on the next
 /// render.
-pub fn input<F>(contents: impl Into<String>, on_changed: F) -> Input<F> {
+pub fn input<F>(contents: impl Into<String>, on_change: F) -> Input<F> {
     Input {
         contents: contents.into(),
         placeholder: ArcStr::default(),
         disabled: false,
         prefix: None,
         suffix: None,
-        callback: on_changed,
+        callback: on_change,
     }
 }
 

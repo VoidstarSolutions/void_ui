@@ -56,6 +56,7 @@ pub mod focus_ring;
 #[cfg(feature = "gallery")]
 pub mod gallery;
 pub mod layout;
+pub mod orientation;
 pub mod overlay;
 pub mod overlay_portal;
 pub mod overlay_scope;
@@ -70,36 +71,34 @@ pub use animated_clip::AnimatedClip;
 /// (re-exported as `menu_item`), plus `ComponentKind`.
 pub use components::{
     Alert, AlertVariant, Autocomplete, AutocompleteAction, AutocompleteView, Badge, Breadcrumb,
-    BreadcrumbSegment, Button, ButtonGroup, ButtonVariant, ButtonView, Card, CellAlign, Checkbox,
-    CheckboxPress, CheckboxView, ClickableRow, Clipboard, ClipboardView, CloseCallback,
+    BreadcrumbSegment, Button, ButtonGroup, ButtonVariant, ButtonView, Card, CellAlignment,
+    Checkbox, CheckboxAction, CheckboxView, ClickableRow, Clipboard, ClipboardView, CloseCallback,
     Collapsible, CollapsibleView, ColumnDef, ColumnId, ColumnWidths, ComponentKind, ContentButton,
-    ContentButtonView, ContextMenuAction, ContextMenuArea, ContextMenuAreaBuilder,
-    ContextMenuAreaView, CurrencyFormat, CurrencyInput, DEFAULT_DELAY_MS,
-    DEFAULT_NOTIFICATION_WIDTH, DEFAULT_TIMEOUT, DataGrid, DatePicker, DatePickerAction,
-    DatePickerView, Dialog, DialogView, DismissCallback, DropdownButton, DropdownButtonView,
-    ExpansionState, FilterState, Form, FormField, FormOrientation, GroupBox, Highlighter, Icon,
-    IconName, Input, Kbd, Label, LabelAlignment, List, MIN_COLUMN_WIDTH, MIN_PANEL_SIZE,
-    MaskedInput, Menu, MenuItem, MenuView, Meter, MeterFill, Modifier, NoTitle, Notification,
-    NotificationLayerView, NotificationPosition, NotificationView, NumberInput, OnClose,
-    Orientation, Popover, PopoverAnchor, PopoverOpenChanged, PopoverView, Radio, RadioView,
-    RangeSlider, RangeSliderView, ReadOnlyText, ReadOnlyTextView, Resizable, ResizablePanel,
-    ResizablePanels, ResizablePanelsView, ResizableView, RowClickAction, RowComparator, RowFilter,
-    RustHighlighter, ScrollBarVisibility, ScrollContainer, ScrollContainerView, ScrollState,
-    SelectionState, Separator, SeparatorStyle, SidebarItem, SidebarItemView, SidebarNav,
-    SidebarNavItem, SidebarNavView, SidebarPanel, SidebarPanelView, Skeleton, SkeletonAnimation,
-    SkeletonShape, SkeletonView, Slider, SliderView, SortDirection, SortState, Spinner,
-    SpinnerView, StatusDot, Submenu, TabItem, Tabs, TabsVariant, TabsView, TitleState, Toggle,
-    TogglePress, ToggleView, TokenKind, TokenSpan, Tooltip, TooltipView, WithTitle, alert,
-    autocomplete, badge, breadcrumb, button, button_group, card, checkbox, clickable_row,
-    clipboard, collapsible, colored_text_column, content_button, context_menu_area, currency_input,
-    data_grid, date_picker, dialog, disclosure_chevron, disclosure_icon, dropdown_button,
-    filtered_indices, form, form_field, format_currency, format_mask, group_box, h_resizable,
-    h_resizable_panels, icon, input, kbd, label, list, masked_input, menu, meter, notification,
-    notification_layer, notification_overlay, notification_stack, number_input,
-    optional_text_column, pill, popover, radio, range_slider, read_only_text, scroll_container,
-    segment, separator, sidebar_item, sidebar_nav, sidebar_panel, skeleton, slider, sort_indices,
-    spinner, status_dot, submenu, tabs, text_column, toggle, toggle_button_group, tooltip,
-    v_resizable, v_resizable_panels,
+    ContentButtonView, ContextMenuAction, ContextMenuArea, ContextMenuAreaView, CurrencyFormat,
+    CurrencyInput, DEFAULT_DELAY_MS, DEFAULT_NOTIFICATION_WIDTH, DEFAULT_TIMEOUT, DataGrid,
+    DatePicker, DatePickerAction, DatePickerView, Dialog, DialogView, DropdownButton,
+    DropdownButtonView, ExpansionState, FilterState, Form, FormField, FormOrientation, GroupBox,
+    Highlighter, Icon, IconName, Input, Kbd, Label, LabelAlignment, List, MIN_COLUMN_WIDTH,
+    MIN_PANEL_SIZE, MaskedInput, Menu, MenuItem, MenuView, Meter, MeterFill, Modifier, NoTitle,
+    Notification, NotificationLayerView, NotificationPosition, NotificationView, NumberInput,
+    OnClose, Popover, PopoverAction, PopoverAnchor, PopoverView, Radio, RadioView, RangeSlider,
+    RangeSliderView, ReadOnlyText, ReadOnlyTextView, Resizable, ResizablePanel, ResizablePanels,
+    ResizablePanelsView, ResizableView, RowClickAction, RowComparator, RowFilter, RustHighlighter,
+    ScrollBarVisibility, ScrollContainer, ScrollContainerView, ScrollState, SelectionState,
+    Separator, SeparatorVariant, SidebarItem, SidebarItemView, SidebarNav, SidebarNavItem,
+    SidebarNavView, SidebarPanel, SidebarPanelView, Skeleton, SkeletonAnimation, SkeletonShape,
+    SkeletonView, Slider, SliderView, SortDirection, SortState, Spinner, SpinnerView, StatusDot,
+    Submenu, TabItem, Tabs, TabsVariant, TabsView, TitleState, Toggle, ToggleAction, ToggleView,
+    TokenKind, TokenSpan, Tooltip, TooltipView, WithTitle, alert, autocomplete, badge, breadcrumb,
+    button, button_group, card, checkbox, clickable_row, clipboard, collapsible,
+    colored_text_column, content_button, context_menu_area, currency_input, data_grid, date_picker,
+    dialog, disclosure_chevron, disclosure_icon, dropdown_button, filtered_indices, form,
+    form_field, format_currency, format_mask, group_box, h_resizable, h_resizable_panels, icon,
+    input, kbd, label, list, masked_input, menu, meter, notification, notification_layer,
+    notification_overlay, notification_stack, number_input, optional_text_column, pill, popover,
+    radio, range_slider, read_only_text, scroll_container, segment, separator, sidebar_item,
+    sidebar_nav, sidebar_panel, skeleton, slider, sort_indices, spinner, status_dot, submenu, tabs,
+    text_column, toggle, toggle_button_group, tooltip, v_resizable, v_resizable_panels,
 };
 
 /// `components::context_menu::item`, renamed at the root so a glob import of
@@ -109,6 +108,7 @@ pub use floating::{FloatingOverlay, FloatingOverlayView, floating, interactive_f
 #[cfg(feature = "gallery")]
 pub use gallery::code_block;
 pub use lucide_icons::LUCIDE_FONT_BYTES;
+pub use orientation::Orientation;
 pub use overlay::OverlayAnchor;
 pub use overlay_scope::{OverlayScope, OverlayScopeHandle, overlay_scope};
 pub use pointer_inert::{PointerInert, PointerInertView, pointer_inert};
@@ -131,26 +131,25 @@ mod root_export_tests {
         use crate::{
             Alert, AlertVariant, Autocomplete, AutocompleteAction, AutocompleteView, Badge,
             Breadcrumb, BreadcrumbSegment, Button, ButtonGroup, ButtonVariant, ButtonView, Card,
-            CellAlign, Checkbox, CheckboxPress, CheckboxView, ClickableRow, Clipboard,
+            CellAlignment, Checkbox, CheckboxAction, CheckboxView, ClickableRow, Clipboard,
             ClipboardView, CloseCallback, Collapsible, CollapsibleView, ColumnDef, ColumnId,
             ColumnWidths, ComponentKind, ContentButton, ContentButtonView, ContextMenuAction,
-            ContextMenuArea, ContextMenuAreaBuilder, ContextMenuAreaView, CurrencyFormat,
-            CurrencyInput, DEFAULT_DELAY_MS, DEFAULT_NOTIFICATION_WIDTH, DEFAULT_TIMEOUT, DataGrid,
-            DatePicker, DatePickerAction, DatePickerView, Dialog, DialogView, DismissCallback,
-            DropdownButton, DropdownButtonView, ExpansionState, FilterState, Form, FormField,
-            FormOrientation, GroupBox, Highlighter, Icon, IconName, Input, Kbd, Label,
-            LabelAlignment, List, MIN_COLUMN_WIDTH, MIN_PANEL_SIZE, MaskedInput, Menu, MenuItem,
-            MenuView, Meter, MeterFill, Modifier, NoTitle, Notification, NotificationLayerView,
-            NotificationPosition, NotificationView, NumberInput, OnClose, Orientation, Popover,
-            PopoverAnchor, PopoverOpenChanged, PopoverView, Radio, RadioView, RangeSlider,
+            ContextMenuArea, ContextMenuAreaView, CurrencyFormat, CurrencyInput, DEFAULT_DELAY_MS,
+            DEFAULT_NOTIFICATION_WIDTH, DEFAULT_TIMEOUT, DataGrid, DatePicker, DatePickerAction,
+            DatePickerView, Dialog, DialogView, DropdownButton, DropdownButtonView, ExpansionState,
+            FilterState, Form, FormField, FormOrientation, GroupBox, Highlighter, Icon, IconName,
+            Input, Kbd, Label, LabelAlignment, List, MIN_COLUMN_WIDTH, MIN_PANEL_SIZE, MaskedInput,
+            Menu, MenuItem, MenuView, Meter, MeterFill, Modifier, NoTitle, Notification,
+            NotificationLayerView, NotificationPosition, NotificationView, NumberInput, OnClose,
+            Popover, PopoverAction, PopoverAnchor, PopoverView, Radio, RadioView, RangeSlider,
             RangeSliderView, ReadOnlyText, ReadOnlyTextView, Resizable, ResizablePanel,
             ResizablePanels, ResizablePanelsView, ResizableView, RowClickAction, RowComparator,
             RowFilter, RustHighlighter, ScrollBarVisibility, ScrollContainer, ScrollContainerView,
-            ScrollState, SelectionState, Separator, SeparatorStyle, SidebarItem, SidebarItemView,
+            ScrollState, SelectionState, Separator, SeparatorVariant, SidebarItem, SidebarItemView,
             SidebarNav, SidebarNavItem, SidebarNavView, SidebarPanel, SidebarPanelView, Skeleton,
             SkeletonAnimation, SkeletonShape, SkeletonView, Slider, SliderView, SortDirection,
             SortState, Spinner, SpinnerView, StatusDot, Submenu, TabItem, Tabs, TabsVariant,
-            TabsView, TitleState, Toggle, TogglePress, ToggleView, TokenKind, TokenSpan, Tooltip,
+            TabsView, TitleState, Toggle, ToggleAction, ToggleView, TokenKind, TokenSpan, Tooltip,
             TooltipView, WithTitle, alert, autocomplete, badge, breadcrumb, button, button_group,
             card, checkbox, clickable_row, clipboard, collapsible, colored_text_column,
             content_button, context_menu_area, currency_input, data_grid, date_picker, dialog,

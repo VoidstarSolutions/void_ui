@@ -138,7 +138,7 @@ pub fn filtered_indices<R, State>(
 #[cfg(test)]
 mod tests {
     use super::{ColumnId, FilterState, filtered_indices};
-    use crate::components::data_grid::column::{CellAlign, ColumnDef, text_column};
+    use crate::components::data_grid::column::{CellAlignment, ColumnDef, text_column};
 
     #[derive(Clone)]
     struct Row {
@@ -153,17 +153,17 @@ mod tests {
     fn columns() -> Vec<ColumnDef<Row, ()>> {
         vec![
             // Col 0: Symbol — filterable.
-            text_column::<Row, (), _>("Symbol", 10.0, CellAlign::Start, |r: &Row| {
+            text_column::<Row, (), _>("Symbol", 10.0, CellAlignment::Start, |r: &Row| {
                 r.symbol.to_string()
             })
             .filterable_by_text(|r: &Row| r.symbol.to_string()),
             // Col 1: Sector — filterable.
-            text_column::<Row, (), _>("Sector", 10.0, CellAlign::Start, |r: &Row| {
+            text_column::<Row, (), _>("Sector", 10.0, CellAlignment::Start, |r: &Row| {
                 r.sector.to_string()
             })
             .filterable_by_text(|r: &Row| r.sector.to_string()),
             // Col 2: Plain — intentionally NOT filterable.
-            text_column::<Row, (), _>("Plain", 10.0, CellAlign::Start, |r: &Row| {
+            text_column::<Row, (), _>("Plain", 10.0, CellAlignment::Start, |r: &Row| {
                 r.symbol.to_string()
             }),
         ]
@@ -263,12 +263,12 @@ mod tests {
         let cols = columns();
         let reordered = vec![
             // Sector
-            text_column::<Row, (), _>("Sector", 10.0, CellAlign::Start, |r: &Row| {
+            text_column::<Row, (), _>("Sector", 10.0, CellAlignment::Start, |r: &Row| {
                 r.sector.to_string()
             })
             .filterable_by_text(|r: &Row| r.sector.to_string()),
             // Symbol
-            text_column::<Row, (), _>("Symbol", 10.0, CellAlign::Start, |r: &Row| {
+            text_column::<Row, (), _>("Symbol", 10.0, CellAlignment::Start, |r: &Row| {
                 r.symbol.to_string()
             })
             .filterable_by_text(|r: &Row| r.symbol.to_string()),

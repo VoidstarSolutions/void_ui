@@ -44,7 +44,8 @@ use xilem::view::{CrossAxisAlignment, flex_col, sized_box};
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::widget::{NotificationHost, NotificationTimeout};
-use crate::components::alert::{CloseCallback, alert};
+use crate::components::alert::alert;
+use crate::components::close_callback::CloseCallback;
 use crate::overlay::SurfaceStyle;
 use crate::overlay_portal::{PortalContentView, PortalPlacement, portal_from_env_lookup};
 use crate::{AlertVariant, IconName, Theme};

@@ -4,7 +4,7 @@
 //! a `Theme` value. The optional text label is a masonry `Label` child widget
 //! so text layout is handled by the framework.
 //!
-//! Emits [`CheckboxPress`] on primary-pointer release inside the widget and
+//! Emits [`CheckboxAction`] on primary-pointer release inside the widget and
 //! on Space/Enter while focused.
 
 use masonry::accesskit::{self, Node, Role, Toggled};
@@ -20,7 +20,7 @@ use masonry::peniko::Color;
 use masonry::properties::ContentColor;
 use masonry::widgets::Label;
 
-use super::CheckboxPress;
+use super::CheckboxAction;
 use crate::Theme;
 use crate::components::click::{self, ClickPhase};
 use crate::components::icon::{IconName, icon};
@@ -210,7 +210,7 @@ impl CheckboxWidget {
 
 // --- MARK: IMPL WIDGET
 impl Widget for CheckboxWidget {
-    type Action = CheckboxPress;
+    type Action = CheckboxAction;
 
     fn on_pointer_event(
         &mut self,
@@ -230,7 +230,7 @@ impl Widget for CheckboxWidget {
             }
             Some(ClickPhase::Up { completed, .. }) => {
                 if completed {
-                    ctx.submit_action::<Self::Action>(CheckboxPress);
+                    ctx.submit_action::<Self::Action>(CheckboxAction);
                 }
                 ctx.request_paint_only();
             }
@@ -255,7 +255,7 @@ impl Widget for CheckboxWidget {
             ctx.set_handled();
             self.keyboard_pressed = false;
             ctx.request_paint_only();
-            ctx.submit_action::<Self::Action>(CheckboxPress);
+            ctx.submit_action::<Self::Action>(CheckboxAction);
         }
     }
 
@@ -269,7 +269,7 @@ impl Widget for CheckboxWidget {
             return;
         }
         if interaction::is_access_click(event) {
-            ctx.submit_action::<Self::Action>(CheckboxPress);
+            ctx.submit_action::<Self::Action>(CheckboxAction);
         }
     }
 
@@ -464,7 +464,7 @@ mod tests {
 
     use super::CheckboxWidget;
     use crate::Theme;
-    use crate::components::checkbox::CheckboxPress;
+    use crate::components::checkbox::CheckboxAction;
 
     fn harness() -> TestHarness<CheckboxWidget> {
         let widget = CheckboxWidget::new(&Theme::dark(), false, false);
@@ -477,7 +477,7 @@ mod tests {
         h.mouse_move(Point::new(30.0, 15.0));
         h.mouse_button_press(Some(PointerButton::Primary));
         h.mouse_button_release(Some(PointerButton::Primary));
-        assert!(h.pop_action::<CheckboxPress>().is_some());
+        assert!(h.pop_action::<CheckboxAction>().is_some());
     }
 
     #[test]
@@ -487,7 +487,7 @@ mod tests {
         h.mouse_button_press(Some(PointerButton::Primary));
         h.mouse_move(Point::new(300.0, 300.0));
         h.mouse_button_release(Some(PointerButton::Primary));
-        assert!(h.pop_action::<CheckboxPress>().is_none());
+        assert!(h.pop_action::<CheckboxAction>().is_none());
     }
 
     #[test]
@@ -496,11 +496,11 @@ mod tests {
         h.focus_on(Some(h.root_id()));
 
         h.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
-        assert!(h.pop_action::<CheckboxPress>().is_some());
+        assert!(h.pop_action::<CheckboxAction>().is_some());
 
         h.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
         assert!(
-            h.pop_action::<CheckboxPress>().is_some(),
+            h.pop_action::<CheckboxAction>().is_some(),
             "checkboxes accept Enter as well as Space"
         );
     }
@@ -518,13 +518,13 @@ mod tests {
         h.process_text_event(TextEvent::key_down(Key::Character(" ".into())));
         assert!(h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
         assert!(
-            h.pop_action::<CheckboxPress>().is_none(),
+            h.pop_action::<CheckboxAction>().is_none(),
             "not yet activated"
         );
 
         h.process_text_event(TextEvent::key_up(Key::Character(" ".into())));
         assert!(!h.edit_root_widget(|wm| wm.widget.keyboard_pressed));
-        assert!(h.pop_action::<CheckboxPress>().is_some());
+        assert!(h.pop_action::<CheckboxAction>().is_some());
     }
 
     #[test]

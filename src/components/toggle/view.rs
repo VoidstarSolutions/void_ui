@@ -20,7 +20,7 @@ use masonry::widgets::Label;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx};
 
-use super::TogglePress;
+use super::ToggleAction;
 use super::widget::ToggleWidget;
 use crate::Theme;
 
@@ -41,12 +41,12 @@ pub struct Toggle<F> {
 /// Space / Enter while the widget is focused. The callback receives the
 /// **new** checked value (`!checked` at the time of the press); the host
 /// stores it in its own state.
-pub fn toggle<F>(checked: bool, callback: F) -> Toggle<F> {
+pub fn toggle<F>(checked: bool, on_change: F) -> Toggle<F> {
     Toggle {
         checked,
         disabled: false,
         label: None,
-        callback,
+        callback: on_change,
     }
 }
 
@@ -210,7 +210,7 @@ where
         _element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        match message.take_message::<TogglePress>() {
+        match message.take_message::<ToggleAction>() {
             // `checked` is the host-controlled prop this view was rendered
             // with; the widget never self-toggles, so the new value is its
             // negation by construction.

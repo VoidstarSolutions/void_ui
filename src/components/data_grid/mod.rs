@@ -194,7 +194,7 @@ pub use crate::collection::ScrollState;
 pub use crate::collection::SelectionState;
 pub use crate::collection::row_click::{ClickableRow, RowClickAction, clickable_row};
 pub use column::{
-    CellAlign, ColumnDef, ColumnId, RowComparator, RowFilter, colored_text_column,
+    CellAlignment, ColumnDef, ColumnId, RowComparator, RowFilter, colored_text_column,
     optional_text_column, text_column,
 };
 pub use column_strip::{ColumnResize, ColumnSeparatorStyle, ColumnStrip};

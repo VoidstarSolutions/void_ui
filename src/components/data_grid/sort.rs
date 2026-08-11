@@ -268,7 +268,7 @@ pub fn sort_indices<R, State>(
 #[cfg(test)]
 mod tests {
     use super::{ColumnId, SortDirection, SortState, sort_indices};
-    use crate::components::data_grid::column::{CellAlign, ColumnDef, text_column};
+    use crate::components::data_grid::column::{CellAlignment, ColumnDef, text_column};
 
     fn id(s: &str) -> ColumnId {
         ColumnId::from(s)
@@ -277,7 +277,7 @@ mod tests {
     /// One sortable column "N" over `i32` rows, keyed on the value itself.
     fn int_columns() -> Vec<ColumnDef<i32, ()>> {
         vec![
-            text_column::<i32, (), _>("N", 10.0, CellAlign::End, |r: &i32| r.to_string())
+            text_column::<i32, (), _>("N", 10.0, CellAlignment::End, |r: &i32| r.to_string())
                 .sortable_by_key(|r: &i32| *r),
         ]
     }
@@ -289,7 +289,7 @@ mod tests {
         cols.push(text_column::<i32, (), _>(
             "Plain",
             10.0,
-            CellAlign::End,
+            CellAlignment::End,
             |r: &i32| r.to_string(),
         ));
         cols
@@ -497,9 +497,9 @@ mod tests {
             val: i32,
         }
         let cols: Vec<ColumnDef<Row, ()>> = vec![
-            text_column::<Row, (), _>("grp", 10.0, CellAlign::End, |r: &Row| r.grp.to_string())
+            text_column::<Row, (), _>("grp", 10.0, CellAlignment::End, |r: &Row| r.grp.to_string())
                 .sortable_by_key(|r: &Row| r.grp),
-            text_column::<Row, (), _>("val", 10.0, CellAlign::End, |r: &Row| r.val.to_string())
+            text_column::<Row, (), _>("val", 10.0, CellAlignment::End, |r: &Row| r.val.to_string())
                 .sortable_by_key(|r: &Row| r.val),
         ];
         // grp: 1,1,0,0 ; val: 5,9,2,7
@@ -532,11 +532,11 @@ mod tests {
             c: i32,
         }
         let cols: Vec<ColumnDef<Row, ()>> = vec![
-            text_column::<Row, (), _>("a", 10.0, CellAlign::End, |r: &Row| r.a.to_string())
+            text_column::<Row, (), _>("a", 10.0, CellAlignment::End, |r: &Row| r.a.to_string())
                 .sortable_by_key(|r: &Row| r.a),
-            text_column::<Row, (), _>("b", 10.0, CellAlign::End, |r: &Row| r.b.to_string())
+            text_column::<Row, (), _>("b", 10.0, CellAlignment::End, |r: &Row| r.b.to_string())
                 .sortable_by_key(|r: &Row| r.b),
-            text_column::<Row, (), _>("c", 10.0, CellAlign::End, |r: &Row| r.c.to_string())
+            text_column::<Row, (), _>("c", 10.0, CellAlignment::End, |r: &Row| r.c.to_string())
                 .sortable_by_key(|r: &Row| r.c),
         ];
         // All share a=0, b=0 → 1st and 2nd levels tie on every row; only
@@ -610,7 +610,7 @@ mod tests {
         let only_plain = vec![text_column::<i32, (), _>(
             "Plain",
             10.0,
-            CellAlign::End,
+            CellAlignment::End,
             |r: &i32| r.to_string(),
         )];
         sort_indices(&mut idx, &rows, &s, &only_plain);
@@ -631,8 +631,8 @@ mod tests {
 
         // Reordered columns: "Plain" first, "N" second.
         let reordered = vec![
-            text_column::<i32, (), _>("Plain", 10.0, CellAlign::End, |r: &i32| r.to_string()),
-            text_column::<i32, (), _>("N", 10.0, CellAlign::End, |r: &i32| r.to_string())
+            text_column::<i32, (), _>("Plain", 10.0, CellAlignment::End, |r: &i32| r.to_string()),
+            text_column::<i32, (), _>("N", 10.0, CellAlignment::End, |r: &i32| r.to_string())
                 .sortable_by_key(|r: &i32| *r),
         ];
         let mut idx = vec![0, 1, 2];

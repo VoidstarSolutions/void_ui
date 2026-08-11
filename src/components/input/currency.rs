@@ -76,16 +76,16 @@ pub struct CurrencyInput<F> {
 
 /// Create a currency input with the given value and change callback.
 ///
-/// `value` is host-controlled; it is regrouped for display. `on_changed` is
+/// `value` is host-controlled; it is regrouped for display. `on_change` is
 /// invoked on every edit with the value re-filtered to numerals and regrouped
 /// per the [`CurrencyFormat`]. Defaults to US-dollar formatting.
-pub fn currency_input<F>(value: impl Into<String>, on_changed: F) -> CurrencyInput<F> {
+pub fn currency_input<F>(value: impl Into<String>, on_change: F) -> CurrencyInput<F> {
     CurrencyInput {
         value: value.into(),
         format: CurrencyFormat::default(),
         placeholder: ArcStr::default(),
         disabled: false,
-        on_changed,
+        on_changed: on_change,
     }
 }
 

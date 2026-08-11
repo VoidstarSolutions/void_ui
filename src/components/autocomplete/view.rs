@@ -17,10 +17,10 @@
 //! # ;
 //! ```
 //!
-//! The text is **host-controlled**: on every keystroke the `on_changed`
+//! The text is **host-controlled**: on every keystroke the `on_change`
 //! callback fires with the full updated string, and the host stores it and
 //! passes it back in on the next render (same contract as [`Input`]).
-//! Selecting a suggestion also fires `on_changed` with the selected text.
+//! Selecting a suggestion also fires `on_change` with the selected text.
 //!
 //! When inside an [`crate::overlay_scope`] the suggestion dropdown is mounted
 //! in the scope's always-on-top portal slot so it paints above siblings
@@ -63,16 +63,16 @@ pub struct Autocomplete<F> {
 /// callback.
 ///
 /// `contents` is host-controlled — the widget never mutates it directly.
-/// `on_changed` fires with the full updated string on every keystroke and on
+/// `on_change` fires with the full updated string on every keystroke and on
 /// suggestion selection; the host stores it and passes it back in on the next
 /// render.
-pub fn autocomplete<F>(contents: impl Into<String>, on_changed: F) -> Autocomplete<F> {
+pub fn autocomplete<F>(contents: impl Into<String>, on_change: F) -> Autocomplete<F> {
     Autocomplete {
         contents: contents.into(),
         placeholder: ArcStr::default(),
         suggestions: Vec::new(),
         disabled: false,
-        on_changed,
+        on_changed: on_change,
     }
 }
 

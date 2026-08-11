@@ -316,11 +316,11 @@ pub struct Slider<F> {
 /// passing it back in on the next render.
 ///
 /// Defaults to the range `0.0..=1.0` with continuous (unstepped) values.
-pub fn slider<F>(value: f64, callback: F) -> Slider<F> {
+pub fn slider<F>(value: f64, on_change: F) -> Slider<F> {
     Slider {
         value,
         config: SliderConfig::default(),
-        callback,
+        callback: on_change,
     }
 }
 
@@ -371,12 +371,12 @@ pub struct RangeSlider<F> {
 /// actions; the host stores the pair and passes it back in on the next render.
 ///
 /// Defaults to the range `0.0..=1.0` with continuous (unstepped) values.
-pub fn range_slider<F>(low: f64, high: f64, callback: F) -> RangeSlider<F> {
+pub fn range_slider<F>(low: f64, high: f64, on_change: F) -> RangeSlider<F> {
     RangeSlider {
         low,
         high,
         config: SliderConfig::default(),
-        callback,
+        callback: on_change,
     }
 }
 

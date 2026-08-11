@@ -11,4 +11,4 @@
 pub mod demo;
 mod view;
 
-pub use view::{Badge, DismissCallback, badge, pill};
+pub use view::{Badge, badge, pill};

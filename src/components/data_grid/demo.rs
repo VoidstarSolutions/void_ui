@@ -28,7 +28,7 @@ use xilem::view::{
 use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::column::{
-    CellAlign, ColumnDef, ColumnId, colored_text_column, optional_text_column, text_column,
+    CellAlignment, ColumnDef, ColumnId, colored_text_column, optional_text_column, text_column,
 };
 use super::expand::ExpansionState;
 use super::filter::{FilterState, filtered_indices};
@@ -402,15 +402,20 @@ pub fn tick_columns<State: 'static>(base_time_ns: i64) -> Vec<ColumnDef<DemoTick
         // Columns sort by their *underlying* value, not the formatted
         // display string — `event_ns`/`price_units` sort numerically
         // rather than lexicographically (e.g. so "$9.00" < "$100.00").
-        text_column("Time (ms)", 100.0, CellAlign::End, move |t: &DemoTick| {
-            let delta_ns = t.event_ns.saturating_sub(base_time_ns);
-            // ns → ms with one decimal.
-            #[expect(clippy::cast_precision_loss, reason = "Display only")]
-            let ms = delta_ns as f64 / 1_000_000.0;
-            format!("{ms:.1}")
-        })
+        text_column(
+            "Time (ms)",
+            100.0,
+            CellAlignment::End,
+            move |t: &DemoTick| {
+                let delta_ns = t.event_ns.saturating_sub(base_time_ns);
+                // ns → ms with one decimal.
+                #[expect(clippy::cast_precision_loss, reason = "Display only")]
+                let ms = delta_ns as f64 / 1_000_000.0;
+                format!("{ms:.1}")
+            },
+        )
         .sortable_by_key(|t: &DemoTick| t.event_ns),
-        text_column("Price", 90.0, CellAlign::End, |t: &DemoTick| {
+        text_column("Price", 90.0, CellAlignment::End, |t: &DemoTick| {
             #[expect(clippy::cast_precision_loss, reason = "Display only")]
             let dollars = t.price_units as f64 / PRICE_UNITS_PER_DOLLAR;
             format!("${dollars:.2}")
@@ -419,7 +424,7 @@ pub fn tick_columns<State: 'static>(base_time_ns: i64) -> Vec<ColumnDef<DemoTick
         // rows genuinely tie and a 2nd-level sort visibly orders within
         // each price. Sorting by the raw value is exact here.
         .sortable_by_key(|t: &DemoTick| t.price_units),
-        optional_text_column("Size", 80.0, CellAlign::End, |t: &DemoTick| {
+        optional_text_column("Size", 80.0, CellAlignment::End, |t: &DemoTick| {
             t.size.map(|v| v.to_string())
         })
         // `Option<u64>` is `Ord` (None sorts before Some), so unknown
@@ -430,7 +435,7 @@ pub fn tick_columns<State: 'static>(base_time_ns: i64) -> Vec<ColumnDef<DemoTick
         colored_text_column(
             "Side",
             60.0,
-            CellAlign::Center,
+            CellAlignment::Center,
             |t: &DemoTick| match t.side {
                 Some(DemoSide::Buy) => "B".to_string(),
                 Some(DemoSide::Sell) => "S".to_string(),
@@ -450,22 +455,22 @@ pub fn tick_columns<State: 'static>(base_time_ns: i64) -> Vec<ColumnDef<DemoTick
         // --- Extra derived columns: a realistic wide blotter that
         //     overflows the viewport horizontally (Tier 2: H-scroll).
         //     All are pure functions of existing fields — no new data.
-        text_column("Bid", 100.0, CellAlign::End, |t: &DemoTick| {
+        text_column("Bid", 100.0, CellAlignment::End, |t: &DemoTick| {
             #[expect(clippy::cast_precision_loss, reason = "Display only")]
             let bid = (t.price_units - 10_000_000) as f64 / PRICE_UNITS_PER_DOLLAR;
             format!("${bid:.2}")
         })
         .sortable_by_key(|t: &DemoTick| t.price_units - 10_000_000),
-        text_column("Ask", 100.0, CellAlign::End, |t: &DemoTick| {
+        text_column("Ask", 100.0, CellAlignment::End, |t: &DemoTick| {
             #[expect(clippy::cast_precision_loss, reason = "Display only")]
             let ask = (t.price_units + 10_000_000) as f64 / PRICE_UNITS_PER_DOLLAR;
             format!("${ask:.2}")
         })
         .sortable_by_key(|t: &DemoTick| t.price_units + 10_000_000),
-        text_column("Spread", 90.0, CellAlign::End, |_t: &DemoTick| {
+        text_column("Spread", 90.0, CellAlignment::End, |_t: &DemoTick| {
             "$0.02".to_string()
         }),
-        text_column("Notional", 130.0, CellAlign::End, |t: &DemoTick| {
+        text_column("Notional", 130.0, CellAlignment::End, |t: &DemoTick| {
             #[expect(clippy::cast_precision_loss, reason = "Display only")]
             let px = t.price_units as f64 / PRICE_UNITS_PER_DOLLAR;
             #[expect(clippy::cast_precision_loss, reason = "Display only")]
@@ -483,12 +488,12 @@ pub fn tick_columns<State: 'static>(base_time_ns: i64) -> Vec<ColumnDef<DemoTick
         // leaving a gutter); when narrower, the grid scrolls as before. It's
         // not the last column, showing the fill targets the flex column, not
         // just the trailing edge.
-        text_column("Exchange", 120.0, CellAlign::Start, |t: &DemoTick| {
+        text_column("Exchange", 120.0, CellAlignment::Start, |t: &DemoTick| {
             demo_exchange(t.event_ns).to_string()
         })
         .flex(1.0)
         .filterable_by_text(|t: &DemoTick| demo_exchange(t.event_ns).to_string()),
-        text_column("VWAP", 100.0, CellAlign::End, |t: &DemoTick| {
+        text_column("VWAP", 100.0, CellAlignment::End, |t: &DemoTick| {
             #[expect(clippy::cast_precision_loss, reason = "Display only")]
             let v = t.price_units as f64 / PRICE_UNITS_PER_DOLLAR;
             format!("${v:.2}")
@@ -825,24 +830,24 @@ fn bps(v: f64) -> i64 {
 #[must_use]
 pub fn stock_columns<S: 'static>() -> Vec<ColumnDef<StockQuote, S>> {
     vec![
-        text_column("Symbol", 80.0, CellAlign::Start, |q: &StockQuote| {
+        text_column("Symbol", 80.0, CellAlignment::Start, |q: &StockQuote| {
             q.symbol.to_string()
         })
         .sortable_by_key(|q: &StockQuote| q.symbol)
         .filterable_by_text(|q: &StockQuote| q.symbol.to_string()),
-        text_column("Name", 190.0, CellAlign::Start, |q: &StockQuote| {
+        text_column("Name", 190.0, CellAlignment::Start, |q: &StockQuote| {
             q.name.to_string()
         })
         .sortable_by_key(|q: &StockQuote| q.name)
         .filterable_by_text(|q: &StockQuote| q.name.to_string()),
-        text_column("Last", 90.0, CellAlign::End, |q: &StockQuote| {
+        text_column("Last", 90.0, CellAlignment::End, |q: &StockQuote| {
             format!("${:.2}", q.last)
         })
         .sortable_by_key(|q: &StockQuote| cents(q.last)),
         colored_text_column(
             "Chg",
             80.0,
-            CellAlign::End,
+            CellAlignment::End,
             |q: &StockQuote| format!("{:+.2}", q.change),
             |q: &StockQuote, theme: &Theme| change_color(q.change, theme),
         )
@@ -850,64 +855,64 @@ pub fn stock_columns<S: 'static>() -> Vec<ColumnDef<StockQuote, S>> {
         colored_text_column(
             "Chg%",
             80.0,
-            CellAlign::End,
+            CellAlignment::End,
             |q: &StockQuote| format!("{:+.2}%", q.change_pct),
             |q: &StockQuote, theme: &Theme| change_color(q.change_pct, theme),
         )
         .sortable_by_key(|q: &StockQuote| bps(q.change_pct)),
-        text_column("Open", 90.0, CellAlign::End, |q: &StockQuote| {
+        text_column("Open", 90.0, CellAlignment::End, |q: &StockQuote| {
             format!("${:.2}", q.open)
         })
         .sortable_by_key(|q: &StockQuote| cents(q.open)),
-        text_column("High", 90.0, CellAlign::End, |q: &StockQuote| {
+        text_column("High", 90.0, CellAlignment::End, |q: &StockQuote| {
             format!("${:.2}", q.high)
         })
         .sortable_by_key(|q: &StockQuote| cents(q.high)),
-        text_column("Low", 90.0, CellAlign::End, |q: &StockQuote| {
+        text_column("Low", 90.0, CellAlignment::End, |q: &StockQuote| {
             format!("${:.2}", q.low)
         })
         .sortable_by_key(|q: &StockQuote| cents(q.low)),
-        text_column("Volume", 110.0, CellAlign::End, |q: &StockQuote| {
+        text_column("Volume", 110.0, CellAlignment::End, |q: &StockQuote| {
             fmt_compact(q.volume)
         })
         .sortable_by_key(|q: &StockQuote| q.volume),
-        text_column("Avg Vol", 110.0, CellAlign::End, |q: &StockQuote| {
+        text_column("Avg Vol", 110.0, CellAlignment::End, |q: &StockQuote| {
             fmt_compact(q.avg_volume)
         })
         .sortable_by_key(|q: &StockQuote| q.avg_volume),
-        text_column("Mkt Cap", 110.0, CellAlign::End, |q: &StockQuote| {
+        text_column("Mkt Cap", 110.0, CellAlignment::End, |q: &StockQuote| {
             fmt_compact(q.market_cap)
         })
         .sortable_by_key(|q: &StockQuote| q.market_cap),
-        optional_text_column("P/E", 80.0, CellAlign::End, |q: &StockQuote| {
+        optional_text_column("P/E", 80.0, CellAlignment::End, |q: &StockQuote| {
             q.pe.map(|p| format!("{p:.1}"))
         })
         // `Option<i64>` is `Ord` (None sorts first), clustering N/A P/Es.
         .sortable_by_key(|q: &StockQuote| q.pe.map(bps)),
-        text_column("EPS", 80.0, CellAlign::End, |q: &StockQuote| {
+        text_column("EPS", 80.0, CellAlignment::End, |q: &StockQuote| {
             format!("${:.2}", q.eps)
         })
         .sortable_by_key(|q: &StockQuote| cents(q.eps)),
-        optional_text_column("Div %", 80.0, CellAlign::End, |q: &StockQuote| {
+        optional_text_column("Div %", 80.0, CellAlignment::End, |q: &StockQuote| {
             q.div_yield.map(|d| format!("{d:.2}%"))
         })
         .sortable_by_key(|q: &StockQuote| q.div_yield.map(bps)),
-        text_column("52W H", 90.0, CellAlign::End, |q: &StockQuote| {
+        text_column("52W H", 90.0, CellAlignment::End, |q: &StockQuote| {
             format!("${:.2}", q.week52_high)
         })
         .sortable_by_key(|q: &StockQuote| cents(q.week52_high)),
-        text_column("52W L", 90.0, CellAlign::End, |q: &StockQuote| {
+        text_column("52W L", 90.0, CellAlignment::End, |q: &StockQuote| {
             format!("${:.2}", q.week52_low)
         })
         .sortable_by_key(|q: &StockQuote| cents(q.week52_low)),
         // Trailing space + a little extra width so the right-aligned Beta
         // value keeps a visible gap from the left-aligned Sector column
         // that follows it (cells have no internal horizontal padding).
-        text_column("Beta", 84.0, CellAlign::End, |q: &StockQuote| {
+        text_column("Beta", 84.0, CellAlignment::End, |q: &StockQuote| {
             format!("{:.2}  ", q.beta)
         })
         .sortable_by_key(|q: &StockQuote| bps(q.beta)),
-        text_column("Sector", 170.0, CellAlign::Start, |q: &StockQuote| {
+        text_column("Sector", 170.0, CellAlignment::Start, |q: &StockQuote| {
             q.sector.to_string()
         })
         // Low-cardinality → a great multi-sort primary ("Sector then
@@ -1087,7 +1092,7 @@ fn build_inner(theme: &Theme, demo: &Demo) -> impl WidgetView<Demo> + use<> {
     columns.push(ColumnDef::new(
         "Actions",
         70.0,
-        CellAlign::Center,
+        CellAlignment::Center,
         |t: &DemoTick, theme: &Theme| {
             let id = t.id;
             Box::new(
@@ -1633,14 +1638,14 @@ fn build_tree_inner(theme: &Theme, demo: &TreeDemo) -> impl WidgetView<TreeDemo>
     // The first column is the tree column: wide enough to hold the depth
     // indent + chevron + name.
     let columns = vec![
-        text_column::<TreeRow, TreeDemo, _>("Name", 300.0, CellAlign::Start, |r: &TreeRow| {
+        text_column::<TreeRow, TreeDemo, _>("Name", 300.0, CellAlignment::Start, |r: &TreeRow| {
             r.name.clone()
         })
         .flex(1.0),
         text_column::<TreeRow, TreeDemo, _>(
             "Market Value",
             140.0,
-            CellAlign::End,
+            CellAlignment::End,
             |r: &TreeRow| r.value.clone(),
         ),
     ];

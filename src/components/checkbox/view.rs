@@ -20,7 +20,7 @@ use masonry::widgets::Label;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx};
 
-use super::CheckboxPress;
+use super::CheckboxAction;
 use super::widget::CheckboxWidget;
 use crate::Theme;
 
@@ -41,12 +41,12 @@ pub struct Checkbox<F> {
 /// Space / Enter while the widget is focused. The callback receives the
 /// **new** checked value (`!checked` at the time of the press); the host
 /// stores it in its own state.
-pub fn checkbox<F>(checked: bool, callback: F) -> Checkbox<F> {
+pub fn checkbox<F>(checked: bool, on_change: F) -> Checkbox<F> {
     Checkbox {
         checked,
         disabled: false,
         label: None,
-        callback,
+        callback: on_change,
     }
 }
 
@@ -120,7 +120,7 @@ where
             widget = widget.with_label(lbl);
         }
         // `with_action_widget` registers the widget as an action source so that
-        // `CheckboxPress` events bubble up to this view's `message` handler.
+        // `CheckboxAction` events bubble up to this view's `message` handler.
         let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
         (element, ())
     }
@@ -212,7 +212,7 @@ where
         _element: Mut<'_, Self::Element>,
         app_state: &mut State,
     ) -> MessageResult<Action> {
-        match message.take_message::<CheckboxPress>() {
+        match message.take_message::<CheckboxAction>() {
             // `checked` is the host-controlled prop this view was rendered
             // with; the widget never self-toggles, so the new value is its
             // negation by construction.

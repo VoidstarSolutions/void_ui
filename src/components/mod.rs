@@ -26,7 +26,7 @@
 //! 2. Any other type a component's public API forces a caller to name —
 //!    config/style enums, constants, and action/marker types referenced by
 //!    a builder's generic bounds or a view's `message()` contract
-//!    (`CloseCallback`, `TogglePress`, `PopoverOpenChanged`,
+//!    (`CloseCallback`, `ToggleAction`, `PopoverAction`,
 //!    `DEFAULT_DELAY_MS`, `MIN_PANEL_SIZE`, ...) — is `pub` and re-exported
 //!    to the root too, regardless of whether it happens to live in that
 //!    component's `view.rs` or `widget.rs`.
@@ -39,6 +39,27 @@
 //! 4. `mod view;` is always private — nothing outside a component needs
 //!    the raw module path, since every type callers need is re-exported
 //!    through the component's own `mod.rs`.
+//!
+//! ## Render return type
+//!
+//! `render` returns one of three shapes. Pick the most specific one that
+//! compiles — never reach for a heavier shape than the composition needs, as
+//! each step down erases more type information (and `Box` adds an allocation):
+//!
+//! 1. A concrete `FooView` when the component ships its own `View` impl
+//!    (bespoke rebuild logic in `view.rs`). Most interactive widgets —
+//!    `button`, `checkbox`, `slider`, `tabs` — do this; the named type lets a
+//!    caller store the view and keeps rebuild allocation-free.
+//! 2. `impl WidgetView<State, Action> + use<...>` when `render` is a pure
+//!    composition of other views whose *outermost* view has a single concrete
+//!    type. Per-child variation is fine here — absorb it into a homogeneous
+//!    `Vec<Box<AnyWidgetView<..>>>` handed to one flex container, so the
+//!    return itself stays a single opaque type (`breadcrumb`, `data_grid`).
+//! 3. `Box<AnyWidgetView<State, Action>>` only when the *outermost* expression
+//!    itself branches into differing concrete types that cannot be unified —
+//!    an optional border or title, an orientation switch (`card`, `group_box`,
+//!    `separator`, `meter`, `form`). Erase once at the return rather than
+//!    duplicate the whole builder per branch.
 
 pub(crate) mod access_wrap;
 pub mod alert;
@@ -51,6 +72,7 @@ pub mod card;
 pub mod checkbox;
 pub(crate) mod click;
 pub mod clipboard;
+mod close_callback;
 pub mod code_view;
 pub mod collapsible;
 pub mod context_menu;
@@ -83,17 +105,18 @@ pub mod tabs;
 pub mod toggle;
 pub mod tooltip;
 
-pub use alert::{Alert, AlertVariant, CloseCallback, alert};
+pub use alert::{Alert, AlertVariant, alert};
 pub use autocomplete::{Autocomplete, AutocompleteAction, AutocompleteView, autocomplete};
-pub use badge::{Badge, DismissCallback, badge, pill};
+pub use badge::{Badge, badge, pill};
 pub use breadcrumb::{Breadcrumb, BreadcrumbSegment, breadcrumb, segment};
 pub use button::{
     Button, ButtonVariant, ButtonView, ContentButton, ContentButtonView, button, content_button,
 };
 pub use button_group::{ButtonGroup, button_group, toggle_button_group};
 pub use card::{Card, card};
-pub use checkbox::{Checkbox, CheckboxPress, CheckboxView, checkbox};
+pub use checkbox::{Checkbox, CheckboxAction, CheckboxView, checkbox};
 pub use clipboard::{Clipboard, ClipboardView, clipboard};
+pub use close_callback::CloseCallback;
 pub use code_view::{
     Highlighter, ReadOnlyText, ReadOnlyTextView, RustHighlighter, TokenKind, TokenSpan,
     read_only_text,
@@ -101,11 +124,10 @@ pub use code_view::{
 pub use collapsible::{Collapsible, CollapsibleView, collapsible};
 pub use context_menu::{ContextMenuAction, ContextMenuArea};
 pub use context_menu::{
-    ContextMenuAreaBuilder, ContextMenuAreaView, Menu, MenuItem, MenuView, Submenu,
-    context_menu_area, item, menu, submenu,
+    ContextMenuAreaView, Menu, MenuItem, MenuView, Submenu, context_menu_area, item, menu, submenu,
 };
 pub use data_grid::{
-    CellAlign, ClickableRow, ColumnDef, ColumnId, ColumnWidths, DataGrid, ExpansionState,
+    CellAlignment, ClickableRow, ColumnDef, ColumnId, ColumnWidths, DataGrid, ExpansionState,
     FilterState, MIN_COLUMN_WIDTH, RowClickAction, RowComparator, RowFilter, ScrollState,
     SelectionState, SortDirection, SortState, clickable_row, colored_text_column, data_grid,
     filtered_indices, optional_text_column, sort_indices, text_column,
@@ -129,7 +151,7 @@ pub use notification::{
     NotificationPosition, NotificationView, OnClose, notification, notification_layer,
     notification_overlay, notification_stack,
 };
-pub use popover::{Popover, PopoverAnchor, PopoverOpenChanged, PopoverView, popover};
+pub use popover::{Popover, PopoverAction, PopoverAnchor, PopoverView, popover};
 pub use radio::{Radio, RadioView, radio};
 pub use resizable::{
     MIN_PANEL_SIZE, Resizable, ResizablePanel, ResizablePanels, ResizablePanelsView, ResizableView,
@@ -138,7 +160,7 @@ pub use resizable::{
 pub use scroll_container::{
     ScrollBarVisibility, ScrollContainer, ScrollContainerView, scroll_container,
 };
-pub use separator::{Orientation, Separator, SeparatorStyle, separator};
+pub use separator::{Separator, SeparatorVariant, separator};
 pub use sidebar::{
     SidebarItem, SidebarItemView, SidebarNav, SidebarNavItem, SidebarNavView, SidebarPanel,
     SidebarPanelView, sidebar_item, sidebar_nav, sidebar_panel,
@@ -148,7 +170,7 @@ pub use slider::{RangeSlider, RangeSliderView, Slider, SliderView, range_slider,
 pub use spinner::{Spinner, SpinnerView, spinner};
 pub use status_dot::{StatusDot, status_dot};
 pub use tabs::{TabItem, Tabs, TabsVariant, TabsView, tabs};
-pub use toggle::{Toggle, TogglePress, ToggleView, toggle};
+pub use toggle::{Toggle, ToggleAction, ToggleView, toggle};
 pub use tooltip::{DEFAULT_DELAY_MS, Tooltip, TooltipView, tooltip};
 
 /// One entry per component the gallery exposes.

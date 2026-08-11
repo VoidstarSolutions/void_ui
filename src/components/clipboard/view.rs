@@ -41,10 +41,10 @@ pub struct Clipboard<F> {
 /// `value` is written to the system clipboard when the user activates the
 /// button. `callback` is called afterward so the host can react (e.g. update
 /// UI state, show a toast).
-pub fn clipboard<F>(value: impl Into<ArcStr>, callback: F) -> Clipboard<F> {
+pub fn clipboard<F>(value: impl Into<ArcStr>, on_copy: F) -> Clipboard<F> {
     Clipboard {
         value: value.into(),
-        callback,
+        callback: on_copy,
     }
 }
 

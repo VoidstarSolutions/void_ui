@@ -33,7 +33,7 @@ use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::{Pod, ViewCtx, WidgetView};
 
 use super::area::{
-    ContextMenuAction, ContextMenuArea, ContextMenuHandle, context_menu_dismiss_hook,
+    ContextMenuAction, ContextMenuAreaWidget, ContextMenuHandle, context_menu_dismiss_hook,
 };
 use super::widget::{MenuAction, MenuPanel, MenuRowSpec};
 use crate::Theme;
@@ -415,21 +415,21 @@ where
 ///     .render(&theme)
 /// # ;
 /// ```
-#[must_use = "ContextMenuAreaBuilder does nothing until rendered with .render(&theme)"]
-pub struct ContextMenuAreaBuilder<State, Action, V> {
+#[must_use = "ContextMenuArea does nothing until rendered with .render(&theme)"]
+pub struct ContextMenuArea<State, Action, V> {
     content: V,
     entries: Vec<Entry<State, Action>>,
 }
 
 /// Wrap `content` so a right-click opens a context menu over it.
-pub fn context_menu_area<State, Action, V>(content: V) -> ContextMenuAreaBuilder<State, Action, V> {
-    ContextMenuAreaBuilder {
+pub fn context_menu_area<State, Action, V>(content: V) -> ContextMenuArea<State, Action, V> {
+    ContextMenuArea {
         content,
         entries: Vec::new(),
     }
 }
 
-impl<State, Action, V> ContextMenuAreaBuilder<State, Action, V>
+impl<State, Action, V> ContextMenuArea<State, Action, V>
 where
     State: 'static,
     Action: 'static,
@@ -472,7 +472,7 @@ where
     }
 }
 
-/// The materialized xilem `View` backing a [`ContextMenuAreaBuilder`].
+/// The materialized xilem `View` backing a [`ContextMenuArea`].
 #[must_use = "View values do nothing unless provided to Xilem."]
 pub struct ContextMenuAreaView<V, State, Action> {
     content: V,
@@ -486,7 +486,7 @@ impl<V, State, Action> ViewMarker for ContextMenuAreaView<V, State, Action> {}
 
 /// Where this area's menu is bound: the nearest scope's portal (registered
 /// by key; the scope's view mounts/rebuilds it), or in-tree under our own
-/// `ContextMenuArea` (fallback, handled entirely by the widget). Mirrors
+/// `ContextMenuAreaWidget` (fallback, handled entirely by the widget). Mirrors
 /// `dropdown_button::view::MenuBinding`.
 enum MenuBinding<State: 'static, Action: 'static> {
     Portal {
@@ -511,7 +511,7 @@ where
     Action: 'static,
     V: WidgetView<State, Action>,
 {
-    type Element = Pod<ContextMenuArea>;
+    type Element = Pod<ContextMenuAreaWidget>;
     type ViewState = ContextMenuAreaViewState<V::ViewState, State, Action>;
 
     fn build(&self, ctx: &mut ViewCtx, app_state: &mut State) -> (Self::Element, Self::ViewState) {
@@ -531,7 +531,7 @@ where
                 PortalPlacement::BareTrigger,
                 SurfaceStyle::Popover,
             );
-            let widget = ContextMenuArea::new_portal(
+            let widget = ContextMenuAreaWidget::new_portal(
                 content_pod.new_widget.erased(),
                 handle.clone(),
                 portal.scope().clone(),
@@ -552,7 +552,7 @@ where
         } else {
             let menu = MenuPanel::new(self.rows.iter().cloned(), &self.theme).hosted();
             let widget =
-                ContextMenuArea::new(content_pod.new_widget.erased(), NewWidget::new(menu));
+                ContextMenuAreaWidget::new(content_pod.new_widget.erased(), NewWidget::new(menu));
             let element = ctx.with_action_widget(|ctx| ctx.create_pod(widget));
             (
                 element,
@@ -573,7 +573,7 @@ where
         app_state: &mut State,
     ) {
         {
-            let mut content = ContextMenuArea::content_mut(&mut element);
+            let mut content = ContextMenuAreaWidget::content_mut(&mut element);
             self.content.rebuild(
                 &prev.content,
                 &mut view_state.content,
@@ -585,12 +585,12 @@ where
         match &mut view_state.binding {
             MenuBinding::InTree => {
                 if self.theme != prev.theme
-                    && let Some(mut menu) = ContextMenuArea::menu_mut(&mut element)
+                    && let Some(mut menu) = ContextMenuAreaWidget::menu_mut(&mut element)
                 {
                     MenuPanel::set_theme(&mut menu, &self.theme);
                 }
                 if self.rows != prev.rows
-                    && let Some(mut menu) = ContextMenuArea::menu_mut(&mut element)
+                    && let Some(mut menu) = ContextMenuAreaWidget::menu_mut(&mut element)
                 {
                     MenuPanel::set_rows(&mut menu, self.rows.iter().cloned());
                 }
@@ -634,7 +634,7 @@ where
         mut element: Mut<'_, Self::Element>,
     ) {
         {
-            let mut content = ContextMenuArea::content_mut(&mut element);
+            let mut content = ContextMenuAreaWidget::content_mut(&mut element);
             self.content
                 .teardown(&mut view_state.content, ctx, content.downcast());
         }
@@ -655,7 +655,7 @@ where
             let ContextMenuAction::ItemSelected(index) = *action;
             dispatch_selection(&self.callbacks, index, app_state)
         } else {
-            let mut content = ContextMenuArea::content_mut(&mut element);
+            let mut content = ContextMenuAreaWidget::content_mut(&mut element);
             self.content.message(
                 &mut view_state.content,
                 message,
@@ -668,13 +668,13 @@ where
 
 /// The content view registered with the scope's [`OverlayPortal`] for a
 /// portal-mode context menu — wraps `MenuPanel` and, on selection or
-/// dismissal, notifies the owning [`ContextMenuArea`] (via
+/// dismissal, notifies the owning [`ContextMenuAreaWidget`] (via
 /// [`ContextMenuHandle`]) to close, reusing [`context_menu_dismiss_hook`]
 /// directly since context menu has no host-controlled open state to gate
 /// (unlike `dropdown_button::view::MenuContentView`, which must split
 /// `close_for_selection` from `mark_closed` for exactly that reason). The
 /// menu is not a descendant of the area in this mode, so normal action
-/// bubbling never reaches `ContextMenuArea::on_action`.
+/// bubbling never reaches `ContextMenuAreaWidget::on_action`.
 struct ContextMenuContentView<State, Action> {
     rows: Vec<MenuRowSpec>,
     callbacks: Arc<Vec<Option<SelectCallback<State, Action>>>>,

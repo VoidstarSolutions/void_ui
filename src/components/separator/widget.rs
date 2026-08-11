@@ -10,7 +10,8 @@ use masonry::kurbo::{Axis, Point, Rect, Size};
 use masonry::layout::{LenReq, Length};
 use masonry::peniko::Color;
 
-use super::view::{Orientation, SeparatorStyle};
+use super::view::SeparatorVariant;
+use crate::Orientation;
 
 /// Length of the drawn segment in a dashed separator's pattern — dash-pattern
 /// chrome, not density-scaled.
@@ -21,7 +22,7 @@ const DASH_OFF: f64 = 2.0;
 
 pub struct SeparatorWidget {
     pub(super) orientation: Orientation,
-    pub(super) style: SeparatorStyle,
+    pub(super) style: SeparatorVariant,
     pub(super) color: Color,
 }
 
@@ -33,7 +34,7 @@ impl SeparatorWidget {
         }
     }
 
-    pub(super) fn set_style(this: &mut WidgetMut<'_, Self>, style: SeparatorStyle) {
+    pub(super) fn set_style(this: &mut WidgetMut<'_, Self>, style: SeparatorVariant) {
         if this.widget.style != style {
             this.widget.style = style;
             this.ctx.request_paint_only();
@@ -88,12 +89,12 @@ impl Widget for SeparatorWidget {
     ) {
         let size = ctx.border_box().size();
         match self.style {
-            SeparatorStyle::Solid => {
+            SeparatorVariant::Solid => {
                 painter
                     .fill(Rect::from_origin_size(Point::ORIGIN, size), self.color)
                     .draw();
             }
-            SeparatorStyle::Dashed => match self.orientation {
+            SeparatorVariant::Dashed => match self.orientation {
                 Orientation::Horizontal => {
                     let mut x = 0.0_f64;
                     while x < size.width {
@@ -154,12 +155,13 @@ mod tests {
     use masonry::testing::TestHarness;
 
     use super::SeparatorWidget;
-    use crate::components::separator::view::{Orientation, SeparatorStyle};
+    use crate::Orientation;
+    use crate::components::separator::view::SeparatorVariant;
 
     fn widget() -> SeparatorWidget {
         SeparatorWidget {
             orientation: Orientation::Horizontal,
-            style: SeparatorStyle::Solid,
+            style: SeparatorVariant::Solid,
             color: Color::BLACK,
         }
     }
@@ -193,8 +195,8 @@ mod tests {
     fn set_style_updates_the_field_when_it_changes() {
         let mut h = harness();
         h.edit_root_widget(|mut wm| {
-            SeparatorWidget::set_style(&mut wm, SeparatorStyle::Dashed);
-            assert_eq!(wm.widget.style, SeparatorStyle::Dashed);
+            SeparatorWidget::set_style(&mut wm, SeparatorVariant::Dashed);
+            assert_eq!(wm.widget.style, SeparatorVariant::Dashed);
         });
     }
 
