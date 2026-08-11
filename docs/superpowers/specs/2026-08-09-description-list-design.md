@@ -47,7 +47,7 @@ Standard two-layer split under `src/components/description_list/`:
 ```rust
 description_list()
     .item("Name",   label("Ada Lovelace").render(&theme))
-    .item("Status", status_dot(Status::Online).render(&theme))
+    .item("Status", status_dot(theme.palette.success).render(&theme))
     .item("Role",   badge("Admin").render(&theme))
     .stacked()                       // or .horizontal() (default)
     .render::<State, Action>(&theme)
