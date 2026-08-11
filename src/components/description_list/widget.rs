@@ -268,11 +268,22 @@ impl DescriptionListWidget {
 
     /// Replaces the entire label/value child set, e.g. when the item *count*
     /// changes.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `labels` and `values` don't have the same length. Checked
+    /// before either child vector is mutated, so a mismatch fails at the call
+    /// site rather than corrupting the widget's state.
     pub(super) fn set_items(
         this: &mut WidgetMut<'_, Self>,
         labels: Vec<NewWidget<Passthrough>>,
         values: Vec<NewWidget<Passthrough>>,
     ) {
+        assert_eq!(
+            labels.len(),
+            values.len(),
+            "DescriptionListWidget: labels and values must be the same length"
+        );
         // Drop old children so masonry unregisters them, then register the new set.
         for pod in this.widget.labels.drain(..) {
             this.ctx.remove_child(pod);
@@ -358,6 +369,13 @@ impl Widget for DescriptionListWidget {
 
                 match axis {
                     Axis::Horizontal => {
+                        // Empty list has no column and no value: report zero,
+                        // matching `measure_stacked`'s empty-list behavior.
+                        // Skipping this would return a lone `column_gap` for a
+                        // list with nothing in it.
+                        if n == 0 {
+                            return Length::px(0.0);
+                        }
                         // Intrinsic total width: label column + gap + widest
                         // value at its own (unconstrained) preferred width.
                         let mut value_w = 0.0_f64;
@@ -390,6 +408,12 @@ impl Widget for DescriptionListWidget {
                         // intrinsically-sized values (min-content == fit-content).
                         let value_avail = cross_length
                             .map(|w| Length::px((w.get() - col_w - column_gap).max(0.0)));
+                        // The value sits in the narrower column past the label,
+                        // so its measurement context width is `value_avail`, not
+                        // the full parent width. Keep the label measuring against
+                        // the full `context_size`.
+                        let value_context =
+                            LayoutSize::maybe(axis.cross(), value_avail.or(cross_length));
                         let mut total_h = 0.0_f64;
                         for i in 0..n {
                             let lh = ctx.compute_length(
@@ -402,7 +426,7 @@ impl Widget for DescriptionListWidget {
                             let vh = ctx.compute_length(
                                 &mut self.values[i],
                                 len_req.into(),
-                                context_size,
+                                value_context,
                                 Axis::Vertical,
                                 value_avail.or(cross_length),
                             );
@@ -447,7 +471,7 @@ impl Widget for DescriptionListWidget {
     }
 
     fn accessibility_role(&self) -> Role {
-        Role::GenericContainer
+        Role::DescriptionList
     }
 
     fn accessibility(
@@ -486,10 +510,6 @@ mod tests {
         NewWidget::new(Passthrough::new(NewWidget::new(Label::new(text)).erased()))
     }
 
-    /// A plain `SizedBox` never calls `ctx.set_baselines`, so it has no real
-    /// text baseline — masonry substitutes its own border-box height as its
-    /// "baseline" (see `layout_horizontal`'s `*_has_base` comment). Used to
-    /// exercise the top-align fallback when a value isn't text.
     /// A text value that word-wraps under a width constraint (masonry's default
     /// `LineBreaking` is `Overflow`, which never wraps). Used to exercise the
     /// wrapping-value sizing contract between `measure` and `layout_horizontal`.
@@ -501,6 +521,10 @@ mod tests {
         NewWidget::new(Passthrough::new(label.erased()))
     }
 
+    /// A plain `SizedBox` never calls `ctx.set_baselines`, so it has no real
+    /// text baseline — masonry substitutes its own border-box height as its
+    /// "baseline" (see `layout_horizontal`'s `*_has_base` comment). Used to
+    /// exercise the top-align fallback when a value isn't text.
     fn passthrough_box(width: f64, height: f64) -> NewWidget<Passthrough> {
         NewWidget::new(Passthrough::new(
             NewWidget::new(
