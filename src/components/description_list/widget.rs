@@ -336,17 +336,15 @@ impl Widget for DescriptionListWidget {
         let context_size = LayoutSize::maybe(axis.cross(), cross_length);
         match self.orientation {
             DescriptionListOrientation::Horizontal => {
-                let mut col_w = 0.0_f64;
-                let mut value_w = 0.0_f64;
-                let mut total_h = 0.0_f64;
-                let row_gap = self.row_gap();
                 let n = self.labels.len();
-                // This arm sizes children via the incoming `len_req`, while
-                // `layout_horizontal` sizes the same children via `SizeDef::MIN`.
-                // The two agree only while values are intrinsically-sized
-                // (min-content == fit-content), which holds for the current
-                // value set (text/badge/status_dot). Revisit this split if a
-                // wrapping/growable value type is introduced.
+                let column_gap = self.column_gap();
+                let row_gap = self.row_gap();
+
+                // Shared label-column width: widest label's intrinsic width.
+                // Needed by both axes — the width arm returns it directly, the
+                // height arm subtracts it to reproduce `layout_horizontal`'s
+                // `value_avail` value width.
+                let mut col_w = 0.0_f64;
                 for i in 0..n {
                     let lw = ctx.compute_length(
                         &mut self.labels[i],
@@ -357,45 +355,74 @@ impl Widget for DescriptionListWidget {
                     );
                     col_w = col_w.max(lw.get());
                 }
-                for i in 0..n {
-                    let vw = ctx.compute_length(
-                        &mut self.values[i],
-                        len_req.into(),
-                        context_size,
-                        Axis::Horizontal,
-                        cross_length,
-                    );
-                    value_w = value_w.max(vw.get());
-                    let lh = ctx.compute_length(
-                        &mut self.labels[i],
-                        len_req.into(),
-                        context_size,
-                        Axis::Vertical,
-                        cross_length,
-                    );
-                    let vh = ctx.compute_length(
-                        &mut self.values[i],
-                        len_req.into(),
-                        context_size,
-                        Axis::Vertical,
-                        cross_length,
-                    );
-                    // Simplification: approximate row height as max(label_h,
-                    // value_h), ignoring the baseline-alignment offsets that
-                    // `layout_horizontal` applies to actual placement. When a
-                    // row's value has an atypical baseline (rare — labels are
-                    // fixed caption text and typical values are text too), this
-                    // can slightly under-report the height `layout` actually
-                    // produces. Accepted as a known, intentional gap rather than
-                    // running a second layout pass inside `measure`.
-                    total_h += lh.get().max(vh.get());
-                    if i + 1 < n {
-                        total_h += row_gap;
-                    }
-                }
+
                 match axis {
-                    Axis::Horizontal => Length::px(col_w + self.column_gap() + value_w),
-                    Axis::Vertical => Length::px(total_h),
+                    Axis::Horizontal => {
+                        // Intrinsic total width: label column + gap + widest
+                        // value at its own (unconstrained) preferred width.
+                        let mut value_w = 0.0_f64;
+                        for i in 0..n {
+                            let vw = ctx.compute_length(
+                                &mut self.values[i],
+                                len_req.into(),
+                                context_size,
+                                Axis::Horizontal,
+                                cross_length,
+                            );
+                            value_w = value_w.max(vw.get());
+                        }
+                        Length::px(col_w + column_gap + value_w)
+                    }
+                    Axis::Vertical => {
+                        // Height must mirror `layout_horizontal`, which lays each
+                        // value out constrained to `value_avail` — the width left
+                        // past the label column. Measuring the value's height at
+                        // that same narrower width lets a wrapping value report
+                        // its true (taller, wrapped) height, so the parent
+                        // allocates enough room and the value doesn't overflow /
+                        // clip. Without a known width (`cross_length == None`,
+                        // i.e. the parent is asking for intrinsic height) fall
+                        // back to the value's own unconstrained height.
+                        //
+                        // Remaining `measure`/`layout` gap: this arm still uses
+                        // the incoming `len_req` as the value's auto-length while
+                        // `layout_horizontal` uses `SizeDef::MIN`. Those agree for
+                        // intrinsically-sized values (min-content == fit-content).
+                        let value_avail = cross_length
+                            .map(|w| Length::px((w.get() - col_w - column_gap).max(0.0)));
+                        let mut total_h = 0.0_f64;
+                        for i in 0..n {
+                            let lh = ctx.compute_length(
+                                &mut self.labels[i],
+                                len_req.into(),
+                                context_size,
+                                Axis::Vertical,
+                                cross_length,
+                            );
+                            let vh = ctx.compute_length(
+                                &mut self.values[i],
+                                len_req.into(),
+                                context_size,
+                                Axis::Vertical,
+                                value_avail.or(cross_length),
+                            );
+                            // Simplification: approximate row height as
+                            // max(label_h, value_h), ignoring the baseline-
+                            // alignment offsets that `layout_horizontal` applies
+                            // to actual placement. When a row's value has an
+                            // atypical baseline (rare — labels are fixed caption
+                            // text and typical values are text too), this can
+                            // slightly under-report the height `layout` actually
+                            // produces. Accepted as a known, intentional gap
+                            // rather than running a second layout pass inside
+                            // `measure`.
+                            total_h += lh.get().max(vh.get());
+                            if i + 1 < n {
+                                total_h += row_gap;
+                            }
+                        }
+                        Length::px(total_h)
+                    }
                 }
             }
             DescriptionListOrientation::Stacked => {
@@ -463,6 +490,17 @@ mod tests {
     /// text baseline — masonry substitutes its own border-box height as its
     /// "baseline" (see `layout_horizontal`'s `*_has_base` comment). Used to
     /// exercise the top-align fallback when a value isn't text.
+    /// A text value that word-wraps under a width constraint (masonry's default
+    /// `LineBreaking` is `Overflow`, which never wraps). Used to exercise the
+    /// wrapping-value sizing contract between `measure` and `layout_horizontal`.
+    fn passthrough_wrap(text: &str) -> NewWidget<Passthrough> {
+        use masonry::core::PropertySet;
+        use masonry::properties::LineBreaking;
+        let label = NewWidget::new(Label::new(text))
+            .with_props(PropertySet::new().with(LineBreaking::WordWrap));
+        NewWidget::new(Passthrough::new(label.erased()))
+    }
+
     fn passthrough_box(width: f64, height: f64) -> NewWidget<Passthrough> {
         NewWidget::new(Passthrough::new(
             NewWidget::new(
@@ -574,6 +612,62 @@ mod tests {
             (label_min_y - value_min_y).abs() < 0.5,
             "row should top-align when the value has no text baseline: label min_y \
              {label_min_y} vs value min_y {value_min_y}"
+        );
+    }
+
+    #[test]
+    fn horizontal_measured_height_covers_wrapped_value() {
+        use masonry::widgets::Flex;
+
+        // Regression: `measure`'s Horizontal arm must size a wrapping value's
+        // height at the same narrow width (`value_avail`) that
+        // `layout_horizontal` lays it out at. If `measure` sizes the value at
+        // the full parent width instead, it under-reports the wrapped height,
+        // the parent lays the taller value out anyway, and it overflows the box
+        // the parent allocated from that measurement — clipping / overlapping
+        // whatever sits below.
+        //
+        // Structure that makes the under-report observable:
+        //   Flex column [ list, marker ]   in a 120px-wide window
+        // A `Flex` column measures each child's height passing its own available
+        // width as `cross_length` and stacks children at that measured height.
+        // Pinning the window to 120px makes that measurement width equal the
+        // width the list is later laid out at, so `measure` and
+        // `layout_horizontal` see the same narrow `value_avail` and the value
+        // genuinely wraps in both. If `measure` sized the value at the full
+        // window width instead of `value_avail`, it would under-report the
+        // wrapped height, the marker would sit too high, and the taller
+        // laid-out value would overlap it.
+        let value = passthrough_wrap(
+            "the quick brown fox jumps over the lazy dog again and again and again",
+        );
+        let value_id = value.id();
+        let list = NewWidget::new(DescriptionListWidget::new(
+            vec![passthrough("Description")],
+            vec![value],
+            DescriptionListOrientation::Horizontal,
+            &Theme::default(),
+        ));
+        let marker = passthrough_box(10.0, 6.0);
+        let marker_id = marker.id();
+
+        let column = NewWidget::new(
+            Flex::column()
+                .with_fixed(list.erased())
+                .with_fixed(marker.erased()),
+        );
+        let h = TestHarness::create_with_size(
+            masonry::theme::default_property_set(),
+            column,
+            (120, 400),
+        );
+
+        let value_max_y = h.get_widget_with_id(value_id).ctx().bounding_box().max_y();
+        let marker_min_y = h.get_widget_with_id(marker_id).ctx().bounding_box().min_y();
+        assert!(
+            value_max_y <= marker_min_y + 0.5,
+            "measured height under-reports wrapped value: value bottom {value_max_y} \
+             overlaps the sibling below it at {marker_min_y}"
         );
     }
 
