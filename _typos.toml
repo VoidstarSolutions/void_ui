@@ -1,0 +1,7 @@
+# Config for the `typos` pre-commit hook.
+
+[default.extend-words]
+# "mis-select", "mis-attribute", "mis-route" — legitimate hyphenated prefix.
+mis = "mis"
+# code_view tests spell "café" as `caf\u{e9}` to exercise Unicode boundaries.
+caf = "caf"

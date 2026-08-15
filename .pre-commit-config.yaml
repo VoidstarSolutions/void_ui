@@ -1,0 +1,64 @@
+# Run with prek (https://github.com/j178/prek): `prek install` once per clone,
+# then hooks fire on commit/push. `prek run --all-files` runs the commit stage
+# manually; `prek run --hook-stage pre-push --all-files` runs the heavy stage.
+#
+# Stage split: commits stay fast (hygiene + fmt); clippy/check/test mirror CI
+# (.github/workflows/ci.yml) and run at pre-push.
+
+default_install_hook_types: [pre-commit, pre-push]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: check-symlinks
+      - id: destroyed-symlinks
+
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.49.0
+    hooks:
+      - id: typos
+
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --all --check
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      # Heavy checks: same commands as CI, gated to pushes that touch
+      # Rust/manifest files. --locked keeps the linebender main-tracking
+      # deps pinned to the lockfile rev (see CLAUDE.md).
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: cargo clippy --all-targets --all-features --locked
+        language: system
+        files: (\.rs|\.toml|^Cargo\.lock)$
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: cargo-check
+        name: cargo check (no features)
+        entry: cargo check --locked
+        language: system
+        files: (\.rs|\.toml|^Cargo\.lock)$
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: cargo-test
+        name: cargo test
+        entry: cargo test --all-features --locked
+        language: system
+        files: (\.rs|\.toml|^Cargo\.lock)$
+        pass_filenames: false
+        stages: [pre-push]

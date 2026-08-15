@@ -1610,7 +1610,7 @@ mod tests {
         // header row (that's Tab, asserted above). This just confirms
         // Shift+Tab from the interception's own landing spot doesn't get
         // silently swallowed — it still lands on a real widget somewhere
-        // (native masonry backward traversal, uninterupted for this leg).
+        // (native masonry backward traversal, uninterrupted for this leg).
         let (mut h, _trigger_id, header_id) = open_portal_picker_for_test();
         h.process_text_event(TextEvent::key_down(Key::Named(NamedKey::Tab)));
         assert_eq!(h.focused_widget_id(), Some(header_id));
