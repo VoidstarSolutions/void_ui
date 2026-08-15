@@ -2,11 +2,11 @@
 //!
 //! [`InputFrame`] is a transparent single-child container that hosts the
 //! masonry `TextInput` and adds keyboard behavior the upstream widget does not
-//! provide. Today that is Esc-to-clear (#39): when the focused field receives
-//! Escape — which the child `TextArea` leaves unhandled, so it bubbles up to
-//! us — the frame emits [`InputCleared`]. The view maps that to an empty-string
-//! change so the host clears its own state; the widget never mutates the
-//! field's contents itself.
+//! provide. Today that is Esc-to-clear (#39): the focused child `TextArea`
+//! turns Escape into a [`TextAction::Cancelled`] child action, which the frame
+//! intercepts in [`on_action`](Widget::on_action) and re-emits as
+//! [`InputCleared`]. The view maps that to an empty-string change so the host
+//! clears its own state; the widget never mutates the field's contents itself.
 //!
 //! Layout, measurement, and chrome are delegated to the child; the frame paints
 //! nothing of its own. Affixes (prefix/suffix) and the field chrome compose
@@ -14,17 +14,16 @@
 //! the upstream editor lacks.
 
 use masonry::accesskit::{Node, Role};
-use masonry::core::keyboard::{Key, NamedKey};
 use masonry::core::{
-    AccessCtx, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, PaintCtx, PropertiesMut,
-    PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
+    AccessCtx, ActionCtx, ChildrenIds, ErasedAction, LayoutCtx, MeasureCtx, NewWidget, PaintCtx,
+    PropertiesMut, PropertiesRef, RegisterCtx, Update, UpdateCtx, Widget, WidgetId, WidgetMut,
     WidgetPod,
 };
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Size};
 use masonry::layout::{LenReq, Length};
 use masonry::parley::{LineHeight, StyleProperty};
-use masonry::widgets::{Label, TextInput};
+use masonry::widgets::{Label, TextAction, TextInput};
 use tracing::{Span, trace_span};
 
 /// Action emitted by [`InputFrame`] when the user presses Escape in the focused
@@ -87,19 +86,20 @@ impl InputFrame {
 impl Widget for InputFrame {
     type Action = InputCleared;
 
-    fn on_text_event(
+    fn on_action(
         &mut self,
-        ctx: &mut EventCtx<'_>,
+        ctx: &mut ActionCtx<'_>,
         _props: &mut PropertiesMut<'_>,
-        event: &TextEvent,
+        action: &ErasedAction,
+        _source: WidgetId,
     ) {
-        let TextEvent::Keyboard(key_event) = event else {
-            return;
-        };
-        // Only act on the press, and only for Escape. Because the child
-        // TextArea doesn't handle Escape, this fires exactly when the field is
-        // focused (text events bubble up from the focused widget).
-        if key_event.state.is_down() && key_event.key == Key::Named(NamedKey::Escape) {
+        // The focused child `TextArea` consumes Escape and reports it as a
+        // `TextAction::Cancelled` child action (rather than leaving the key to
+        // bubble). Translate that into the frame's `InputCleared` contract; the
+        // re-emitted action bubbles on to any enclosing widget (e.g. the
+        // autocomplete) exactly as the old Escape path did. Other `TextAction`s
+        // (Changed/Entered) pass through untouched.
+        if let Some(TextAction::Cancelled) = action.downcast_ref::<TextAction>() {
             ctx.submit_action::<Self::Action>(InputCleared);
             ctx.set_handled();
         }

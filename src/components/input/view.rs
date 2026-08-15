@@ -500,9 +500,8 @@ where
                     MessageResult::Action((self.callback)(app_state, text))
                 }
                 // Enter-to-submit is wired up in a later chunk; ignore for now.
-                TextAction::Entered(_) => MessageResult::Nop,
                 // Escape/cancel is handled via the `InputCleared` path below.
-                TextAction::Cancelled => MessageResult::Nop,
+                TextAction::Entered(_) | TextAction::Cancelled => MessageResult::Nop,
             };
         }
         // Escape in the focused field clears it: emit an empty-string change so
