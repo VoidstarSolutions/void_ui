@@ -1215,6 +1215,10 @@ impl Widget for AutocompleteWidget {
                         self.select_suggestion(ctx, first.to_string());
                     }
                 }
+                // Escape/cancel from the text area — the popup-dismiss and
+                // field semantics are handled via `InputCleared` below, so
+                // there's nothing to do here.
+                TextAction::Cancelled => {}
             }
             return;
         }
