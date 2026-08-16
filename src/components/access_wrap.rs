@@ -33,6 +33,12 @@ pub(crate) enum AccessAnnotation {
     /// semantic content of its own (e.g. a chevron used only as a visual
     /// separator).
     Hidden,
+    /// Report `Role::Term` — the label (`<dt>`) half of a description-list
+    /// label/value pair.
+    Term,
+    /// Report `Role::Definition` — the value (`<dd>`) half of a
+    /// description-list label/value pair.
+    Definition,
 }
 
 /// Wrap `inner` in a transparent widget that applies `annotation` to the
@@ -170,6 +176,8 @@ impl Widget for AccessAnnotateWidget {
     fn accessibility_role(&self) -> Role {
         match self.annotation {
             AccessAnnotation::Navigation => Role::Navigation,
+            AccessAnnotation::Term => Role::Term,
+            AccessAnnotation::Definition => Role::Definition,
             AccessAnnotation::CurrentPage | AccessAnnotation::Hidden => Role::GenericContainer,
         }
     }
@@ -181,7 +189,10 @@ impl Widget for AccessAnnotateWidget {
         node: &mut Node,
     ) {
         match self.annotation {
-            AccessAnnotation::Navigation => {}
+            // Role alone carries the semantics; no extra node state.
+            AccessAnnotation::Navigation
+            | AccessAnnotation::Term
+            | AccessAnnotation::Definition => {}
             AccessAnnotation::CurrentPage => node.set_aria_current(AriaCurrent::Page),
             AccessAnnotation::Hidden => node.set_hidden(),
         }
@@ -220,6 +231,18 @@ mod tests {
         assert_eq!(
             widget(AccessAnnotation::Hidden).accessibility_role(),
             Role::GenericContainer
+        );
+    }
+
+    #[test]
+    fn term_and_definition_report_dl_pair_roles() {
+        assert_eq!(
+            widget(AccessAnnotation::Term).accessibility_role(),
+            Role::Term
+        );
+        assert_eq!(
+            widget(AccessAnnotation::Definition).accessibility_role(),
+            Role::Definition
         );
     }
 }

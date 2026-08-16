@@ -7,6 +7,7 @@ use xilem::{AnyWidgetView, Pod, ViewCtx, WidgetView};
 
 use super::widget::DescriptionListWidget;
 use crate::Theme;
+use crate::components::access_wrap::{AccessAnnotation, annotate};
 
 /// Layout orientation for a [`DescriptionList`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,11 +41,17 @@ pub fn description_list<State, Action>() -> DescriptionList<State, Action> {
 
 impl<State: 'static, Action: 'static> DescriptionList<State, Action> {
     /// Append a label/value pair. `label` is plain text; `value` is any view.
+    ///
+    /// The value is wrapped so its accessibility node reports `Role::Definition`
+    /// (the `<dd>` half of the pair); labels are stamped `Role::Term` internally.
     pub fn item<V>(mut self, label: impl Into<String>, value: V) -> Self
     where
         V: WidgetView<State, Action>,
     {
-        self.items.push((label.into(), value.boxed()));
+        self.items.push((
+            label.into(),
+            annotate(value, AccessAnnotation::Definition).boxed(),
+        ));
         self
     }
 
@@ -85,11 +92,11 @@ pub struct DescriptionListView<State, Action> {
 impl<State: 'static, Action: 'static> DescriptionListView<State, Action> {
     /// Build the internal, themed label child view for one item's label string.
     fn label_view(&self, text: &str) -> Box<AnyWidgetView<State, Action>> {
-        crate::label(text.to_string())
+        let label = crate::label(text.to_string())
             .color(self.theme.palette.text_faint)
             .text_size(self.theme.typography.size_caption)
-            .render::<State, Action>(&self.theme)
-            .boxed()
+            .render::<State, Action>(&self.theme);
+        annotate(label, AccessAnnotation::Term).boxed()
     }
 }
 

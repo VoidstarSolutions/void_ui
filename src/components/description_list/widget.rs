@@ -99,13 +99,15 @@ impl DescriptionListWidget {
         let value_avail = (size.width - value_x).max(0.0);
 
         // Pass 2: lay out each row, baseline-aligning value to label.
+        let n = self.labels.len();
         let mut y = 0.0_f64;
         let rows = self
             .labels
             .iter_mut()
             .zip(self.values.iter_mut())
-            .zip(label_pref.iter());
-        for ((label, value), lp) in rows {
+            .zip(label_pref.iter())
+            .enumerate();
+        for (i, ((label, value), lp)) in rows {
             let lh = lp.height;
             ctx.run_layout(label, Size::new(col_w, lh));
             // `child_layout_baselines` (not `child_aligned_baselines`) is the one that
@@ -147,7 +149,10 @@ impl DescriptionListWidget {
             ctx.place_child(value, Point::new(value_x, y + value_dy));
 
             let row_h = (label_dy + lh).max(value_dy + vs.height);
-            y += row_h + row_gap;
+            y += row_h;
+            if i + 1 < n {
+                y += row_gap;
+            }
         }
     }
 
