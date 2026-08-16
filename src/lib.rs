@@ -67,6 +67,7 @@ pub mod text_style;
 pub mod theme;
 pub use masonry;
 pub use xilem;
+pub use xilem_masonry;
 
 pub use animated_clip::AnimatedClip;
 /// Re-exports the union of every `pub use` in `components/mod.rs`, minus `item`
