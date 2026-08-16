@@ -160,7 +160,7 @@ impl<C> Badge<C> {
 
         sized_box(row)
             .padding(Padding::from_vh(
-                Length::px(f64::from(theme.density.button_pad_v)),
+                Length::px(f64::from(theme.density.button_pad_v) * 0.2),
                 Length::px(f64::from(theme.density.button_pad_h)),
             ))
             .background_color(bg)
