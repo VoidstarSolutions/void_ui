@@ -62,8 +62,8 @@ use crate::label;
 /// at each call site — keeping the cross-axis-alignment decision in one place.
 macro_rules! affixed_row {
     ($prefix:expr, $core:expr, $suffix:expr, $theme:expr $(,)?) => {{
-        use ::xilem::style::Style as _;
-        use ::xilem::view::FlexExt as _;
+        use xilem::style::Style as _;
+        use xilem::view::FlexExt as _;
         ::xilem::view::flex_row(($prefix, $core.flex(1.0), $suffix))
             .cross_axis_alignment(::xilem::view::CrossAxisAlignment::Center)
             .gap(::masonry::layout::Length::px(f64::from(
@@ -500,7 +500,8 @@ where
                     MessageResult::Action((self.callback)(app_state, text))
                 }
                 // Enter-to-submit is wired up in a later chunk; ignore for now.
-                TextAction::Entered(_) => MessageResult::Nop,
+                // Escape/cancel is handled via the `InputCleared` path below.
+                TextAction::Entered(_) | TextAction::Cancelled => MessageResult::Nop,
             };
         }
         // Escape in the focused field clears it: emit an empty-string change so
