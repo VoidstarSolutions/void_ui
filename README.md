@@ -52,6 +52,7 @@ Shipped components, grouped by role:
   NASDAQ-style stock-quote board (the product "value lens"). See
   [`docs/DATA_GRID_HOST_CONTRACT.md`](docs/DATA_GRID_HOST_CONTRACT.md).
 - **`List`** — flat virtualized list (DataGrid's virtualization, single-column)
+- **`DescriptionList`** — label/value pairs, horizontal or stacked
 - **`Meter`** — linear progress/fill bar, optional gradient
 - **`Badge`** — semantic colored pill (optional leading icon, optional dismiss)
 - **`StatusDot`** — semantic status indicator
@@ -141,7 +142,7 @@ The overlay primitive and Foundations are shipped, as is most of Phases 1–4 (o
 | `List`            | M    | ✓      | DataGrid's virtualization for a flat list.       |
 | `Tree`            | L    | —      | Hierarchical with expand/collapse.               |
 | `Pagination`      | S    | —      |                                                  |
-| `DescriptionList` | S    | —      | Label/value pairs.                               |
+| `DescriptionList` | S    | ✓      | Label/value pairs.                               |
 | `HoverCard`       | M    | —      | Tooltip with richer content.                     |
 
 ### Phase 6 — Specialized
@@ -155,7 +156,7 @@ The overlay primitive and Foundations are shipped, as is most of Phases 1–4 (o
 
 ### Remaining
 
-The open surface, all `—` above: `Form`, `ProgressCircle`, `Tree`, `Pagination`, `DescriptionList`, `HoverCard`, `ColorPicker`, `Stepper`, `Kbd`.
+The open surface, all `—` above: `Form`, `ProgressCircle`, `Tree`, `Pagination`, `HoverCard`, `ColorPicker`, `Stepper`, `Kbd`.
 
 Also shipped beyond the original roadmap: `ButtonGroup`, `Clipboard`, `ReadOnlyText`, `StatusDot`, `Popover` (standalone), and the collapsible `Sidebar` panel (beyond `SidebarItem`).
 

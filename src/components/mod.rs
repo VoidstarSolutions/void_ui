@@ -78,6 +78,7 @@ pub mod collapsible;
 pub mod context_menu;
 pub mod data_grid;
 pub mod date_picker;
+pub mod description_list;
 pub mod dialog;
 pub mod dropdown_button;
 pub mod form;
@@ -133,6 +134,9 @@ pub use data_grid::{
     filtered_indices, optional_text_column, sort_indices, text_column,
 };
 pub use date_picker::{DatePicker, DatePickerAction, DatePickerView, date_picker};
+pub use description_list::{
+    DescriptionList, DescriptionListOrientation, DescriptionListView, description_list,
+};
 pub use dialog::{Dialog, DialogView, dialog};
 pub use dropdown_button::{DropdownButton, DropdownButtonView, dropdown_button};
 pub use form::{Form, FormField, FormOrientation, form, form_field};
@@ -199,6 +203,7 @@ pub enum ComponentKind {
     ContextMenu,
     DataGrid,
     DatePicker,
+    DescriptionList,
     Dialog,
     Icon,
     Input,
@@ -244,6 +249,7 @@ impl ComponentKind {
             Self::ContextMenu => "Context Menu",
             Self::DataGrid => "Data Grid",
             Self::DatePicker => "Date Picker",
+            Self::DescriptionList => "Description List",
             Self::Dialog => "Dialog",
             Self::Icon => "Icon",
             Self::Input => "Input",
@@ -286,6 +292,7 @@ impl ComponentKind {
             Self::ContextMenu,
             Self::DataGrid,
             Self::DatePicker,
+            Self::DescriptionList,
             Self::Dialog,
             Self::DropdownButton,
             Self::Form,
