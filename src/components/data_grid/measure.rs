@@ -20,14 +20,44 @@
 //!   fixed) reuses an `O(1)` value instead of re-scanning every row on
 //!   each pointer-move. This mirrors the grid's existing rule of keeping
 //!   `O(rows)` work off the per-rebuild path (see `CopyOnShortcutView`).
+//!
+//! Row-count keying only invalidates a floor when the *size* changes, and
+//! nothing evicts stale `(font_size, text)` widths, so both tables are
+//! size-bounded ([`WIDTHS_CAP`]/[`FLOORS_CAP`]) and reset wholesale on
+//! overflow — otherwise a long-lived grid whose data churns would retain
+//! every value it ever measured.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::hash::Hash;
 
 use masonry::core::{BrushIndex, StyleProperty};
 use masonry::parley::{FontContext, Layout, LayoutContext};
 
 use super::column::ColumnId;
+
+/// Upper bound on live `widths` entries before the table resets. Keyed by
+/// distinct `(font_size, cell text)`, so a long-lived grid whose data churns
+/// would otherwise retain every string ever shown. Sized to hold far more
+/// than one screen's worth of distinct cells.
+const WIDTHS_CAP: usize = 8192;
+
+/// Upper bound on live `floors` entries before the table resets. Keyed by
+/// `(column, row_count)`, which accumulates a new entry each time the dataset
+/// changes size; a modest cap covers any realistic column count.
+const FLOORS_CAP: usize = 512;
+
+/// Insert into a size-bounded memo table. When the table is full and the key
+/// is new, it is cleared wholesale before inserting — an active drag's working
+/// set is far smaller than either cap, so it repopulates on the next moves,
+/// and a clear keeps the hot path allocation-free versus per-entry eviction.
+/// Overwriting an existing key never grows the table, so it skips the clear.
+fn insert_bounded<K: Eq + Hash, V>(map: &mut HashMap<K, V>, cap: usize, key: K, value: V) {
+    if map.len() >= cap && !map.contains_key(&key) {
+        map.clear();
+    }
+    map.insert(key, value);
+}
 
 /// Per-thread parley contexts plus the two memo tables. Parley's
 /// `FontContext`/`LayoutContext` are reused across measurements (building
@@ -78,7 +108,7 @@ pub(crate) fn text_width(text: &str, font_size: f32) -> f64 {
         // full advance, which is exactly the content width we floor to.
         layout.break_all_lines(None);
         let w = layout.width();
-        widths.insert(key, w);
+        insert_bounded(widths, WIDTHS_CAP, key, w);
         f64::from(w)
     })
 }
@@ -102,15 +132,42 @@ pub(crate) fn column_floor(
     }
     let floor = compute();
     MEASURER.with_borrow_mut(|m| {
-        m.floors.insert(key, floor);
+        insert_bounded(&mut m.floors, FLOORS_CAP, key, floor);
     });
     floor
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{column_floor, text_width};
+    use std::collections::HashMap;
+
+    use super::{column_floor, insert_bounded, text_width};
     use crate::components::data_grid::column::ColumnId;
+
+    #[test]
+    fn insert_bounded_clears_on_overflow_then_repopulates() {
+        let mut map: HashMap<u32, u32> = HashMap::new();
+        for k in 0..4 {
+            insert_bounded(&mut map, 4, k, k);
+        }
+        assert_eq!(map.len(), 4, "fills up to the cap");
+        // A new key at capacity resets the table, keeping only the newcomer.
+        insert_bounded(&mut map, 4, 99, 99);
+        assert_eq!(map.len(), 1, "overflow clears the stale working set");
+        assert_eq!(map.get(&99), Some(&99), "newcomer survives the reset");
+    }
+
+    #[test]
+    fn insert_bounded_overwrite_at_cap_does_not_clear() {
+        let mut map: HashMap<u32, u32> = HashMap::new();
+        for k in 0..4 {
+            insert_bounded(&mut map, 4, k, k);
+        }
+        // Re-inserting an existing key at capacity must not grow => no clear.
+        insert_bounded(&mut map, 4, 2, 200);
+        assert_eq!(map.len(), 4, "overwrite keeps every entry");
+        assert_eq!(map.get(&2), Some(&200), "overwrite updates in place");
+    }
 
     #[test]
     fn empty_text_is_zero_width() {
