@@ -15,11 +15,20 @@
 //!   that recurs across rows (or across successive drags) is laid out
 //!   once.
 //! - [`column_floor`] memoizes the finished per-column floor keyed by
-//!   `(ColumnId, row_count)`. The row count makes it self-invalidate when
-//!   the dataset grows or shrinks, while an in-flight drag (row count
-//!   fixed) reuses an `O(1)` value instead of re-scanning every row on
-//!   each pointer-move. This mirrors the grid's existing rule of keeping
-//!   `O(rows)` work off the per-rebuild path (see `CopyOnShortcutView`).
+//!   `(ColumnId, row_count, signature)`. The row count makes it
+//!   self-invalidate when the dataset grows or shrinks; the `signature`
+//!   (see the caller's `floor_signature`) folds in the layout determinants
+//!   the count can't see — the body/header font sizes and the header title
+//!   — so a theme swap or a retitled column can't reuse a floor computed
+//!   under the old typography, and two grids that happen to share a
+//!   `ColumnId` don't collide unless their titles and fonts also match. An
+//!   in-flight drag (all three fixed) reuses an `O(1)` value instead of
+//!   re-scanning every row on each pointer-move. This mirrors the grid's
+//!   existing rule of keeping `O(rows)` work off the per-rebuild path (see
+//!   `CopyOnShortcutView`). Body cell *text* is deliberately not in the
+//!   signature — hashing it would reintroduce the very `O(rows)` scan the
+//!   cache exists to avoid — so a content edit that changes neither the row
+//!   count nor the title still relies on row-count keying as its proxy.
 //!
 //! Row-count keying only invalidates a floor when the *size* changes, and
 //! nothing evicts stale `(font_size, text)` widths, so both tables are
@@ -43,8 +52,9 @@ use super::column::ColumnId;
 const WIDTHS_CAP: usize = 8192;
 
 /// Upper bound on live `floors` entries before the table resets. Keyed by
-/// `(column, row_count)`, which accumulates a new entry each time the dataset
-/// changes size; a modest cap covers any realistic column count.
+/// `(column, row_count, signature)`, which accumulates a new entry each time
+/// the dataset changes size or the column's typography/title changes; a modest
+/// cap covers any realistic column count.
 const FLOORS_CAP: usize = 512;
 
 /// Insert into a size-bounded memo table. When the table is full and the key
@@ -68,8 +78,10 @@ struct Measurer {
     layouts: LayoutContext<BrushIndex>,
     /// `(font_size_bits, text) -> width_px`.
     widths: HashMap<(u32, String), f32>,
-    /// `(column, row_count) -> floor_px`.
-    floors: HashMap<(ColumnId, u64), f64>,
+    /// `(column, row_count, signature) -> floor_px`. `signature` folds the
+    /// floor's font sizes + title so a theme/title change can't reuse a
+    /// stale floor across grids or content updates (see [`column_floor`]).
+    floors: HashMap<(ColumnId, u64, u64), f64>,
 }
 
 thread_local! {
@@ -113,20 +125,28 @@ pub(crate) fn text_width(text: &str, font_size: f32) -> f64 {
     })
 }
 
-/// The drag-resize floor for `column` at the current `row_count`,
-/// computing it via `compute` on a cache miss and memoizing the result.
+/// The drag-resize floor for `column` at the current `row_count` and
+/// `signature`, computing it via `compute` on a cache miss and memoizing
+/// the result.
+///
+/// `signature` must fold every determinant of the floor that `column` and
+/// `row_count` don't already capture — the body/header font sizes and the
+/// header title (see the caller's `floor_signature`). Keeping it out of the
+/// key would let a floor computed under one theme's typography, or for a
+/// same-id column in another grid, be reused incorrectly.
 ///
 /// `compute` returns the finished floor (widest cell width plus chrome)
-/// and runs at most once per `(column, row_count)` — so a drag, which
-/// fires many pointer-moves at a fixed row count, pays the `O(rows)` scan
+/// and runs at most once per `(column, row_count, signature)` — so a drag,
+/// which fires many pointer-moves at a fixed key, pays the `O(rows)` scan
 /// only on its first move. The borrow is released before `compute` runs,
 /// so `compute` may call [`text_width`] without a re-entrant borrow.
 pub(crate) fn column_floor(
     column: &ColumnId,
     row_count: u64,
+    signature: u64,
     compute: impl FnOnce() -> f64,
 ) -> f64 {
-    let key = (column.clone(), row_count);
+    let key = (column.clone(), row_count, signature);
     if let Some(f) = MEASURER.with_borrow(|m| m.floors.get(&key).copied()) {
         return f;
     }
@@ -198,12 +218,33 @@ mod tests {
             100.0
         };
 
-        assert!((column_floor(&id, 3, compute) - 100.0).abs() < f64::EPSILON);
-        // Same (column, row_count) => cache hit, `compute` not re-run.
-        assert!((column_floor(&id, 3, compute) - 100.0).abs() < f64::EPSILON);
-        assert_eq!(calls.get(), 1, "second call with same row_count is cached");
+        assert!((column_floor(&id, 3, 0, compute) - 100.0).abs() < f64::EPSILON);
+        // Same (column, row_count, signature) => cache hit, `compute` not re-run.
+        assert!((column_floor(&id, 3, 0, compute) - 100.0).abs() < f64::EPSILON);
+        assert_eq!(calls.get(), 1, "second call with same key is cached");
         // A different row count recomputes (dataset changed size).
-        let _ = column_floor(&id, 4, compute);
+        let _ = column_floor(&id, 4, 0, compute);
         assert_eq!(calls.get(), 2, "new row_count recomputes the floor");
+    }
+
+    #[test]
+    fn column_floor_recomputes_on_signature_change() {
+        use std::cell::Cell;
+
+        // Same column + row_count but a changed signature (e.g. a theme
+        // typography swap or a retitled column) must not reuse the floor.
+        let id = ColumnId::from("column_floor_recomputes_on_signature_change");
+        let calls = Cell::new(0u32);
+        let compute = || {
+            calls.set(calls.get() + 1);
+            100.0
+        };
+
+        let _ = column_floor(&id, 3, 0xA1, compute);
+        let _ = column_floor(&id, 3, 0xA1, compute);
+        assert_eq!(calls.get(), 1, "same signature is cached");
+        // New signature => recompute even though (column, row_count) match.
+        let _ = column_floor(&id, 3, 0xB2, compute);
+        assert_eq!(calls.get(), 2, "new signature recomputes the floor");
     }
 }

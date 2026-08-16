@@ -1250,6 +1250,24 @@ fn content_floor<R>(
     widest + GRAB_ZONE + 2.0 * CELL_PAD
 }
 
+/// Folds the floor's layout determinants that `(ColumnId, row_count)` can't
+/// see into one `u64` for the [`measure::column_floor`] cache key: the body
+/// and header font sizes (theme typography) and the header title. This stops
+/// a floor computed under one theme — or for a same-id column in a different
+/// grid — from being reused after a theme swap or against another grid whose
+/// title/fonts differ. Body cell *text* is intentionally excluded: hashing it
+/// would reintroduce the `O(rows)` scan the cache exists to avoid, so a
+/// content edit that changes neither the row count nor the title still leans
+/// on row-count keying as its proxy.
+fn floor_signature(size_body: f32, size_caption: f32, title: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    size_body.to_bits().hash(&mut hasher);
+    size_caption.to_bits().hash(&mut hasher);
+    title.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// Builds the sticky header row: a [`column_strip`] of per-column header
 /// cells (sortable columns clickable, filtered columns marked), carrying the
 /// shared flex weights and — when a resize callback is supplied — the
@@ -1317,10 +1335,13 @@ where
             };
             // Floor the drag at the column's widest cell so it can't be
             // dragged narrower than its content (which would clip). The
-            // floor is memoized per `(column, row_count)`, so this scans
-            // the rows only on the first pointer-move of a drag.
+            // floor is memoized per `(column, row_count, signature)`, so
+            // this scans the rows only on the first pointer-move of a drag,
+            // yet a theme/title change (folded into the signature) can't
+            // reuse a floor measured under the old typography.
             let row_count = u64::try_from(rows(state).len()).unwrap_or(u64::MAX);
-            let floor = measure::column_floor(id, row_count, || {
+            let signature = floor_signature(size_body, size_caption, &titles[col]);
+            let floor = measure::column_floor(id, row_count, signature, || {
                 content_floor(
                     &titles[col],
                     text_projectors.get(col).and_then(Option::as_ref),
