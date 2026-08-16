@@ -34,11 +34,12 @@ use xilem::view::{
 use xilem::{AnyWidgetView, Pod, ViewCtx};
 
 use super::column::{CellAlignment, CellRenderer, ColumnDef, ColumnId, TextProjector};
-use super::column_strip::{ColumnSeparatorStyle, column_strip};
+use super::column_strip::{ColumnSeparatorStyle, GRAB_ZONE, column_strip};
 use super::copy_shortcut::{CopyOnShortcut, CopyRequested};
 use super::expand::{disclosure_hit_width, disclosure_toggle, tree_indent_step};
 use super::filter::FilterState;
 use super::header_click::clickable_header;
+use super::measure;
 use super::sort::{SortDirection, SortState};
 use super::width::ColumnWidths;
 use crate::Theme;
@@ -784,6 +785,8 @@ where
         sort,
         sort_change,
         width_change,
+        rows: rows.clone(),
+        text_projectors: Arc::clone(&text_projectors),
         flex_weights: Arc::clone(&flex_weights),
         row_height,
         theme: &theme,
@@ -1194,9 +1197,75 @@ struct HeaderParams<'a, State, R, Action> {
     sort: SortState,
     sort_change: Option<SortChange<State, Action>>,
     width_change: Option<WidthChange<State, Action>>,
+    /// Row accessor + per-column text projectors, needed only to compute
+    /// drag-resize content floors (the widest cell's rendered width). Both
+    /// are cheap `Arc` clones and only read on an actual resize drag, never
+    /// per rebuild — see the resize adapter below.
+    rows: RowsFn<State, R>,
+    text_projectors: Arc<Vec<Option<TextProjector<R>>>>,
     flex_weights: Arc<Vec<f64>>,
     row_height: f64,
     theme: &'a Theme,
+}
+
+/// The drag-resize floor for a column: the rendered width of its widest
+/// cell so a drag can't shrink it narrower than its content (which would
+/// clip). Body cells are measured at `size_body`, the header title at
+/// `size_caption`; the result includes the strip chrome (the grab zone
+/// plus a hairline) so no glyph sits under the resize handle. A column
+/// whose cells aren't plain text (`projector` is `None`, e.g. a custom
+/// widget renderer) floors at just its header title.
+///
+/// `O(rows)` — called only from the memoized [`measure::column_floor`],
+/// so a drag pays this once per `(column, row_count)`, never per rebuild.
+fn content_floor<R>(
+    title: &str,
+    projector: Option<&TextProjector<R>>,
+    rows: &[R],
+    size_body: f32,
+    size_caption: f32,
+) -> f64 {
+    // Header title width: caption font size plus its inter-glyph letter
+    // spacing (1.2 px, see `header_cell`), plus a fixed allowance for the
+    // sort arrow / multi-sort badge / filter marker a header may append.
+    const HEADER_LETTER_SPACING: f64 = 1.2;
+    const HEADER_DECOR_ALLOWANCE: f64 = 20.0;
+    // Cells are laid out `GRAB_ZONE` narrower than their column (see
+    // `cell_layout_width`); add it back, plus a small pad on each side so the
+    // widest cell's text isn't flush against the column edges at the floor.
+    const CELL_PAD: f64 = 6.0;
+    let glyph_gaps =
+        f64::from(u32::try_from(title.chars().count().saturating_sub(1)).unwrap_or(u32::MAX));
+    let mut widest = measure::text_width(title, size_caption)
+        + glyph_gaps * HEADER_LETTER_SPACING
+        + HEADER_DECOR_ALLOWANCE;
+    if let Some(projector) = projector {
+        for row in rows {
+            let w = measure::text_width(&projector(row), size_body);
+            if w > widest {
+                widest = w;
+            }
+        }
+    }
+    widest + GRAB_ZONE + 2.0 * CELL_PAD
+}
+
+/// Folds the floor's layout determinants that `(ColumnId, row_count)` can't
+/// see into one `u64` for the [`measure::column_floor`] cache key: the body
+/// and header font sizes (theme typography) and the header title. This stops
+/// a floor computed under one theme — or for a same-id column in a different
+/// grid — from being reused after a theme swap or against another grid whose
+/// title/fonts differ. Body cell *text* is intentionally excluded: hashing it
+/// would reintroduce the `O(rows)` scan the cache exists to avoid, so a
+/// content edit that changes neither the row count nor the title still leans
+/// on row-count keying as its proxy.
+fn floor_signature(size_body: f32, size_caption: f32, title: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    size_body.to_bits().hash(&mut hasher);
+    size_caption.to_bits().hash(&mut hasher);
+    title.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Builds the sticky header row: a [`column_strip`] of per-column header
@@ -1219,6 +1288,8 @@ where
         sort,
         sort_change,
         width_change,
+        rows,
+        text_projectors,
         flex_weights,
         row_height,
         theme,
@@ -1252,12 +1323,34 @@ where
         // slot, not identity). Translate it to the column's stable id here so
         // the host's width override stays attached across reorder/hide.
         let resize_ids: Vec<ColumnId> = render_slots.iter().map(|s| s.id.clone()).collect();
+        // Captured so the adapter can floor the drag at each column's widest
+        // cell (see `content_floor`): the column titles (measured at header
+        // font size), the per-column text projectors, and the row accessor.
+        let titles: Vec<String> = render_slots.iter().map(|s| s.title.clone()).collect();
+        let size_body = theme.typography.size_body;
+        let size_caption = theme.typography.size_caption;
         header_strip = header_strip.resizable(style, move |state: &mut State, col, new_width| {
-            if let Some(id) = resize_ids.get(col) {
-                width_change(state, id.clone(), new_width)
-            } else {
-                Action::default()
-            }
+            let Some(id) = resize_ids.get(col) else {
+                return Action::default();
+            };
+            // Floor the drag at the column's widest cell so it can't be
+            // dragged narrower than its content (which would clip). The
+            // floor is memoized per `(column, row_count, signature)`, so
+            // this scans the rows only on the first pointer-move of a drag,
+            // yet a theme/title change (folded into the signature) can't
+            // reuse a floor measured under the old typography.
+            let row_count = u64::try_from(rows(state).len()).unwrap_or(u64::MAX);
+            let signature = floor_signature(size_body, size_caption, &titles[col]);
+            let floor = measure::column_floor(id, row_count, signature, || {
+                content_floor(
+                    &titles[col],
+                    text_projectors.get(col).and_then(Option::as_ref),
+                    rows(state),
+                    size_body,
+                    size_caption,
+                )
+            });
+            width_change(state, id.clone(), new_width.max(floor))
         });
     }
     sized_box(header_strip)
@@ -1705,6 +1798,31 @@ mod tests {
     /// A single text projector that stringifies the `u64` row.
     fn value_projectors() -> Vec<Option<TextProjector<u64>>> {
         vec![Some(Box::new(|r: &u64| r.to_string()))]
+    }
+
+    #[test]
+    fn content_floor_widens_with_cell_content_and_covers_header() {
+        use super::content_floor;
+
+        let t = Theme::default();
+        let body = t.typography.size_body;
+        let caption = t.typography.size_caption;
+        let proj: TextProjector<u64> = Box::new(|r: &u64| format!("${r}.00"));
+
+        // A column of wide values floors wider than one of narrow values.
+        let narrow = content_floor("v", Some(&proj), &[1, 2, 3], body, caption);
+        let wide = content_floor("v", Some(&proj), &[1_239_999, 88], body, caption);
+        assert!(
+            wide > narrow,
+            "wider cells raise the floor: {wide} !> {narrow}"
+        );
+
+        // With no text projector the floor still covers the header title —
+        // a long title floors wider than a short one.
+        let short_hdr = content_floor::<u64>("ID", None, &[], body, caption);
+        let long_hdr = content_floor::<u64>("A REALLY LONG HEADER", None, &[], body, caption);
+        assert!(short_hdr > 0.0);
+        assert!(long_hdr > short_hdr, "header width feeds the floor");
     }
 
     #[test]

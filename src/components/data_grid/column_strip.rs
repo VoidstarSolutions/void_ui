@@ -45,7 +45,7 @@ use masonry::peniko::Color;
 /// the same x by construction. Also the hover tolerance. A resize hit-target
 /// half-width; hit targets must not shrink at compact density, so this
 /// doesn't scale with density.
-const GRAB_ZONE: f64 = 6.0;
+pub(crate) const GRAB_ZONE: f64 = 6.0;
 
 /// The width a cell is laid out at inside its column slot: the column
 /// width minus the trailing [`GRAB_ZONE`], floored at zero. Identical

@@ -1,0 +1,250 @@
+//! Text-width measurement for drag-to-resize *content floors*.
+//!
+//! Drag-to-resize lets a column be dragged narrower than its content,
+//! which clips the cells (see the resize adapter in [`super::view`]). To
+//! stop that, the adapter floors each column at the width of its widest
+//! cell. Computing that floor needs the *rendered* width of every cell's
+//! text — not a glyph-count estimate — so this module lays the text out
+//! with parley at the cell's font size, exactly as the `text_column`
+//! label does, and reads the resulting advance.
+//!
+//! Measurement is authoritative but not free, so two thread-local caches
+//! keep it off the hot path:
+//!
+//! - [`text_width`] memoizes `(font_size, text) -> width`, so a value
+//!   that recurs across rows (or across successive drags) is laid out
+//!   once.
+//! - [`column_floor`] memoizes the finished per-column floor keyed by
+//!   `(ColumnId, row_count, signature)`. The row count makes it
+//!   self-invalidate when the dataset grows or shrinks; the `signature`
+//!   (see the caller's `floor_signature`) folds in the layout determinants
+//!   the count can't see — the body/header font sizes and the header title
+//!   — so a theme swap or a retitled column can't reuse a floor computed
+//!   under the old typography, and two grids that happen to share a
+//!   `ColumnId` don't collide unless their titles and fonts also match. An
+//!   in-flight drag (all three fixed) reuses an `O(1)` value instead of
+//!   re-scanning every row on each pointer-move. This mirrors the grid's
+//!   existing rule of keeping `O(rows)` work off the per-rebuild path (see
+//!   `CopyOnShortcutView`). Body cell *text* is deliberately not in the
+//!   signature — hashing it would reintroduce the very `O(rows)` scan the
+//!   cache exists to avoid — so a content edit that changes neither the row
+//!   count nor the title still relies on row-count keying as its proxy.
+//!
+//! Row-count keying only invalidates a floor when the *size* changes, and
+//! nothing evicts stale `(font_size, text)` widths, so both tables are
+//! size-bounded ([`WIDTHS_CAP`]/[`FLOORS_CAP`]) and reset wholesale on
+//! overflow — otherwise a long-lived grid whose data churns would retain
+//! every value it ever measured.
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::hash::Hash;
+
+use masonry::core::{BrushIndex, StyleProperty};
+use masonry::parley::{FontContext, Layout, LayoutContext};
+
+use super::column::ColumnId;
+
+/// Upper bound on live `widths` entries before the table resets. Keyed by
+/// distinct `(font_size, cell text)`, so a long-lived grid whose data churns
+/// would otherwise retain every string ever shown. Sized to hold far more
+/// than one screen's worth of distinct cells.
+const WIDTHS_CAP: usize = 8192;
+
+/// Upper bound on live `floors` entries before the table resets. Keyed by
+/// `(column, row_count, signature)`, which accumulates a new entry each time
+/// the dataset changes size or the column's typography/title changes; a modest
+/// cap covers any realistic column count.
+const FLOORS_CAP: usize = 512;
+
+/// Insert into a size-bounded memo table. When the table is full and the key
+/// is new, it is cleared wholesale before inserting — an active drag's working
+/// set is far smaller than either cap, so it repopulates on the next moves,
+/// and a clear keeps the hot path allocation-free versus per-entry eviction.
+/// Overwriting an existing key never grows the table, so it skips the clear.
+fn insert_bounded<K: Eq + Hash, V>(map: &mut HashMap<K, V>, cap: usize, key: K, value: V) {
+    if map.len() >= cap && !map.contains_key(&key) {
+        map.clear();
+    }
+    map.insert(key, value);
+}
+
+/// Per-thread parley contexts plus the two memo tables. Parley's
+/// `FontContext`/`LayoutContext` are reused across measurements (building
+/// them is expensive); a `thread_local` keeps them off any shared-state
+/// path and matches how masonry drives text layout on the UI thread.
+struct Measurer {
+    fonts: FontContext,
+    layouts: LayoutContext<BrushIndex>,
+    /// `(font_size_bits, text) -> width_px`.
+    widths: HashMap<(u32, String), f32>,
+    /// `(column, row_count, signature) -> floor_px`. `signature` folds the
+    /// floor's font sizes + title so a theme/title change can't reuse a
+    /// stale floor across grids or content updates (see [`column_floor`]).
+    floors: HashMap<(ColumnId, u64, u64), f64>,
+}
+
+thread_local! {
+    static MEASURER: RefCell<Measurer> = RefCell::new(Measurer {
+        fonts: FontContext::new(),
+        layouts: LayoutContext::new(),
+        widths: HashMap::new(),
+        floors: HashMap::new(),
+    });
+}
+
+/// Rendered width, in px, of `text` laid out on a single line at
+/// `font_size` in the default font family — matching a `text_column`
+/// cell label. Empty text is `0.0`. Memoized per `(font_size, text)`.
+pub(crate) fn text_width(text: &str, font_size: f32) -> f64 {
+    if text.is_empty() {
+        return 0.0;
+    }
+    MEASURER.with_borrow_mut(|m| {
+        let key = (font_size.to_bits(), text.to_owned());
+        if let Some(w) = m.widths.get(&key) {
+            return f64::from(*w);
+        }
+        let Measurer {
+            fonts,
+            layouts,
+            widths,
+            ..
+        } = m;
+        let mut layout: Layout<BrushIndex> = Layout::default();
+        let mut builder = layouts.ranged_builder(fonts, text, 1.0, true);
+        builder.push_default(StyleProperty::FontSize(font_size));
+        builder.push_default(StyleProperty::Brush(BrushIndex(0)));
+        builder.build_into(&mut layout, text);
+        // `None` = no wrap width: a single line whose `width()` is the
+        // full advance, which is exactly the content width we floor to.
+        layout.break_all_lines(None);
+        let w = layout.width();
+        insert_bounded(widths, WIDTHS_CAP, key, w);
+        f64::from(w)
+    })
+}
+
+/// The drag-resize floor for `column` at the current `row_count` and
+/// `signature`, computing it via `compute` on a cache miss and memoizing
+/// the result.
+///
+/// `signature` must fold every determinant of the floor that `column` and
+/// `row_count` don't already capture — the body/header font sizes and the
+/// header title (see the caller's `floor_signature`). Keeping it out of the
+/// key would let a floor computed under one theme's typography, or for a
+/// same-id column in another grid, be reused incorrectly.
+///
+/// `compute` returns the finished floor (widest cell width plus chrome)
+/// and runs at most once per `(column, row_count, signature)` — so a drag,
+/// which fires many pointer-moves at a fixed key, pays the `O(rows)` scan
+/// only on its first move. The borrow is released before `compute` runs,
+/// so `compute` may call [`text_width`] without a re-entrant borrow.
+pub(crate) fn column_floor(
+    column: &ColumnId,
+    row_count: u64,
+    signature: u64,
+    compute: impl FnOnce() -> f64,
+) -> f64 {
+    let key = (column.clone(), row_count, signature);
+    if let Some(f) = MEASURER.with_borrow(|m| m.floors.get(&key).copied()) {
+        return f;
+    }
+    let floor = compute();
+    MEASURER.with_borrow_mut(|m| {
+        insert_bounded(&mut m.floors, FLOORS_CAP, key, floor);
+    });
+    floor
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::{column_floor, insert_bounded, text_width};
+    use crate::components::data_grid::column::ColumnId;
+
+    #[test]
+    fn insert_bounded_clears_on_overflow_then_repopulates() {
+        let mut map: HashMap<u32, u32> = HashMap::new();
+        for k in 0..4 {
+            insert_bounded(&mut map, 4, k, k);
+        }
+        assert_eq!(map.len(), 4, "fills up to the cap");
+        // A new key at capacity resets the table, keeping only the newcomer.
+        insert_bounded(&mut map, 4, 99, 99);
+        assert_eq!(map.len(), 1, "overflow clears the stale working set");
+        assert_eq!(map.get(&99), Some(&99), "newcomer survives the reset");
+    }
+
+    #[test]
+    fn insert_bounded_overwrite_at_cap_does_not_clear() {
+        let mut map: HashMap<u32, u32> = HashMap::new();
+        for k in 0..4 {
+            insert_bounded(&mut map, 4, k, k);
+        }
+        // Re-inserting an existing key at capacity must not grow => no clear.
+        insert_bounded(&mut map, 4, 2, 200);
+        assert_eq!(map.len(), 4, "overwrite keeps every entry");
+        assert_eq!(map.get(&2), Some(&200), "overwrite updates in place");
+    }
+
+    #[test]
+    fn empty_text_is_zero_width() {
+        assert!((text_width("", 14.0) - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn wider_text_measures_wider() {
+        // A longer string of the same characters must be at least as wide;
+        // in practice strictly wider. Uses a fresh, deterministic default
+        // font context — no assertion on absolute pixels (font-dependent).
+        let short = text_width("$1.72", 14.0);
+        let long = text_width("$1239.91", 14.0);
+        assert!(short > 0.0, "non-empty text has positive width");
+        assert!(long > short, "more glyphs => wider: {long} !> {short}");
+    }
+
+    #[test]
+    fn column_floor_memoizes_by_row_count() {
+        use std::cell::Cell;
+
+        // A unique id keeps this independent of any other test's cache
+        // entries sharing the process-wide thread-local.
+        let id = ColumnId::from("column_floor_memoizes_by_row_count");
+        let calls = Cell::new(0u32);
+        let compute = || {
+            calls.set(calls.get() + 1);
+            100.0
+        };
+
+        assert!((column_floor(&id, 3, 0, compute) - 100.0).abs() < f64::EPSILON);
+        // Same (column, row_count, signature) => cache hit, `compute` not re-run.
+        assert!((column_floor(&id, 3, 0, compute) - 100.0).abs() < f64::EPSILON);
+        assert_eq!(calls.get(), 1, "second call with same key is cached");
+        // A different row count recomputes (dataset changed size).
+        let _ = column_floor(&id, 4, 0, compute);
+        assert_eq!(calls.get(), 2, "new row_count recomputes the floor");
+    }
+
+    #[test]
+    fn column_floor_recomputes_on_signature_change() {
+        use std::cell::Cell;
+
+        // Same column + row_count but a changed signature (e.g. a theme
+        // typography swap or a retitled column) must not reuse the floor.
+        let id = ColumnId::from("column_floor_recomputes_on_signature_change");
+        let calls = Cell::new(0u32);
+        let compute = || {
+            calls.set(calls.get() + 1);
+            100.0
+        };
+
+        let _ = column_floor(&id, 3, 0xA1, compute);
+        let _ = column_floor(&id, 3, 0xA1, compute);
+        assert_eq!(calls.get(), 1, "same signature is cached");
+        // New signature => recompute even though (column, row_count) match.
+        let _ = column_floor(&id, 3, 0xB2, compute);
+        assert_eq!(calls.get(), 2, "new signature recomputes the floor");
+    }
+}
