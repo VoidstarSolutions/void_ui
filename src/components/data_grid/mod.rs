@@ -186,6 +186,7 @@ pub mod demo;
 pub mod expand;
 pub mod filter;
 pub mod header_click;
+mod measure;
 pub mod sort;
 mod view;
 pub mod width;
