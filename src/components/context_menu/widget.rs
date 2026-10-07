@@ -1106,7 +1106,7 @@ mod tests {
         );
         assert!(!panel.rows[0].selectable);
         assert!(!panel.rows[1].selectable);
-        assert!(panel.hoverable_indices().is_empty());
+        assert_eq!(panel.hoverable_indices(), [] as [usize; 0]);
     }
 
     // --- keyboard navigation (TestHarness) ---

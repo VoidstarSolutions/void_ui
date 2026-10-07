@@ -71,6 +71,7 @@ impl OverlayListItem {
     ) -> Self {
         let mut lbl = Label::new(text.clone())
             .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
+            .with_style(StyleProperty::FontFamily(theme.typography.sans_family()))
             .prepare();
         lbl.properties.insert(ContentColor::new(theme.palette.text));
         Self {
@@ -121,6 +122,10 @@ impl OverlayListItem {
             Label::insert_style(
                 &mut lbl,
                 StyleProperty::FontSize(theme.density.ui_font_size),
+            );
+            Label::insert_style(
+                &mut lbl,
+                StyleProperty::FontFamily(theme.typography.sans_family()),
             );
         }
         this.ctx.request_paint_only();

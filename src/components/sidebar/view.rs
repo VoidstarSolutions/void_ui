@@ -161,6 +161,9 @@ impl<F, State, Action> SidebarItemView<F, State, Action> {
     fn build_label(&self) -> NewWidget<Label> {
         let mut label = Label::new(self.label.clone())
             .with_style(StyleProperty::FontSize(self.theme.density.ui_font_size))
+            .with_style(StyleProperty::FontFamily(
+                self.theme.typography.sans_family(),
+            ))
             .prepare();
         label
             .properties
@@ -238,6 +241,10 @@ where
                             &mut lbl,
                             StyleProperty::FontSize(self.theme.density.ui_font_size),
                         );
+                        Label::insert_style(
+                            &mut lbl,
+                            StyleProperty::FontFamily(self.theme.typography.sans_family()),
+                        );
                     }
                 }
             }
@@ -253,6 +260,10 @@ where
                         Label::insert_style(
                             &mut lbl,
                             StyleProperty::FontSize(self.theme.density.ui_font_size),
+                        );
+                        Label::insert_style(
+                            &mut lbl,
+                            StyleProperty::FontFamily(self.theme.typography.sans_family()),
                         );
                     }
                 }

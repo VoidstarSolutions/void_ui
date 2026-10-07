@@ -71,6 +71,7 @@ fn make_title(text: ArcStr, theme: &Theme, disabled: bool) -> NewWidget<Label> {
     };
     let mut lbl = Label::new(text)
         .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
+        .with_style(StyleProperty::FontFamily(theme.typography.sans_family()))
         .prepare();
     lbl.properties.insert(ContentColor::new(color));
     lbl
@@ -171,6 +172,10 @@ impl<W: Widget + ?Sized> CollapsibleWidget<W> {
                 Label::insert_style(
                     &mut title,
                     StyleProperty::FontSize(theme.density.ui_font_size),
+                );
+                Label::insert_style(
+                    &mut title,
+                    StyleProperty::FontFamily(theme.typography.sans_family()),
                 );
             }
             this.ctx.request_layout();

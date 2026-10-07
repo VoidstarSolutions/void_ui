@@ -134,6 +134,10 @@ impl ToggleWidget {
                     &mut typed,
                     StyleProperty::FontSize(theme.density.ui_font_size),
                 );
+                Label::insert_style(
+                    &mut typed,
+                    StyleProperty::FontFamily(theme.typography.sans_family()),
+                );
             }
             this.ctx.request_layout();
             this.ctx.request_paint_only();

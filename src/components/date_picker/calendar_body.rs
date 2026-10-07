@@ -239,6 +239,7 @@ fn header_year_label(nav: &CalendarNavState) -> ArcStr {
 fn build_header_button(label: ArcStr, theme: &Theme) -> NewWidget<ThemedButton> {
     let lbl = Label::new(label)
         .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
+        .with_style(StyleProperty::FontFamily(theme.typography.sans_family()))
         .prepare();
     let mut lbl = lbl.erased();
     lbl.properties.insert(ContentColor::new(theme.palette.text));
@@ -249,6 +250,7 @@ fn build_header_button(label: ArcStr, theme: &Theme) -> NewWidget<ThemedButton> 
 fn build_weekday_label(text: &str, theme: &Theme) -> WidgetPod<Label> {
     let mut lbl = Label::new(ArcStr::from(text))
         .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
+        .with_style(StyleProperty::FontFamily(theme.typography.sans_family()))
         .prepare();
     lbl.properties
         .insert(ContentColor::new(theme.palette.text_muted));
@@ -563,6 +565,10 @@ impl CalendarBodyWidget {
             let mut lbl = this.ctx.get_mut(&mut this.widget.weekday_row[i]);
             lbl.insert_prop(ContentColor::new(text_muted));
             Label::insert_style(&mut lbl, StyleProperty::FontSize(ui_font_size));
+            Label::insert_style(
+                &mut lbl,
+                StyleProperty::FontFamily(theme.typography.sans_family()),
+            );
         }
 
         // Update grid (drop the mut ref before requesting layout).

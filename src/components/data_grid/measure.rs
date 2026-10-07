@@ -11,7 +11,7 @@
 //! Measurement is authoritative but not free, so two thread-local caches
 //! keep it off the hot path:
 //!
-//! - [`text_width`] memoizes `(font_size, text) -> width`, so a value
+//! - [`text_width`] memoizes `(font_size, font stack, text) -> width`, so a value
 //!   that recurs across rows (or across successive drags) is laid out
 //!   once.
 //! - [`column_floor`] memoizes the finished per-column floor keyed by
@@ -41,9 +41,10 @@ use std::collections::HashMap;
 use std::hash::Hash;
 
 use masonry::core::{BrushIndex, StyleProperty};
-use masonry::parley::{FontContext, Layout, LayoutContext};
+use masonry::parley::{FontContext, GenericFamily, Layout, LayoutContext};
 
 use super::column::ColumnId;
+use crate::theme::FontStack;
 
 /// Upper bound on live `widths` entries before the table resets. Keyed by
 /// distinct `(font_size, cell text)`, so a long-lived grid whose data churns
@@ -76,8 +77,8 @@ fn insert_bounded<K: Eq + Hash, V>(map: &mut HashMap<K, V>, cap: usize, key: K, 
 struct Measurer {
     fonts: FontContext,
     layouts: LayoutContext<BrushIndex>,
-    /// `(font_size_bits, text) -> width_px`.
-    widths: HashMap<(u32, String), f32>,
+    /// `(font_size_bits, sans stack, text) -> width_px`.
+    widths: HashMap<(u32, FontStack, String), f32>,
     /// `(column, row_count, signature) -> floor_px`. `signature` folds the
     /// floor's font sizes + title so a theme/title change can't reuse a
     /// stale floor across grids or content updates (see [`column_floor`]).
@@ -94,14 +95,20 @@ thread_local! {
 }
 
 /// Rendered width, in px, of `text` laid out on a single line at
-/// `font_size` in the default font family — matching a `text_column`
-/// cell label. Empty text is `0.0`. Memoized per `(font_size, text)`.
-pub(crate) fn text_width(text: &str, font_size: f32) -> f64 {
+/// `font_size` in the theme's `sans` stack — the family a `text_column`
+/// cell label renders in. Empty text is `0.0`. Memoized per
+/// `(font_size, sans, text)`.
+///
+/// The measurer owns a private `FontContext`, so a face the host registers
+/// only through `Xilem::with_font` isn't visible here; for such a face the
+/// stack falls through to its next installed family, and the floor is an
+/// approximation. Faces installed system-wide measure exactly.
+pub(crate) fn text_width(text: &str, font_size: f32, sans: FontStack) -> f64 {
     if text.is_empty() {
         return 0.0;
     }
     MEASURER.with_borrow_mut(|m| {
-        let key = (font_size.to_bits(), text.to_owned());
+        let key = (font_size.to_bits(), sans, text.to_owned());
         if let Some(w) = m.widths.get(&key) {
             return f64::from(*w);
         }
@@ -114,6 +121,9 @@ pub(crate) fn text_width(text: &str, font_size: f32) -> f64 {
         let mut layout: Layout<BrushIndex> = Layout::default();
         let mut builder = layouts.ranged_builder(fonts, text, 1.0, true);
         builder.push_default(StyleProperty::FontSize(font_size));
+        builder.push_default(StyleProperty::FontFamily(
+            sans.to_family(GenericFamily::SansSerif),
+        ));
         builder.push_default(StyleProperty::Brush(BrushIndex(0)));
         builder.build_into(&mut layout, text);
         // `None` = no wrap width: a single line whose `width()` is the
@@ -163,6 +173,11 @@ mod tests {
 
     use super::{column_floor, insert_bounded, text_width};
     use crate::components::data_grid::column::ColumnId;
+    use crate::theme::{FontStack, Typography};
+
+    fn sans() -> FontStack {
+        Typography::default().sans
+    }
 
     #[test]
     fn insert_bounded_clears_on_overflow_then_repopulates() {
@@ -191,7 +206,7 @@ mod tests {
 
     #[test]
     fn empty_text_is_zero_width() {
-        assert!((text_width("", 14.0) - 0.0).abs() < f64::EPSILON);
+        assert!((text_width("", 14.0, sans()) - 0.0).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -199,8 +214,8 @@ mod tests {
         // A longer string of the same characters must be at least as wide;
         // in practice strictly wider. Uses a fresh, deterministic default
         // font context — no assertion on absolute pixels (font-dependent).
-        let short = text_width("$1.72", 14.0);
-        let long = text_width("$1239.91", 14.0);
+        let short = text_width("$1.72", 14.0, sans());
+        let long = text_width("$1239.91", 14.0, sans());
         assert!(short > 0.0, "non-empty text has positive width");
         assert!(long > short, "more glyphs => wider: {long} !> {short}");
     }

@@ -453,6 +453,10 @@ fn apply_chrome_theme(sb: &mut WidgetMut<'_, SizedBox>, theme: &Theme) {
             );
             widgets::Label::insert_style(
                 &mut placeholder,
+                StyleProperty::FontFamily(theme.typography.sans_family()),
+            );
+            widgets::Label::insert_style(
+                &mut placeholder,
                 StyleProperty::LineHeight(masonry::parley::LineHeight::Absolute(line_px)),
             );
         }
@@ -467,6 +471,10 @@ fn apply_chrome_theme(sb: &mut WidgetMut<'_, SizedBox>, theme: &Theme) {
         widgets::TextArea::insert_style(
             &mut ta,
             StyleProperty::FontSize(theme.typography.size_body),
+        );
+        widgets::TextArea::insert_style(
+            &mut ta,
+            StyleProperty::FontFamily(theme.typography.sans_family()),
         );
         widgets::TextArea::insert_style(
             &mut ta,
@@ -636,6 +644,7 @@ impl AutocompleteWidget {
         // let `with_clip(true)` shear the descenders off.
         let text_area = widgets::TextArea::new_editable(contents)
             .with_style(StyleProperty::FontSize(theme.typography.size_body))
+            .with_style(StyleProperty::FontFamily(theme.typography.sans_family()))
             .with_style(StyleProperty::LineHeight(
                 masonry::parley::LineHeight::Absolute(body_line_height(theme)),
             ));
@@ -661,6 +670,7 @@ impl AutocompleteWidget {
             text_input_widget,
             theme.typography.size_body,
             body_line_height(theme),
+            theme.typography.sans_family(),
         );
 
         // ── SizedBox — field chrome via masonry property system ───────────────

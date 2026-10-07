@@ -347,6 +347,9 @@ where
     fn build(&self, ctx: &mut ViewCtx, _state: &mut State) -> (Self::Element, Self::ViewState) {
         let text_area = widgets::TextArea::new_editable(&self.contents)
             .with_style(StyleProperty::FontSize(self.theme.typography.size_body))
+            .with_style(StyleProperty::FontFamily(
+                self.theme.typography.sans_family(),
+            ))
             .with_style(StyleProperty::LineHeight(
                 masonry::parley::LineHeight::Absolute(body_line_height(&self.theme)),
             ));
@@ -378,6 +381,7 @@ where
             input,
             self.theme.typography.size_body,
             body_line_height(&self.theme),
+            self.theme.typography.sans_family(),
         ));
         // Route both sources to this view: the frame (Escape -> InputCleared)
         // and the inner TextArea (edits -> TextAction).
@@ -412,6 +416,10 @@ where
             );
             widgets::Label::insert_style(
                 &mut placeholder,
+                StyleProperty::FontFamily(self.theme.typography.sans_family()),
+            );
+            widgets::Label::insert_style(
+                &mut placeholder,
                 StyleProperty::LineHeight(masonry::parley::LineHeight::Absolute(body_line_height(
                     &self.theme,
                 ))),
@@ -440,6 +448,10 @@ where
             widgets::TextArea::insert_style(
                 &mut text_area,
                 StyleProperty::FontSize(self.theme.typography.size_body),
+            );
+            widgets::TextArea::insert_style(
+                &mut text_area,
+                StyleProperty::FontFamily(self.theme.typography.sans_family()),
             );
             widgets::TextArea::insert_style(
                 &mut text_area,

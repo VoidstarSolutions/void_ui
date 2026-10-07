@@ -22,7 +22,7 @@ use masonry::core::{
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Size};
 use masonry::layout::{LenReq, Length};
-use masonry::parley::{LineHeight, StyleProperty};
+use masonry::parley::{FontFamily, LineHeight, StyleProperty};
 use masonry::widgets::{Label, TextAction, TextInput};
 use tracing::{Span, trace_span};
 
@@ -36,7 +36,7 @@ pub struct InputCleared;
 /// adding Esc-to-clear. See the module docs.
 pub struct InputFrame {
     inner: WidgetPod<dyn Widget>,
-    /// `(font_size_px, line_height_px)` to stamp onto the hosted `TextInput`'s
+    /// `(font_size_px, line_height_px, family)` to stamp onto the hosted `TextInput`'s
     /// placeholder `Label` on `WidgetAdded`. masonry builds the placeholder at
     /// its own default font size with the font's natural (ascent-heavy) metrics,
     /// and gives no build-time style hook — the only public seam is a runtime
@@ -45,7 +45,7 @@ pub struct InputFrame {
     /// app-state change, so on a freshly built tree that never rebuilds the
     /// placeholder would otherwise render oversized and low until the first
     /// interaction. `None` skips it (fields with no placeholder / bare tests).
-    placeholder_style: Option<(f32, f32)>,
+    placeholder_style: Option<(f32, f32, FontFamily<'static>)>,
 }
 
 impl InputFrame {
@@ -62,17 +62,18 @@ impl InputFrame {
         }
     }
 
-    /// Wrap the child and stamp the given `(font_size_px, line_height_px)` onto
+    /// Wrap the child and stamp the given font size, line height and family onto
     /// its placeholder `Label` before the first paint (see [`Self::placeholder_style`]).
     #[must_use]
     pub fn with_placeholder_style(
         child: NewWidget<impl Widget + ?Sized>,
         font_px: f32,
         line_px: f32,
+        family: FontFamily<'static>,
     ) -> Self {
         Self {
             inner: child.erased().to_pod(),
-            placeholder_style: Some((font_px, line_px)),
+            placeholder_style: Some((font_px, line_px, family)),
         }
     }
 
@@ -106,13 +107,17 @@ impl Widget for InputFrame {
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
-        // Stamp the placeholder font size + line height once, before first paint.
+        // Stamp the placeholder font size, line height and family once, before
+        // first paint.
         // See `placeholder_style`.
-        if let (Update::WidgetAdded, Some((font_px, line_px))) = (event, self.placeholder_style) {
+        if let (Update::WidgetAdded, Some((font_px, line_px, family))) =
+            (event, self.placeholder_style.clone())
+        {
             ctx.mutate_child_later(&mut self.inner, move |mut child| {
                 let mut input = child.downcast::<TextInput>();
                 let mut placeholder = TextInput::placeholder_mut(&mut input);
                 Label::insert_style(&mut placeholder, StyleProperty::FontSize(font_px));
+                Label::insert_style(&mut placeholder, StyleProperty::FontFamily(family));
                 Label::insert_style(
                     &mut placeholder,
                     StyleProperty::LineHeight(LineHeight::Absolute(line_px)),

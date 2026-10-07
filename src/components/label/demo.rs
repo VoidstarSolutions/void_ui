@@ -1,6 +1,7 @@
 //! Label demo panel used by the void-ui gallery.
 
 use masonry::layout::Length;
+use masonry::parley::style::FontWeight;
 use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
 use xilem::masonry::widgets::Passthrough;
 use xilem::style::Style as _;
@@ -131,6 +132,27 @@ fn decoration_section(theme: &Theme) -> impl WidgetView<LabelDemoState> + use<> 
     })
 }
 
+fn weights_section(theme: &Theme) -> impl WidgetView<LabelDemoState> + use<> {
+    with_source!(theme, {
+        flex_col((
+            label("Regular — 400 (default)").render(theme),
+            label("Medium — 500")
+                .weight(FontWeight::MEDIUM)
+                .render(theme),
+            label("Semibold — 600")
+                .weight(FontWeight::SEMI_BOLD)
+                .render(theme),
+            label("Bold — 700").weight(FontWeight::BOLD).render(theme),
+            label("$1,239.91")
+                .weight(FontWeight::SEMI_BOLD)
+                .secondary("+2.4%")
+                .render(theme),
+        ))
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .gap(Length::px(6.0))
+    })
+}
+
 fn build_inner(theme: &Theme, state: &LabelDemoState) -> impl WidgetView<LabelDemoState> + use<> {
     let mask_toggle = checkbox(state.masked, |s: &mut LabelDemoState, checked: bool| {
         s.masked = checked;
@@ -198,6 +220,8 @@ fn build_inner(theme: &Theme, state: &LabelDemoState) -> impl WidgetView<LabelDe
             (
                 section_header("Decoration", theme),
                 decoration_section(theme),
+                section_header("Weight", theme),
+                weights_section(theme),
             ),
         ))
         .cross_axis_alignment(CrossAxisAlignment::Start)

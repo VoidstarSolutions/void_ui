@@ -338,6 +338,7 @@ where
         let text = fmt_for_render(row);
         let view = label(text)
             .text_size(theme.typography.size_body)
+            .font(theme.typography.sans_family())
             .color(theme.palette.text);
         Box::new(view)
     })
@@ -371,6 +372,7 @@ where
         };
         let view = label(text)
             .text_size(theme.typography.size_body)
+            .font(theme.typography.sans_family())
             .color(color);
         Box::new(view)
     })
@@ -409,6 +411,7 @@ where
     ColumnDef::new(title, width, align, move |row, theme| {
         let view = label(fmt_for_render(row))
             .text_size(theme.typography.size_body)
+            .font(theme.typography.sans_family())
             .color(color(row, theme));
         Box::new(view)
     })

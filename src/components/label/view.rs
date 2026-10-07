@@ -13,6 +13,7 @@
 //! (e.g. when `.secondary()` toggles).
 
 use masonry::core::ArcStr;
+use masonry::parley::style::FontWeight;
 use masonry::parley::{FontFamily, LineHeight};
 use masonry::properties::LineBreaking;
 use xilem::masonry::layout::Length;
@@ -36,6 +37,7 @@ pub struct Label {
     text_size: Option<f32>,
     letter_spacing: f32,
     font: Option<FontFamily<'static>>,
+    weight: FontWeight,
     alignment: LabelAlignment,
     line_height: Option<f32>,
     multiline: bool,
@@ -46,8 +48,9 @@ pub struct Label {
 
 /// Create a themed text label.
 ///
-/// Defaults: body font size, `palette.text` color, start alignment,
-/// no secondary text, single-line (clip on overflow), unmasked.
+/// Defaults: the theme's sans stack at body size and normal weight,
+/// `palette.text` color, start alignment, no secondary text, single-line
+/// (clip on overflow), unmasked.
 pub fn label(text: impl Into<ArcStr>) -> Label {
     Label {
         text: text.into(),
@@ -56,6 +59,7 @@ pub fn label(text: impl Into<ArcStr>) -> Label {
         text_size: None,
         letter_spacing: 0.0,
         font: None,
+        weight: FontWeight::NORMAL,
         alignment: LabelAlignment::default(),
         line_height: None,
         multiline: false,
@@ -94,12 +98,21 @@ impl Label {
         self
     }
 
-    /// Override the font family.
+    /// Override the font family. Defaults to `typography.sans`.
     ///
-    /// Useful for monospace code labels; most UI labels should use the
-    /// theme's sans-serif stack and do not need to call this.
+    /// Useful for monospace code labels (`theme.typography.mono_family()`);
+    /// most UI labels should use the theme's sans stack and do not need to
+    /// call this.
     pub fn font(mut self, font: FontFamily<'static>) -> Self {
         self.font = Some(font);
+        self
+    }
+
+    /// Set the font weight (e.g. `FontWeight::SEMI_BOLD` for values and
+    /// headings). Defaults to `FontWeight::NORMAL`. Applies to both main and
+    /// secondary text.
+    pub fn weight(mut self, weight: FontWeight) -> Self {
+        self.weight = weight;
         self
     }
 
@@ -192,11 +205,13 @@ impl Label {
         let base = styled_label(text, decoration)
             .text_size(self.text_size.unwrap_or(theme.typography.size_body))
             .text_alignment(self.alignment.into_text_align())
-            .letter_spacing(self.letter_spacing);
-        let base = match self.font.clone() {
-            Some(f) => base.font(f),
-            None => base,
-        };
+            .letter_spacing(self.letter_spacing)
+            .weight(self.weight)
+            .font(
+                self.font
+                    .clone()
+                    .unwrap_or_else(|| theme.typography.sans_family()),
+            );
         let base = match self.line_height {
             Some(lh) => base.line_height(LineHeight::FontSizeRelative(lh)),
             None => base,
@@ -215,14 +230,105 @@ fn mask(text: &str) -> ArcStr {
 
 #[cfg(test)]
 mod tests {
+    use masonry::core::{NewWidget, StyleProperty};
+    use masonry::parley::style::FontWeight;
+    use masonry::parley::{FontFamily, FontFamilyName, GenericFamily};
+    use masonry::testing::TestHarness;
+    use masonry::widgets;
     use xilem::ViewCtx;
     use xilem::core::View;
 
-    use super::{label, mask};
+    use super::{Label, label, mask};
+    use crate::theme::{FontStack, Typography};
     use crate::{TextDecoration, Theme, test_support};
 
     #[derive(Default)]
     struct AppState;
+
+    /// A theme whose sans stack names a brand face, as a host would set it.
+    fn branded_theme() -> Theme {
+        Theme {
+            typography: Typography {
+                sans: FontStack::new(&["DM Sans", "sans-serif"]),
+                ..Typography::default()
+            },
+            ..Theme::default()
+        }
+    }
+
+    /// Build `view` and read back one style property from the resulting
+    /// masonry `Label`. `insert_style` returns the value it replaced, so
+    /// swapping in `probe` reveals what the view set.
+    fn built_style(view: Label, theme: &Theme, probe: StyleProperty) -> Option<StyleProperty> {
+        let mut ctx = ViewCtx::new(
+            test_support::noop_proxy(),
+            test_support::current_thread_runtime(),
+        );
+        let mut state = AppState;
+        let (pod, _) = view
+            .render::<AppState, ()>(theme)
+            .build(&mut ctx, &mut state);
+        // `render` erases the widget; wrap it so the harness root is sized.
+        // The erased view is itself a `Passthrough` around the `Label`.
+        let mut harness = TestHarness::create(
+            masonry::theme::default_property_set(),
+            NewWidget::new(widgets::Passthrough::new(pod.new_widget)),
+        );
+        harness.edit_root_widget(|mut root| {
+            let mut erased = widgets::Passthrough::child_mut(&mut root);
+            let mut erased = erased.downcast::<widgets::Passthrough>();
+            let mut child = widgets::Passthrough::child_mut(&mut erased);
+            let mut lbl = child.downcast::<widgets::Label>();
+            widgets::Label::insert_style(&mut lbl, probe)
+        })
+    }
+
+    fn family_probe() -> StyleProperty {
+        StyleProperty::FontFamily(FontFamily::Single(FontFamilyName::Generic(
+            GenericFamily::Cursive,
+        )))
+    }
+
+    #[test]
+    fn label_defaults_to_the_theme_sans_stack() {
+        let theme = branded_theme();
+        let family = built_style(label("hello"), &theme, family_probe());
+        assert_eq!(
+            family,
+            Some(StyleProperty::FontFamily(theme.typography.sans_family()))
+        );
+        // Not circular: the brand face the theme named leads the list.
+        let Some(StyleProperty::FontFamily(FontFamily::List(names))) = family else {
+            panic!("expected a family list");
+        };
+        assert_eq!(names[0], FontFamilyName::Named("DM Sans".into()));
+    }
+
+    #[test]
+    fn explicit_font_overrides_the_theme_stack() {
+        let theme = branded_theme();
+        let mono = theme.typography.mono_family();
+        let family = built_style(label("hello").font(mono.clone()), &theme, family_probe());
+        assert_eq!(family, Some(StyleProperty::FontFamily(mono)));
+    }
+
+    #[test]
+    fn weight_defaults_to_normal_and_is_overridable() {
+        let theme = Theme::default();
+        let probe = || StyleProperty::FontWeight(FontWeight::THIN);
+        assert_eq!(
+            built_style(label("hello"), &theme, probe()),
+            Some(StyleProperty::FontWeight(FontWeight::NORMAL))
+        );
+        assert_eq!(
+            built_style(
+                label("hello").weight(FontWeight::SEMI_BOLD),
+                &theme,
+                probe()
+            ),
+            Some(StyleProperty::FontWeight(FontWeight::SEMI_BOLD))
+        );
+    }
 
     #[test]
     fn mask_replaces_every_char_with_a_bullet_preserving_length() {

@@ -153,6 +153,7 @@ impl ThemedDropdownButton {
 
         let label = Label::new(label_text.clone())
             .with_style(StyleProperty::FontSize(theme.density.ui_font_size))
+            .with_style(StyleProperty::FontFamily(theme.typography.sans_family()))
             .prepare();
         let mut label = label.erased();
         label.properties.insert(ContentColor::new(text_color));
@@ -344,6 +345,10 @@ impl ThemedDropdownButton {
                         &mut child,
                         StyleProperty::FontSize(theme.density.ui_font_size),
                     );
+                    Label::insert_style(
+                        &mut child,
+                        StyleProperty::FontFamily(theme.typography.sans_family()),
+                    );
                 }
                 Self::refresh_icon_props(&mut trigger, icon_color, theme);
             });
@@ -371,6 +376,10 @@ impl ThemedDropdownButton {
             Label::insert_style(
                 &mut child,
                 StyleProperty::FontSize(theme.density.ui_font_size),
+            );
+            Label::insert_style(
+                &mut child,
+                StyleProperty::FontFamily(theme.typography.sans_family()),
             );
             Label::set_text(&mut child, label);
         });
