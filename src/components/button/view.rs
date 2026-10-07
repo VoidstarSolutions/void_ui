@@ -271,6 +271,9 @@ where
         let text_color = self.text_color();
         let mut label = Label::new(self.label.clone().unwrap_or_default())
             .with_style(StyleProperty::FontSize(self.theme.density.ui_font_size))
+            .with_style(StyleProperty::FontFamily(
+                self.theme.typography.sans_family(),
+            ))
             .prepare();
         label.properties.insert(ContentColor::new(text_color));
         let icon_color = self.icon_color();
@@ -322,6 +325,10 @@ where
             Label::insert_style(
                 &mut lbl,
                 StyleProperty::FontSize(self.theme.density.ui_font_size),
+            );
+            Label::insert_style(
+                &mut lbl,
+                StyleProperty::FontFamily(self.theme.typography.sans_family()),
             );
         }
         if self.theme != prev.theme

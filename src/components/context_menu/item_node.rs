@@ -135,9 +135,10 @@ fn muted_color(disabled: bool, theme: &Theme) -> Color {
     }
 }
 
-fn make_text(text: &ArcStr, size: f32, color: Color) -> WidgetPod<dyn Widget> {
+fn make_text(text: &ArcStr, size: f32, color: Color, theme: &Theme) -> WidgetPod<dyn Widget> {
     let mut lbl = Label::new(text.clone())
         .with_style(StyleProperty::FontSize(size))
+        .with_style(StyleProperty::FontFamily(theme.typography.sans_family()))
         .prepare();
     lbl.properties.insert(ContentColor::new(color));
     lbl.erased().to_pod()
@@ -213,10 +214,11 @@ impl MenuItemNode {
                 };
                 MenuItemNode {
                     gutter,
-                    label: Some(make_text(&label, size, label_color(disabled, theme))),
+                    label: Some(make_text(&label, size, label_color(disabled, theme), theme)),
                     subtitle: subtitle
-                        .map(|s| make_text(&s, caption, muted_color(disabled, theme))),
-                    shortcut: shortcut.map(|s| make_text(&s, size, muted_color(disabled, theme))),
+                        .map(|s| make_text(&s, caption, muted_color(disabled, theme), theme)),
+                    shortcut: shortcut
+                        .map(|s| make_text(&s, size, muted_color(disabled, theme), theme)),
                     kind: RowKind::Action,
                     name: label,
                     checked,
@@ -247,7 +249,7 @@ impl MenuItemNode {
             },
             MenuRowSpec::Section { text } => MenuItemNode {
                 gutter: None,
-                label: Some(make_text(&text, size, theme.palette.text_faint)),
+                label: Some(make_text(&text, size, theme.palette.text_faint, theme)),
                 subtitle: None,
                 shortcut: None,
                 kind: RowKind::Section,
@@ -272,7 +274,7 @@ impl MenuItemNode {
                 let panel = NewWidget::new(MenuPanel::new(children, theme).hosted()).to_pod();
                 MenuItemNode {
                     gutter: leading.map(|name| make_icon(name, false, theme)),
-                    label: Some(make_text(&label, size, label_color(false, theme))),
+                    label: Some(make_text(&label, size, label_color(false, theme), theme)),
                     subtitle: None,
                     shortcut: Some(make_chevron(theme)),
                     kind: RowKind::Submenu,
@@ -310,17 +312,30 @@ impl MenuItemNode {
         let size = theme.density.ui_font_size;
         let caption = theme.typography.size_caption;
 
-        for (child, color, fsize) in [
-            (&mut this.widget.gutter, label_color(disabled, theme), size),
-            (&mut this.widget.label, label_fg, size),
-            (&mut this.widget.shortcut, muted_fg, size),
-            (&mut this.widget.subtitle, muted_fg, caption),
+        // `is_text` is false for the gutter, an icon glyph that keeps its own
+        // icon font.
+        for (child, color, fsize, is_text) in [
+            (
+                &mut this.widget.gutter,
+                label_color(disabled, theme),
+                size,
+                false,
+            ),
+            (&mut this.widget.label, label_fg, size, true),
+            (&mut this.widget.shortcut, muted_fg, size, true),
+            (&mut this.widget.subtitle, muted_fg, caption, true),
         ] {
             if let Some(child) = child {
                 let mut lbl = this.ctx.get_mut(child);
                 lbl.insert_prop(ContentColor::new(color));
                 let mut lbl = lbl.downcast::<Label>();
                 Label::insert_style(&mut lbl, StyleProperty::FontSize(fsize));
+                if is_text {
+                    Label::insert_style(
+                        &mut lbl,
+                        StyleProperty::FontFamily(theme.typography.sans_family()),
+                    );
+                }
             }
         }
         // Propagate the theme into the fly-out panel.

@@ -18,6 +18,7 @@ use masonry::core::{
 use masonry::imaging::Painter;
 use masonry::kurbo::{Axis, Point, Rect, RoundedRect, Size, Stroke};
 use masonry::layout::{LayoutSize, LenDef, LenReq, Length, SizeDef};
+use masonry::parley::StyleProperty;
 use masonry::properties::ContentColor;
 use masonry::widgets::{Label, Passthrough};
 
@@ -105,7 +106,9 @@ impl DatePickerTrigger {
             .build_widget(theme)
             .to_pod();
 
-        let mut text_lbl = Label::new(text).prepare();
+        let mut text_lbl = Label::new(text)
+            .with_style(StyleProperty::FontFamily(theme.typography.sans_family()))
+            .prepare();
         text_lbl.properties.insert(ContentColor::new(text_color));
         let text_pod = text_lbl.to_pod();
 
@@ -237,6 +240,10 @@ impl DatePickerTrigger {
         {
             let mut lbl = this.ctx.get_mut(&mut this.widget.text);
             lbl.insert_prop(ContentColor::new(text_color));
+            Label::insert_style(
+                &mut lbl,
+                StyleProperty::FontFamily(theme.typography.sans_family()),
+            );
         }
         if let Some(pod) = this.widget.clear_icon.as_mut() {
             let mut lbl = this.ctx.get_mut(pod);

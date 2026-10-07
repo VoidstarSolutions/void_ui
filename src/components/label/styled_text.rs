@@ -24,6 +24,7 @@ pub(super) fn styled_label(label: impl Into<ArcStr>, decoration: TextDecoration)
         text_size: masonry::theme::TEXT_SIZE_NORMAL,
         letter_spacing: 0.0,
         font: FontFamily::Single(FontFamilyName::Generic(GenericFamily::SystemUi)),
+        weight: FontWeight::NORMAL,
         line_height: LineHeight::default(),
         decoration,
     }
@@ -35,6 +36,7 @@ pub(super) struct StyledLabel {
     text_size: f32,
     letter_spacing: f32,
     font: FontFamily<'static>,
+    weight: FontWeight,
     line_height: LineHeight,
     decoration: TextDecoration,
 }
@@ -60,6 +62,11 @@ impl StyledLabel {
         self
     }
 
+    pub(super) fn weight(mut self, weight: FontWeight) -> Self {
+        self.weight = weight;
+        self
+    }
+
     pub(super) fn line_height(mut self, line_height: LineHeight) -> Self {
         self.line_height = line_height;
         self
@@ -76,7 +83,7 @@ impl<State: 'static, Action> View<State, Action, ViewCtx> for StyledLabel {
         let widget = widgets::Label::new(self.label.clone())
             .with_text_alignment(self.text_alignment)
             .with_style(StyleProperty::FontSize(self.text_size))
-            .with_style(StyleProperty::FontWeight(FontWeight::NORMAL))
+            .with_style(StyleProperty::FontWeight(self.weight))
             .with_style(StyleProperty::LineHeight(self.line_height))
             .with_style(StyleProperty::FontFamily(self.font.clone()))
             .with_style(StyleProperty::WordSpacing(0.0))
@@ -126,6 +133,9 @@ impl<State: 'static, Action> View<State, Action, ViewCtx> for StyledLabel {
                 &mut element,
                 StyleProperty::LetterSpacing(self.letter_spacing),
             );
+        }
+        if prev.weight != self.weight {
+            widgets::Label::insert_style(&mut element, StyleProperty::FontWeight(self.weight));
         }
         if prev.font != self.font {
             widgets::Label::insert_style(

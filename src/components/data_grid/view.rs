@@ -51,7 +51,7 @@ use crate::collection::{
 };
 use crate::components::icon::{IconName, disclosure_chevron, icon};
 use crate::components::scroll_container::{ScrollBarVisibility, scroll_container};
-use crate::theme::Density;
+use crate::theme::{Density, FontStack};
 
 /// Boxed row-data accessor, shared via `Arc` across the body and clipboard
 /// closures. Aliases the substrate's [`ItemsFn`] — same `Fn(&State) -> &[R]`
@@ -1159,6 +1159,7 @@ where
     };
     let header_label = label(title)
         .text_size(theme.typography.size_caption)
+        .font(theme.typography.sans_family())
         .letter_spacing(1.2)
         .color(title_color);
 
@@ -1224,6 +1225,7 @@ fn content_floor<R>(
     rows: &[R],
     size_body: f32,
     size_caption: f32,
+    sans: FontStack,
 ) -> f64 {
     // Header title width: caption font size plus its inter-glyph letter
     // spacing (1.2 px, see `header_cell`), plus a fixed allowance for the
@@ -1236,12 +1238,12 @@ fn content_floor<R>(
     const CELL_PAD: f64 = 6.0;
     let glyph_gaps =
         f64::from(u32::try_from(title.chars().count().saturating_sub(1)).unwrap_or(u32::MAX));
-    let mut widest = measure::text_width(title, size_caption)
+    let mut widest = measure::text_width(title, size_caption, sans)
         + glyph_gaps * HEADER_LETTER_SPACING
         + HEADER_DECOR_ALLOWANCE;
     if let Some(projector) = projector {
         for row in rows {
-            let w = measure::text_width(&projector(row), size_body);
+            let w = measure::text_width(&projector(row), size_body, sans);
             if w > widest {
                 widest = w;
             }
@@ -1252,18 +1254,19 @@ fn content_floor<R>(
 
 /// Folds the floor's layout determinants that `(ColumnId, row_count)` can't
 /// see into one `u64` for the [`measure::column_floor`] cache key: the body
-/// and header font sizes (theme typography) and the header title. This stops
+/// and header font sizes and sans stack (theme typography) and the header title. This stops
 /// a floor computed under one theme — or for a same-id column in a different
 /// grid — from being reused after a theme swap or against another grid whose
 /// title/fonts differ. Body cell *text* is intentionally excluded: hashing it
 /// would reintroduce the `O(rows)` scan the cache exists to avoid, so a
 /// content edit that changes neither the row count nor the title still leans
 /// on row-count keying as its proxy.
-fn floor_signature(size_body: f32, size_caption: f32, title: &str) -> u64 {
+fn floor_signature(size_body: f32, size_caption: f32, sans: FontStack, title: &str) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     size_body.to_bits().hash(&mut hasher);
     size_caption.to_bits().hash(&mut hasher);
+    sans.hash(&mut hasher);
     title.hash(&mut hasher);
     hasher.finish()
 }
@@ -1328,6 +1331,7 @@ where
         // font size), the per-column text projectors, and the row accessor.
         let titles: Vec<String> = render_slots.iter().map(|s| s.title.clone()).collect();
         let size_body = theme.typography.size_body;
+        let sans = theme.typography.sans;
         let size_caption = theme.typography.size_caption;
         header_strip = header_strip.resizable(style, move |state: &mut State, col, new_width| {
             let Some(id) = resize_ids.get(col) else {
@@ -1340,7 +1344,7 @@ where
             // yet a theme/title change (folded into the signature) can't
             // reuse a floor measured under the old typography.
             let row_count = u64::try_from(rows(state).len()).unwrap_or(u64::MAX);
-            let signature = floor_signature(size_body, size_caption, &titles[col]);
+            let signature = floor_signature(size_body, size_caption, sans, &titles[col]);
             let floor = measure::column_floor(id, row_count, signature, || {
                 content_floor(
                     &titles[col],
@@ -1348,6 +1352,7 @@ where
                     rows(state),
                     size_body,
                     size_caption,
+                    sans,
                 )
             });
             width_change(state, id.clone(), new_width.max(floor))
@@ -1807,11 +1812,12 @@ mod tests {
         let t = Theme::default();
         let body = t.typography.size_body;
         let caption = t.typography.size_caption;
+        let sans = t.typography.sans;
         let proj: TextProjector<u64> = Box::new(|r: &u64| format!("${r}.00"));
 
         // A column of wide values floors wider than one of narrow values.
-        let narrow = content_floor("v", Some(&proj), &[1, 2, 3], body, caption);
-        let wide = content_floor("v", Some(&proj), &[1_239_999, 88], body, caption);
+        let narrow = content_floor("v", Some(&proj), &[1, 2, 3], body, caption, sans);
+        let wide = content_floor("v", Some(&proj), &[1_239_999, 88], body, caption, sans);
         assert!(
             wide > narrow,
             "wider cells raise the floor: {wide} !> {narrow}"
@@ -1819,8 +1825,8 @@ mod tests {
 
         // With no text projector the floor still covers the header title —
         // a long title floors wider than a short one.
-        let short_hdr = content_floor::<u64>("ID", None, &[], body, caption);
-        let long_hdr = content_floor::<u64>("A REALLY LONG HEADER", None, &[], body, caption);
+        let short_hdr = content_floor::<u64>("ID", None, &[], body, caption, sans);
+        let long_hdr = content_floor::<u64>("A REALLY LONG HEADER", None, &[], body, caption, sans);
         assert!(short_hdr > 0.0);
         assert!(long_hdr > short_hdr, "header width feeds the floor");
     }

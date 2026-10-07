@@ -115,6 +115,9 @@ where
         if let Some(text) = &self.label {
             let mut lbl = Label::new(text.clone())
                 .with_style(StyleProperty::FontSize(self.theme.density.ui_font_size))
+                .with_style(StyleProperty::FontFamily(
+                    self.theme.typography.sans_family(),
+                ))
                 .prepare();
             lbl.properties.insert(ContentColor::new(text_color));
             widget = widget.with_label(lbl);
@@ -147,6 +150,10 @@ where
                     &mut typed,
                     StyleProperty::FontSize(self.theme.density.ui_font_size),
                 );
+                Label::insert_style(
+                    &mut typed,
+                    StyleProperty::FontFamily(self.theme.typography.sans_family()),
+                );
             }
         }
         if self.checked != prev.checked {
@@ -178,12 +185,19 @@ where
                             &mut typed,
                             StyleProperty::FontSize(self.theme.density.ui_font_size),
                         );
+                        Label::insert_style(
+                            &mut typed,
+                            StyleProperty::FontFamily(self.theme.typography.sans_family()),
+                        );
                         Label::set_text(&mut typed, text.clone());
                     }
                 }
                 (Some(text), None) => {
                     let mut lbl = Label::new(text.clone())
                         .with_style(StyleProperty::FontSize(self.theme.density.ui_font_size))
+                        .with_style(StyleProperty::FontFamily(
+                            self.theme.typography.sans_family(),
+                        ))
                         .prepare();
                     lbl.properties.insert(ContentColor::new(text_color));
                     CheckboxWidget::attach_label(&mut element, lbl);
